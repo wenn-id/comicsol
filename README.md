@@ -8,7 +8,7 @@ not a web app or hosted product. No build service is required.
 
 ## Install
 
-Requirements are Python 3.11 and `Pillow==11.3.0`. Image creation additionally
+Requirements are Python 3.11 and `Pillow==12.3.0`. Image creation additionally
 requires an image-generation capability exposed to the active agent session; Comic
 Sol never embeds provider credentials.
 
@@ -36,7 +36,7 @@ py -3.11 -m pip install -r requirements.txt
 ```
 
 Supported environments are Linux, macOS, Windows, and WSL with Python 3.11 and
-Pillow 11.3.0. The deterministic test suite does not need an image provider.
+Pillow 12.3.0. The deterministic test suite does not need an image provider.
 
 ## Native Hermes MCP Server (Optional)
 
@@ -166,7 +166,7 @@ Clean-room Linux/macOS/WSL check:
 ```bash
 tmp_dir=$(mktemp -d)
 python3.11 -m venv "$tmp_dir/venv"
-"$tmp_dir/venv/bin/python" -m pip install Pillow==11.3.0
+"$tmp_dir/venv/bin/python" -m pip install Pillow==12.3.0
 "$tmp_dir/venv/bin/python" scripts/comic_sol.py doctor --output-root "$tmp_dir/output"
 ```
 
@@ -175,7 +175,7 @@ Windows clean-room equivalent:
 ```powershell
 $TempRoot = Join-Path $env:TEMP "comic-sol-clean-room"
 py -3.11 -m venv "$TempRoot\venv"
-& "$TempRoot\venv\Scripts\python.exe" -m pip install Pillow==11.3.0
+& "$TempRoot\venv\Scripts\python.exe" -m pip install Pillow==12.3.0
 & "$TempRoot\venv\Scripts\python.exe" scripts\comic_sol.py doctor --output-root "$TempRoot\output"
 ```
 
@@ -187,7 +187,7 @@ py -3.11 -m venv "$TempRoot\venv"
 | Output | Panel PNGs, page PNGs, comic PDF, manifest, QA report | Editable intermediate artifacts remain local. |
 | Lettering | Comic Neue Regular/Bold; per-character Noto Sans fallback | Adaptive oval dialogue, actual inline bold emphasis, compact captions, and hybrid authored SFX are supported. Font licenses and digests are in `assets/README.md`. |
 | Image generation | Agent-exposed image model returning a local raster | References and exact dimensions are used when supported; exact authored SFX is checked by visual QA. |
-| Deterministic scripts | Python 3.11 and Pillow 11.3.0 | Offline and provider-neutral. |
+| Deterministic scripts | Python 3.11 and Pillow 12.3.0 | Offline and provider-neutral. |
 | Native MCP | Python 3.11 and MCP SDK 1.28.1 via `stdio` | Exposes 17 tools covering the full deterministic lifecycle safely locked to one output root. |
 
 ## Privacy, IP, and Limitations

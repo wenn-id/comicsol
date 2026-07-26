@@ -39,8 +39,9 @@ reporting to the bundled Python scripts.
    all seven QA checks, and selectively repair only failures within budget.
 6. Promote accepted attempts; deterministically letter dialogue and captions while
    validating and counting exact storyboard SFX without drawing it in Pillow; compose
-   pages, export PDF, inspect and validate final integrity, transition to the honest
-   terminal status, then render the QA report so it projects that terminal status.
+   pages, inspect every composed page and write its `qa/pages/page-{NNN}.json` record,
+   export the PDF, render the QA report (which projects the terminal status the project
+   is about to reach), validate final integrity, then transition to that terminal status.
 7. Return status, counts, warnings, and clickable project output paths.
 
 ## Token budget rules
@@ -79,7 +80,14 @@ with one combined command instead of per-stage turns:
 python3.11 scripts/comic_sol.py finalize PROJECT_DIR
 ```
 
-When `finalize` is available, prefer it over manual `transition → letter → compose → export → validate → transition → report` turn-by-turn. When `finalize` is not available, use the `comic_finalize` MCP tool or stack the commands manually.
+When `finalize` is available, prefer it over stacking the deterministic stages
+turn-by-turn. When `finalize` is not available, use the `comic_finalize` MCP tool or run
+the stage-by-stage route in the workflow reference.
+
+`finalize` fails closed with `page_qa_required` until every composed page has an
+agent-authored `qa/pages/page-{NNN}.json` record matching that page's hash. Run
+`finalize` once to letter and compose, inspect each page, write its record from
+`templates/page-qa.json`, then run `finalize` again. Never fabricate that record.
 
 ### Completion response
 
@@ -100,6 +108,7 @@ python3.11 scripts/comic_sol.py transition PROJECT_DIR TARGET [--warning TEXT]
 python3.11 scripts/validate_project.py PROJECT_DIR --stage plan|storyboard|panels|final [--json]
 
 python3.11 scripts/comic_sol.py resume-plan PROJECT_DIR --json
+python3.11 scripts/comic_sol.py resume PROJECT_DIR --json
 python3.11 scripts/comic_sol.py invalidate PROJECT_DIR STAGE
 python3.11 scripts/comic_sol.py record-stage PROJECT_DIR STAGE
 python3.11 scripts/comic_sol.py record-attempt PROJECT_DIR PANEL_ID initial|visual_retry|transient_repeat PATH

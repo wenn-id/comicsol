@@ -25,6 +25,13 @@ FIXTURES = ROOT / "tests/fixtures"
 
 FONT = ROOT / "assets/fonts/ComicNeue-Regular.ttf"
 
+# The schema caps dialogue at 32 words, the worst case a balloon must contain.
+MAXIMUM_DIALOGUE = (
+    "We have exactly one shot at the service bridge before the tide turns, "
+    "so keep the lantern low, stay right behind me, and do not ever stop "
+    "moving until we are through"
+)
+
 
 def dialogue(content="Keep moving.", priority=1, anchor="top-left"):
     return {
@@ -34,10 +41,10 @@ def dialogue(content="Keep moving.", priority=1, anchor="top-left"):
     }
 
 
-def caption(content="Below the city, daylight became a delivery.", priority=1):
+def caption(content="Below the city, daylight became a delivery.", priority=1, anchor="bottom-right"):
     return {
         "id": f"caption-{priority}", "kind": "caption", "speaker": None,
-        "content": content, "anchor": "bottom-right", "tail_target": None,
+        "content": content, "anchor": anchor, "tail_target": None,
         "priority": priority,
     }
 
@@ -465,6 +472,105 @@ class LetteringTests(unittest.TestCase):
         self.assertEqual((28, 32, 40), image.getpixel((short_rect["x"] + 2, short_rect["y"] + 2)))
         self.assertGreater(min(image.getpixel((short_rect["x"] + short_rect["width"] // 2, short_rect["y"] + 6))), 220)
 
+    def test_balloon_circumscribes_a_maximum_length_dialogue_block(self):
+        from letter_panels import (
+            _anchor_rect,
+            _fitted_item_rect,
+            _item_font,
+            _layout_styled_text,
+            _text_wrap_width,
+        )
+
+        item = dialogue(MAXIMUM_DIALOGUE)
+        item["tail_target"] = None
+        self.assertEqual(32, normalized_word_count(item["content"]))
+        image = Image.new("RGB", (1200, 1600), (28, 32, 40))
+        draw = ImageDraw.Draw(image, "RGBA")
+        maximum = _anchor_rect("top-left", 1200, 1600)
+        font = _item_font(draw, item, maximum)
+        rect = _fitted_item_rect(draw, item, maximum, font)
+        layout = _layout_styled_text(
+            draw, item["content"], font, _text_wrap_width("dialogue", rect["width"])
+        )
+        self.assertIsNotNone(layout)
+        self.assertGreaterEqual(len(layout.lines), 3)
+
+        center_x = rect["x"] + rect["width"] / 2
+        center_y = rect["y"] + rect["height"] / 2
+        radius_x, radius_y = rect["width"] / 2, rect["height"] / 2
+        self.assertLessEqual(
+            (layout.width / rect["width"]) ** 2 + (layout.height / rect["height"]) ** 2,
+            1.0,
+        )
+
+        balloon = image.copy()
+        with mock.patch("letter_panels._draw_font_runs"):
+            render_text_item(
+                ImageDraw.Draw(balloon, "RGBA"), item, rect, font, self.characters
+            )
+        render_text_item(draw, item, rect, font, self.characters)
+
+        difference = ImageChops.difference(image, balloon).convert("L")
+        box = difference.getbbox()
+        self.assertIsNotNone(box)
+        stride = box[2] - box[0]
+        text_pixels = [
+            (box[0] + index % stride, box[1] + index // stride)
+            for index, value in enumerate(difference.crop(box).getdata())
+            if value
+        ]
+        self.assertGreater(len(text_pixels), 1000)
+        escaped = [
+            point
+            for point in text_pixels
+            if ((point[0] - center_x) / radius_x) ** 2
+            + ((point[1] - center_y) / radius_y) ** 2 > 1.0
+        ]
+        self.assertEqual(
+            [], escaped[:8], f"{len(escaped)}/{len(text_pixels)} text pixels left the balloon"
+        )
+        self.assertTrue(all(balloon.getpixel(point) == (255, 255, 255) for point in text_pixels))
+
+    def test_caption_honors_its_authored_anchor(self):
+        letter_panel(
+            str(self.panel), 800, 1000,
+            [caption("A quiet beat.", anchor="bottom-center")], self.characters,
+        )
+        image = Image.open(self.panel).convert("RGB")
+        box = ImageChops.difference(
+            image, Image.new("RGB", (800, 1000), (28, 32, 40))
+        ).getbbox()
+
+        self.assertIsNotNone(box)
+        self.assertGreaterEqual(box[1], 660)
+        self.assertLessEqual(box[3], 962)
+        self.assertAlmostEqual(400, (box[0] + box[2]) / 2, delta=2)
+
+    def test_non_finite_tail_target_is_rejected_as_value_error(self):
+        from letter_panels import _ellipse_tail_polygon
+
+        before = self.panel.read_bytes()
+        for value in (float("inf"), float("-inf"), float("nan")):
+            item = dialogue()
+            item["tail_target"] = [value, 0.5]
+            with self.assertRaisesRegex(ValueError, "non-finite tail target"):
+                letter_panel(str(self.panel), 800, 1000, [item], self.characters)
+            self.assertEqual(before, self.panel.read_bytes())
+            with self.assertRaisesRegex(ValueError, "finite"):
+                _ellipse_tail_polygon(
+                    {"x": 40, "y": 30, "width": 120, "height": 70}, [value, 0.5], 240, 240
+                )
+
+    def test_oversized_panel_image_is_rejected_as_value_error(self):
+        from letter_panels import MAX_DECODED_PIXELS
+
+        self.assertGreaterEqual(MAX_DECODED_PIXELS, 1600 * 2400)
+        before = self.panel.read_bytes()
+        with mock.patch("letter_panels.MAX_DECODED_PIXELS", 800 * 1000 - 1):
+            with self.assertRaisesRegex(ValueError, "pixel decode limit"):
+                letter_panel(str(self.panel), 800, 1000, [dialogue()], self.characters)
+        self.assertEqual(before, self.panel.read_bytes())
+
     def test_sfx_is_validated_counted_and_byte_exact_noop(self):
         before = self.panel.read_bytes()
         result = letter_panel(str(self.panel), 800, 1000, [sfx()], self.characters)
@@ -515,7 +621,7 @@ class LetteringTests(unittest.TestCase):
         self.assertEqual(2, mixed_result["text_count"])
 
     def test_caption_is_drawn_at_top_as_overlay(self):
-        letter_panel(str(self.panel), 800, 1000, [caption()], self.characters)
+        letter_panel(str(self.panel), 800, 1000, [caption(anchor="top-left")], self.characters)
         image = Image.open(self.panel).convert("RGB")
         top = ImageChops.difference(image.crop((0, 0, 800, 320)), Image.new("RGB", (800, 320), (28, 32, 40)))
         bottom = ImageChops.difference(image.crop((0, 680, 800, 1000)), Image.new("RGB", (800, 320), (28, 32, 40)))
@@ -527,7 +633,7 @@ class LetteringTests(unittest.TestCase):
 
         image = Image.new("RGB", (800, 1000), (28, 32, 40))
         draw = ImageDraw.Draw(image)
-        item = caption("A quiet beat.")
+        item = caption("A quiet beat.", anchor="top-left")
         maximum = {"x": 32, "y": 40, "width": 336, "height": 300}
         font = _item_font(draw, item, maximum)
         fitted = _fitted_item_rect(draw, item, maximum, font)
@@ -731,6 +837,48 @@ class LetteringTests(unittest.TestCase):
                 ]))
             self.assertTrue(errors.getvalue().startswith("ERROR ValueError:"))
             self.assertIn("font", errors.getvalue().lower())
+            self.assertNotIn("Traceback", errors.getvalue())
+
+    def test_cli_rejects_non_finite_tail_target_without_traceback(self):
+        import contextlib
+        import io
+
+        from letter_panels import main as letter_main
+
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            shutil.copytree(FIXTURES / "valid-one-page", project)
+            storyboard_path = project / "plan/storyboard.json"
+            storyboard = json.loads(storyboard_path.read_text("utf-8"))
+            storyboard["pages"][0]["panels"][1]["text"][0]["tail_target"] = [
+                float("inf"), 0.55,
+            ]
+            storyboard_path.write_text(json.dumps(storyboard), "utf-8")
+
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors):
+                self.assertEqual(1, letter_main([str(project)]))
+            self.assertTrue(errors.getvalue().startswith("ERROR ValueError:"))
+            self.assertIn("tail target", errors.getvalue())
+            self.assertNotIn("Traceback", errors.getvalue())
+
+    def test_cli_rejects_oversized_panel_image_without_traceback(self):
+        import contextlib
+        import io
+
+        from letter_panels import main as letter_main
+
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            shutil.copytree(FIXTURES / "valid-one-page", project)
+            errors = io.StringIO()
+            with (
+                mock.patch("letter_panels.MAX_DECODED_PIXELS", 1024),
+                contextlib.redirect_stderr(errors),
+            ):
+                self.assertEqual(1, letter_main([str(project)]))
+            self.assertTrue(errors.getvalue().startswith("ERROR ValueError:"))
+            self.assertIn("pixel decode limit", errors.getvalue())
             self.assertNotIn("Traceback", errors.getvalue())
 
     def test_cli_normalizes_pillow_safety_error_without_traceback(self):

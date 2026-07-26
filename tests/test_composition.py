@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from comic_sol import atomic_write_json  # noqa: E402
 from compose_pages import compose_all_pages, compose_page  # noqa: E402
+from tests.support import make_symlink  # noqa: E402
 
 
 class CompositionTests(unittest.TestCase):
@@ -107,10 +108,7 @@ class CompositionTests(unittest.TestCase):
         Image.new("RGB", (800, 800), "blue").save(outside)
         self.addCleanup(outside.unlink, missing_ok=True)
         link = self.project / "panels/linked.png"
-        try:
-            link.symlink_to(outside)
-        except OSError as error:
-            self.skipTest(f"symlink unavailable: {error}")
+        make_symlink(self, link, outside)
 
         with self.assertRaisesRegex(ValueError, "escapes|symlinks"):
             compose_page(
@@ -132,12 +130,9 @@ class CompositionTests(unittest.TestCase):
             source.symlink_to(outside)
             return sources
 
-        try:
-            probe = self.project / "symlink-probe"
-            probe.symlink_to(outside)
-            probe.unlink()
-        except OSError as error:
-            self.skipTest(f"symlink unavailable: {error}")
+        probe = self.project / "symlink-probe"
+        make_symlink(self, probe, outside)
+        probe.unlink()
 
         with patch("compose_pages._page_sources", side_effect=swap_after_preflight):
             with self.assertRaisesRegex(ValueError, "escapes|symlinks"):

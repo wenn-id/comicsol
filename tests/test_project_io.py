@@ -7,6 +7,7 @@ from unittest import mock
 
 from scripts import project_io
 from scripts.project_io import contained_project_path
+from tests.support import make_symlink
 
 
 class ContainedProjectPathTests(unittest.TestCase):
@@ -44,10 +45,7 @@ class ContainedProjectPathTests(unittest.TestCase):
         outside = self.root / "outside.png"
         outside.write_bytes(b"outside")
         link = self.project / "linked.png"
-        try:
-            link.symlink_to(outside)
-        except OSError as error:
-            self.skipTest(f"symlink unavailable: {error}")
+        make_symlink(self, link, outside)
         with self.assertRaisesRegex(ValueError, "escapes|symlinks"):
             contained_project_path(self.project, "linked.png", must_exist=True)
 
@@ -55,10 +53,7 @@ class ContainedProjectPathTests(unittest.TestCase):
         outside = self.root / "outside"
         outside.mkdir()
         link = self.project / "panels"
-        try:
-            link.symlink_to(outside, target_is_directory=True)
-        except OSError as error:
-            self.skipTest(f"symlink unavailable: {error}")
+        make_symlink(self, link, outside, directory=True)
         with self.assertRaisesRegex(ValueError, "escapes|symlinks"):
             contained_project_path(self.project, "panels/image.png")
 

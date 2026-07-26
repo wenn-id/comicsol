@@ -258,7 +258,7 @@ class ManifestTests(unittest.TestCase):
         self.assertTrue(healthy, messages)
         for label in (
             "Python 3.11",
-            "Pillow 11.3.0",
+            "Pillow 12.3.0",
             "font Comic Neue Regular",
             "font Comic Neue Bold",
             "font Noto Sans fallback",

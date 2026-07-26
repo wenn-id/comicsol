@@ -37,6 +37,14 @@ ANCHORS = (
     "bottom-left",
     "middle-left",
 )
+# A w x h text block only fits inside an ellipse whose axes are at least
+# sqrt(2) times w and h, so balloons budget and circumscribe text with it.
+ELLIPSE_TEXT_RATIO = math.sqrt(2.0)
+BALLOON_PADDING = 28
+CAPTION_PADDING = 20
+# Panels are page-sized at most (1600x2400); sixteen page areas leaves room for
+# oversampled source art while rejecting decompression bombs.
+MAX_DECODED_PIXELS = 1600 * 2400 * 16
 
 
 def normalize_content(text: str) -> str:
@@ -449,6 +457,27 @@ def _overlap(first: dict[str, int], second: dict[str, int]) -> bool:
     )
 
 
+def _text_padding(kind: object) -> int:
+    """Return the padding between a text block and the shape drawn around it."""
+    return BALLOON_PADDING if kind == "dialogue" else CAPTION_PADDING
+
+
+def _text_wrap_width(kind: object, box_width: float) -> float:
+    """Return the wrapping width a text block may use inside its drawn shape."""
+    inner = max(1.0, box_width - 2 * _text_padding(kind))
+    # Balloon text is inscribed in the ellipse rather than in the box bounding
+    # it, so only inner / sqrt(2) of that box is usable text width.
+    return inner / ELLIPSE_TEXT_RATIO if kind == "dialogue" else inner
+
+
+def _balloon_box(layout: _StyledLayout) -> tuple[int, int]:
+    """Return the ellipse box that circumscribes one centered text block."""
+    return (
+        math.ceil(layout.width * ELLIPSE_TEXT_RATIO) + 2 * BALLOON_PADDING,
+        math.ceil(layout.height * ELLIPSE_TEXT_RATIO) + 2 * BALLOON_PADDING,
+    )
+
+
 def _fitted_item_rect(
     draw: ImageDraw.ImageDraw,
     item: dict,
@@ -457,35 +486,24 @@ def _fitted_item_rect(
 ) -> dict[str, int]:
     """Fit a rendered text shape inside its anchor's maximum placement area."""
     kind = item.get("kind")
-    if kind == "caption":
-        layout = _layout_styled_text(
-            draw,
-            normalize_content(item.get("content", "")),
-            font,
-            max(1, maximum["width"] - 40),
-            emphasis=False,
-        )
-        if layout is None:
-            raise ValueError(f"text item {item.get('id', 'unknown')} cannot be wrapped")
-        return {
-            "x": maximum["x"],
-            "y": maximum["y"],
-            "width": min(maximum["width"], math.ceil(layout.width) + 40),
-            "height": min(maximum["height"], layout.height + 20),
-        }
-    if kind != "dialogue":
+    if kind not in {"caption", "dialogue"}:
         return dict(maximum)
     layout = _layout_styled_text(
         draw,
         normalize_content(item.get("content", "")),
         font,
-        max(1, maximum["width"] - 48),
+        _text_wrap_width(kind, maximum["width"]),
+        emphasis=kind == "dialogue",
     )
     if layout is None:
         raise ValueError(f"text item {item.get('id', 'unknown')} cannot be wrapped")
-    horizontal_padding = max(28, math.ceil(layout.height * 0.25))
-    fitted_width = min(maximum["width"], math.ceil(layout.width) + 2 * horizontal_padding)
-    fitted_height = min(maximum["height"], layout.height + 48)
+    if kind == "dialogue":
+        box_width, box_height = _balloon_box(layout)
+    else:
+        box_width = math.ceil(layout.width) + 2 * CAPTION_PADDING
+        box_height = layout.height + CAPTION_PADDING
+    fitted_width = min(maximum["width"], box_width)
+    fitted_height = min(maximum["height"], box_height)
 
     anchor = item.get("anchor", "top-left")
     vertical, horizontal = anchor.split("-", 1) if anchor in ANCHORS else ("top", "left")
@@ -509,6 +527,8 @@ def _ellipse_tail_polygon(
     image_height: int,
 ) -> tuple[tuple[float, float], tuple[float, float], tuple[int, int]]:
     """Return a triangular tail based at the nearest ellipse point toward target."""
+    if not all(math.isfinite(float(value)) for value in tail_target):
+        raise ValueError("dialogue tail target coordinates must be finite numbers")
     target_x = min(image_width - 1, max(0, round(float(tail_target[0]) * image_width)))
     target_y = min(image_height - 1, max(0, round(float(tail_target[1]) * image_height)))
     center_x = rect["x"] + rect["width"] / 2
@@ -548,7 +568,6 @@ def _item_font(
     rect: dict[str, int],
 ) -> ImageFont.FreeTypeFont:
     kind = item.get("kind")
-    padding = 24 if kind == "dialogue" else 20
     content = normalize_content(item.get("content", ""))
     for size in range(42, 23, -2):
         font = _load_font(size)
@@ -556,10 +575,16 @@ def _item_font(
             draw,
             content,
             font,
-            max(1, rect["width"] - 2 * padding),
+            _text_wrap_width(kind, rect["width"]),
             emphasis=kind == "dialogue",
         )
-        if layout is not None and layout.height <= rect["height"] - 2 * padding:
+        if layout is None:
+            continue
+        if kind == "dialogue":
+            box_width, box_height = _balloon_box(layout)
+            if box_width <= rect["width"] and box_height <= rect["height"]:
+                return font
+        elif layout.height <= rect["height"] - 2 * _text_padding(kind):
             return font
     item_id = item.get("id", "unknown")
     raise ValueError(f"text item {item_id} does not fit inside the panel")
@@ -590,18 +615,17 @@ def render_text_item(
     x1 = min(image_width - 1, x0 + max(1, int(rect["width"])))
     y1 = min(image_height - 1, y0 + max(1, int(rect["height"])))
     bounded = {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}
-    padding = 24 if kind == "dialogue" else 20
+    padding = _text_padding(kind)
     layout = _layout_styled_text(
         draw,
         content,
         font,
-        max(1, bounded["width"] - 2 * padding),
+        _text_wrap_width(kind, bounded["width"]),
         emphasis=kind == "dialogue",
     )
     if layout is None:
         raise ValueError(f"text item {item.get('id', 'unknown')} cannot be wrapped")
-    text_width, text_height = layout.width, layout.height
-    text_x = x0 + max(padding, (bounded["width"] - text_width) // 2)
+    text_height = layout.height
     text_y = y0 + max(padding, (bounded["height"] - text_height) / 2)
     if kind == "caption":
         text_y = y0 + max(0, (bounded["height"] - text_height) / 2)
@@ -652,6 +676,15 @@ def render_text_item(
         )
 
 
+def _validate_decoded_pixels(size: tuple[int, int], path: Path) -> None:
+    """Reject panel images whose decoded pixel count exceeds the project cap."""
+    width, height = size
+    if width * height > MAX_DECODED_PIXELS:
+        raise ValueError(
+            f"panel exceeds the {MAX_DECODED_PIXELS} pixel decode limit: {path}"
+        )
+
+
 def letter_panel(
     output_path: str,
     panel_width: int,
@@ -667,10 +700,11 @@ def letter_panel(
     path = Path(output_path)
     try:
         with Image.open(path) as source:
+            _validate_decoded_pixels(source.size, path)
             base = ImageOps.exif_transpose(source).convert("RGBA")
             if base.size != (panel_width, panel_height):
                 base = ImageOps.fit(base, (panel_width, panel_height), method=Image.Resampling.LANCZOS)
-    except (OSError, Image.DecompressionBombError) as error:
+    except (OSError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
         raise ValueError(f"panel is not a readable image: {path}") from error
 
     ordered = sorted(
@@ -689,6 +723,13 @@ def letter_panel(
         anchor = item.get("anchor", "top-left")
         if anchor not in ANCHORS:
             raise ValueError(f"text item {item.get('id', 'unknown')} has unknown anchor")
+        tail = item.get("tail_target")
+        if isinstance(tail, list) and any(
+            isinstance(value, float) and not math.isfinite(value) for value in tail
+        ):
+            raise ValueError(
+                f"text item {item.get('id', 'unknown')} has a non-finite tail target"
+            )
         item["content"] = content
 
     rendered_text_count = sum(item.get("kind") != "sfx" for item in ordered)
@@ -711,7 +752,7 @@ def letter_panel(
     for item in ordered:
         if item.get("kind") == "sfx":
             continue
-        requested = "top-left" if item.get("kind") == "caption" else item.get("anchor", "top-left")
+        requested = item.get("anchor", "top-left")
         start = ANCHORS.index(requested)
         rect = None
         font = None
@@ -788,11 +829,12 @@ def _letter_project_with_summaries(
             try:
                 source = contained_project_path(project_dir, source_relative, must_exist=True)
                 with Image.open(source) as image:
+                    _validate_decoded_pixels(image.size, source)
                     image.load()
                     width, height = image.size
                 source = contained_project_path(project_dir, source_relative, must_exist=True)
                 source_bytes = source.read_bytes()
-            except (OSError, SyntaxError, Image.DecompressionBombError) as error:
+            except (OSError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
                 raise ValueError(f"panel {panel_id} is not a readable image") from error
             staged_path = temporary_root / f"{panel_id}.png"
             atomic_write_bytes(staged_path, source_bytes)

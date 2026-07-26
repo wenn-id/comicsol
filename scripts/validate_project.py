@@ -20,7 +20,6 @@ from project_io import contained_project_path
 from comic_sol import (
     ALL_STATUSES,
     CATEGORY,
-    GUTTER,
     LINEAR_STATUSES,
     MARGIN,
     PAGE_HEIGHT,
@@ -51,6 +50,8 @@ CHECK_IDS = (
     "character-identity", "anatomy", "action", "composition", "continuity",
     "text-free", "technical",
 )
+MAX_PAGES = 4
+MAX_PANELS = 12
 
 
 @dataclass(frozen=True)
@@ -256,8 +257,8 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
                 _add(issues, path, f"settings.{field}", f"must equal {expected}")
         if settings.get("reading_direction") != "ltr":
             _add(issues, path, "settings.reading_direction", "must equal ltr")
-        _integer(settings.get("page_count"), 1, 4, issues, path, "settings.page_count")
-        _integer(settings.get("panel_count"), 0, 12, issues, path, "settings.panel_count")
+        _integer(settings.get("page_count"), 1, MAX_PAGES, issues, path, "settings.page_count")
+        _integer(settings.get("panel_count"), 0, MAX_PANELS, issues, path, "settings.panel_count")
         _nonempty_string(settings.get("style_anchor"), issues, path, "settings.style_anchor")
 
     capability_fields = {
@@ -1110,10 +1111,13 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
             if isinstance(page_count_value, int) and not isinstance(page_count_value, bool)
             else 0
         )
+        # An out-of-range page_count is already reported above. Enumerating it
+        # anyway would let a corrupt manifest drive unbounded filesystem work.
+        page_count = max(0, min(page_count, MAX_PAGES))
         panels = manifest.get("panels", [])
         if not isinstance(panels, list):
             panels = []
-        panel_count = len(panels)
+        panels = panels[:MAX_PANELS]
 
         _validate_required_artifacts(
             project_dir, manifest, page_count, panels, issues,
@@ -1121,9 +1125,7 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
         )
 
         # Page-QA records.
-
-        # Page-QA records.
-        for page_number in range(1, int(page_count) + 1):
+        for page_number in range(1, page_count + 1):
             page_qa_relative = f"qa/pages/page-{page_number:03d}.json"
             page_qa = _read_canonical_json(project_dir, page_qa_relative, issues)
             expected_page = f"pages/page-{page_number:03d}.png"

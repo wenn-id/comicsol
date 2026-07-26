@@ -12,6 +12,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from tests.support import make_symlink  # noqa: E402
+
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
 
 if MCP_AVAILABLE:
@@ -65,10 +67,7 @@ class McpServerUnitTests(unittest.TestCase):
     def test_project_symlink_cannot_escape_root(self):
         outside = Path(self.temporary_directory.name) / "outside"
         outside.mkdir()
-        try:
-            (self.root / "escape").symlink_to(outside, target_is_directory=True)
-        except OSError as error:
-            self.skipTest(f"symlink unavailable: {error}")
+        make_symlink(self, self.root / "escape", outside, directory=True)
 
         with self.assertRaisesRegex(ToolError, "outside output root"):
             mcp_server._resolve_project("escape")
@@ -78,10 +77,7 @@ class McpServerUnitTests(unittest.TestCase):
         project.mkdir()
         outside = Path(self.temporary_directory.name) / "secret.txt"
         outside.write_text("outside output root")
-        try:
-            (project / "arbitrary-file.txt").symlink_to(outside)
-        except OSError as error:
-            self.skipTest(f"symlink unavailable: {error}")
+        make_symlink(self, project / "arbitrary-file.txt", outside)
 
         with self.assertRaisesRegex(ToolError, "symlink"):
             mcp_server._resolve_project("project")

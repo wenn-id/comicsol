@@ -786,7 +786,7 @@ class PackagingTests(unittest.TestCase):
     def test_readme_is_judge_runnable_without_a_build_service(self):
         readme = self.readme()
         for required in (
-            "Pillow==11.3.0",
+            "Pillow==12.3.0",
             "python3.11 -m unittest discover -s tests -v",
             "python3.11 scripts/comic_sol.py doctor",
             "One natural-language",

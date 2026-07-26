@@ -2,9 +2,10 @@ name: Tests
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, ai/post-event-development ]
+  # Every pull request, whatever its base. Restricting this to `main` meant the
+  # suite never ran in a repository whose default branch is not `main`.
   pull_request:
-    branches: [ main ]
 
 jobs:
   test:
@@ -29,6 +30,10 @@ jobs:
       if: matrix.extras == 'mcp'
       run: python -m pip install -r requirements-mcp.txt
     - name: Test with unittest
+      # Unprivileged Windows cannot create file symlinks, so the path-containment
+      # tests may only skip there; everywhere else a skip is a coverage loss.
+      env:
+        COMIC_SOL_REQUIRE_SYMLINK_TESTS: ${{ matrix.os == 'windows-latest' && '0' || '1' }}
       run: python -m unittest discover -s tests -v
     - name: Run doctor
       run: python scripts/comic_sol.py doctor --output-root ${{ runner.temp }}/comic-sol-doctor

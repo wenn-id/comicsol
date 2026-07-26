@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -13,7 +12,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from comic_sol import atomic_write_bytes, read_json, sha256_file
+from comic_sol import atomic_write_bytes, atomic_write_json, read_json, sha256_file
+from project_io import contained_project_path
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,10 +100,25 @@ def _load_records(project_dir: Path) -> list[dict[str, object]]:
     return records
 
 
+def _final_status(manifest: dict[str, object]) -> object:
+    """Project the terminal status an EXPORTED project is about to reach.
+
+    Final validation requires this report and its descriptor to exist before
+    the terminal transition, so the report can only ever be written while the
+    project is still EXPORTED. From there the outcome is determined by whether
+    any warning is unresolved.
+    """
+    status = manifest.get("status")
+    if status != "EXPORTED":
+        return status if status is not None else "unknown"
+    warnings = manifest.get("warnings")
+    return "COMPLETE_WITH_WARNINGS" if isinstance(warnings, list) and warnings else "COMPLETE"
+
+
 def _project_summary(manifest: dict[str, object]) -> str:
     return "\n".join((
         f"- Project: {_escape_table(manifest.get('title', 'Untitled'))} (`{manifest.get('project_id', 'unknown')}`)",
-        f"- Final status: **{manifest.get('status', 'unknown')}**",
+        f"- Final status: **{_final_status(manifest)}**",
     ))
 
 
@@ -215,6 +230,20 @@ def _relative(project_dir: Path, path: Path) -> str:
         return path.as_posix()
 
 
+def _contained_or_none(project_dir: Path, relative: object) -> Path | None:
+    """Resolve a manifest-supplied path, or None when it escapes the project.
+
+    Manifest values are agent-authored, so an absolute path, a UNC path or a
+    ``..`` sequence must never be read or hashed into the report.
+    """
+    if not isinstance(relative, str):
+        return None
+    try:
+        return contained_project_path(project_dir, relative)
+    except (ValueError, OSError):
+        return None
+
+
 def _pdf_readable(path: Path, expected_pages: int) -> bool:
     try:
         payload = path.read_bytes()
@@ -241,7 +270,10 @@ def _integrity(
                 continue
             relative = descriptor.get("path")
             expected = descriptor.get("sha256")
-            path = project_dir / relative if isinstance(relative, str) else project_dir / "__invalid__"
+            path = _contained_or_none(project_dir, relative)
+            if path is None:
+                lines.append(f"- `{relative}` — outside the project boundary")
+                continue
             exists = path.is_file()
             matches = exists and isinstance(expected, str) and sha256_file(path) == expected
             lines.append(
@@ -274,22 +306,28 @@ def _integrity(
         if isinstance(reference, str)
     })
     for reference in references:
-        path = project_dir / reference
-        lines.append(
-            f"- Reference `{reference}` — valid: {'yes' if path.is_file() else 'no'}"
-        )
+        path = _contained_or_none(project_dir, reference)
+        valid = path is not None and path.is_file()
+        lines.append(f"- Reference `{reference}` — valid: {'yes' if valid else 'no'}")
 
     project_id = manifest.get("project_id", "")
     pdf_descriptor = artifacts.get("pdf") if isinstance(artifacts, dict) else None
     pdf_relative = pdf_descriptor.get("path") if isinstance(pdf_descriptor, dict) else f"exports/{project_id}.pdf"
-    pdf_path = project_dir / pdf_relative
+    pdf_path = _contained_or_none(project_dir, pdf_relative)
+    readable = pdf_path is not None and _pdf_readable(pdf_path, len(pages))
     lines.append(
-        f"- `{pdf_relative}` — PDF readable: {'yes' if _pdf_readable(pdf_path, len(pages)) else 'no'}; pages: {len(pages)}"
+        f"- `{pdf_relative}` — PDF readable: {'yes' if readable else 'no'}; pages: {len(pages)}"
     )
     return "\n".join(lines) if lines else "No artifacts were recorded."
 
 
 def _resume(project_dir: Path) -> str:
+    """Summarize which artifacts a resume carried over versus rebuilt.
+
+    ``resume_project`` emits ``artifact.reused`` for every preserved stage
+    output; ``promote_attempt`` emits ``artifact.regenerated`` when it replaces
+    an existing panel.
+    """
     event_path = project_dir / "logs/events.jsonl"
     reused: set[str] = set()
     regenerated: set[str] = set()
@@ -305,9 +343,9 @@ def _resume(project_dir: Path) -> str:
             if not isinstance(artifact, str):
                 continue
             name = str(event.get("event", ""))
-            if name.endswith("reused"):
+            if name == "artifact.reused":
                 reused.add(artifact)
-            elif name.endswith("regenerated") or name.endswith("generated"):
+            elif name == "artifact.regenerated":
                 regenerated.add(artifact)
     return "\n".join((
         "- Reused: " + (", ".join(sorted(reused)) if reused else "none"),
@@ -338,7 +376,28 @@ def render_report(project_dir: Path, output_path: Path | None = None) -> Path:
         raise ValueError("QA report contains an unresolved template token")
     destination = Path(output_path) if output_path is not None else project_dir / "qa/report.md"
     atomic_write_bytes(destination, (rendered.rstrip() + "\n").encode("utf-8"))
+    if destination == project_dir / "qa/report.md":
+        _record_report_descriptor(project_dir, destination)
     return destination
+
+
+def _record_report_descriptor(project_dir: Path, report_path: Path) -> None:
+    """Record the qa_report descriptor final validation requires.
+
+    Mirrors ``export_pdf.guarded_export`` recording the pdf descriptor, so the
+    stage-by-stage route reaches a valid terminal state without a manual edit.
+    """
+    manifest_path = project_dir / "project.json"
+    manifest = read_json(manifest_path)
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+    artifacts["qa_report"] = {
+        "path": "qa/report.md",
+        "sha256": sha256_file(report_path),
+    }
+    manifest["artifacts"] = artifacts
+    atomic_write_json(manifest_path, manifest)
 
 
 def _build_parser() -> argparse.ArgumentParser:

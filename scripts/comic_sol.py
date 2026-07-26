@@ -120,6 +120,7 @@ SENSITIVE_KEY = re.compile(
     r"(?:api[_-]?key|authorization|credential|password|private[_-]?key|secret|token)",
     re.IGNORECASE,
 )
+REQUIRED_PILLOW = "12.3.0"
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 CATEGORY = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -155,12 +156,23 @@ def _utc_now() -> str:
 
 
 def canonical_json_bytes(value: object) -> bytes:
-    """Return compact, sorted UTF-8 JSON bytes without a trailing newline."""
+    """Return compact, sorted UTF-8 JSON bytes without a trailing newline.
+
+    Use for single-line JSONL records and for stable hash inputs. Document
+    artifacts must use ``canonical_artifact_bytes`` instead.
+    """
     return json.dumps(
         value,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
+    ).encode("utf-8")
+
+
+def canonical_artifact_bytes(value: object) -> bytes:
+    """Return the two-space sorted UTF-8 JSON bytes the validator requires."""
+    return (
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
 
 
@@ -179,10 +191,7 @@ def atomic_write_bytes(path: Path, payload: bytes) -> None:
 
 def atomic_write_json(path: Path, value: object) -> None:
     """Atomically write canonical human-readable artifact JSON."""
-    payload = (
-        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
-    atomic_write_bytes(path, payload)
+    atomic_write_bytes(path, canonical_artifact_bytes(value))
 
 
 def sha256_file(path: Path) -> str:
@@ -416,8 +425,22 @@ def canonical_event_record(event: str, details: dict[str, object]) -> bytes:
 
 
 def _event_log_with(project_dir: Path, event: str, details: dict[str, object]) -> bytes:
+    """Return the whole event log plus one record, repairing a torn tail.
+
+    ``append_event`` writes without a transaction, so an interrupted append can
+    leave a partial final line. Republishing it verbatim would embed the tear
+    permanently, so drop an unparsable trailing record instead.
+    """
     event_path = contained_project_path(project_dir, "logs/events.jsonl")
     prior = event_path.read_bytes() if event_path.is_file() else b""
+    if prior and not prior.endswith(b"\n"):
+        head, _, tail = prior.rpartition(b"\n")
+        try:
+            json.loads(tail)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            prior = head + b"\n" if head else b""
+        else:
+            prior = prior + b"\n"
     return prior + canonical_event_record(event, details)
 
 
@@ -462,33 +485,35 @@ def transition(
         return block_project(project_dir, reason or "project-blocked", block_warning)
     project_dir = Path(project_dir)
     manifest_path = project_dir / "project.json"
-    manifest = read_json(manifest_path)
-    current = manifest.get("status")
-    warnings = manifest.get("warnings")
-    if not isinstance(warnings, list):
-        raise ValueError("manifest warnings must be an array")
-    if current == "EXPORTED" and target == "COMPLETE" and (warnings or warning):
-        target = "COMPLETE_WITH_WARNINGS"
-    if not isinstance(current, str) or not _allowed_transition(current, target):
-        raise ValueError(f"invalid Comic Sol transition: {current} -> {target}")
-    if target in TERMINAL_STATUSES:
-        from validate_project import require_valid_project
-        require_valid_project(project_dir, "final")
-    if target == "COMPLETE_WITH_WARNINGS" and not (warnings or warning):
-        raise ValueError("COMPLETE_WITH_WARNINGS requires an unresolved warning")
-    if warning and warning not in warnings:
-        warnings.append(warning)
-    manifest["status"] = target
-    manifest["updated_at"] = _utc_now()
-
-    events = _event_log_with(
-        project_dir,
-        "project.transitioned",
-        {"from": current, "to": target, "warning_present": warning is not None},
-    )
+    # Read, validate and snapshot the event log under the transaction's lock:
+    # the log is republished wholesale, so a pre-lock snapshot would silently
+    # drop events appended by a concurrent command.
     with ProjectTransaction(project_dir, "transition") as tx:
+        manifest = read_json(manifest_path)
+        current = manifest.get("status")
+        warnings = manifest.get("warnings")
+        if not isinstance(warnings, list):
+            raise ValueError("manifest warnings must be an array")
+        if current == "EXPORTED" and target == "COMPLETE" and (warnings or warning):
+            target = "COMPLETE_WITH_WARNINGS"
+        if not isinstance(current, str) or not _allowed_transition(current, target):
+            raise ValueError(f"invalid Comic Sol transition: {current} -> {target}")
+        if target in TERMINAL_STATUSES:
+            from validate_project import require_valid_project
+            require_valid_project(project_dir, "final")
+        if target == "COMPLETE_WITH_WARNINGS" and not (warnings or warning):
+            raise ValueError("COMPLETE_WITH_WARNINGS requires an unresolved warning")
+        if warning and warning not in warnings:
+            warnings.append(warning)
+        manifest["status"] = target
+        manifest["updated_at"] = _utc_now()
+        events = _event_log_with(
+            project_dir,
+            "project.transitioned",
+            {"from": current, "to": target, "warning_present": warning is not None},
+        )
         tx.stage_bytes("logs/events.jsonl", events)
-        tx.stage_bytes("project.json", canonical_json_bytes(manifest))
+        tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
     return manifest
 
 
@@ -668,7 +693,13 @@ def _manifest_artifact_problem(
         if not isinstance(relative, str) or not isinstance(expected_hash, str):
             problems.setdefault(stage, f"artifact descriptor is invalid: {name}")
             continue
-        path = project_dir / relative
+        try:
+            path = contained_project_path(project_dir, relative)
+        except (ValueError, OSError):
+            problems.setdefault(
+                stage, f"artifact path escapes the project: {name}"
+            )
+            continue
         if not path.is_file():
             problems.setdefault(stage, f"artifact is missing: {relative}")
         elif sha256_file(path) != expected_hash:
@@ -767,33 +798,31 @@ def record_stage(project_dir: Path, stage: str) -> dict[str, object]:
     if stage not in RESUME_STAGES:
         raise ValueError(f"unknown resume stage: {stage}")
     project_dir = Path(project_dir).resolve()
-    manifest = read_json(project_dir / "project.json")
-    versions = manifest.get("stage_versions")
-    if not isinstance(versions, dict) or not isinstance(versions.get(stage), str):
-        raise ValueError("manifest stage_versions must contain the stage version")
-    output_files = _stage_output_files(project_dir, stage, manifest)
-    missing_outputs = [
-        path.relative_to(project_dir).as_posix()
-        for path in output_files
-        if not path.is_file()
-    ]
-    if missing_outputs:
-        raise ValueError(f"stage output is missing: {missing_outputs[0]}")
-    canonical_inputs, files = _resume_stage_material(project_dir, stage, manifest)
-    key = stage_cache_key(stage, canonical_inputs, files, versions[stage])
-    artifacts = {
-        path.relative_to(project_dir).as_posix(): sha256_file(path)
-        for path in output_files
-    }
-    cache_path = project_dir / STAGE_CACHE_PATH
-    cache, _ = _load_stage_cache(cache_path)
-    stages = cache["stages"]
-    assert isinstance(stages, dict)
-    stages[stage] = {"artifacts": artifacts, "key": key}
-    updated_cache = canonical_json_bytes(cache)
-    updated_manifest = canonical_json_bytes(manifest)
     with ProjectTransaction(project_dir, "stage-committed") as tx:
-        tx.stage_bytes(str(STAGE_CACHE_PATH), updated_cache)
+        manifest = read_json(project_dir / "project.json")
+        versions = manifest.get("stage_versions")
+        if not isinstance(versions, dict) or not isinstance(versions.get(stage), str):
+            raise ValueError("manifest stage_versions must contain the stage version")
+        output_files = _stage_output_files(project_dir, stage, manifest)
+        missing_outputs = [
+            path.relative_to(project_dir).as_posix()
+            for path in output_files
+            if not path.is_file()
+        ]
+        if missing_outputs:
+            raise ValueError(f"stage output is missing: {missing_outputs[0]}")
+        canonical_inputs, files = _resume_stage_material(project_dir, stage, manifest)
+        key = stage_cache_key(stage, canonical_inputs, files, versions[stage])
+        artifacts = {
+            path.relative_to(project_dir).as_posix(): sha256_file(path)
+            for path in output_files
+        }
+        cache_path = project_dir / STAGE_CACHE_PATH
+        cache, _ = _load_stage_cache(cache_path)
+        stages = cache["stages"]
+        assert isinstance(stages, dict)
+        stages[stage] = {"artifacts": artifacts, "key": key}
+        tx.stage_bytes(str(STAGE_CACHE_PATH), canonical_artifact_bytes(cache))
         tx.stage_bytes(
             "logs/events.jsonl",
             _event_log_with(project_dir, "stage.recorded", {"action": stage}),
@@ -1139,7 +1168,15 @@ def resume_project(project_dir: Path) -> dict[str, object]:
         # Drop outer lock so invalidate_from can acquire its own ProjectTransaction lock
     if stale_stage is not None:
         invalidate_from(project_dir, stale_stage)
-    recovery_status = STAGE_COMPLETION_STATUS[preserved[-1]] if preserved else "INIT"
+    # Use the same rule as invalidate_from so a standalone `invalidate` and a
+    # `resume` that invalidates the same stage agree. They differ for the
+    # generation stage, whose invalidation preserves the canonical references.
+    if stale_stage is not None:
+        recovery_status = _post_invalidation_status(
+            project_dir, stale_stage, str(blocked_from)
+        )
+    else:
+        recovery_status = STAGE_COMPLETION_STATUS[preserved[-1]] if preserved else "INIT"
     with ProjectLock(project_dir):
         manifest = read_json(manifest_path)
         warnings = manifest.get("warnings")
@@ -1153,6 +1190,20 @@ def resume_project(project_dir: Path) -> dict[str, object]:
         manifest["blocked_reason"] = None
         manifest["updated_at"] = _utc_now()
         atomic_write_json(manifest_path, manifest)
+        for stage in preserved:
+            try:
+                outputs = _stage_output_files(project_dir, stage, manifest)
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            for output in outputs:
+                append_event(
+                    project_dir,
+                    "artifact.reused",
+                    {
+                        "artifact_path": output.relative_to(project_dir).as_posix(),
+                        "reused": True,
+                    },
+                )
         return {
             "status": recovery_status,
             "preserved": preserved,
@@ -1161,42 +1212,80 @@ def resume_project(project_dir: Path) -> dict[str, object]:
         }
 
 
+def _references_ready(project_dir: Path) -> bool:
+    """Report whether every canonical character reference image exists."""
+    try:
+        bible = read_json(project_dir / "plan/character-bible.json")
+    except (OSError, UnicodeError, ValueError):
+        return False
+    characters = bible.get("characters")
+    if not isinstance(characters, list) or not characters:
+        return False
+    for character in characters:
+        if not isinstance(character, dict) or not isinstance(character.get("id"), str):
+            return False
+        reference = project_dir / f"references/characters/{character['id']}.png"
+        if not reference.is_file():
+            return False
+    return True
+
+
+def _earlier_status(candidate: str, ceiling: str) -> str:
+    """Hold ``candidate`` at ``ceiling``; a non-linear ceiling constrains nothing."""
+    if candidate not in LINEAR_STATUSES or ceiling not in LINEAR_STATUSES:
+        return candidate
+    return min(candidate, ceiling, key=LINEAR_STATUSES.index)
+
+
+def _post_invalidation_status(project_dir: Path, stage: str, reached: str) -> str:
+    """Return the honest status a project holds after invalidating from a stage.
+
+    Invalidating panel generation preserves the canonical references, but only
+    when they were actually produced, and rewinding must never advance a
+    project past ``reached`` -- the furthest point it actually got.
+    """
+    status = STAGE_INVALIDATION_STATUS[stage]
+    if status == "REFERENCES_READY" and not _references_ready(project_dir):
+        status = "STORYBOARDED"
+    return _earlier_status(status, reached)
+
+
 def invalidate_from(project_dir: Path, stage: str) -> list[str]:
     """Forget manifest/cache descriptors from a stage onward without deleting artifacts."""
     if stage not in RESUME_STAGES:
         raise ValueError(f"unknown resume stage: {stage}")
     project_dir = Path(project_dir).resolve()
     manifest_path = project_dir / "project.json"
-    manifest = read_json(manifest_path)
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict):
-        raise ValueError("manifest artifacts must be an object")
     start = RESUME_STAGES.index(stage)
     removed: list[str] = []
-    for name in ARTIFACT_STAGE:
-        if name not in artifacts:
-            continue
-        owner = ARTIFACT_STAGE.get(name)
-        if owner is not None and RESUME_STAGES.index(owner) >= start:
-            removed.append(name)
-            del artifacts[name]
-    manifest["status"] = STAGE_INVALIDATION_STATUS[stage]
-    manifest["updated_at"] = _utc_now()
-
-    cache_bytes: bytes | None = None
-    cache_path = project_dir / STAGE_CACHE_PATH
-    if cache_path.is_file():
-        cache, _ = _load_stage_cache(cache_path)
-        cached_stages = cache.get("stages")
-        if isinstance(cached_stages, dict):
-            for downstream in RESUME_STAGES[start:]:
-                cached_stages.pop(downstream, None)
-            cache_bytes = canonical_json_bytes(cache)
-
     with ProjectTransaction(project_dir, "invalidate") as tx:
-        if cache_bytes is not None:
-            tx.stage_bytes(str(STAGE_CACHE_PATH), cache_bytes)
-        tx.stage_bytes("project.json", canonical_json_bytes(manifest))
+        manifest = read_json(manifest_path)
+        artifacts = manifest.get("artifacts")
+        if not isinstance(artifacts, dict):
+            raise ValueError("manifest artifacts must be an object")
+        for name in ARTIFACT_STAGE:
+            if name not in artifacts:
+                continue
+            owner = ARTIFACT_STAGE.get(name)
+            if owner is not None and RESUME_STAGES.index(owner) >= start:
+                removed.append(name)
+                del artifacts[name]
+        manifest["status"] = _post_invalidation_status(
+            project_dir, stage, str(manifest.get("status"))
+        )
+        manifest["updated_at"] = _utc_now()
+
+        cache_path = project_dir / STAGE_CACHE_PATH
+        if cache_path.is_file():
+            cache, _ = _load_stage_cache(cache_path)
+            cached_stages = cache.get("stages")
+            if isinstance(cached_stages, dict):
+                for downstream in RESUME_STAGES[start:]:
+                    cached_stages.pop(downstream, None)
+                tx.stage_bytes(
+                    str(STAGE_CACHE_PATH), canonical_artifact_bytes(cache)
+                )
+        tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
     return removed
 
 
@@ -1331,6 +1420,7 @@ def promote_attempt(project_dir: Path, panel_id: str, attempt_path: Path) -> Pat
         _verify_raster(attempt)
         destination = project_dir / f"panels/raw/{panel_id}.png"
         event_details = {"attempt_path": attempt_relative, "panel_id": panel_id}
+        replaced = destination.is_file()
         if destination.is_file():
             old_bytes = destination.read_bytes()
             old_sha = sha256_file(destination)
@@ -1348,6 +1438,15 @@ def promote_attempt(project_dir: Path, panel_id: str, attempt_path: Path) -> Pat
         attempt = contained_project_path(project_dir, attempt_relative, must_exist=True)
         durable_atomic_write(destination, attempt.read_bytes())
         append_event(project_dir, "generation.attempt-promoted", event_details)
+        if replaced:
+            append_event(
+                project_dir,
+                "artifact.regenerated",
+                {
+                    "artifact_path": destination.relative_to(project_dir).as_posix(),
+                    "reused": False,
+                },
+            )
         return destination
 
 
@@ -1359,6 +1458,18 @@ def record_override(project_dir: Path, panel_id: str, reason: str) -> None:
         raise ValueError("override reason must not be empty")
     project_dir = Path(project_dir)
     record_path = project_dir / f"qa/panels/{panel_id}.json"
+    with ProjectTransaction(project_dir, "override") as tx:
+        _stage_override(project_dir, panel_id, reason, record_path, tx)
+
+
+def _stage_override(
+    project_dir: Path,
+    panel_id: str,
+    reason: str,
+    record_path: Path,
+    tx: ProjectTransaction,
+) -> None:
+    """Validate and stage one override. Runs under the transaction's lock."""
     record = read_json(record_path)
     if record.get("panel_id") != panel_id:
         raise ValueError("panel QA record does not match the requested panel")
@@ -1424,13 +1535,12 @@ def record_override(project_dir: Path, panel_id: str, reason: str) -> None:
         manifest_warnings.append(normalized_reason)
         manifest["updated_at"] = _utc_now()
 
-    with ProjectTransaction(project_dir, "override") as tx:
-        tx.stage_bytes(f"qa/panels/{panel_id}.json", canonical_json_bytes(record))
-        tx.stage_bytes("project.json", canonical_json_bytes(manifest))
-        tx.stage_bytes(
-            "logs/events.jsonl",
-            _event_log_with(project_dir, "panel.overridden", {"panel_id": panel_id, "action": "accepted"}),
-        )
+    tx.stage_bytes(f"qa/panels/{panel_id}.json", canonical_artifact_bytes(record))
+    tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
+    tx.stage_bytes(
+        "logs/events.jsonl",
+        _event_log_with(project_dir, "panel.overridden", {"panel_id": panel_id, "action": "accepted"}),
+    )
 
 
 def doctor(output_root: Path) -> tuple[bool, list[str]]:
@@ -1447,11 +1557,13 @@ def doctor(output_root: Path) -> tuple[bool, list[str]]:
     try:
         import PIL
 
-        if PIL.__version__ == "11.3.0":
-            messages.append("PASS Pillow 11.3.0")
+        if PIL.__version__ == REQUIRED_PILLOW:
+            messages.append(f"PASS Pillow {REQUIRED_PILLOW}")
         else:
             healthy = False
-            messages.append(f"FAIL Pillow 11.3.0 required; found {PIL.__version__}")
+            messages.append(
+                f"FAIL Pillow {REQUIRED_PILLOW} required; found {PIL.__version__}"
+            )
     except Exception as error:
         healthy = False
         messages.append(f"FAIL Pillow check: {type(error).__name__}: {error}")
@@ -1500,62 +1612,6 @@ def doctor(output_root: Path) -> tuple[bool, list[str]]:
     return healthy, messages
 
 
-def _normalize_manifest(project_dir: Path) -> None:
-    """Re-read and re-write project.json in canonical two-space sorted format.
-
-    Transition writes compact JSON (canonical_json_bytes) which violates
-    validate_project's expectation of two-space indented format. This
-    normalizer runs after each transition in finalize_project so that
-    subsequent guarded_export (which calls require_valid_project) passes.
-    """
-    manifest_path = project_dir / "project.json"
-    manifest = read_json(manifest_path)
-    atomic_write_json(manifest_path, manifest)
-
-
-def _create_composition_cache(project_dir: Path) -> None:
-    """Write the composition stage cache required by export-ready validation.
-
-    compose_project creates pages but does not write cache/composition.json.
-    validate_project's export-ready check requires this file to exist with a
-    valid schema_version and stages object.  This helper fills the gap.
-    """
-    cache_path = project_dir / "cache/composition.json"
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest = read_json(project_dir / "project.json")
-    panels = manifest.get("panels", [])
-    if not isinstance(panels, list):
-        panels = []
-    pages_dir = project_dir / "pages"
-    page_count = 0
-    if pages_dir.is_dir():
-        page_count = len(list(pages_dir.glob("page-*.png")))
-    cache = {
-        "schema_version": "1.0",
-        "stages": {
-            "composition": {
-                "artifacts": {
-                    f"pages/page-{n:03d}.png": (project_dir / f"pages/page-{n:03d}.png").stat().st_size
-                    for n in range(1, page_count + 1)
-                    if (project_dir / f"pages/page-{n:03d}.png").is_file()
-                },
-            }
-        },
-    }
-    atomic_write_json(cache_path, cache)
-    # Also add artifact descriptor so validate can find it.
-    m = read_json(project_dir / "project.json")
-    artifacts = m.get("artifacts")
-    if not isinstance(artifacts, dict):
-        artifacts = {}
-    artifacts["composition_cache"] = {
-        "path": "cache/composition.json",
-        "sha256": sha256_file(cache_path),
-    }
-    m["artifacts"] = artifacts
-    atomic_write_json(project_dir / "project.json", m)
-
-
 def finalize_project(project_dir: Path) -> dict[str, object]:
     """Run all deterministic finalization steps and transition to terminal status.
 
@@ -1583,30 +1639,21 @@ def finalize_project(project_dir: Path) -> dict[str, object]:
     if need_lettering:
         from letter_panels import letter_project
         letter_project(project_dir)
-        manifest = read_json(manifest_path)
-        _normalize_manifest(project_dir)  # restore two-space before record_stage
         record_stage(project_dir, "lettering")
     manifest = read_json(manifest_path)
     if _allowed_transition(str(manifest.get("status")), "LETTERED"):
         transition(project_dir, "LETTERED")
-    _normalize_manifest(project_dir)  # transition writes compact json
 
-    # 3. Composition (if stale), advance status.
-    manifest = read_json(manifest_path)
+    # 3. Composition (if stale), advance status. compose_project writes
+    #    cache/composition.json and its manifest descriptor.
     need_composition = "composition" in stale or not (project_dir / "cache/composition.json").is_file()
     if need_composition:
         from compose_pages import compose_project
         compose_project(project_dir)
-        manifest = read_json(manifest_path)
-        _normalize_manifest(project_dir)
         record_stage(project_dir, "composition")
     manifest = read_json(manifest_path)
     if _allowed_transition(str(manifest.get("status")), "COMPOSED"):
         transition(project_dir, "COMPOSED")
-    _normalize_manifest(project_dir)
-
-    # Create composition cache so export-ready validation passes.
-    _create_composition_cache(project_dir)
 
     # 4. Fail closed on agent-produced page-QA integrity records.
     manifest = read_json(manifest_path)
@@ -1618,7 +1665,10 @@ def finalize_project(project_dir: Path) -> dict[str, object]:
         qa_rel = f"qa/pages/page-{page_number:03d}.json"
         qa_path = project_dir / qa_rel
         if not qa_path.is_file():
-            raise ValueError(f"page_qa_required: {qa_rel} is missing")
+            raise ValueError(
+                f"page_qa_required: {qa_rel} is missing. Inspect the composed "
+                f"page and write the record from templates/page-qa.json."
+            )
         record = read_json(qa_path)
         page_rel = f"pages/page-{page_number:03d}.png"
         page_path = project_dir / page_rel
@@ -1634,41 +1684,38 @@ def finalize_project(project_dir: Path) -> dict[str, object]:
     if _allowed_transition(str(manifest.get("status")), "EXPORTED"):
         transition(project_dir, "EXPORTED")
 
-    # 6. Render QA report (no manifest mutation).
-    from render_report import render_report
-    report_path = render_report(project_dir)
-
-    # 7. Record artifact descriptors for report and composition cache.
+    # 6. Render the QA report, which projects the terminal status and records
+    #    its own descriptor. Final validation requires both before the terminal
+    #    transition, so the report cannot honestly be rendered afterwards.
     manifest = read_json(manifest_path)
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict):
-        artifacts = {}
-    artifacts["qa_report"] = {
-        "path": "qa/report.md",
-        "sha256": sha256_file(report_path),
-    }
-    comp_cache = project_dir / "cache/composition.json"
-    if comp_cache.is_file():
-        artifacts["composition_cache"] = {
-            "path": "cache/composition.json",
-            "sha256": sha256_file(comp_cache),
-        }
-    manifest["artifacts"] = artifacts
-    atomic_write_json(manifest_path, manifest)
+    warnings = manifest.get("warnings")
+    final_status = (
+        "COMPLETE_WITH_WARNINGS"
+        if isinstance(warnings, list) and warnings
+        else "COMPLETE"
+    )
+    from render_report import render_report
+    render_report(project_dir)
+
+    # 7. render_report and compose_project record their own descriptors.
 
     # 8. Record export stage cache.
     record_stage(project_dir, "export")
 
-    # 9. Compute terminal status from warning state.
+    # 9. Confirm the warning state still matches what the report projected.
     manifest = read_json(manifest_path)
     warnings = manifest.get("warnings")
     has_warnings = isinstance(warnings, list) and len(warnings) > 0
-    final_status = "COMPLETE_WITH_WARNINGS" if has_warnings else "COMPLETE"
+    actual_status = "COMPLETE_WITH_WARNINGS" if has_warnings else "COMPLETE"
+    if actual_status != final_status:
+        raise ValueError(
+            "warning state changed after the QA report was rendered; "
+            f"report projects {final_status} but the project is {actual_status}"
+        )
 
     # 10. Guarded terminal transition (runs final validation internally).
     if str(manifest.get("status")) not in TERMINAL_STATUSES:
         transition(project_dir, final_status)
-        _normalize_manifest(project_dir)
 
     return {
         "status": final_status,
@@ -1795,6 +1842,15 @@ def main(argv: list[str] | None = None) -> int:
                 elif isinstance(next_action, dict) and "required" in next_action:
                     print(f"required: {next_action['required']}")
         elif arguments.command == "invalidate":
+            # Invalidating a BLOCKED project would leave blocked_from and
+            # blocked_reason set, which every later validation rejects.
+            if read_json(Path(arguments.project_dir) / "project.json").get(
+                "status"
+            ) == "BLOCKED":
+                raise ValueError(
+                    "project is BLOCKED; run `comic_sol.py resume PROJECT_DIR` "
+                    "to clear the block before invalidating a stage"
+                )
             removed = invalidate_from(arguments.project_dir, arguments.stage)
             print("\n".join(removed) if removed else "no manifest artifacts removed")
         elif arguments.command == "record-stage":

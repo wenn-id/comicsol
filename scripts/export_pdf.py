@@ -162,14 +162,19 @@ def export_pdf(project_dir: Path, output_path: Path | None = None) -> Path:
     manifest = _validated_manifest(project_dir)
     page_paths = discover_pages(project_dir)
     pages = _load_pages(page_paths)
-    if output_path is None:
-        project_id = manifest.get("project_id")
-        if not isinstance(project_id, str) or not project_id:
-            raise PdfExportError("manifest project_id is invalid")
-        destination = project_dir / f"exports/{project_id}.pdf"
-    else:
-        destination = Path(output_path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if output_path is None:
+            project_id = manifest.get("project_id")
+            if not isinstance(project_id, str) or not project_id:
+                raise PdfExportError("manifest project_id is invalid")
+            destination = project_dir / f"exports/{project_id}.pdf"
+        else:
+            destination = Path(output_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except BaseException:
+        for page in pages:
+            page.close()
+        raise
 
     temporary_path: Path | None = None
     try:
@@ -221,7 +226,7 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
     if not isinstance(artifacts, dict):
         artifacts = {}
     artifacts["pdf"] = {
-        "path": str(destination.relative_to(project_dir)),
+        "path": destination.relative_to(project_dir).as_posix(),
         "sha256": sha256_file(destination),
     }
     manifest["artifacts"] = artifacts
@@ -239,7 +244,12 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     arguments = _build_parser().parse_args(argv)
     try:
-        print(export_pdf(arguments.project_dir, arguments.output))
+        # The canonical destination records the pdf descriptor that final
+        # validation requires; an explicit --output is an ad-hoc copy.
+        if arguments.output is None:
+            print(guarded_export(arguments.project_dir))
+        else:
+            print(export_pdf(arguments.project_dir, arguments.output))
         return 0
     except (OSError, TypeError, ValueError) as error:
         print(f"ERROR {type(error).__name__}: {error}", file=sys.stderr)

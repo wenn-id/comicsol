@@ -385,7 +385,7 @@ class GuardedOperationTests(unittest.TestCase):
         manifest = read_json(self.project / "project.json")
         self.assertIn("pdf", manifest["artifacts"])
         pdf_desc = manifest["artifacts"]["pdf"]
-        self.assertEqual(str(result.relative_to(self.project)), pdf_desc["path"])
+        self.assertEqual(result.relative_to(self.project).as_posix(), pdf_desc["path"])
         self.assertEqual(64, len(pdf_desc["sha256"]))
 
     def test_guarded_transition_rejects_incomplete_final(self):
@@ -415,7 +415,7 @@ class GuardedOperationTests(unittest.TestCase):
             "sha256": sha256_file(self.project / "qa/report.md"),
         }
         manifest["artifacts"]["pdf"] = {
-            "path": str(pdf_path.relative_to(self.project)),
+            "path": pdf_path.relative_to(self.project).as_posix(),
             "sha256": sha256_file(pdf_path),
         }
         manifest["status"] = "EXPORTED"
@@ -436,7 +436,7 @@ class GuardedOperationTests(unittest.TestCase):
             "sha256": sha256_file(self.project / "qa/report.md"),
         }
         manifest["artifacts"]["pdf"] = {
-            "path": str(pdf_path.relative_to(self.project)),
+            "path": pdf_path.relative_to(self.project).as_posix(),
             "sha256": sha256_file(pdf_path),
         }
         manifest["warnings"] = ["minor prop drift"]

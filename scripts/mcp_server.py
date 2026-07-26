@@ -110,15 +110,20 @@ def comic_transition(
         raise ToolError(str(e))
 
 
+def _issue_payload(issue) -> dict[str, str]:
+    """Include the file path so a caller can locate which artifact is at fault."""
+    return {"path": issue.path, "field": issue.field, "message": issue.message}
+
+
 @mcp.tool()
 def comic_validate(project_id: str, stage: str = "all") -> list[dict[str, str]]:
     """Run integrity validators on the project."""
     project_dir = _resolve_project(project_id)
     try:
         issues = validate_project(project_dir, stage)
-        return [{"field": i.field, "message": i.message} for i in issues]
+        return [_issue_payload(i) for i in issues]
     except ProjectValidationError as e:
-        return [{"field": i.field, "message": i.message} for i in e.issues]
+        return [_issue_payload(i) for i in e.issues]
     except Exception as e:
         raise ToolError(str(e))
 

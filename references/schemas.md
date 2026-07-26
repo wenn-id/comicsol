@@ -35,6 +35,8 @@ The manifest is created from `templates/manifest.json` and is the authoritative 
 | `stage_versions` | object | yes | Deterministic cache-version strings |
 | `panels` | array[string] | yes | Unique panel IDs in page/reading order |
 | `warnings` | array[string] | yes | Unresolved project-level warning messages |
+| `blocked_from` | enum \| null | yes | Linear status held when blocked; `null` otherwise |
+| `blocked_reason` | string \| null | yes | Stable sanitized category when blocked; `null` otherwise |
 
 ### Manifest statuses
 
@@ -43,6 +45,8 @@ The linear success path is:
 `INIT → PLANNED → SCRIPTED → STORYBOARDED → REFERENCES_READY → PANELS_READY → QA_READY → LETTERED → COMPOSED → EXPORTED → COMPLETE`
 
 `BLOCKED` is permitted from any nonterminal state when the run cannot safely continue. `COMPLETE_WITH_WARNINGS` is a terminal alternative to `COMPLETE`. Skipping a linear state is invalid.
+
+While `status` is `BLOCKED`, `blocked_from` and `blocked_reason` are both set; in every other status both are `null`. Only `comic_sol.py resume` clears them, so recovering a blocked project always goes through `resume` rather than `invalidate`.
 
 ### `input`
 
@@ -84,7 +88,9 @@ The manifest never stores credentials, tokens, environment values, provider requ
 
 ### `artifacts`
 
-Allowed keys are `story_plan`, `character_bible`, `storyboard`, `qa_report`, and `pdf`. Each present value is an object containing exactly `path` (relative path) and `sha256` (valid SHA-256). Entries are absent until their file has been produced and verified; empty descriptor values are invalid.
+Allowed keys are `story_plan`, `character_bible`, `storyboard`, `composition_cache`, `qa_report`, and `pdf`. Each present value is an object containing exactly `path` (relative path) and `sha256` (valid SHA-256). Entries are absent until their file has been produced and verified; empty descriptor values are invalid.
+
+Three descriptors are written by the deterministic scripts, not the agent: `compose_pages.py` records `composition_cache`, `export_pdf.py` records `pdf`, and `render_report.py` records `qa_report`. Final validation requires `character_bible`, `story_plan`, `storyboard`, and `composition_cache`, plus `qa_report` and `pdf` at the terminal stages.
 
 ### `stage_versions`
 
@@ -161,11 +167,13 @@ Layout enums are `full-page`, `two-horizontal`, `three-horizontal`, `hero-top-tw
 | `action` | string | Visible action |
 | `expression` | string | Visible emotional expression |
 | `lighting` | string | Key/fill/environment light direction |
-| `continuity` | array[string] | Exact character/scene invariants checked in QA |
+| `continuity` | array[string] | Exact character/scene invariants checked in QA, each written `owner-id:fact` |
 | `negative` | array[string] | Prohibits generated dialogue, captions, speech bubbles, logos, signatures, watermarks, unauthorized text/SFX, and panel-specific failures; exact authored SFX remains allowed |
 | `text` | array[text item] | 0–3 items; at most 45 words total |
 
 There are at most 12 panels project-wide. Every panel scene and character must exist. Dialogue speakers must both exist in the character bible and appear in the panel.
+
+Each `continuity` entry is `<owner-id>:<fact>`, where `owner-id` is a character or scene ID used by the panel and `fact` string-equals one of that character's `visual_fingerprint.invariants` entries or that scene's `continuity_anchor`, verbatim. Write `mira:amber scarf`, not `amber scarf`.
 
 ### Text item
 
@@ -179,7 +187,9 @@ There are at most 12 panels project-wide. Every panel scene and character must e
 | `tail_target` | array[number] or null | Dialogue `[x,y]`, each normalized 0–1; otherwise null |
 | `priority` | integer | Positive placement order; ties break by item ID |
 
-Anchors are `top-left`, `top-center`, `top-right`, `middle-left`, `middle-right`, `bottom-left`, `bottom-center`, and `bottom-right`. Control characters other than newline are invalid. Explicit newlines are optional wrapping hints. Authored punctuation and words are not rewritten by deterministic scripts.
+Anchors are `top-left`, `top-center`, `top-right`, `middle-left`, `middle-right`, `bottom-left`, `bottom-center`, and `bottom-right`. `anchor` places every text item, captions included. Control characters other than newline are invalid. Explicit newlines are optional wrapping hints. Authored punctuation and words are not rewritten by deterministic scripts.
+
+The word limits are a ceiling, not a guarantee of fit. Dialogue is inscribed in an oval, which holds roughly half the text of the rectangle bounding it, and an anchor area is about 42% of panel width by 30% of panel height. A 32-word line needs a panel of roughly 1000x1200 px or larger; a 720x1064 panel holds about 14 words. Lettering fails with `text item {id} does not fit inside the panel` rather than printing over the artwork, so size dialogue to the panel rectangle the storyboard assigns it.
 
 Dialogue and captions are deterministic lettering inputs. SFX is authored storyboard
 content for generation prompts and visual QA, but Pillow neither draws SFX nor allocates a placement rectangle or overlap reservation. Lettering summaries retain `text_count`
@@ -240,9 +250,24 @@ output is UTF-8 with exactly one trailing newline.
 
 ## Generated project paths
 
-The version 1.0 project boundary contains `project.json`; exact source/request copies; the three plan JSON files; character/scene reference PNGs; preserved reference/panel prompt text; raw `panels/raw/{panel-id}.png`, clean `panels/clean/{panel-id}.png`, and lettered `panels/{panel-id}/lettered.png` panel images; per-panel QA JSON; `qa/report.md`; zero-padded `pages/page-001.png` files; `exports/{project-id}.pdf`; the resume cache `logs/stage-cache.json`; and append-only `logs/events.jsonl`.
+The version 1.0 project boundary contains `project.json`; exact source/request copies; the three plan JSON files; character/scene reference PNGs; preserved reference/panel prompt text; raw `panels/raw/{panel-id}.png`, clean `panels/clean/{panel-id}.png`, and lettered `panels/{panel-id}/lettered.png` panel images; per-panel QA JSON; per-page QA JSON `qa/pages/page-{NNN}.json`; `qa/report.md`; zero-padded `pages/page-001.png` files; the composition cache `cache/composition.json`; `exports/{project-id}.pdf`; the resume cache `logs/stage-cache.json`; and append-only `logs/events.jsonl`.
 
 Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-number}.png`; only the accepted attempt occupies `panels/raw/{panel-id}.png`. Generated images intentionally contain no dialogue, captions, speech bubbles, signatures, logos, or watermarks. Exact storyboard-authored SFX is instead allowed and required in generated artwork; generated SFX is forbidden when the storyboard has none.
+
+## Page QA record: `qa/pages/page-{NNN}.json`
+
+One record per composed page, created from `templates/page-qa.json` after the agent visually inspects that page. It contains exactly `page`, `page_path`, `page_sha256`, `schema_version`, and `status`:
+
+- `page`: the page number, matching the file's zero-padded `NNN`.
+- `page_path`: exactly `pages/page-{NNN}.png`.
+- `page_sha256`: the SHA-256 of that composed page PNG as it exists on disk.
+- `status`: exactly `"reviewed"`.
+
+These records are the integrity gate on finalization. `comic_sol.py finalize` and `validate_project.py --stage final|export-ready` fail closed when a record is missing or when `page_sha256` no longer matches the page, because a terminal status must not claim visual review that did not happen. Recompose a page and its record goes stale; write it again after re-inspecting.
+
+## Composition cache: `cache/composition.json`
+
+`compose_pages.py PROJECT_DIR --all` writes this file and its `composition_cache` manifest descriptor in the same transaction as the page PNGs. It is a canonical JSON object containing exactly `schema_version` and `stages`, where `stages.composition.artifacts` maps each `pages/page-{NNN}.png` to its SHA-256. Final and export-ready validation require both the file and the descriptor.
 
 ## Stage cache: `logs/stage-cache.json`
 

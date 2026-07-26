@@ -44,6 +44,11 @@ Comic Sol does not claim CJK coverage from this file. All bundled font faces rem
 subject to the SIL Open Font License 1.1. The repository's project license does not replace the font license
 for any bundled face.
 
+OFL 1.1 requires the license to travel with the fonts, so its full text is vendored
+beside them: [`OFL-ComicNeue.txt`](fonts/OFL-ComicNeue.txt) covers Comic Neue Regular and
+Bold, and [`OFL-NotoSans.txt`](fonts/OFL-NotoSans.txt) covers Noto Sans Regular. Each
+file is the verbatim upstream license, including that project's copyright notice.
+
 Comic Sol's MIT License applies to the project's original code and documentation
 only. It does not relicense, supersede, or replace the font license or its upstream
 copyright notices.

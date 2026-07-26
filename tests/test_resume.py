@@ -20,7 +20,7 @@ from comic_sol import (  # noqa: E402
     atomic_write_json,
     block_project,
     build_resume_plan,
-    canonical_json_bytes,
+    canonical_artifact_bytes,
     init_project,
     invalidate_from,
     main,
@@ -741,7 +741,7 @@ class ResumeTests(unittest.TestCase):
         cache = read_json(cache_path)
         self.assertEqual({"schema_version", "stages"}, set(cache))
         self.assertEqual({"planning"}, set(cache["stages"]))
-        self.assertEqual(canonical_json_bytes(cache), cache_path.read_bytes())
+        self.assertEqual(canonical_artifact_bytes(cache), cache_path.read_bytes())
         self.assertEqual([], list(cache_path.parent.glob(f".{cache_path.name}.*.tmp")))
 
     def test_record_stage_refuses_missing_expected_output(self):

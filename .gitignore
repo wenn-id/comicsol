@@ -18,3 +18,6 @@ comic-sol-output/
 
 # Isolated development worktrees
 .worktrees/
+
+# AI session working logs (machine-specific paths, superseded by git history)
+.superpowers/

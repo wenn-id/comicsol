@@ -170,7 +170,9 @@ class ProjectLockTests(unittest.TestCase):
                     raise OSError("unlock failed")
 
                 with (
-                    mock.patch.object(Path, "open", return_value=handle),
+                    mock.patch.object(
+                        project_io.ProjectLock, "_open_retained", return_value=handle
+                    ),
                     mock.patch.object(
                         project_io.ProjectLock,
                         "_lock",

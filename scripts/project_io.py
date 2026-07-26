@@ -17,6 +17,11 @@ MAX_SOURCE_BYTES = 200 * 1024
 SOURCE_SUFFIXES = {".txt", ".md"}
 _DRIVE = re.compile(r"^[A-Za-z]:")
 _LOCK_RETRY_SECONDS = 0.05
+# Windows byte-range locks are mandatory, so the locked byte must sit past any
+# region readers touch. The PID metadata occupies the first bytes of the file.
+_LOCK_BYTE_OFFSET = 4096
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_HAS_NOFOLLOW = _O_NOFOLLOW != 0
 
 
 class ProjectLock:
@@ -33,7 +38,7 @@ class ProjectLock:
         try:
             descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
         except FileExistsError:
-            handle = path.open("r+b")
+            handle = self._open_retained(path)
         else:
             handle = os.fdopen(descriptor, "r+b")
             try:
@@ -93,11 +98,28 @@ class ProjectLock:
             raise
 
     @staticmethod
+    def _open_retained(path: Path) -> BinaryIO:
+        """Reopen an existing lock file without ever following a symlink.
+
+        A symlinked lock path would otherwise be truncated and overwritten with
+        PID metadata when the lock is acquired.
+        """
+        if not _HAS_NOFOLLOW and path.is_symlink():
+            raise ValueError("lock path must not be a symlink")
+        try:
+            descriptor = os.open(path, os.O_RDWR | _O_NOFOLLOW)
+        except OSError as error:
+            if error.errno in (errno.ELOOP, errno.EMLINK):
+                raise ValueError("lock path must not be a symlink") from error
+            raise
+        return os.fdopen(descriptor, "r+b")
+
+    @staticmethod
     def _lock(handle: BinaryIO) -> None:
-        handle.seek(0)
         if os.name == "nt":
             import msvcrt
 
+            handle.seek(_LOCK_BYTE_OFFSET)
             msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         else:
             import fcntl
@@ -112,10 +134,10 @@ class ProjectLock:
 
     @staticmethod
     def _unlock(handle: BinaryIO) -> None:
-        handle.seek(0)
         if os.name == "nt":
             import msvcrt
 
+            handle.seek(_LOCK_BYTE_OFFSET)
             msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
         else:
             import fcntl
@@ -295,9 +317,9 @@ class ProjectTransaction:
             raise RuntimeError("transaction already committed or rolling back")
         self._phase = "publishing"
         self._write_journal()
-        staging_paths: list[tuple[Path, bool]] = []
+        published: list[tuple[Path, dict]] = []
         try:
-            for index, entry in enumerate(self._journal, start=1):
+            for entry in self._journal:
                 dest = contained_project_path(self.project_dir, entry["path"])
                 staged = contained_project_path(
                     self.project_dir, entry["staged"], must_exist=True
@@ -305,25 +327,22 @@ class ProjectTransaction:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(staged, dest)
                 fsync_directory(dest.parent)
-                staging_paths.append((dest, True))
+                published.append((dest, entry))
             self._phase = "committed"
             self._write_journal()
             self._cleanup()
         except BaseException:
-            for dest, _ in reversed(staging_paths):
-                for entry in self._journal:
-                    if entry["path"] == str(Path(dest).relative_to(self.project_dir)):
-                        if entry.get("backup"):
-                            backup = contained_project_path(self.project_dir, entry["backup"])
-                            if backup.is_file():
-                                os.replace(backup, dest)
-                                fsync_directory(dest.parent)
-                        else:
-                            try:
-                                dest.unlink()
-                            except OSError:
-                                pass
-                        break
+            for dest, entry in reversed(published):
+                if entry.get("backup"):
+                    backup = contained_project_path(self.project_dir, entry["backup"])
+                    if backup.is_file():
+                        os.replace(backup, dest)
+                        fsync_directory(dest.parent)
+                else:
+                    try:
+                        dest.unlink()
+                    except OSError:
+                        pass
             self._phase = "rolled_back"
             self._write_journal()
             raise

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import sys
@@ -11,8 +12,16 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
 
-from comic_sol import PAGE_HEIGHT, PAGE_WIDTH, atomic_write_bytes, read_json
+from comic_sol import (
+    PAGE_HEIGHT,
+    PAGE_WIDTH,
+    atomic_write_bytes,
+    canonical_artifact_bytes,
+    read_json,
+)
 from project_io import ProjectTransaction, contained_project_path
+
+COMPOSITION_CACHE_PATH = "cache/composition.json"
 
 
 def _storyboard_page(storyboard: dict, page_number: int) -> dict:
@@ -174,7 +183,9 @@ def compose_all_pages(project_dir: Path) -> list[Path]:
         raise ValueError("storyboard pages must be an array")
     page_numbers = sorted(
         page.get("number") for page in pages
-        if isinstance(page, dict) and isinstance(page.get("number"), int)
+        if isinstance(page, dict)
+        and isinstance(page.get("number"), int)
+        and not isinstance(page.get("number"), bool)
     )
     if len(page_numbers) != len(pages) or page_numbers != list(range(1, len(pages) + 1)):
         raise ValueError("storyboard pages must be numbered contiguously from 1")
@@ -187,11 +198,36 @@ def compose_all_pages(project_dir: Path) -> list[Path]:
         (f"pages/page-{number:03d}.png", _compose_to_bytes(project_dir, page, sources, settings))
         for number, page, sources in prepared_pages
     ]
+    cache_payload = canonical_artifact_bytes({
+        "schema_version": "1.0",
+        "stages": {
+            "composition": {
+                "artifacts": {
+                    relative: hashlib.sha256(payload).hexdigest()
+                    for relative, payload in payloads
+                },
+            },
+        },
+    })
     output_paths = []
     with ProjectTransaction(project_dir, "composition") as transaction:
         for relative, payload in payloads:
             transaction.stage_bytes(relative, payload)
             output_paths.append(project_dir / relative)
+        transaction.stage_bytes(COMPOSITION_CACHE_PATH, cache_payload)
+        # Re-read under the lock so a concurrent writer's manifest is not lost.
+        locked_manifest = read_json(project_dir / "project.json")
+        descriptors = locked_manifest.get("artifacts")
+        if not isinstance(descriptors, dict):
+            descriptors = {}
+        descriptors["composition_cache"] = {
+            "path": COMPOSITION_CACHE_PATH,
+            "sha256": hashlib.sha256(cache_payload).hexdigest(),
+        }
+        locked_manifest["artifacts"] = descriptors
+        transaction.stage_bytes(
+            "project.json", canonical_artifact_bytes(locked_manifest)
+        )
         transaction.commit()
     return output_paths
 
