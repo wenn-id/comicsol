@@ -30,7 +30,9 @@ class ContainedProjectPathTests(unittest.TestCase):
                     contained_project_path(self.project, bad)
 
     def test_nonexistent_contained_target_obeys_must_exist(self):
-        expected = self.project / "panels/new.png"
+        # contained_project_path returns a resolved path, and the temp root is
+        # itself a symlink on macOS (/var -> /private/var).
+        expected = self.project.resolve() / "panels/new.png"
         self.assertEqual(expected, contained_project_path(self.project, "panels/new.png"))
         with self.assertRaises(FileNotFoundError):
             contained_project_path(self.project, "panels/new.png", must_exist=True)

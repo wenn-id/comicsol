@@ -1292,8 +1292,11 @@ def invalidate_from(project_dir: Path, stage: str) -> list[str]:
 def _contained_project_path(project_dir: Path, path: Path) -> Path:
     project_root = Path(project_dir).resolve(strict=True)
     if path.is_absolute():
+        # Resolve before comparing: the same location can be spelled two ways
+        # (macOS /var vs /private/var, Windows 8.3 names), and only the root
+        # was being resolved. contained_project_path re-checks the remainder.
         try:
-            path = path.relative_to(project_root)
+            path = path.resolve().relative_to(project_root)
         except ValueError as error:
             raise ValueError("path escapes the project directory") from error
     return contained_project_path(project_root, path)

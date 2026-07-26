@@ -909,11 +909,14 @@ class LetteringFixtureIntegrationTests(unittest.TestCase):
             project = Path(temporary) / "project"
             shutil.copytree(FIXTURES / "valid-one-page", project)
             outputs = letter_project(project)
+            # letter_project returns resolved paths, and the temp root is itself
+            # a symlink on macOS (/var -> /private/var).
+            resolved = project.resolve()
             self.assertEqual(
                 [
-                    project / "panels/p01-01/lettered.png",
-                    project / "panels/p01-02/lettered.png",
-                    project / "panels/p01-03/lettered.png",
+                    resolved / "panels/p01-01/lettered.png",
+                    resolved / "panels/p01-02/lettered.png",
+                    resolved / "panels/p01-03/lettered.png",
                 ],
                 outputs,
             )
