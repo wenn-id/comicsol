@@ -58,6 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     mcp = subparsers.add_parser("mcp")
     mcp.add_argument("--root", required=True, type=Path)
+
+    for command in ("setup", "repair", "uninstall"):
+        integration = subparsers.add_parser(command)
+        integration.add_argument("--output-root", type=Path, default=default_output_root())
+        integration.add_argument("--client", action="append", dest="clients")
     return parser
 
 
@@ -111,6 +116,15 @@ def _run(arguments: argparse.Namespace) -> Any:
         return engine.resume_project(arguments.project_dir)
     if arguments.command == "finalize":
         return engine.finalize_project(arguments.project_dir)
+    if arguments.command in {"setup", "repair", "uninstall"}:
+        from .setup import repair_clients, setup_clients, uninstall_clients
+
+        operation = {
+            "setup": setup_clients,
+            "repair": repair_clients,
+            "uninstall": uninstall_clients,
+        }[arguments.command]
+        return [asdict(result) for result in operation(arguments.output_root, selected=arguments.clients)]
     raise ValueError(f"unsupported command: {arguments.command}")
 
 
@@ -132,6 +146,9 @@ def main(argv: list[str] | None = None) -> int:
             print(data["project_id"])
         elif command == "status":
             print(f"{data['project_id']}: {data['status']}")
+        elif command in {"setup", "repair", "uninstall"}:
+            for result in data:
+                print(f"{result['client']}: {result['status']} — {result['message']}")
         else:
             print(json.dumps(data, ensure_ascii=False, sort_keys=True))
         if command == "doctor" and not data["healthy"]:

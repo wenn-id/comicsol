@@ -79,6 +79,21 @@ python3.11 -m pip install '.[mcp]'
 comic-sol mcp --root /absolute/path/to/comic-sol-output
 ```
 
+Transactional client integration is available through:
+
+```bash
+comic-sol --json setup --output-root /absolute/path/to/comic-sol-output
+comic-sol --json repair --output-root /absolute/path/to/comic-sol-output
+comic-sol --json uninstall --output-root /absolute/path/to/comic-sol-output
+```
+
+Setup refuses malformed native config, creates a timestamped backup before each
+change, writes atomically, and restores the original bytes if verification fails.
+Repeated setup is idempotent. Uninstall removes only the MCP integration and
+preserves comic projects. Codex TOML and detected JSON client configs are mutated
+only at verified locations; clients whose native format or location has not been
+verified are reported as `unsupported` rather than guessed.
+
 During source development, `python3.11 scripts/mcp_server.py --root PATH` remains
 available. Both entry points expose the same protocol-tested deterministic lifecycle
 as exactly 17 `comic_*` tools.
