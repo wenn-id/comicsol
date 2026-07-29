@@ -42,6 +42,8 @@ Pillow 12.3.0. The deterministic test suite does not need an image provider.
 
 Comic Sol includes an optional `stdio` MCP server that exposes the deterministic pipeline as standard tools for Hermes Agent, Claude Desktop, Cursor, or any MCP client.
 
+Sampling should remain disabled to preserve deterministic execution.
+
 To run the MCP adapter, install the SDK alongside Pillow:
 
 ```bash
