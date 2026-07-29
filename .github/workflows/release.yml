@@ -56,7 +56,7 @@ jobs:
       - name: Build OCI image
         run: docker build -t comic-sol:2.0.0rc1 .
       - name: Smoke OCI image
-        run: docker run --rm --entrypoint comic-sol comic-sol:2.0.0rc1 doctor --output-root /tmp/comic-sol-doctor
+        run: docker run --rm --entrypoint comic-sol comic-sol:2.0.0rc1 doctor --output-root /data/doctor
 
   source:
     runs-on: ubuntu-latest

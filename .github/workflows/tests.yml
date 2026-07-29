@@ -76,5 +76,5 @@ jobs:
       run: |
         docker build -t comic-sol:pr .
         docker run --rm --entrypoint comic-sol comic-sol:pr --version
-        docker run --rm --entrypoint comic-sol comic-sol:pr doctor --output-root ${{ runner.temp }}/comic-sol-doctor
+        docker run --rm --entrypoint comic-sol comic-sol:pr doctor --output-root /data/doctor
         test "$(docker run --rm --entrypoint sh comic-sol:pr -c 'id -u')" != "0"
