@@ -77,7 +77,8 @@ class NativeInstallLifecycleTests(unittest.TestCase):
             )
         self.assertEqual("1.9.0", read_active_version(self.install_root))
         self.assertFalse((self.install_root / "versions/2.0.0rc1").exists())
-        self.assertEqual(b"old", (self.install_root / "bin/comic-sol").read_bytes())
+        executable = "comic-sol.exe" if os.name == "nt" else "comic-sol"
+        self.assertEqual(b"old", (self.install_root / "bin" / executable).read_bytes())
 
     def test_uninstall_removes_runtime_only_and_preserves_projects(self):
         install_archive(self.archive("2.0.0rc1"), self.install_root, "2.0.0rc1", verifier=lambda _: True)
