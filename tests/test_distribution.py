@@ -164,6 +164,10 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("installed_mcp_smoke.py", portable_smoke)
         self.assertIn("SHA256SUMS", workflow)
         self.assertIn("sbom", workflow.lower())
+        self.assertIn("dist/*.whl", workflow)
+        self.assertIn("dist/*.tar.gz", workflow)
+        self.assertIn("installers/install.sh", workflow)
+        self.assertIn("installers/install.ps1", workflow)
         self.assertIn("prerelease: true", workflow)
         self.assertIn("if: github.ref == 'refs/tags/v2.0.0rc1'", workflow)
         for line in workflow.splitlines():

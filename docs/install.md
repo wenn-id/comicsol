@@ -1,0 +1,99 @@
+# Install Comic Sol v2.0.0rc1
+
+Comic Sol `v2.0.0rc1` is a prerelease distributed as native portable archives for Linux, macOS, and Windows, plus a Python wheel/source archive and an OCI image definition. Native archives bundle Python 3.11, Pillow, MCP, fonts, templates, the Skill, and references; no system Python is required after extraction.
+
+## Security status
+
+This release is **unsigned**. It is not Authenticode-signed, notarized, or GPG-signed. Every release includes `SHA256SUMS`, per-platform metadata with `signature_status: unsigned`, and a CycloneDX SBOM. Download the archive and checksum manifest over HTTPS, verify the digest, then run the installer. Never pipe a remote installer directly into a shell.
+
+## Linux and macOS
+
+Download the matching ZIP and copy `installers/install.sh` from the same release or repository checkout. Read it before execution, then verify and install:
+
+```bash
+sha256sum comic-sol-2.0.0rc1-linux-x86_64.zip
+# Compare the digest with SHA256SUMS.
+sh installers/install.sh \
+  --archive ./comic-sol-2.0.0rc1-linux-x86_64.zip \
+  --sha256 <digest-from-SHA256SUMS>
+
+$HOME/.local/share/comic-sol/bin/comic-sol --version
+$HOME/.local/share/comic-sol/bin/comic-sol doctor
+```
+
+For macOS, use `comic-sol-2.0.0rc1-macos-x86_64.zip`. The default installation root is `$HOME/.local/share/comic-sol`. Override it with `--install-root PATH` or `COMIC_SOL_INSTALL_ROOT`.
+
+The POSIX installer requires `sha256sum`, `unzip`, and standard POSIX utilities. Native binaries are unsigned, so macOS Gatekeeper may require an explicit local approval for this prerelease.
+
+## Windows PowerShell
+
+Download `comic-sol-2.0.0rc1-windows-x86_64.zip` and copy `installers/install.ps1` from the same release or repository checkout, then run:
+
+```powershell
+(Get-FileHash .\comic-sol-2.0.0rc1-windows-x86_64.zip -Algorithm SHA256).Hash
+# Compare the digest with SHA256SUMS.
+.\installers\install.ps1 `
+  -Archive .\comic-sol-2.0.0rc1-windows-x86_64.zip `
+  -SHA256 <digest-from-SHA256SUMS>
+
+& "$HOME\AppData\Local\ComicSol\bin\comic-sol.exe" --version
+& "$HOME\AppData\Local\ComicSol\bin\comic-sol.exe" doctor
+```
+
+The default root is `$HOME\AppData\Local\ComicSol`. Override it with `-InstallRoot PATH`. The executable is unsigned, so Windows SmartScreen may warn during this prerelease.
+
+## Portable use without installation
+
+Extract the archive into a dedicated directory. Keep the executable beside its `_internal` directory; this is a PyInstaller one-directory runtime.
+
+```bash
+./comic-sol/comic-sol --version
+./comic-sol/comic-sol doctor --output-root "$HOME/Comic Sol"
+```
+
+On Windows use `.\comic-sol\comic-sol.exe`.
+
+## Upgrade and rollback
+
+Running the installer again with a verified newer archive performs an upgrade. Runtime versions live beneath `versions/`, the stable runtime is exposed at `bin/`, and `active-version` records the active release. The new runtime runs `doctor` before activation. Transactional lifecycle code restores the previous `bin/` runtime and `active-version` if verification fails.
+
+For manual rollback, reinstall the previously verified archive and matching SHA-256 digest. Never edit `active-version` alone: the entire one-directory runtime must change together.
+
+## Uninstall
+
+Linux/macOS:
+
+```bash
+sh installers/install.sh --uninstall
+```
+
+Windows:
+
+```powershell
+.\installers\install.ps1 -Uninstall
+```
+
+Uninstall removes only the user-local runtime installation. Comic projects are preserved because output roots live outside the installation directory. MCP client integration is managed separately with `comic-sol setup`, `comic-sol repair`, and `comic-sol uninstall`.
+
+## OCI image
+
+Build and run the non-root image from a checkout:
+
+```bash
+docker build -t comic-sol:2.0.0rc1 .
+docker run --rm --entrypoint comic-sol comic-sol:2.0.0rc1 doctor --output-root /tmp/comic-sol-doctor
+docker compose up
+```
+
+The image runs as `comic-sol`, uses `/data` for persistent projects, and exposes the MCP server over stdio by default. `compose.yaml` mounts a named `/data` volume, uses a read-only root filesystem, and enables `no-new-privileges`.
+
+## Verify release metadata
+
+Each platform bundle contains:
+
+- `comic-sol-2.0.0rc1-<platform>-x86_64.zip`
+- platform metadata declaring the unsigned state
+- a CycloneDX SBOM
+- `SHA256SUMS`
+
+The GitHub prerelease also provides a global `SHA256SUMS`. A mismatch means the artifact must not be executed.

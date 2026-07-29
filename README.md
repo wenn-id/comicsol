@@ -50,6 +50,25 @@ The CLI currently exposes `doctor`, `init`, `status`, `validate`, `resume`,
 `finalize`, and the optional `mcp` launcher. Machine-readable responses use one
 stable envelope containing `ok`, `command`, `data`, and `error`.
 
+## Native Distribution (`v2.0.0rc1`)
+
+The `v2.0.0rc1` prerelease provides bundled portable archives for Linux, macOS,
+and Windows x86_64, plus transactional user-local installers and a non-root OCI
+image. Native archives include Python, Pillow, MCP, fonts, templates, the Skill,
+and references, so installed execution does not require a system Python.
+
+Every native bundle includes `SHA256SUMS`, deterministic metadata, and a
+CycloneDX SBOM. The RC artifacts are explicitly **unsigned** and not notarized;
+verify the SHA-256 digest before execution. Exact install, upgrade, rollback,
+uninstall, and security instructions are in [`docs/install.md`](docs/install.md).
+
+Container and Compose deployment commands are documented in
+[`docs/install.md`](docs/install.md); they are optional and are not required for
+the normal local CLI workflow.
+
+Native uninstall removes only the runtime. User projects and separately managed
+MCP client configurations remain preserved.
+
 ## MCP Server (Optional)
 
 Comic Sol includes an optional `stdio` MCP server that exposes the deterministic pipeline as standard tools for Hermes Agent, Claude Desktop, Cursor, or any MCP client.

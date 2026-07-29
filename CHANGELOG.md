@@ -1,0 +1,23 @@
+# Changelog
+
+## 2.0.0rc1 — 2026-07-29
+
+First Native Distribution release candidate.
+
+### Added
+
+- Installable `comic-sol` CLI with deterministic engine, fonts, templates, Skill, and references.
+- Stable stdio MCP launcher with the exact 17-tool lifecycle surface.
+- Native bundled runtimes and portable ZIP archives for Linux, macOS, and Windows x86_64.
+- Transactional user-local installers with checksum verification, health checks, upgrade rollback, idempotent reinstall, and project-preserving uninstall.
+- Non-root OCI image and Compose example using `/data` for persistent projects.
+- Deterministic unsigned release metadata, SHA-256 manifests, and CycloneDX SBOM files.
+- Cross-platform release CI and clean-install/package gates.
+
+### Security and limitations
+
+- All native artifacts are **unsigned**: no Authenticode signature, Apple notarization, or GPG signature is provided in this prerelease.
+- Linux, macOS, and Windows archives are built independently on native GitHub runners.
+- x86_64 is the release architecture for `v2.0.0rc1`; arm64 naming is reserved but no arm64 artifact is claimed.
+- Image generation still depends on an agent-exposed provider capability; deterministic fixtures do not claim live visual quality.
+- Provider credentials and provider SDKs remain outside the base package.
