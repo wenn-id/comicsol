@@ -105,6 +105,41 @@ class McpServerUnitTests(unittest.TestCase):
 
 
 @unittest.skipUnless(MCP_AVAILABLE, "MCP extra is not installed")
+class InstalledMcpProtocolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_product_cli_launches_exact_tool_surface(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output_root = Path(temporary_directory) / "output"
+            parameters = StdioServerParameters(
+                command=sys.executable,
+                args=[
+                    "-m",
+                    "comic_sol_product.cli",
+                    "mcp",
+                    "--root",
+                    str(output_root),
+                ],
+            )
+            async with stdio_client(parameters) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    listed = await session.list_tools()
+                    self.assertEqual(TOOL_NAMES, {tool.name for tool in listed.tools})
+                    health = await session.call_tool("comic_doctor", {})
+                    self.assertFalse(health.isError)
+                    self.assertTrue(health.structuredContent["healthy"])
+                    created = await session.call_tool("comic_init", {
+                        "title": "Installed Wire Test",
+                        "source_text": "An installed protocol smoke test.",
+                        "request_settings": {"language": "en", "mode": "short_prompt"},
+                    })
+                    self.assertFalse(created.isError)
+                    project_id = created.structuredContent["result"]
+                    status = await session.call_tool("comic_status", {"project_id": project_id})
+                    self.assertFalse(status.isError)
+                    self.assertEqual("INIT", status.structuredContent["status"])
+
+
+@unittest.skipUnless(MCP_AVAILABLE, "MCP extra is not installed")
 class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
     async def test_stdio_protocol_exercises_all_tools(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

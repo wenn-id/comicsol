@@ -72,11 +72,16 @@ python3.11 scripts/mcp_server.py --root "$OUTPUT_ROOT"
 ```
 
 For an MCP client configuration, lock the server to one absolute output root and
-keep sampling disabled. During source development, resolve `python3.11` and
-`scripts/mcp_server.py` from the current checkout instead of copying paths from
-another machine. The stable installed `comic-sol mcp --root PATH` launcher is
-completed and protocol-tested in the next Portable Product gate. The server exposes
-the full deterministic lifecycle as 17 `comic_*` tools.
+keep sampling disabled. An installed package uses the stable launcher:
+
+```bash
+python3.11 -m pip install '.[mcp]'
+comic-sol mcp --root /absolute/path/to/comic-sol-output
+```
+
+During source development, `python3.11 scripts/mcp_server.py --root PATH` remains
+available. Both entry points expose the same protocol-tested deterministic lifecycle
+as exactly 17 `comic_*` tools.
 
 ## Invoke
 

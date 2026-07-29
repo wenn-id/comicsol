@@ -111,8 +111,6 @@ def _run(arguments: argparse.Namespace) -> Any:
         return engine.resume_project(arguments.project_dir)
     if arguments.command == "finalize":
         return engine.finalize_project(arguments.project_dir)
-    if arguments.command == "mcp":
-        raise RuntimeError("MCP launcher is not available in the base install")
     raise ValueError(f"unsupported command: {arguments.command}")
 
 
@@ -120,6 +118,11 @@ def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     command = arguments.command
     try:
+        if command == "mcp":
+            from .mcp import run as run_mcp
+
+            run_mcp(arguments.root)
+            return 0
         data = _run(arguments)
         if arguments.as_json:
             print(json.dumps(_success(command, data), ensure_ascii=False, sort_keys=True))
