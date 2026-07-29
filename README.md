@@ -121,6 +121,8 @@ provider SDKs do not enter deterministic scripts.
 
 ## Hybrid lettering
 
+Dialogue is rendered in uppercase, while authored caption casing is preserved.
+
 Dialogue uses bundled Comic Neue Regular, and inline `**bold**` emphasis uses Comic
 Neue Bold with wrapping and centering measured across the mixed runs. Font selection
 is per-character: bundled Noto Sans covers Greek and Cyrillic when Comic Neue does not,
