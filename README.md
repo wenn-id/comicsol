@@ -129,8 +129,9 @@ than silently dropped. The `--font` option still overrides the regular dialogue 
 its bold counterpart may fall back to Comic Neue Bold.
 
 Pillow fits dialogue into adaptive oval balloons, attaches each tail at the nearest
-oval boundary toward its target, and draws compact light caption strips sized to their
-text. Authored SFX takes the other half of the hybrid pipeline: the image model draws
+oval boundary toward its target, and keeps tails short enough to avoid crossing faces
+or focal action. It also draws compact light caption strips sized to their text.
+Authored SFX takes the other half of the hybrid pipeline: the image model draws
 the exact SFX into the artwork, and visual QA verifies spelling, count, and authorization.
 Pillow validates and counts SFX but reserves no placement and changes no pixels for it.
 
