@@ -12,7 +12,6 @@ from typing import Iterable
 
 REQUIRED_RUNTIME_SUFFIXES = frozenset(
     {
-        "comic-sol/comic-sol",
         "comic-sol/_internal/comic_sol_product/assets/fonts/ComicNeue-Regular.ttf",
         "comic-sol/_internal/comic_sol_product/assets/fonts/ComicNeue-Bold.ttf",
         "comic-sol/_internal/comic_sol_product/templates/manifest.json",

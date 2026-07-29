@@ -88,7 +88,8 @@ class NativeDistributionContractTests(unittest.TestCase):
                 verify_release_directory(release, self.identity)
 
     def test_portable_runtime_requires_executable_skill_fonts_and_mcp(self):
-        validate_runtime_members(REQUIRED_RUNTIME_SUFFIXES | {"comic-sol/extra.txt"})
+        validate_runtime_members(REQUIRED_RUNTIME_SUFFIXES | {"comic-sol/comic-sol"})
+        validate_runtime_members(REQUIRED_RUNTIME_SUFFIXES | {"comic-sol/comic-sol.exe"})
         with self.assertRaisesRegex(ValueError, "portable runtime is missing"):
             validate_runtime_members({"comic-sol/comic-sol"})
 
@@ -98,7 +99,7 @@ class NativeDistributionContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             runtime = root / "runtime"
-            for member in REQUIRED_RUNTIME_SUFFIXES:
+            for member in REQUIRED_RUNTIME_SUFFIXES | {"comic-sol/comic-sol"}:
                 relative = member.removeprefix("comic-sol/")
                 target = runtime / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -139,6 +140,36 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("excludes=['pkg_resources', 'setuptools']", spec)
         self.assertIn("name='comic-sol'", spec)
         self.assertIn("comic_sol_product.cli", entrypoint)
+
+    def test_container_and_release_workflow_are_hardened(self):
+        root = Path(__file__).resolve().parents[1]
+        dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+        compose = (root / "compose.yaml").read_text(encoding="utf-8")
+        workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+        self.assertIn("USER comic-sol", dockerfile)
+        self.assertIn("/data", dockerfile)
+        self.assertIn("HEALTHCHECK", dockerfile)
+        self.assertIn('["comic-sol", "doctor"', dockerfile)
+        self.assertIn("read_only: true", compose)
+        self.assertIn("/data", compose)
+
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("tags: [ 'v2.0.0rc1' ]", workflow)
+        for runner in ("ubuntu-latest", "macos-latest", "windows-latest"):
+            self.assertIn(runner, workflow)
+        self.assertIn("scripts/build_portable.py", workflow)
+        self.assertIn("scripts/portable_release_smoke.py", workflow)
+        portable_smoke = (root / "scripts/portable_release_smoke.py").read_text(encoding="utf-8")
+        self.assertIn("installed_mcp_smoke.py", portable_smoke)
+        self.assertIn("SHA256SUMS", workflow)
+        self.assertIn("sbom", workflow.lower())
+        self.assertIn("prerelease: true", workflow)
+        self.assertIn("if: github.ref == 'refs/tags/v2.0.0rc1'", workflow)
+        for line in workflow.splitlines():
+            if "uses:" in line:
+                reference = line.split("uses:", 1)[1].strip().split()[0]
+                self.assertRegex(reference, r"^[^@]+@[0-9a-f]{40}$")
 
 
 if __name__ == "__main__":

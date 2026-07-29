@@ -1,0 +1,12 @@
+.git
+.github
+.worktrees
+.native-dist
+build
+dist
+*.egg-info
+__pycache__
+*.pyc
+tests
+.superpowers
+comic-sol-output
