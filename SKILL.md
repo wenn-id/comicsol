@@ -97,6 +97,10 @@ subagent to audit results.
 
 ## Deterministic command route
 
+When installed as a package, use the stable `comic-sol` executable for `doctor`, `init`,
+`status`, `validate`, `resume`, `finalize`, and `mcp`. Source checkouts retain the
+script routes below for compatibility.
+
 Use Python 3.11 from the skill root. Replace uppercase placeholders with resolved paths
 or values; quote shell arguments safely.
 
