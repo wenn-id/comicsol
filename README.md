@@ -22,9 +22,9 @@ cd "${CODEX_HOME:-$HOME/.codex}/skills/comic-sol"
 python3.11 -m pip install -r requirements.txt
 ```
 
-The host-agnostic rule is: install this repository as one `comic-sol` folder beneath
-the Codex skills directory configured by your Codex installation. Keep `SKILL.md`,
-`scripts/`, `references/`, `templates/`, and `assets/` together.
+The host-agnostic rule is: clone or copy this repository as one `comic-sol` folder
+beneath the Codex skills directory configured by your Codex installation. Keep
+`SKILL.md`, `scripts/`, `references/`, `templates/`, and `assets/` together.
 
 Windows PowerShell:
 
@@ -82,6 +82,16 @@ comic-sol mcp --root /absolute/path/to/comic-sol-output
 During source development, `python3.11 scripts/mcp_server.py --root PATH` remains
 available. Both entry points expose the same protocol-tested deterministic lifecycle
 as exactly 17 `comic_*` tools.
+
+## Provider contract
+
+Image-provider integrations implement the immutable `GenerationProvider` protocol
+from `comic_sol_product.providers`. Requests record only prompt hashes, dimensions,
+relative references, and optional provider/model/seed identifiers. Results retain
+only allowlisted metadata plus raster bytes and SHA-256; credentials and raw provider
+payloads are never accepted into the contract. The base package includes no HTTP or
+provider SDK. Retained results pass through the engine's existing containment,
+raster verification, and retry-budget accounting.
 
 ## Invoke
 
