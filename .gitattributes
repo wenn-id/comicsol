@@ -7,5 +7,5 @@
 *.yaml text eol=lf
 *.yml text eol=lf
 
-# QA report templates are data, not Go source; exclude them from language stats.
-templates/*.tmpl linguist-detectable=false
+# QA report templates are documentation data, not Go source.
+templates/*.tmpl linguist-documentation=true linguist-detectable=false
