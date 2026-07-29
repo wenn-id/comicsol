@@ -42,7 +42,7 @@ def _safe_message(message: str) -> str:
     tokens = sanitized.split()
     for token in tokens:
         candidate = token.strip("'\"(),:;")
-        if Path(candidate).is_absolute() or PureWindowsPath(candidate).is_absolute():
+        if PurePosixPath(candidate).is_absolute() or PureWindowsPath(candidate).is_absolute():
             sanitized = sanitized.replace(candidate, "<path>")
     return sanitized
 
