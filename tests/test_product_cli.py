@@ -20,6 +20,13 @@ class ProductCliTests(unittest.TestCase):
     def test_parser_uses_installed_command_name(self):
         self.assertEqual("comic-sol", cli.build_parser().prog)
 
+    def test_version_flag_reports_release_identity(self):
+        stdout = io.StringIO()
+        with self.assertRaises(SystemExit) as exit_context, redirect_stdout(stdout):
+            cli.build_parser().parse_args(["--version"])
+        self.assertEqual(0, exit_context.exception.code)
+        self.assertEqual("comic-sol 2.0.0rc1\n", stdout.getvalue())
+
     def test_default_output_roots_are_platform_native(self):
         home = Path("/users/example")
         self.assertEqual(home / "Comic Sol", default_output_root("linux", home))

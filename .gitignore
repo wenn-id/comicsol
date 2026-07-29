@@ -5,6 +5,7 @@ __pycache__/
 .Python
 build/
 dist/
+.native-dist/
 *.egg-info/
 
 # Virtual environments

@@ -9,6 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from .config import default_output_root
 
 
@@ -31,6 +32,7 @@ def _load_engine() -> Any:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="comic-sol")
+    parser.add_argument("--version", action="version", version=f"comic-sol {__version__}")
     parser.add_argument("--json", action="store_true", dest="as_json")
     subparsers = parser.add_subparsers(dest="command", required=True)
 

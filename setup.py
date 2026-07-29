@@ -10,7 +10,11 @@ from setuptools.command.build_py import build_py as _build_py
 
 
 ROOT = Path(__file__).resolve().parent
-BUILD_ONLY_SCRIPTS = {"clean_install_smoke.py", "installed_mcp_smoke.py"}
+BUILD_ONLY_SCRIPTS = {
+    "build_portable.py",
+    "clean_install_smoke.py",
+    "installed_mcp_smoke.py",
+}
 
 
 class build_py(_build_py):
