@@ -1,6 +1,6 @@
 # Comic Sol
 
-Comic Sol is a pure installable Codex Skill that turns a short prompt, pasted story,
+Comic Sol is an installable Codex Skill and portable Python CLI that turns a short prompt, pasted story,
 or `.txt`/`.md` file into an original manga/anime comic. One natural-language
 invocation drives planning, character consistency, image generation, visual QA,
 selective repair, deterministic lettering and composition, and PDF export. It is
@@ -38,6 +38,18 @@ py -3.11 -m pip install -r requirements.txt
 Supported environments are Linux, macOS, Windows, and WSL with Python 3.11 and
 Pillow 12.3.0. The deterministic test suite does not need an image provider.
 
+Install the portable CLI from a checkout and verify the bundled deterministic
+engine, fonts, and templates:
+
+```bash
+python3.11 -m pip install .
+comic-sol --json doctor
+```
+
+The CLI currently exposes `doctor`, `init`, `status`, `validate`, `resume`,
+`finalize`, and the optional `mcp` launcher. Machine-readable responses use one
+stable envelope containing `ok`, `command`, `data`, and `error`.
+
 ## MCP Server (Optional)
 
 Comic Sol includes an optional `stdio` MCP server that exposes the deterministic pipeline as standard tools for Hermes Agent, Claude Desktop, Cursor, or any MCP client.
@@ -59,11 +71,12 @@ OUTPUT_ROOT="$(pwd)/comic-sol-output"
 python3.11 scripts/mcp_server.py --root "$OUTPUT_ROOT"
 ```
 
-For an MCP client configuration, resolve `python3.11`, `scripts/mcp_server.py`, and
-the selected output root to absolute paths from the current checkout. Do not copy
-paths from another machine. A portable installed CLI is not available yet. Disable
-sampling and lock the server to that output root. The server exposes the full
-deterministic lifecycle as 17 `comic_*` tools.
+For an MCP client configuration, lock the server to one absolute output root and
+keep sampling disabled. During source development, resolve `python3.11` and
+`scripts/mcp_server.py` from the current checkout instead of copying paths from
+another machine. The stable installed `comic-sol mcp --root PATH` launcher is
+completed and protocol-tested in the next Portable Product gate. The server exposes
+the full deterministic lifecycle as 17 `comic_*` tools.
 
 ## Invoke
 
@@ -84,6 +97,8 @@ For deterministic diagnostics:
 
 ```bash
 python3.11 scripts/comic_sol.py doctor --output-root /tmp/comic-sol-doctor
+# Installed equivalent:
+comic-sol --json doctor --output-root /tmp/comic-sol-doctor
 ```
 
 ## Inspect the result

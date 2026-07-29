@@ -1,0 +1,81 @@
+import io
+import json
+import tempfile
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+
+from comic_sol_product import cli
+from comic_sol_product.config import default_output_root
+
+
+class ProductCliTests(unittest.TestCase):
+    def invoke(self, argv: list[str]) -> tuple[int, str, str]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = cli.main(argv)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_parser_uses_installed_command_name(self):
+        self.assertEqual("comic-sol", cli.build_parser().prog)
+
+    def test_default_output_roots_are_platform_native(self):
+        home = Path("/users/example")
+        self.assertEqual(home / "Comic Sol", default_output_root("linux", home))
+        self.assertEqual(home / "Documents/Comic Sol", default_output_root("darwin", home))
+        self.assertEqual(home / "Documents/Comic Sol", default_output_root("win32", home))
+
+    def test_json_doctor_returns_stable_success_envelope(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            code, stdout, stderr = self.invoke([
+                "--json",
+                "doctor",
+                "--output-root",
+                str(Path(temporary_directory) / "output"),
+            ])
+        self.assertEqual(0, code)
+        self.assertEqual("", stderr)
+        payload = json.loads(stdout)
+        self.assertEqual({"ok", "command", "data", "error"}, set(payload))
+        self.assertTrue(payload["ok"])
+        self.assertEqual("doctor", payload["command"])
+        self.assertIsNone(payload["error"])
+        self.assertTrue(payload["data"]["healthy"])
+        self.assertIsInstance(payload["data"]["messages"], list)
+
+    def test_invalid_source_extension_is_categorized_before_allocation(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "story.png"
+            source.write_bytes(b"not an image or text source")
+            request = root / "request.json"
+            request.write_text('{"language":"en","mode":"short_prompt"}', encoding="utf-8")
+            output = root / "output"
+
+            code, stdout, stderr = self.invoke([
+                "--json",
+                "init",
+                "--output-root",
+                str(output),
+                "--title",
+                "Rejected Source",
+                "--source",
+                str(source),
+                "--request-json",
+                str(request),
+            ])
+
+            self.assertEqual(2, code)
+            self.assertEqual("", stderr)
+            payload = json.loads(stdout)
+            self.assertFalse(payload["ok"])
+            self.assertEqual("init", payload["command"])
+            self.assertIsNone(payload["data"])
+            self.assertEqual("invalid-input", payload["error"]["category"])
+            self.assertNotIn(str(root), payload["error"]["message"])
+            self.assertFalse(output.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

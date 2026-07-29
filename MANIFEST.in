@@ -1,0 +1,5 @@
+include LICENSE README.md SKILL.md
+recursive-include scripts *.py
+recursive-include assets *
+recursive-include templates *
+recursive-include references *.md
