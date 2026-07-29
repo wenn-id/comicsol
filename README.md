@@ -38,7 +38,7 @@ py -3.11 -m pip install -r requirements.txt
 Supported environments are Linux, macOS, Windows, and WSL with Python 3.11 and
 Pillow 12.3.0. The deterministic test suite does not need an image provider.
 
-## Native Hermes MCP Server (Optional)
+## MCP Server (Optional)
 
 Comic Sol includes an optional `stdio` MCP server that exposes the deterministic pipeline as standard tools for Hermes Agent, Claude Desktop, Cursor, or any MCP client.
 
