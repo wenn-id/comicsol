@@ -143,8 +143,9 @@ If `finalize` is unavailable, run the stages individually in this order:
    `cache/composition.json` and its manifest descriptor.
 3. Inspect each composed page and write its `qa/pages/page-{NNN}.json` record. Confirm
    with `validate_project.py PROJECT_DIR --stage export-ready`.
-4. `export_pdf.py PROJECT_DIR`, which records the `pdf` descriptor, then transition to
-   `EXPORTED`.
+4. `export_pdf.py PROJECT_DIR`, whose canonical destination full-content verifies every
+   decoded PDF page and transactionally records both `pdf` and `pdf_verification`
+   descriptors, then transition to `EXPORTED`.
 5. `render_report.py PROJECT_DIR`, which records the `qa_report` descriptor. The report
    must exist before the terminal transition because final validation requires it, and
    it projects the terminal status the project is about to reach. Do not re-render it
@@ -156,6 +157,18 @@ If `finalize` is unavailable, run the stages individually in this order:
 The success path is:
 
 `INIT → PLANNED → SCRIPTED → STORYBOARDED → REFERENCES_READY → PANELS_READY → QA_READY → LETTERED → COMPOSED → EXPORTED → COMPLETE`
+
+## Evidence provenance
+
+Deterministic quality fixtures and `quality_sample.py --mode deterministic` prove
+mechanics only: normalization, layout, typography policy, retry/resume, provenance,
+rollback, and artifact integrity. They do not prove live visual quality.
+
+For live visual evidence, retain the actual attempt first, then run
+`quality_sample.py --mode live-visual` with its relative path, provider/model,
+references, reviewer method, and known limitations. The runner hashes the retained
+local file and never calls a provider. Missing retained attempts or provenance fail
+closed. The QA report reads `qa/evidence.json` and displays the claim boundary.
 
 ## Failure taxonomy
 

@@ -181,6 +181,53 @@ def _counts(summary: QaSummary) -> str:
     ))
 
 
+def _evidence_provenance(project_dir: Path) -> str:
+    path = project_dir / "qa/evidence.json"
+    if not path.is_file():
+        return (
+            "- Mode: unavailable\n"
+            "- Scope: no explicit evidence provenance record was supplied."
+        )
+    record = read_json(path)
+    mode = record.get("mode")
+    if mode == "deterministic":
+        return "\n".join((
+            "- Mode: deterministic",
+            f"- Scope: {record.get('scope', 'mechanics-only')}",
+            "- Claim boundary: deterministic evidence proves mechanics only and "
+            "does not prove live visual quality.",
+        ))
+    if mode != "live-visual":
+        raise ValueError("qa/evidence.json has an unsupported evidence mode")
+
+    required = (
+        "retained_attempt", "attempt_sha256", "provider", "model",
+        "reviewer_method",
+    )
+    if any(
+        not isinstance(record.get(name), str) or not record[name]
+        for name in required
+    ):
+        raise ValueError("qa/evidence.json live-visual provenance is incomplete")
+
+    def joined(name: str) -> str:
+        values = record.get(name)
+        if not isinstance(values, list):
+            return "none"
+        return ", ".join(_escape_table(value) for value in values) or "none"
+
+    return "\n".join((
+        "- Mode: live-visual",
+        f"- Scope: {_escape_table(record.get('scope', 'retained-attempt-visual-review'))}",
+        f"- Provider/model: {_escape_table(record['provider'])} / {_escape_table(record['model'])}",
+        f"- Retained attempt: `{_escape_table(record['retained_attempt'])}`",
+        f"- Attempt SHA-256: `{_escape_table(record['attempt_sha256'])}`",
+        f"- References: {joined('references')}",
+        f"- Reviewer method: {_escape_table(record['reviewer_method'])}",
+        f"- Known limitations: {joined('limitations')}",
+    ))
+
+
 def _panel_table(records: list[dict[str, object]]) -> str:
     headings = ("Panel", "Attempts", "Decision", *CHECK_IDS, "Evidence")
     lines = [
@@ -475,6 +522,7 @@ def render_report(project_dir: Path, output_path: Path | None = None) -> Path:
         "{{PROJECT_SUMMARY}}": _project_summary(manifest),
         "{{CAPABILITY}}": _capability(manifest),
         "{{COUNTS}}": _counts(summary),
+        "{{EVIDENCE_PROVENANCE}}": _evidence_provenance(project_dir),
         "{{PANEL_TABLE}}": _panel_table(records),
         "{{NORMALIZATION_TABLE}}": _normalization_table(project_dir, records),
         "{{PAGE_QA_TABLE}}": _page_qa_table(page_records),

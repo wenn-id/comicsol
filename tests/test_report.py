@@ -172,6 +172,50 @@ class ReportTests(unittest.TestCase):
         self.assertIn("Reused: panels/raw/p01-01.png", text)
         self.assertIn("Regenerated: panels/raw/p01-03.png", text)
 
+    def test_report_labels_deterministic_evidence_as_mechanics_only(self):
+        atomic_write_json(
+            self.project / "qa/evidence.json",
+            {
+                "mode": "deterministic",
+                "scope": "mechanics-only",
+                "proves_visual_quality": False,
+            },
+        )
+        text = render_report(self.project).read_text("utf-8")
+        self.assertIn("Evidence provenance", text)
+        self.assertIn("deterministic", text)
+        self.assertIn("mechanics-only", text)
+        self.assertIn("does not prove live visual quality", text)
+
+    def test_report_discloses_retained_live_visual_provenance(self):
+        atomic_write_json(
+            self.project / "qa/evidence.json",
+            {
+                "mode": "live-visual",
+                "scope": "retained-attempt-visual-review",
+                "proves_visual_quality": True,
+                "retained_attempt": "panels/raw/p01-01/attempt-001.png",
+                "attempt_sha256": "a" * 64,
+                "provider": "local-test-provider",
+                "model": "test-model-v1",
+                "references": ["references/characters/mira.png"],
+                "reviewer_method": "bounded-visual-review",
+                "limitations": ["synthetic fixture"],
+            },
+        )
+        text = render_report(self.project).read_text("utf-8")
+        for phrase in (
+            "live-visual",
+            "local-test-provider",
+            "test-model-v1",
+            "attempt-001.png",
+            "a" * 64,
+            "references/characters/mira.png",
+            "bounded-visual-review",
+            "synthetic fixture",
+        ):
+            self.assertIn(phrase, text)
+
     def test_report_discloses_page_layout_and_check_method_identity(self):
         page_dir = self.project / "qa/pages"
         page_dir.mkdir(parents=True, exist_ok=True)

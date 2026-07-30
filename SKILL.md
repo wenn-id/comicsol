@@ -89,6 +89,19 @@ agent-authored `qa/pages/page-{NNN}.json` record matching that page's hash. Run
 `finalize` once to letter and compose, inspect each page, write its record from
 `templates/page-qa.json`, then run `finalize` again. Never fabricate that record.
 
+### Evidence provenance
+
+Label deterministic sample evidence as `mechanics-only`: it proves normalization,
+layout, lettering, retry/resume, provenance, rollback, and export integrity, but does
+not prove live visual quality. Use `scripts/quality_sample.py PROJECT_DIR --mode
+deterministic` to write that disclosure into `qa/evidence.json`.
+
+Live visual evidence is valid only for an already retained local attempt. Supply its
+provider/model, attempt path and SHA-256, references, reviewer method, and known
+limitations. The sample runner never invokes an image provider and refuses live mode
+without a retained attempt. The QA report discloses these fields without inferring or
+fabricating them.
+
 ### Completion response
 
 Report final status, pages, panels, generation/retry count, and unresolved warnings. Give

@@ -19,6 +19,7 @@ class DistributionContractTests(unittest.TestCase):
         self.assertIn("comic_sol_product/engine/layouts.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/page_quality.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/pdf_quality.py", REQUIRED_WHEEL_MEMBERS)
+        self.assertIn("comic_sol_product/engine/quality_sample.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/assets/fonts/ComicNeue-Regular.ttf", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/templates/manifest.json", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/skill/SKILL.md", REQUIRED_WHEEL_MEMBERS)
@@ -38,6 +39,15 @@ class DistributionContractTests(unittest.TestCase):
     def test_distribution_rejects_build_only_scripts(self):
         with self.assertRaisesRegex(ValueError, "build-only"):
             validate_wheel_members(REQUIRED_WHEEL_MEMBERS | FORBIDDEN_WHEEL_MEMBERS)
+
+    def test_distribution_forbids_test_fixture_content_from_runtime(self):
+        forbidden = {
+            "comic_sol_product/engine/test_quality_matrix.py",
+            "comic_sol_product/engine/support.py",
+            "comic_sol_product/engine/quality-matrix/README.md",
+        }
+        with self.assertRaisesRegex(ValueError, "build-only"):
+            validate_wheel_members(REQUIRED_WHEEL_MEMBERS | forbidden)
 
     def test_sdist_contract_covers_source_skill_and_runtime_assets(self):
         members = {f"comic-sol-2.0.0.dev0{suffix}" for suffix in REQUIRED_SDIST_SUFFIXES}
