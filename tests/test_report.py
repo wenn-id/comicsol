@@ -172,6 +172,58 @@ class ReportTests(unittest.TestCase):
         self.assertIn("Reused: panels/raw/p01-01.png", text)
         self.assertIn("Regenerated: panels/raw/p01-03.png", text)
 
+    def test_report_discloses_page_layout_and_check_method_identity(self):
+        page_dir = self.project / "qa/pages"
+        page_dir.mkdir(parents=True, exist_ok=True)
+        checks = []
+        for check_id in (
+            "clipped-text", "text-overlap", "face-action-obstruction",
+            "bubble-tail-direction", "reading-order",
+            "accidental-text-watermark", "layout-border-integrity",
+        ):
+            deterministic = check_id in {
+                "clipped-text", "text-overlap", "reading-order",
+                "layout-border-integrity",
+            }
+            checks.append({
+                "id": check_id,
+                "result": "pass",
+                "severity": "error",
+                "evidence": f"Bounded evidence for {check_id}.",
+                "method": (
+                    "deterministic-geometry-v1"
+                    if deterministic else "bounded-visual-review"
+                ),
+                "reviewer": "comic-sol" if deterministic else "fixture-reviewer",
+                "regions": [{"scope": "page"}],
+            })
+        atomic_write_json(page_dir / "page-001.json", {
+            "bindings": {
+                "layout_name": "four-grid",
+                "layout_version": "1",
+                "page_path": "pages/page-001.png",
+                "page_sha256": "a" * 64,
+            },
+            "checks": checks,
+            "decision": "accept",
+            "kind": "page-qa",
+            "review": {
+                "method": "deterministic-plus-bounded-visual-review",
+                "reviewed_at": "fixture",
+                "reviewer": "fixture-reviewer",
+            },
+            "schema_version": "2.0",
+            "subject_id": "page-001",
+            "unresolved_warnings": [],
+        })
+
+        text = render_report(self.project).read_text("utf-8")
+        self.assertIn("Page QA", text)
+        self.assertIn("four-grid", text)
+        self.assertIn("deterministic-geometry-v1", text)
+        self.assertIn("bounded-visual-review", text)
+        self.assertIn("face-action-obstruction", text)
+
     def test_absent_warnings_use_exact_sentence(self):
         for path in (self.project / "qa/panels").glob("*.json"):
             record = read_json(path)

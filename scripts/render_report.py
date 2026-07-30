@@ -112,6 +112,19 @@ def _load_records(project_dir: Path) -> list[dict[str, object]]:
     return records
 
 
+def _load_page_records(project_dir: Path) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    page_dir = project_dir / "qa/pages"
+    if not page_dir.is_dir():
+        return records
+    for path in page_dir.glob("page-*.json"):
+        record = read_json(path)
+        if record.get("schema_version") == "2.0" and record.get("kind") == "page-qa":
+            records.append(record)
+    records.sort(key=lambda record: str(record.get("subject_id", "")))
+    return records
+
+
 def _final_status(manifest: dict[str, object]) -> object:
     """Project the terminal status an EXPORTED project is about to reach.
 
@@ -251,6 +264,40 @@ def _normalization_table(
                 _escape_table(value)
                 for value in (panel_id, mode, source_size, target_size)
             ) + " |"
+        )
+    return "\n".join(lines)
+
+
+def _page_qa_table(records: list[dict[str, object]]) -> str:
+    headings = ("Page", "Layout", "Check", "Result", "Method", "Reviewer")
+    lines = [
+        "| " + " | ".join(headings) + " |",
+        "| " + " | ".join("---" for _ in headings) + " |",
+    ]
+    for record in records:
+        bindings = record.get("bindings")
+        layout = bindings.get("layout_name", "unknown") if isinstance(bindings, dict) else "unknown"
+        version = bindings.get("layout_version", "unknown") if isinstance(bindings, dict) else "unknown"
+        checks = record.get("checks")
+        if not isinstance(checks, list):
+            checks = []
+        for check in checks:
+            if not isinstance(check, dict):
+                continue
+            cells = (
+                record.get("subject_id", "unknown"),
+                f"{layout} v{version}",
+                check.get("id", "unknown"),
+                check.get("result", "missing"),
+                check.get("method", "missing"),
+                check.get("reviewer", "missing"),
+            )
+            lines.append(
+                "| " + " | ".join(_escape_table(cell) for cell in cells) + " |"
+            )
+    if len(lines) == 2:
+        lines.append(
+            "| none | unavailable | unavailable | unavailable | unavailable | unavailable |"
         )
     return "\n".join(lines)
 
@@ -421,6 +468,7 @@ def render_report(project_dir: Path, output_path: Path | None = None) -> Path:
     project_dir = Path(project_dir)
     manifest = read_json(project_dir / "project.json")
     records = _load_records(project_dir)
+    page_records = _load_page_records(project_dir)
     summary = summarize_qa(manifest, records)
     template = TEMPLATE_PATH.read_text("utf-8")
     replacements = {
@@ -429,6 +477,7 @@ def render_report(project_dir: Path, output_path: Path | None = None) -> Path:
         "{{COUNTS}}": _counts(summary),
         "{{PANEL_TABLE}}": _panel_table(records),
         "{{NORMALIZATION_TABLE}}": _normalization_table(project_dir, records),
+        "{{PAGE_QA_TABLE}}": _page_qa_table(page_records),
         "{{WARNINGS}}": _warnings(manifest, records),
         "{{INTEGRITY}}": _integrity(project_dir, manifest, records),
         "{{RESUME}}": _resume(project_dir),

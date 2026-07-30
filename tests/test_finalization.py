@@ -27,6 +27,8 @@ from validate_project import (  # noqa: E402
 )
 from normalize_panels import normalize_panel  # noqa: E402
 from letter_panels import letter_project  # noqa: E402
+from compose_pages import compose_project  # noqa: E402
+from page_quality import build_page_quality_record, write_page_quality_record  # noqa: E402
 
 from test_validation import (  # noqa: E402
     valid_characters,
@@ -35,6 +37,38 @@ from test_validation import (  # noqa: E402
     valid_story,
     valid_storyboard,
 )
+
+
+def valid_page_reviewer_checks():
+    return [
+        {
+            "id": "face-action-obstruction",
+            "result": "pass",
+            "severity": "error",
+            "evidence": "Reviewer inspected every panel region for face and action obstruction.",
+            "method": "bounded-visual-review",
+            "reviewer": "fixture-reviewer",
+            "regions": [{"scope": "all-panels"}],
+        },
+        {
+            "id": "bubble-tail-direction",
+            "result": "pass",
+            "severity": "error",
+            "evidence": "Reviewer inspected every bubble tail against its intended speaker.",
+            "method": "bounded-visual-review",
+            "reviewer": "fixture-reviewer",
+            "regions": [{"scope": "all-bubbles"}],
+        },
+        {
+            "id": "accidental-text-watermark",
+            "result": "pass",
+            "severity": "error",
+            "evidence": "Reviewer inspected the full page for accidental text and watermarks.",
+            "method": "bounded-visual-review",
+            "reviewer": "fixture-reviewer",
+            "regions": [{"scope": "page"}],
+        },
+    ]
 
 
 class FinalArtifactTests(unittest.TestCase):
@@ -88,24 +122,15 @@ class FinalArtifactTests(unittest.TestCase):
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
 
     def _add_lettered_page_qas(self):
-        (self.project / "pages").mkdir(exist_ok=True)
-        page_png = self.project / "pages/page-001.png"
-        Image.new("RGB", (1600, 2400), (100, 150, 200)).save(page_png)
-        page_hash = sha256_file(page_png)
-        page_qa = self.project / "qa/pages/page-001.json"
-        page_qa.parent.mkdir(parents=True, exist_ok=True)
-        import json
-        atomic_write_json(
-            page_qa,
-            {
-                "page": 1,
-                "page_path": "pages/page-001.png",
-                "page_sha256": page_hash,
-                "schema_version": "1.0",
-                "status": "reviewed",
-            },
-        )
         letter_project(self.project)
+        compose_project(self.project)
+        write_page_quality_record(
+            self.project,
+            1,
+            build_page_quality_record(
+                self.project, 1, valid_page_reviewer_checks()
+            ),
+        )
 
     def test_final_fails_without_any_artifacts(self):
         """RED: an empty project must report missing final artifacts."""
@@ -128,11 +153,6 @@ class FinalArtifactTests(unittest.TestCase):
         self._add_lettered_page_qas()
         manifest = read_json(self.project / "project.json")
         comp_cache = self.project / "cache/composition.json"
-        comp_cache.parent.mkdir(exist_ok=True)
-        import json
-        comp_cache.write_text(
-            json.dumps({"schema_version": "1.0", "stages": {}})
-        )
         comp_hash = sha256_file(comp_cache)
         manifest["artifacts"] = {
             "character_bible": {
@@ -264,35 +284,21 @@ class GuardedOperationTests(unittest.TestCase):
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
 
     def _add_lettered_page_qas(self):
-        (self.project / "pages").mkdir(exist_ok=True)
-        page_png = self.project / "pages/page-001.png"
-        Image.new("RGB", (1600, 2400), (100, 150, 200)).save(page_png)
-        page_hash = sha256_file(page_png)
-        page_qa = self.project / "qa/pages/page-001.json"
-        page_qa.parent.mkdir(parents=True, exist_ok=True)
-        import json
-        atomic_write_json(
-            page_qa,
-            {
-                "page": 1,
-                "page_path": "pages/page-001.png",
-                "page_sha256": page_hash,
-                "schema_version": "1.0",
-                "status": "reviewed",
-            },
-        )
         letter_project(self.project)
+        compose_project(self.project)
+        write_page_quality_record(
+            self.project,
+            1,
+            build_page_quality_record(
+                self.project, 1, valid_page_reviewer_checks()
+            ),
+        )
 
     def _make_export_ready(self):
         self._add_panel_files()
         self._add_lettered_page_qas()
         manifest = read_json(self.project / "project.json")
         comp_cache = self.project / "cache/composition.json"
-        comp_cache.parent.mkdir(exist_ok=True)
-        import json
-        comp_cache.write_text(
-            json.dumps({"schema_version": "1.0", "stages": {}})
-        )
         manifest["artifacts"] = {
             "character_bible": {
                 "path": "plan/character-bible.json",

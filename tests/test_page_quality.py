@@ -1,0 +1,196 @@
+import hashlib
+import json
+import shutil
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from compose_pages import compose_all_pages  # noqa: E402
+from letter_panels import letter_project  # noqa: E402
+from page_quality import (  # noqa: E402
+    DETERMINISTIC_PAGE_CHECK_IDS,
+    PAGE_CHECK_IDS,
+    build_page_quality_record,
+    validate_page_quality,
+    write_page_quality_record,
+)
+from validate_project import validate_project  # noqa: E402
+
+
+FIXTURE = ROOT / "tests/fixtures/valid-one-page"
+SUBJECTIVE = {
+    "face-action-obstruction",
+    "bubble-tail-direction",
+    "accidental-text-watermark",
+}
+
+
+def reviewer_checks():
+    return [
+        {
+            "id": check_id,
+            "result": "pass",
+            "severity": "error",
+            "evidence": f"Reviewer inspected bounded page evidence for {check_id}.",
+            "method": "bounded-visual-review",
+            "reviewer": "fixture-reviewer",
+            "regions": [],
+        }
+        for check_id in sorted(SUBJECTIVE)
+    ]
+
+
+class PageQualityTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.project = Path(self.temporary_directory.name) / "project"
+        shutil.copytree(FIXTURE, self.project)
+        letter_project(self.project)
+        compose_all_pages(self.project)
+
+    def tearDown(self):
+        self.temporary_directory.cleanup()
+
+    def test_exact_check_ids_and_method_boundaries(self):
+        self.assertEqual(
+            (
+                "clipped-text", "text-overlap", "face-action-obstruction",
+                "bubble-tail-direction", "reading-order",
+                "accidental-text-watermark", "layout-border-integrity",
+            ),
+            PAGE_CHECK_IDS,
+        )
+        self.assertEqual(
+            frozenset({"clipped-text", "text-overlap", "reading-order", "layout-border-integrity"}),
+            DETERMINISTIC_PAGE_CHECK_IDS,
+        )
+
+        record = build_page_quality_record(self.project, 1, reviewer_checks())
+        checks = {check["id"]: check for check in record["checks"]}
+        self.assertEqual(set(PAGE_CHECK_IDS), set(checks))
+        for check_id in DETERMINISTIC_PAGE_CHECK_IDS:
+            self.assertEqual("deterministic-geometry-v1", checks[check_id]["method"])
+            self.assertEqual("comic-sol", checks[check_id]["reviewer"])
+            self.assertNotEqual([], checks[check_id]["regions"])
+        for check_id in SUBJECTIVE:
+            self.assertEqual("bounded-visual-review", checks[check_id]["method"])
+            self.assertEqual("fixture-reviewer", checks[check_id]["reviewer"])
+
+    def test_missing_or_generic_subjective_evidence_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "subjective page checks"):
+            build_page_quality_record(self.project, 1, [])
+        generic = reviewer_checks()
+        generic[0]["evidence"] = "ok"
+        with self.assertRaisesRegex(ValueError, "quality-evidence-generic"):
+            build_page_quality_record(self.project, 1, generic)
+
+    def test_record_binds_page_cache_layout_storyboard_and_ordered_lettering(self):
+        record = build_page_quality_record(self.project, 1, reviewer_checks())
+        bindings = record["bindings"]
+        self.assertEqual("2.0", record["schema_version"])
+        self.assertEqual("page-qa", record["kind"])
+        self.assertEqual("page-001", record["subject_id"])
+        self.assertEqual("hero-top-two-bottom", bindings["layout_name"])
+        self.assertEqual("1", bindings["layout_version"])
+        self.assertEqual("pages/page-001.png", bindings["page_path"])
+        self.assertEqual((1600, 2400), (bindings["page_width"], bindings["page_height"]))
+        self.assertRegex(bindings["page_sha256"], r"^[0-9a-f]{64}$")
+        self.assertRegex(bindings["composition_cache_sha256"], r"^[0-9a-f]{64}$")
+        self.assertRegex(bindings["storyboard_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(3, len(bindings["lettering_sha256s"]))
+        self.assertTrue(all(value.startswith("p01-0") and len(value.split(":")) == 2
+                            for value in bindings["lettering_sha256s"]))
+
+    def test_write_is_canonical_and_current_record_validates(self):
+        record = build_page_quality_record(self.project, 1, reviewer_checks())
+        path = write_page_quality_record(self.project, 1, record)
+        self.assertEqual(self.project / "qa/pages/page-001.json", path)
+        loaded = json.loads(path.read_text("utf-8"))
+        self.assertEqual(record, loaded)
+        self.assertEqual(
+            json.dumps(loaded, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            path.read_text("utf-8"),
+        )
+        self.assertEqual((), validate_page_quality(self.project, 1))
+
+    def test_page_cache_storyboard_layout_and_lettering_drift_are_stale(self):
+        record = build_page_quality_record(self.project, 1, reviewer_checks())
+        write_page_quality_record(self.project, 1, record)
+        cases = (
+            ("pages/page-001.png", "bindings.page_sha256", "append"),
+            ("cache/composition.json", "bindings.composition_cache_sha256", "append"),
+            ("plan/storyboard.json", "bindings.storyboard_sha256", "append"),
+            ("panels/p01-02/lettering.json", "bindings.lettering_sha256s", "append"),
+        )
+        for relative, field, operation in cases:
+            with self.subTest(relative=relative):
+                path = self.project / relative
+                before = path.read_bytes()
+                path.write_bytes(before + b"changed")
+                issues = validate_page_quality(self.project, 1)
+                self.assertTrue(any(
+                    issue.field == field
+                    and issue.message.startswith("page-quality-stale:")
+                    for issue in issues
+                ), issues)
+                path.write_bytes(before)
+
+        storyboard_path = self.project / "plan/storyboard.json"
+        storyboard = json.loads(storyboard_path.read_text("utf-8"))
+        storyboard["pages"][0]["layout"] = "custom"
+        storyboard_path.write_text(
+            json.dumps(storyboard, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            "utf-8",
+        )
+        issues = validate_page_quality(self.project, 1)
+        self.assertTrue(any(issue.field == "bindings.layout_name" for issue in issues), issues)
+
+    def test_geometry_detects_clipping_overlap_and_bad_reading_order(self):
+        geometry_path = self.project / "panels/p01-01/lettering.json"
+        geometry = json.loads(geometry_path.read_text("utf-8"))
+        duplicate = dict(geometry["items"][0])
+        duplicate["id"] = "overlap"
+        duplicate["reading_order"] = 1
+        duplicate["box"] = {"x": -10, "y": -10, "width": 100, "height": 100}
+        geometry["items"].append(duplicate)
+        geometry_path.write_text(
+            json.dumps(geometry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            "utf-8",
+        )
+        record = build_page_quality_record(self.project, 1, reviewer_checks())
+        checks = {check["id"]: check for check in record["checks"]}
+        self.assertEqual("fail", checks["clipped-text"]["result"])
+        self.assertEqual("fail", checks["text-overlap"]["result"])
+        self.assertEqual("fail", checks["reading-order"]["result"])
+        self.assertEqual("regenerate", record["decision"])
+
+    def test_export_ready_gate_requires_current_schema_two_page_quality(self):
+        record = build_page_quality_record(self.project, 1, reviewer_checks())
+        write_page_quality_record(self.project, 1, record)
+        current = validate_project(self.project, "export-ready")
+        self.assertFalse(any(
+            issue.path == "qa/pages/page-001.json"
+            and (
+                issue.message.startswith("page-quality-stale:")
+                or "migration" in issue.message
+            )
+            for issue in current
+        ), current)
+
+        page = self.project / "pages/page-001.png"
+        page.write_bytes(page.read_bytes() + b"stale")
+        stale = validate_project(self.project, "export-ready")
+        self.assertTrue(any(
+            issue.path == "qa/pages/page-001.json"
+            and issue.field == "bindings.page_sha256"
+            and issue.message.startswith("page-quality-stale:")
+            for issue in stale
+        ), stale)
+
+
+if __name__ == "__main__":
+    unittest.main()

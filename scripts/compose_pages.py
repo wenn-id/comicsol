@@ -18,7 +18,9 @@ from comic_sol import (
     atomic_write_bytes,
     canonical_artifact_bytes,
     read_json,
+    sha256_file,
 )
+from layouts import LAYOUT_VERSION, get_layout, match_layout, validate_custom_layout
 from project_io import ProjectTransaction, contained_project_path
 
 COMPOSITION_CACHE_PATH = "cache/composition.json"
@@ -109,6 +111,31 @@ def _rect(panel: dict) -> tuple[int, int, int, int]:
     return x, y, width, height
 
 
+def _page_layout(page: dict) -> tuple[str, tuple[tuple[int, int, int, int], ...]]:
+    """Validate page geometry and return its canonical layout identity."""
+    panels = page.get("panels")
+    if not isinstance(panels, list) or not panels:
+        raise ValueError(f"page {page.get('number')} panels must be a non-empty array")
+    rectangles = tuple(_rect(panel) for panel in panels if isinstance(panel, dict))
+    if len(rectangles) != len(panels):
+        raise ValueError(f"page {page.get('number')} contains an invalid panel")
+    validate_custom_layout(rectangles, tuple(range(1, len(rectangles) + 1)))
+    matched = match_layout(rectangles)
+    declared = page.get("layout")
+    if not isinstance(declared, str) or not declared:
+        return matched, rectangles
+    if declared == "custom":
+        if matched != "custom":
+            raise ValueError("declared layout custom does not match storyboard rectangles")
+        return declared, rectangles
+    definition = get_layout(declared)
+    if definition.rectangles != rectangles:
+        raise ValueError(
+            f"declared layout {declared} does not match storyboard rectangles"
+        )
+    return declared, rectangles
+
+
 def _compose_to_bytes(
     project_dir: Path,
     page: dict,
@@ -162,6 +189,7 @@ def compose_page(
         raise TypeError("source_artifacts must be an object")
     project_dir = Path(project_dir)
     page = _storyboard_page(storyboard, page_number)
+    _page_layout(page)
     sources = _page_sources(project_dir, page, source_artifacts)
     payload = _compose_to_bytes(project_dir, page, sources, manifest_settings)
     output_path = project_dir / f"pages/page-{page_number:03d}.png"
@@ -190,24 +218,56 @@ def compose_all_pages(project_dir: Path) -> list[Path]:
     if len(page_numbers) != len(pages) or page_numbers != list(range(1, len(pages) + 1)):
         raise ValueError("storyboard pages must be numbered contiguously from 1")
 
-    prepared_pages = [
-        (number, _storyboard_page(storyboard, number), _page_sources(project_dir, _storyboard_page(storyboard, number), artifacts))
-        for number in page_numbers
-    ]
+    prepared_pages = []
+    for number in page_numbers:
+        page = _storyboard_page(storyboard, number)
+        layout_name, rectangles = _page_layout(page)
+        sources = _page_sources(project_dir, page, artifacts)
+        prepared_pages.append((number, page, sources, layout_name, rectangles))
     payloads = [
         (f"pages/page-{number:03d}.png", _compose_to_bytes(project_dir, page, sources, settings))
-        for number, page, sources in prepared_pages
+        for number, page, sources, _, _ in prepared_pages
     ]
-    cache_payload = canonical_artifact_bytes({
-        "schema_version": "1.0",
-        "stages": {
-            "composition": {
-                "artifacts": {
-                    relative: hashlib.sha256(payload).hexdigest()
-                    for relative, payload in payloads
-                },
+    payload_by_number = {
+        number: (relative, payload)
+        for (number, _, _, _, _), (relative, payload)
+        in zip(prepared_pages, payloads)
+    }
+    cache_pages = []
+    for number, page, sources, layout_name, rectangles in prepared_pages:
+        relative, payload = payload_by_number[number]
+        panel_ids = [panel["id"] for panel, _ in sources]
+        ordered_hashes = []
+        for panel, source_relative in sources:
+            source_path = contained_project_path(
+                project_dir, source_relative, must_exist=True
+            )
+            ordered_hashes.append(f"{panel['id']}:{sha256_file(source_path)}")
+        cache_pages.append({
+            "layout": {
+                "name": layout_name,
+                "rectangles": [list(rectangle) for rectangle in rectangles],
+                "version": LAYOUT_VERSION,
             },
-        },
+            "ordered_lettered_sha256s": ordered_hashes,
+            "output": {
+                "dimensions": [PAGE_WIDTH, PAGE_HEIGHT],
+                "path": relative,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            },
+            "page_id": f"page-{number:03d}",
+            "panel_ids": panel_ids,
+            "settings_sha256": hashlib.sha256(
+                canonical_artifact_bytes(settings)
+            ).hexdigest(),
+            "storyboard_page_sha256": hashlib.sha256(
+                canonical_artifact_bytes(page)
+            ).hexdigest(),
+        })
+    cache_payload = canonical_artifact_bytes({
+        "kind": "composition-cache",
+        "pages": cache_pages,
+        "schema_version": "2.0",
     })
     output_paths = []
     with ProjectTransaction(project_dir, "composition") as transaction:

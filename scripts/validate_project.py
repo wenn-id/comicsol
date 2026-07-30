@@ -18,6 +18,7 @@ from typing import Callable, Iterable
 from PIL import Image, UnidentifiedImageError
 
 from project_io import contained_project_path
+from page_quality import validate_page_quality
 from quality_records import PANEL_CHECK_IDS, validate_quality_checks
 from typography import lettering_geometry_hash
 
@@ -46,6 +47,7 @@ LAYOUTS = {
     "three-horizontal",
     "hero-top-two-bottom",
     "two-top-hero-bottom",
+    "four-grid",
 }
 ANCHORS = {
     "top-left", "top-center", "top-right", "middle-left", "middle-right",
@@ -1511,19 +1513,29 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
             page_qa = _read_canonical_json(project_dir, page_qa_relative, issues)
             expected_page = f"pages/page-{page_number:03d}.png"
             if page_qa is not None:
-                issues.extend(validate_page_qa_record(page_qa))
-                if page_qa.get("page") != page_number:
-                    _add(issues, page_qa_relative, "page",
-                         "must match the canonical page number")
-                if page_qa.get("page_path") != expected_page:
-                    _add(issues, page_qa_relative, "page_path",
-                         "must match the canonical page path")
+                if page_qa.get("schema_version") == "2.0":
+                    for issue in validate_page_quality(project_dir, page_number):
+                        _add(issues, issue.path, issue.field, issue.message)
+                else:
+                    issues.extend(validate_page_qa_record(page_qa))
+                    _add(
+                        issues,
+                        page_qa_relative,
+                        "schema_version",
+                        "quality-migration-required: schema 1.0 page QA must be migrated",
+                    )
+                    if page_qa.get("page") != page_number:
+                        _add(issues, page_qa_relative, "page",
+                             "must match the canonical page number")
+                    if page_qa.get("page_path") != expected_page:
+                        _add(issues, page_qa_relative, "page_path",
+                             "must match the canonical page path")
             page_path = project_dir / expected_page
             if not page_path.is_file():
                 _add(issues, expected_page, "", "composed page is missing")
-            else:
+            elif page_qa is not None and page_qa.get("schema_version") != "2.0":
                 page_hash = sha256_file(page_path)
-                if page_qa is not None and isinstance(page_qa.get("page_sha256"), str):
+                if isinstance(page_qa.get("page_sha256"), str):
                     if page_qa["page_sha256"] != page_hash:
                         _add(issues, page_qa_relative, "page_sha256",
                              "hash does not match the page image")

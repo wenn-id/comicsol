@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from tests.support import make_symlink  # noqa: E402
+from page_quality import build_page_quality_record, write_page_quality_record  # noqa: E402
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
 
@@ -267,19 +268,42 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
 
             def write_page_qa_records():
                 """Record review of the pages as they currently exist on disk."""
-                qa_pages = project / "qa/pages"
-                qa_pages.mkdir(parents=True, exist_ok=True)
                 for page_number in (1, 2):
-                    page_path = project / f"pages/page-{page_number:03d}.png"
-                    record = {
-                        "page": page_number,
-                        "page_path": f"pages/page-{page_number:03d}.png",
-                        "page_sha256": hashlib.sha256(page_path.read_bytes()).hexdigest(),
-                        "schema_version": "1.0",
-                        "status": "reviewed",
-                    }
-                    (qa_pages / f"page-{page_number:03d}.json").write_text(
-                        json.dumps(record, indent=2, sort_keys=True) + "\n", "utf-8"
+                    reviewer_checks = [
+                        {
+                            "id": "face-action-obstruction",
+                            "result": "pass",
+                            "severity": "error",
+                            "evidence": "Reviewer inspected every panel region for face and action obstruction.",
+                            "method": "bounded-visual-review",
+                            "reviewer": "fixture-reviewer",
+                            "regions": [{"scope": "all-panels"}],
+                        },
+                        {
+                            "id": "bubble-tail-direction",
+                            "result": "pass",
+                            "severity": "error",
+                            "evidence": "Reviewer inspected every bubble tail against its intended speaker.",
+                            "method": "bounded-visual-review",
+                            "reviewer": "fixture-reviewer",
+                            "regions": [{"scope": "all-bubbles"}],
+                        },
+                        {
+                            "id": "accidental-text-watermark",
+                            "result": "pass",
+                            "severity": "error",
+                            "evidence": "Reviewer inspected the full page for accidental text and watermarks.",
+                            "method": "bounded-visual-review",
+                            "reviewer": "fixture-reviewer",
+                            "regions": [{"scope": "page"}],
+                        },
+                    ]
+                    write_page_quality_record(
+                        project,
+                        page_number,
+                        build_page_quality_record(
+                            project, page_number, reviewer_checks
+                        ),
                     )
 
             parameters = StdioServerParameters(

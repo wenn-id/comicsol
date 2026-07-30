@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from comic_sol import atomic_write_json  # noqa: E402
 from compose_pages import compose_all_pages, compose_page  # noqa: E402
+from layouts import FOUR_GRID_RECTS  # noqa: E402
 from tests.support import make_symlink  # noqa: E402
 
 
@@ -143,6 +144,74 @@ class CompositionTests(unittest.TestCase):
         first = hashlib.sha256(path.read_bytes()).hexdigest()
         path = compose_page(self.project, 1, self.storyboard, self.settings, {})
         self.assertEqual(first, hashlib.sha256(path.read_bytes()).hexdigest())
+
+    def test_declared_named_layout_must_match_storyboard_rectangles(self):
+        self.storyboard["pages"][0]["layout"] = "full-page"
+        with self.assertRaisesRegex(ValueError, "declared layout.*rectangles"):
+            compose_page(self.project, 1, self.storyboard, self.settings, {})
+
+    def test_four_grid_golden_slots_gutters_borders_and_order(self):
+        colors = ((255, 0, 0), (0, 128, 0), (0, 0, 255), (255, 255, 0))
+        panels = []
+        for index, ((x, y, width, height), color) in enumerate(
+            zip(FOUR_GRID_RECTS, colors), 1
+        ):
+            panel_id = f"p01-{index:02d}"
+            panel_dir = self.project / "panels" / panel_id
+            panel_dir.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (width, height), color).save(
+                panel_dir / "lettered.png"
+            )
+            panels.append({
+                "id": panel_id,
+                "order": index,
+                "rect": {"x": x, "y": y, "width": width, "height": height},
+            })
+        self.storyboard["pages"][0] = {
+            "number": 1,
+            "layout": "four-grid",
+            "panels": panels,
+        }
+
+        page_path = compose_page(
+            self.project, 1, self.storyboard, self.settings, {}
+        )
+        with Image.open(page_path) as page:
+            self.assertEqual((1600, 2400), page.size)
+            for rectangle, color in zip(FOUR_GRID_RECTS, colors):
+                x, y, width, height = rectangle
+                self.assertEqual(color, page.getpixel((x + width // 2, y + height // 2)))
+                self.assertEqual((0, 0, 0), page.getpixel((x, y + height // 2)))
+                self.assertEqual((0, 0, 0), page.getpixel((x + width - 1, y + height // 2)))
+            self.assertEqual((255, 255, 255), page.getpixel((25, 25)))
+            self.assertEqual((255, 255, 255), page.getpixel((800, 600)))
+            self.assertEqual((255, 255, 255), page.getpixel((800, 1200)))
+
+    def test_composition_cache_binds_layout_storyboard_sources_settings_and_output(self):
+        compose_all_pages(self.project)
+        cache_path = self.project / "cache/composition.json"
+        cache = json.loads(cache_path.read_text("utf-8"))
+
+        self.assertEqual("2.0", cache["schema_version"])
+        self.assertEqual("composition-cache", cache["kind"])
+        self.assertEqual(1, len(cache["pages"]))
+        page = cache["pages"][0]
+        self.assertEqual("page-001", page["page_id"])
+        self.assertEqual("two-horizontal", page["layout"]["name"])
+        self.assertEqual("1", page["layout"]["version"])
+        self.assertEqual(["p01-01", "p01-02"], page["panel_ids"])
+        self.assertEqual(2, len(page["ordered_lettered_sha256s"]))
+        self.assertTrue(all(len(value.split(":", 1)[1]) == 64
+                            for value in page["ordered_lettered_sha256s"]))
+        self.assertRegex(page["storyboard_page_sha256"], r"^[0-9a-f]{64}$")
+        self.assertRegex(page["settings_sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual([1600, 2400], page["output"]["dimensions"])
+        self.assertEqual("pages/page-001.png", page["output"]["path"])
+        self.assertRegex(page["output"]["sha256"], r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            json.dumps(cache, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            cache_path.read_text("utf-8"),
+        )
 
     def test_all_pages_returns_numeric_paths_and_writes_each_file(self):
         second = {

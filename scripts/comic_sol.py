@@ -1659,6 +1659,8 @@ def finalize_project(project_dir: Path) -> dict[str, object]:
         transition(project_dir, "COMPOSED")
 
     # 4. Fail closed on agent-produced page-QA integrity records.
+    from page_quality import validate_page_quality
+
     manifest = read_json(manifest_path)
     settings = manifest.get("settings")
     page_count = settings.get("page_count", 0) if isinstance(settings, dict) else 0
@@ -1672,13 +1674,16 @@ def finalize_project(project_dir: Path) -> dict[str, object]:
                 f"page_qa_required: {qa_rel} is missing. Inspect the composed "
                 f"page and write the record from templates/page-qa.json."
             )
-        record = read_json(qa_path)
         page_rel = f"pages/page-{page_number:03d}.png"
         page_path = project_dir / page_rel
         if not page_path.is_file():
             raise ValueError(f"page_qa_required: {page_rel} is missing")
-        if record.get("page_sha256") != sha256_file(page_path):
-            raise ValueError(f"page_qa_required: {qa_rel} hash is stale")
+        page_issues = validate_page_quality(project_dir, page_number)
+        if page_issues:
+            detail = "; ".join(
+                f"{issue.field}: {issue.message}" for issue in page_issues
+            )
+            raise ValueError(f"page_qa_required: {qa_rel} is stale: {detail}")
 
     # 5. Guarded export (validates export-ready, writes PDF, records descriptor).
     from export_pdf import guarded_export
