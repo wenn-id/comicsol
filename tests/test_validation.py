@@ -36,6 +36,7 @@ from validate_project import (  # noqa: E402
     validate_storyboard,
 )
 from quality_records import PANEL_CHECK_IDS, PAGE_CHECK_IDS  # noqa: E402
+from normalize_panels import normalize_panel  # noqa: E402
 
 
 def valid_manifest():
@@ -147,8 +148,14 @@ def valid_panel_record_v2():
         "bindings": {
             "raw_path": "panels/raw/p01-01.png",
             "raw_sha256": "b" * 64,
-            "clean_path": "panels/clean/p01-01.png",
+            "raw_width": 736,
+            "raw_height": 1136,
+            "clean_path": "panels/p01-01/clean.png",
             "clean_sha256": "c" * 64,
+            "clean_width": 736,
+            "clean_height": 1136,
+            "normalization_path": "panels/p01-01/normalization.json",
+            "normalization_sha256": "d" * 64,
         },
         "checks": [{
             "id": check_id,
@@ -193,6 +200,16 @@ class TemplateContractTests(unittest.TestCase):
         self.assertEqual(
             (json.dumps(page, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(),
             page_raw,
+        )
+
+        panel = json.loads((ROOT / "templates/panel-record.json").read_text("utf-8"))
+        self.assertEqual(
+            {
+                "raw_path", "raw_sha256", "raw_width", "raw_height",
+                "clean_path", "clean_sha256", "clean_width", "clean_height",
+                "normalization_path", "normalization_sha256",
+            },
+            set(panel["bindings"]),
         )
 
         font_path = ROOT / "assets/fonts/NotoSans-Regular.ttf"
@@ -515,11 +532,17 @@ class ProjectValidationTests(unittest.TestCase):
 
     def test_schema_two_panel_record_clears_migration_issue(self):
         self.add_panel_files()
+        canonical_clean = normalize_panel(
+            self.project, "p01-01", "panels/raw/p01-01.png",
+            (736, 1136), "exact",
+        )
         record = valid_panel_record_v2()
         raw = self.project / record["bindings"]["raw_path"]
-        clean = self.project / record["bindings"]["clean_path"]
+        clean = canonical_clean
+        normalization = self.project / record["bindings"]["normalization_path"]
         record["bindings"]["raw_sha256"] = sha256_file(raw)
         record["bindings"]["clean_sha256"] = sha256_file(clean)
+        record["bindings"]["normalization_sha256"] = sha256_file(normalization)
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
 
         issues = validate_project(self.project, "panels")

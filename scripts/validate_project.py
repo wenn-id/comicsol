@@ -850,6 +850,114 @@ def _read_canonical_json(
     return data
 
 
+def validate_panel_provenance(
+    project_dir: Path,
+    record: dict[str, object],
+) -> tuple[ValidationIssue, ...]:
+    """Recompute schema-2.0 panel bindings and reject stale provenance."""
+    panel_id = record.get("subject_id")
+    record_path = f"qa/panels/{panel_id if isinstance(panel_id, str) else 'unknown'}.json"
+    issues: list[ValidationIssue] = []
+    bindings = record.get("bindings")
+
+    def stale(field: str, detail: str) -> None:
+        _add(
+            issues,
+            record_path,
+            f"bindings.{field}",
+            f"quality-record-stale: {detail}",
+        )
+
+    if not isinstance(bindings, dict):
+        stale("bindings", "bindings object is missing")
+        return tuple(_sorted(issues))
+
+    required = {
+        "raw_path", "raw_sha256", "raw_width", "raw_height",
+        "clean_path", "clean_sha256", "clean_width", "clean_height",
+        "normalization_path", "normalization_sha256",
+    }
+    for field in sorted(required - set(bindings)):
+        stale(field, "required provenance binding is missing")
+
+    resolved: dict[str, Path] = {}
+    for prefix in ("raw", "clean", "normalization"):
+        path_field = f"{prefix}_path"
+        value = bindings.get(path_field)
+        if not isinstance(value, str):
+            continue
+        try:
+            path = contained_project_path(project_dir, value, must_exist=True)
+        except (OSError, ValueError):
+            stale(path_field, "bound artifact is missing or outside the project")
+            continue
+        if not path.is_file():
+            stale(path_field, "bound artifact is not a regular file")
+            continue
+        resolved[prefix] = path
+        digest_field = f"{prefix}_sha256"
+        expected = bindings.get(digest_field)
+        if not isinstance(expected, str) or SHA256_PATTERN.fullmatch(expected) is None:
+            stale(digest_field, "bound SHA-256 is invalid")
+        elif sha256_file(path) != expected:
+            stale(digest_field, "bound SHA-256 does not match current bytes")
+
+    for prefix in ("raw", "clean"):
+        path = resolved.get(prefix)
+        if path is None:
+            continue
+        try:
+            with Image.open(path) as image:
+                image.load()
+                actual_size = image.size
+        except (OSError, SyntaxError, UnidentifiedImageError, Image.DecompressionBombError):
+            stale(f"{prefix}_path", "bound raster is unreadable")
+            continue
+        for axis, actual in zip(("width", "height"), actual_size):
+            field = f"{prefix}_{axis}"
+            if field in bindings and bindings.get(field) != actual:
+                stale(field, f"recorded {axis} does not match current raster")
+
+    normalization_path = resolved.get("normalization")
+    if normalization_path is not None:
+        try:
+            normalization = json.loads(normalization_path.read_text("utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            stale("normalization_path", "normalization record is unreadable")
+        else:
+            source = normalization.get("source")
+            clean = normalization.get("clean")
+            if not isinstance(source, dict) or not isinstance(clean, dict):
+                stale("normalization_path", "normalization record structure is invalid")
+            else:
+                for field, normalized_value in (
+                    ("raw_path", source.get("path")),
+                    ("raw_sha256", source.get("sha256")),
+                    ("clean_path", clean.get("path")),
+                    ("clean_sha256", clean.get("sha256")),
+                ):
+                    if bindings.get(field) != normalized_value:
+                        stale(field, "binding disagrees with normalization record")
+                for prefix, size in (
+                    ("raw", source.get("size")),
+                    ("clean", clean.get("size")),
+                ):
+                    if not isinstance(size, list) or len(size) != 2:
+                        stale(
+                            "normalization_path",
+                            f"normalization {prefix} size is invalid",
+                        )
+                        continue
+                    for axis, actual in zip(("width", "height"), size):
+                        field = f"{prefix}_{axis}"
+                        if field in bindings and bindings.get(field) != actual:
+                            stale(
+                                field,
+                                "binding disagrees with normalization record",
+                            )
+    return tuple(_sorted(issues))
+
+
 def _load_artifact(
     project_dir: Path,
     relative_path: str,
@@ -1024,6 +1132,8 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                     "quality-migration-required",
                     "schema 1.0 quality record remains readable but must be reviewed as schema 2.0",
                 )
+            else:
+                issues.extend(validate_panel_provenance(project_dir, record))
             if stage in {"all", "final", "export-ready"}:
                 checks = record.get("checks")
                 has_error_failure = isinstance(checks, list) and any(

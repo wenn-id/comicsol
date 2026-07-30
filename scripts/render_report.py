@@ -204,6 +204,57 @@ def _panel_table(records: list[dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
+def _normalization_table(
+    project_dir: Path,
+    records: list[dict[str, object]],
+) -> str:
+    headings = ("Panel", "Mode", "Source", "Target")
+    lines = [
+        "| " + " | ".join(headings) + " |",
+        "| " + " | ".join("---" for _ in headings) + " |",
+    ]
+    for record in records:
+        panel_id = _panel_id(record) or "unknown"
+        bindings = record.get("bindings")
+        relative = (
+            bindings.get("normalization_path")
+            if isinstance(bindings, dict)
+            else None
+        )
+        path = _contained_or_none(project_dir, relative)
+        mode = source_size = target_size = "unavailable"
+        if path is not None and path.is_file():
+            try:
+                normalization = read_json(path)
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+                normalization = {}
+            source = normalization.get("source")
+            operation = normalization.get("operation")
+            target = normalization.get("target_size")
+            if isinstance(operation, dict) and isinstance(operation.get("mode"), str):
+                mode = operation["mode"]
+            source_value = source.get("size") if isinstance(source, dict) else None
+            if (
+                isinstance(source_value, list)
+                and len(source_value) == 2
+                and all(isinstance(value, int) for value in source_value)
+            ):
+                source_size = f"{source_value[0]}×{source_value[1]}"
+            if (
+                isinstance(target, list)
+                and len(target) == 2
+                and all(isinstance(value, int) for value in target)
+            ):
+                target_size = f"{target[0]}×{target[1]}"
+        lines.append(
+            "| " + " | ".join(
+                _escape_table(value)
+                for value in (panel_id, mode, source_size, target_size)
+            ) + " |"
+        )
+    return "\n".join(lines)
+
+
 def _warnings(
     manifest: dict[str, object],
     records: list[dict[str, object]],
@@ -366,7 +417,7 @@ def _resume(project_dir: Path) -> str:
 
 
 def render_report(project_dir: Path, output_path: Path | None = None) -> Path:
-    """Render all seven QA sections and atomically publish UTF-8 Markdown."""
+    """Render structured QA sections and atomically publish UTF-8 Markdown."""
     project_dir = Path(project_dir)
     manifest = read_json(project_dir / "project.json")
     records = _load_records(project_dir)
@@ -377,6 +428,7 @@ def render_report(project_dir: Path, output_path: Path | None = None) -> Path:
         "{{CAPABILITY}}": _capability(manifest),
         "{{COUNTS}}": _counts(summary),
         "{{PANEL_TABLE}}": _panel_table(records),
+        "{{NORMALIZATION_TABLE}}": _normalization_table(project_dir, records),
         "{{WARNINGS}}": _warnings(manifest, records),
         "{{INTEGRITY}}": _integrity(project_dir, manifest, records),
         "{{RESUME}}": _resume(project_dir),

@@ -14,6 +14,7 @@ class DistributionContractTests(unittest.TestCase):
     def test_required_wheel_members_cover_runtime_and_skill(self):
         self.assertIn("comic_sol_product/engine/comic_sol.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/quality_records.py", REQUIRED_WHEEL_MEMBERS)
+        self.assertIn("comic_sol_product/engine/normalize_panels.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/assets/fonts/ComicNeue-Regular.ttf", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/templates/manifest.json", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/skill/SKILL.md", REQUIRED_WHEEL_MEMBERS)

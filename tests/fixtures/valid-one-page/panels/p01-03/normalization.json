@@ -1,0 +1,44 @@
+{
+  "clean": {
+    "mode": "RGB",
+    "path": "panels/p01-03/clean.png",
+    "sha256": "bf362c00eb30736708e274848d29278d992035d02a4de32887dd60615bdd843b",
+    "size": [
+      720,
+      1064
+    ]
+  },
+  "implementation_version": "1",
+  "operation": {
+    "crop_box": null,
+    "mode": "exact",
+    "paste_origin": [
+      0,
+      0
+    ],
+    "resized_size": [
+      720,
+      1064
+    ]
+  },
+  "panel_id": "p01-03",
+  "schema_version": "1.0",
+  "source": {
+    "encoded_size": [
+      720,
+      1064
+    ],
+    "exif_orientation": 1,
+    "format": "PNG",
+    "path": "panels/raw/p01-03.png",
+    "sha256": "bf362c00eb30736708e274848d29278d992035d02a4de32887dd60615bdd843b",
+    "size": [
+      720,
+      1064
+    ]
+  },
+  "target_size": [
+    720,
+    1064
+  ]
+}

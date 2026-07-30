@@ -1,0 +1,44 @@
+{
+  "clean": {
+    "mode": "RGB",
+    "path": "panels/p01-01/clean.png",
+    "sha256": "22d1aa0e264f4e8652ca069e4bb238677769b2e07de7e8b5f8681846aa135618",
+    "size": [
+      736,
+      588
+    ]
+  },
+  "implementation_version": "1",
+  "operation": {
+    "crop_box": null,
+    "mode": "exact",
+    "paste_origin": [
+      0,
+      0
+    ],
+    "resized_size": [
+      736,
+      588
+    ]
+  },
+  "panel_id": "p01-01",
+  "schema_version": "1.0",
+  "source": {
+    "encoded_size": [
+      736,
+      588
+    ],
+    "exif_orientation": 1,
+    "format": "PNG",
+    "path": "panels/raw/p01-01.png",
+    "sha256": "22d1aa0e264f4e8652ca069e4bb238677769b2e07de7e8b5f8681846aa135618",
+    "size": [
+      736,
+      588
+    ]
+  },
+  "target_size": [
+    736,
+    588
+  ]
+}

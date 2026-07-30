@@ -239,6 +239,19 @@ class ReportFixtureIntegrationTests(unittest.TestCase):
             shutil.copytree(ROOT / "tests/fixtures/valid-one-page", project)
             self.assertIn("No unresolved warnings", render_report(project).read_text("utf-8"))
 
+    def test_report_discloses_normalization_without_absolute_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            shutil.copytree(ROOT / "tests/fixtures/valid-one-page", project)
+            text = render_report(project).read_text("utf-8")
+
+            self.assertIn("## Panel normalization", text)
+            self.assertIn("| p01-01 | exact | 736×588 | 736×588 |", text)
+            self.assertIn("| p01-02 | exact | 720×1064 | 720×1064 |", text)
+            self.assertNotIn(str(project), text)
+            self.assertNotIn(str(Path.home()), text)
+            self.assertNotIn("prompts/panels", text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,9 +1,15 @@
 {
   "bindings": {
-    "clean_path": "panels/clean/p02-01.png",
+    "clean_height": 779,
+    "clean_path": "panels/p02-01/clean.png",
     "clean_sha256": "071bc3933f0459c0d5286d4687e9ae7ba0804e6be97f9bc07cf30133e8f4e0da",
+    "clean_width": 1024,
+    "normalization_path": "panels/p02-01/normalization.json",
+    "normalization_sha256": "c21151a89b4ebd2950175655b01715c53245ee1167ad0b0f8bff72e203877241",
+    "raw_height": 779,
     "raw_path": "panels/raw/p02-01.png",
-    "raw_sha256": "071bc3933f0459c0d5286d4687e9ae7ba0804e6be97f9bc07cf30133e8f4e0da"
+    "raw_sha256": "071bc3933f0459c0d5286d4687e9ae7ba0804e6be97f9bc07cf30133e8f4e0da",
+    "raw_width": 1024
   },
   "checks": [
     {

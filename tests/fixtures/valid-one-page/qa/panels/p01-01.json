@@ -1,9 +1,15 @@
 {
   "bindings": {
-    "clean_path": "panels/clean/p01-01.png",
+    "clean_height": 588,
+    "clean_path": "panels/p01-01/clean.png",
     "clean_sha256": "22d1aa0e264f4e8652ca069e4bb238677769b2e07de7e8b5f8681846aa135618",
+    "clean_width": 736,
+    "normalization_path": "panels/p01-01/normalization.json",
+    "normalization_sha256": "adaa2894106419865794442b53c77a3e9e923665c35d61d018345713d78ee88d",
+    "raw_height": 588,
     "raw_path": "panels/raw/p01-01.png",
-    "raw_sha256": "22d1aa0e264f4e8652ca069e4bb238677769b2e07de7e8b5f8681846aa135618"
+    "raw_sha256": "22d1aa0e264f4e8652ca069e4bb238677769b2e07de7e8b5f8681846aa135618",
+    "raw_width": 736
   },
   "checks": [
     {

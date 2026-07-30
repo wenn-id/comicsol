@@ -1,9 +1,15 @@
 {
   "bindings": {
-    "clean_path": "panels/clean/panel-id.png",
+    "clean_height": 1136,
+    "clean_path": "panels/panel-id/clean.png",
     "clean_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "clean_width": 736,
+    "normalization_path": "panels/panel-id/normalization.json",
+    "normalization_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "raw_height": 1136,
     "raw_path": "panels/raw/panel-id.png",
-    "raw_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    "raw_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "raw_width": 736
   },
   "checks": [
     {

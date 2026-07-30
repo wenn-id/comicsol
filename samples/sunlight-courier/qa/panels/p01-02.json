@@ -1,9 +1,15 @@
 {
   "bindings": {
-    "clean_path": "panels/clean/p01-02.png",
+    "clean_height": 779,
+    "clean_path": "panels/p01-02/clean.png",
     "clean_sha256": "4be7108dac24c6084ec3c928197c14a54ef814d1e583123d03a9475b326a6ed6",
+    "clean_width": 1024,
+    "normalization_path": "panels/p01-02/normalization.json",
+    "normalization_sha256": "e1b7bb815dab6d06aa0cf8a2ba115f7f1439def771fe57474398b65ab14eb082",
+    "raw_height": 779,
     "raw_path": "panels/raw/p01-02.png",
-    "raw_sha256": "4be7108dac24c6084ec3c928197c14a54ef814d1e583123d03a9475b326a6ed6"
+    "raw_sha256": "4be7108dac24c6084ec3c928197c14a54ef814d1e583123d03a9475b326a6ed6",
+    "raw_width": 1024
   },
   "checks": [
     {

@@ -25,6 +25,7 @@ from validate_project import (  # noqa: E402
     require_valid_project,
     validate_project,
 )
+from normalize_panels import normalize_panel  # noqa: E402
 
 from test_validation import (  # noqa: E402
     valid_characters,
@@ -73,9 +74,16 @@ class FinalArtifactTests(unittest.TestCase):
         clean = self.project / "panels/clean/p01-01.png"
         Image.new("RGB", (736, 1136), (20, 30, 40)).save(raw)
         Image.new("RGB", (736, 1136), (20, 30, 40)).save(clean)
+        canonical_clean = normalize_panel(
+            self.project, "p01-01", "panels/raw/p01-01.png",
+            (736, 1136), "exact",
+        )
         record = valid_panel_record_v2()
         record["bindings"]["raw_sha256"] = sha256_file(raw)
-        record["bindings"]["clean_sha256"] = sha256_file(clean)
+        record["bindings"]["clean_sha256"] = sha256_file(canonical_clean)
+        record["bindings"]["normalization_sha256"] = sha256_file(
+            self.project / "panels/p01-01/normalization.json"
+        )
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
 
     def _add_lettered_page_qas(self):
@@ -244,9 +252,16 @@ class GuardedOperationTests(unittest.TestCase):
         clean = self.project / "panels/clean/p01-01.png"
         Image.new("RGB", (736, 1136), (20, 30, 40)).save(raw)
         Image.new("RGB", (736, 1136), (20, 30, 40)).save(clean)
+        canonical_clean = normalize_panel(
+            self.project, "p01-01", "panels/raw/p01-01.png",
+            (736, 1136), "exact",
+        )
         record = valid_panel_record_v2()
         record["bindings"]["raw_sha256"] = sha256_file(raw)
-        record["bindings"]["clean_sha256"] = sha256_file(clean)
+        record["bindings"]["clean_sha256"] = sha256_file(canonical_clean)
+        record["bindings"]["normalization_sha256"] = sha256_file(
+            self.project / "panels/p01-01/normalization.json"
+        )
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
 
     def _add_lettered_page_qas(self):
