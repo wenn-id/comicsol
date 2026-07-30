@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.0.0rc2 — 2026-07-30
+
+Comic Quality release candidate.
+
+### Added
+
+- Deterministic panel normalization with format, orientation, dimension, and SHA-256 provenance.
+- Typography preflight and transactional lettering geometry.
+- Immutable layout registry with canonical `four-grid` composition and schema 2.0 page QA.
+- Full-content PDF verification bound to ordered source pages and page-QA hashes.
+- Local-only deterministic quality matrix covering continuity, layouts, text, image formats, typography, retry/warning/failure outcomes, and interrupted resume.
+- Explicit deterministic versus retained live-visual evidence disclosure in QA reports.
+
+### Security and limitations
+
+- Linux, macOS, and Windows x86_64 artifacts remain **unsigned** and are not notarized.
+- Every native bundle includes SHA-256 checksums and a CycloneDX SBOM.
+- Deterministic evidence proves mechanics only; it does not claim live visual quality.
+- Provider credentials and network provider SDKs remain outside the base package.
+
 ## 2.0.0rc1 — 2026-07-29
 
 First Native Distribution release candidate.

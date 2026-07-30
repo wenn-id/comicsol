@@ -3,7 +3,7 @@ name: Native Release
 on:
   workflow_dispatch:
   push:
-    tags: [ 'v2.0.0rc1' ]
+    tags: [ 'v2.0.0rc2' ]
 
 permissions:
   contents: read
@@ -54,9 +54,9 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
       - name: Build OCI image
-        run: docker build -t comic-sol:2.0.0rc1 .
+        run: docker build -t comic-sol:2.0.0rc2 .
       - name: Smoke OCI image
-        run: docker run --rm --entrypoint comic-sol comic-sol:2.0.0rc1 doctor --output-root /data/doctor
+        run: docker run --rm --entrypoint comic-sol comic-sol:2.0.0rc2 doctor --output-root /data/doctor
 
   source:
     runs-on: ubuntu-latest
@@ -82,7 +82,7 @@ jobs:
   publish:
     needs: [native, container, source]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/tags/v2.0.0rc1'
+    if: github.ref == 'refs/tags/v2.0.0rc2'
     permissions:
       contents: write
     env:
@@ -108,7 +108,7 @@ jobs:
           records = []
           for platform in ('linux', 'macos', 'windows'):
               bundle = root / f'comic-sol-{platform}-x86_64'
-              verify_release_directory(bundle, ReleaseIdentity('2.0.0rc1', platform, 'x86_64'))
+              verify_release_directory(bundle, ReleaseIdentity('2.0.0rc2', platform, 'x86_64'))
               for path in sorted(bundle.iterdir()):
                   if path.name == 'SHA256SUMS':
                       continue
@@ -121,6 +121,6 @@ jobs:
       - name: Publish immutable prerelease assets
         shell: bash
         run: |
-          gh release create v2.0.0rc1 --repo "${GITHUB_REPOSITORY}" --verify-tag --prerelease --title 'Comic Sol v2.0.0rc1' --notes-file docs/releases/v2.0.0rc1.md
-          find bundles -type f ! -name SHA256SUMS -print0 | xargs -0 gh release upload v2.0.0rc1 --repo "${GITHUB_REPOSITORY}" --clobber
-          gh release upload v2.0.0rc1 bundles/SHA256SUMS --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release create v2.0.0rc2 --repo "${GITHUB_REPOSITORY}" --verify-tag --prerelease --title 'Comic Sol v2.0.0rc2' --notes-file docs/releases/v2.0.0rc2.md
+          find bundles -type f ! -name SHA256SUMS -print0 | xargs -0 gh release upload v2.0.0rc2 --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release upload v2.0.0rc2 bundles/SHA256SUMS --repo "${GITHUB_REPOSITORY}" --clobber

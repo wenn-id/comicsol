@@ -24,25 +24,25 @@ from comic_sol_product.portable import (
 class NativeDistributionContractTests(unittest.TestCase):
     def setUp(self):
         self.identity = ReleaseIdentity(
-            version="2.0.0rc1", platform="linux", architecture="x86_64"
+            version="2.0.0rc2", platform="linux", architecture="x86_64"
         )
 
     def test_identity_and_artifact_names_are_canonical(self):
-        self.assertEqual("v2.0.0rc1", self.identity.tag)
+        self.assertEqual("v2.0.0rc2", self.identity.tag)
         self.assertEqual(
-            "comic-sol-2.0.0rc1-linux-x86_64.tar.gz",
+            "comic-sol-2.0.0rc2-linux-x86_64.tar.gz",
             artifact_name(self.identity, "tar.gz"),
         )
         with self.assertRaises(ValueError):
-            ReleaseIdentity("2.0.0-rc1", "linux", "x86_64")
+            ReleaseIdentity("2.0.0-rc2", "linux", "x86_64")
         with self.assertRaises(ValueError):
-            ReleaseIdentity("2.0.0rc1", "Linux", "amd64")
+            ReleaseIdentity("2.0.0rc2", "Linux", "amd64")
 
     def test_metadata_checksum_and_sbom_are_deterministic(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             release = Path(temporary_directory)
             first = release / artifact_name(self.identity, "tar.gz")
-            second = release / "comic-sol-2.0.0rc1-linux-x86_64.sbom.json"
+            second = release / "comic-sol-2.0.0rc2-linux-x86_64.sbom.json"
             first.write_bytes(b"portable-runtime")
             second.write_text("{}\n", encoding="utf-8")
 
@@ -64,7 +64,7 @@ class NativeDistributionContractTests(unittest.TestCase):
             self.assertEqual("CycloneDX", sbom_record["bomFormat"])
             self.assertEqual("1.6", sbom_record["specVersion"])
             self.assertEqual("comic-sol", sbom_record["metadata"]["component"]["name"])
-            self.assertEqual("2.0.0rc1", sbom_record["metadata"]["component"]["version"])
+            self.assertEqual("2.0.0rc2", sbom_record["metadata"]["component"]["version"])
 
     def test_verifier_rejects_missing_or_tampered_artifact(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -75,7 +75,7 @@ class NativeDistributionContractTests(unittest.TestCase):
             write_sbom(release, self.identity)
             write_checksums(
                 release,
-                [artifact, release / "comic-sol-2.0.0rc1-linux-x86_64.sbom.json"],
+                [artifact, release / "comic-sol-2.0.0rc2-linux-x86_64.sbom.json"],
             )
             verify_release_directory(release, self.identity)
 
@@ -155,7 +155,7 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("/data", compose)
 
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("tags: [ 'v2.0.0rc1' ]", workflow)
+        self.assertIn("tags: [ 'v2.0.0rc2' ]", workflow)
         for runner in ("ubuntu-latest", "macos-latest", "windows-latest"):
             self.assertIn(runner, workflow)
         self.assertIn("scripts/build_portable.py", workflow)
@@ -169,11 +169,30 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("installers/install.sh", workflow)
         self.assertIn("installers/install.ps1", workflow)
         self.assertIn("prerelease: true", workflow)
-        self.assertIn("if: github.ref == 'refs/tags/v2.0.0rc1'", workflow)
+        self.assertIn("if: github.ref == 'refs/tags/v2.0.0rc2'", workflow)
+        self.assertIn("comic-sol:2.0.0rc2", workflow)
+        self.assertIn("gh release create v2.0.0rc2", workflow)
+        self.assertNotIn("refs/tags/v2.0.0rc1", workflow)
         for line in workflow.splitlines():
             if "uses:" in line:
                 reference = line.split("uses:", 1)[1].strip().split()[0]
                 self.assertRegex(reference, r"^[^@]+@[0-9a-f]{40}$")
+
+    def test_rc2_version_sources_and_quality_runtime_are_consistent(self):
+        root = Path(__file__).resolve().parents[1]
+        pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+        package = (root / "comic_sol_product/__init__.py").read_text(encoding="utf-8")
+        distribution = (root / "comic_sol_product/distribution.py").read_text(encoding="utf-8")
+        assembler = (root / "scripts/assemble_release.py").read_text(encoding="utf-8")
+        compose = (root / "compose.yaml").read_text(encoding="utf-8")
+        release_contract = (root / "comic_sol_product/release.py").read_text(encoding="utf-8")
+        for source in (pyproject, package, distribution, assembler, compose):
+            self.assertIn("2.0.0rc2", source)
+        for module in (
+            "normalize_panels.py", "typography.py", "layouts.py", "page_quality.py",
+            "pdf_quality.py", "quality_sample.py",
+        ):
+            self.assertIn(module, release_contract)
 
 
 if __name__ == "__main__":
