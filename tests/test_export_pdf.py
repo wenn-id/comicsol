@@ -1,5 +1,6 @@
 import hashlib
 import io
+import random
 import re
 import shutil
 import sys
@@ -8,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -100,6 +101,21 @@ class PdfExportTests(unittest.TestCase):
             effective_y = 2400 * 72 / float(height)
             self.assertAlmostEqual(150.0, effective_x, delta=0.2)
             self.assertAlmostEqual(150.0, effective_y, delta=0.2)
+
+    def test_detailed_page_survives_pdf_fidelity_gate(self):
+        noise = Image.frombytes(
+            "L", (320, 480), random.Random(0).randbytes(320 * 480)
+        )
+        page = ImageOps.colorize(
+            noise.resize((1600, 2400), Image.Resampling.LANCZOS),
+            (4, 12, 28),
+            (230, 150, 70),
+        )
+        noise.close()
+        page.save(self.project / "pages/page-001.png")
+        page.close()
+
+        self.assertTrue(export_pdf(self.project).is_file())
 
     def test_custom_output_path_and_cli_are_supported(self):
         custom = self.project / "deliverables/custom.pdf"

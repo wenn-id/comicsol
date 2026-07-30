@@ -136,6 +136,7 @@ def _render_verified_payload(
             producer="Comic Sol 1.0",
             creationDate=False,
             modDate=False,
+            quality=95,
         )
         # Windows rejects fsync on a read-only descriptor.
         with temporary_path.open("rb+") as handle:
