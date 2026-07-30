@@ -9,11 +9,11 @@ class ReleaseDocumentationTests(unittest.TestCase):
         cls.readme = (cls.root / "README.md").read_text(encoding="utf-8")
         cls.install = (cls.root / "docs/install.md").read_text(encoding="utf-8")
         cls.changelog = (cls.root / "CHANGELOG.md").read_text(encoding="utf-8")
-        cls.notes = (cls.root / "docs/releases/v2.0.0rc2.md").read_text(encoding="utf-8")
+        cls.notes = (cls.root / "docs/releases/v2.0.0rc3.md").read_text(encoding="utf-8")
 
     def test_readme_links_native_install_and_release_security(self):
         self.assertIn("docs/install.md", self.readme)
-        self.assertIn("v2.0.0rc2", self.readme)
+        self.assertIn("v2.0.0rc3", self.readme)
         self.assertIn("SHA256SUMS", self.readme)
         self.assertIn("unsigned", self.readme.lower())
         self.assertIn("docker compose", self.install)
@@ -42,7 +42,7 @@ class ReleaseDocumentationTests(unittest.TestCase):
 
     def test_release_notes_and_changelog_identify_rc_limitations(self):
         for document in (self.changelog, self.notes):
-            self.assertIn("2.0.0rc2", document)
+            self.assertIn("2.0.0rc3", document)
             self.assertIn("unsigned", document.lower())
             self.assertIn("Linux", document)
             self.assertIn("macOS", document)

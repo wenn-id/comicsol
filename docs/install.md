@@ -1,6 +1,6 @@
-# Install Comic Sol v2.0.0rc2
+# Install Comic Sol v2.0.0rc3
 
-Comic Sol `v2.0.0rc2` is a prerelease distributed as native portable archives for Linux, macOS, and Windows, plus a Python wheel/source archive and an OCI image definition. Native archives bundle Python 3.11, Pillow, MCP, fonts, templates, the Skill, and references; no system Python is required after extraction.
+Comic Sol `v2.0.0rc3` is a prerelease distributed as native portable archives for Linux, macOS, and Windows, plus a Python wheel/source archive and an OCI image definition. Native archives bundle Python 3.11, Pillow, MCP, fonts, templates, the Skill, and references; no system Python is required after extraction.
 
 ## Security status
 
@@ -11,29 +11,29 @@ This release is **unsigned**. It is not Authenticode-signed, notarized, or GPG-s
 Download the matching ZIP and copy `installers/install.sh` from the same release or repository checkout. Read it before execution, then verify and install:
 
 ```bash
-sha256sum comic-sol-2.0.0rc2-linux-x86_64.zip
+sha256sum comic-sol-2.0.0rc3-linux-x86_64.zip
 # Compare the digest with SHA256SUMS.
 sh installers/install.sh \
-  --archive ./comic-sol-2.0.0rc2-linux-x86_64.zip \
+  --archive ./comic-sol-2.0.0rc3-linux-x86_64.zip \
   --sha256 <digest-from-SHA256SUMS>
 
 $HOME/.local/share/comic-sol/bin/comic-sol --version
 $HOME/.local/share/comic-sol/bin/comic-sol doctor
 ```
 
-For macOS, use `comic-sol-2.0.0rc2-macos-x86_64.zip`. The default installation root is `$HOME/.local/share/comic-sol`. Override it with `--install-root PATH` or `COMIC_SOL_INSTALL_ROOT`.
+For macOS, use `comic-sol-2.0.0rc3-macos-x86_64.zip`. The default installation root is `$HOME/.local/share/comic-sol`. Override it with `--install-root PATH` or `COMIC_SOL_INSTALL_ROOT`.
 
 The POSIX installer requires `sha256sum`, `unzip`, and standard POSIX utilities. Native binaries are unsigned, so macOS Gatekeeper may require an explicit local approval for this prerelease.
 
 ## Windows PowerShell
 
-Download `comic-sol-2.0.0rc2-windows-x86_64.zip` and copy `installers/install.ps1` from the same release or repository checkout, then run:
+Download `comic-sol-2.0.0rc3-windows-x86_64.zip` and copy `installers/install.ps1` from the same release or repository checkout, then run:
 
 ```powershell
-(Get-FileHash .\comic-sol-2.0.0rc2-windows-x86_64.zip -Algorithm SHA256).Hash
+(Get-FileHash .\comic-sol-2.0.0rc3-windows-x86_64.zip -Algorithm SHA256).Hash
 # Compare the digest with SHA256SUMS.
 .\installers\install.ps1 `
-  -Archive .\comic-sol-2.0.0rc2-windows-x86_64.zip `
+  -Archive .\comic-sol-2.0.0rc3-windows-x86_64.zip `
   -SHA256 <digest-from-SHA256SUMS>
 
 & "$HOME\AppData\Local\ComicSol\bin\comic-sol.exe" --version
@@ -80,8 +80,8 @@ Uninstall removes only the user-local runtime installation. Comic projects are p
 Build and run the non-root image from a checkout:
 
 ```bash
-docker build -t comic-sol:2.0.0rc2 .
-docker run --rm --entrypoint comic-sol comic-sol:2.0.0rc2 doctor --output-root /tmp/comic-sol-doctor
+docker build -t comic-sol:2.0.0rc3 .
+docker run --rm --entrypoint comic-sol comic-sol:2.0.0rc3 doctor --output-root /tmp/comic-sol-doctor
 docker compose up
 ```
 
@@ -91,7 +91,7 @@ The image runs as `comic-sol`, uses `/data` for persistent projects, and exposes
 
 Each platform bundle contains:
 
-- `comic-sol-2.0.0rc2-<platform>-x86_64.zip`
+- `comic-sol-2.0.0rc3-<platform>-x86_64.zip`
 - platform metadata declaring the unsigned state
 - a CycloneDX SBOM
 - `SHA256SUMS`

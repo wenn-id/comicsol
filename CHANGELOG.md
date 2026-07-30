@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.0.0rc3 — 2026-07-30
+
+Focused PDF fidelity prerelease.
+
+### Fixed
+
+- Encode composed page rasters at JPEG quality 95 before deterministic PDF publication.
+- Preserve detailed, high-frequency comic artwork under the unchanged full-content verification thresholds.
+- Add a deterministic regression reproducing the live Codex App dogfood failure.
+
+### Distribution notes
+
+- Linux, macOS, and Windows x86_64 archives remain available with wheel, sdist, installers, checksums, and CycloneDX SBOMs.
+- Native artifacts remain **unsigned**; verify downloads against `SHA256SUMS`.
+
 ## 2.0.0rc2 — 2026-07-30
 
 Comic Quality release candidate.

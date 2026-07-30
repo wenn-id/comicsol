@@ -29,7 +29,7 @@ def main() -> int:
     parser.add_argument("--architecture", default="x86_64", choices=("x86_64", "arm64"))
     args = parser.parse_args()
 
-    identity = ReleaseIdentity("2.0.0rc2", args.platform, args.architecture)
+    identity = ReleaseIdentity("2.0.0rc3", args.platform, args.architecture)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     archive = output / artifact_name(identity, "zip")

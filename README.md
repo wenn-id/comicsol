@@ -50,9 +50,9 @@ The CLI currently exposes `doctor`, `init`, `status`, `validate`, `resume`,
 `finalize`, and the optional `mcp` launcher. Machine-readable responses use one
 stable envelope containing `ok`, `command`, `data`, and `error`.
 
-## Native Distribution (`v2.0.0rc2`)
+## Native Distribution (`v2.0.0rc3`)
 
-The `v2.0.0rc2` prerelease provides bundled portable archives for Linux, macOS,
+The `v2.0.0rc3` prerelease provides bundled portable archives for Linux, macOS,
 and Windows x86_64, plus transactional user-local installers and a non-root OCI
 image. Native archives include Python, Pillow, MCP, fonts, templates, the Skill,
 and references, so installed execution does not require a system Python.
