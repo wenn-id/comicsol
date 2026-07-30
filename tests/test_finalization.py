@@ -29,7 +29,7 @@ from validate_project import (  # noqa: E402
 from test_validation import (  # noqa: E402
     valid_characters,
     valid_manifest,
-    valid_panel_record,
+    valid_panel_record_v2,
     valid_story,
     valid_storyboard,
 )
@@ -73,8 +73,9 @@ class FinalArtifactTests(unittest.TestCase):
         clean = self.project / "panels/clean/p01-01.png"
         Image.new("RGB", (736, 1136), (20, 30, 40)).save(raw)
         Image.new("RGB", (736, 1136), (20, 30, 40)).save(clean)
-        record = valid_panel_record()
-        record["raw_sha256"] = sha256_file(raw)
+        record = valid_panel_record_v2()
+        record["bindings"]["raw_sha256"] = sha256_file(raw)
+        record["bindings"]["clean_sha256"] = sha256_file(clean)
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
 
     def _add_lettered_page_qas(self):
@@ -243,8 +244,9 @@ class GuardedOperationTests(unittest.TestCase):
         clean = self.project / "panels/clean/p01-01.png"
         Image.new("RGB", (736, 1136), (20, 30, 40)).save(raw)
         Image.new("RGB", (736, 1136), (20, 30, 40)).save(clean)
-        record = valid_panel_record()
-        record["raw_sha256"] = sha256_file(raw)
+        record = valid_panel_record_v2()
+        record["bindings"]["raw_sha256"] = sha256_file(raw)
+        record["bindings"]["clean_sha256"] = sha256_file(clean)
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
 
     def _add_lettered_page_qas(self):

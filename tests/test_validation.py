@@ -35,6 +35,7 @@ from validate_project import (  # noqa: E402
     validate_story_plan,
     validate_storyboard,
 )
+from quality_records import PANEL_CHECK_IDS, PAGE_CHECK_IDS  # noqa: E402
 
 
 def valid_manifest():
@@ -138,8 +139,38 @@ def valid_panel_record():
     }
 
 
+def valid_panel_record_v2():
+    return {
+        "schema_version": "2.0",
+        "kind": "panel-qa",
+        "subject_id": "p01-01",
+        "bindings": {
+            "raw_path": "panels/raw/p01-01.png",
+            "raw_sha256": "b" * 64,
+            "clean_path": "panels/clean/p01-01.png",
+            "clean_sha256": "c" * 64,
+        },
+        "checks": [{
+            "id": check_id,
+            "result": "pass",
+            "severity": "error",
+            "evidence": f"Observed {check_id} against current panel artifacts",
+            "method": "agent-review",
+            "reviewer": "fixture-reviewer",
+            "regions": [],
+        } for check_id in PANEL_CHECK_IDS],
+        "review": {
+            "method": "agent-review",
+            "reviewer": "fixture-reviewer",
+            "reviewed_at": "2026-07-30T01:00:00Z",
+        },
+        "decision": "accept",
+        "unresolved_warnings": [],
+    }
+
+
 class TemplateContractTests(unittest.TestCase):
-    def test_templates_are_canonical_v1_and_font_is_loadable(self):
+    def test_templates_are_canonical_with_quality_records_at_v2(self):
         names = (
             "manifest.json", "character-bible.json", "story-plan.json",
             "storyboard.json", "panel-record.json",
@@ -148,10 +179,21 @@ class TemplateContractTests(unittest.TestCase):
             raw = (ROOT / "templates" / name).read_bytes()
             self.assertTrue(raw.endswith(b"\n"), name)
             data = json.loads(raw)
-            self.assertEqual("1.0", data["schema_version"])
+            expected_schema = "2.0" if name == "panel-record.json" else "1.0"
+            self.assertEqual(expected_schema, data["schema_version"])
             expected = (json.dumps(data, ensure_ascii=False, indent=2,
                                    sort_keys=True) + "\n").encode("utf-8")
             self.assertEqual(expected, raw, name)
+
+        page_raw = (ROOT / "templates/page-qa.json").read_bytes()
+        page = json.loads(page_raw)
+        self.assertEqual("2.0", page["schema_version"])
+        self.assertEqual("page-qa", page["kind"])
+        self.assertEqual(list(PAGE_CHECK_IDS), [check["id"] for check in page["checks"]])
+        self.assertEqual(
+            (json.dumps(page, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(),
+            page_raw,
+        )
 
         font_path = ROOT / "assets/fonts/NotoSans-Regular.ttf"
         ImageFont.truetype(str(font_path), 42)
@@ -357,6 +399,22 @@ class StrictSchemaValidationTests(unittest.TestCase):
         data.update({"decision": "regenerate", "retry_reason": "warning impairs readability"})
         self.assertEqual([], validate_panel_record(data))
 
+    def test_panel_record_v2_uses_shared_quality_contract(self):
+        self.assertEqual([], validate_panel_record(valid_panel_record_v2()))
+
+        generic = valid_panel_record_v2()
+        for check in generic["checks"]:
+            check["evidence"] = "verified"
+        self.assert_issue(validate_panel_record(generic), "quality-evidence-generic")
+
+        wrong_kind = valid_panel_record_v2()
+        wrong_kind["kind"] = "page-qa"
+        self.assert_issue(validate_panel_record(wrong_kind), "kind")
+
+        private_path = valid_panel_record_v2()
+        private_path["bindings"]["raw_path"] = "/home/private/panel.png"
+        self.assert_issue(validate_panel_record(private_path), "bindings.raw_path")
+
     def test_panel_override_fields_require_a_recorded_visual_warning(self):
         reason = "minor prop drift is acceptable"
         valid = valid_panel_record()
@@ -434,7 +492,15 @@ class ProjectValidationTests(unittest.TestCase):
 
     def test_panel_stage_validates_hash_dimensions_aspect_and_alpha(self):
         self.add_panel_files()
-        self.assertEqual([], validate_project(self.project, "panels"))
+        issues = validate_project(self.project, "panels")
+        self.assertTrue(any(
+            issue.field == "quality-migration-required"
+            and "schema 1.0" in issue.message
+            for issue in issues
+        ), issues)
+        self.assertFalse(any(
+            issue.field != "quality-migration-required" for issue in issues
+        ), issues)
 
         self.add_panel_files(mode="RGBA")
         issues = validate_project(self.project, "panels")
@@ -446,6 +512,18 @@ class ProjectValidationTests(unittest.TestCase):
         issues = validate_project(self.project, "panels")
         self.assertTrue(any("hash" in issue.message for issue in issues), issues)
         self.assertTrue(any("aspect" in issue.message for issue in issues), issues)
+
+    def test_schema_two_panel_record_clears_migration_issue(self):
+        self.add_panel_files()
+        record = valid_panel_record_v2()
+        raw = self.project / record["bindings"]["raw_path"]
+        clean = self.project / record["bindings"]["clean_path"]
+        record["bindings"]["raw_sha256"] = sha256_file(raw)
+        record["bindings"]["clean_sha256"] = sha256_file(clean)
+        atomic_write_json(self.project / "qa/panels/p01-01.json", record)
+
+        issues = validate_project(self.project, "panels")
+        self.assertEqual([], issues)
 
     def test_panel_stage_normalizes_pillow_safety_error_as_validation_issue(self):
         self.add_panel_files()

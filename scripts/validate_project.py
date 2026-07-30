@@ -16,6 +16,7 @@ from typing import Callable, Iterable
 from PIL import Image, UnidentifiedImageError
 
 from project_io import contained_project_path
+from quality_records import PANEL_CHECK_IDS, validate_quality_checks
 
 from comic_sol import (
     ALL_STATUSES,
@@ -612,7 +613,72 @@ def validate_storyboard(
     return _sorted(issues)
 
 
+def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
+    panel_name = data.get("subject_id") if isinstance(data, dict) else "unknown"
+    path = f"qa/panels/{panel_name}.json"
+    issues: list[ValidationIssue] = []
+    fields = {
+        "schema_version", "kind", "subject_id", "bindings", "checks",
+        "review", "decision", "unresolved_warnings",
+    }
+    root = _object(data, fields, fields, issues, path, "")
+    if root is None:
+        return _sorted(issues)
+    if root.get("schema_version") != "2.0":
+        _add(issues, path, "schema_version", "must equal 2.0")
+    if root.get("kind") != "panel-qa":
+        _add(issues, path, "kind", "must equal panel-qa")
+    subject_id = root.get("subject_id")
+    if not isinstance(subject_id, str) or PANEL_ID_PATTERN.fullmatch(subject_id) is None:
+        _add(issues, path, "subject_id", "must match pNN-NN")
+
+    bindings = root.get("bindings")
+    if not isinstance(bindings, dict):
+        _add(issues, path, "bindings", "must be an object")
+    else:
+        for name, value in sorted(bindings.items()):
+            field = f"bindings.{name}"
+            if name.endswith("_path"):
+                _relative_path(value, issues, path, field)
+            elif name.endswith("_sha256"):
+                _sha256(value, issues, path, field)
+            elif name.endswith(("_width", "_height")):
+                _integer(value, 1, 100_000, issues, path, field)
+            elif name.endswith("_sha256s"):
+                values = _string_list(value, issues, path, field)
+                if values is not None:
+                    for index, digest in enumerate(values):
+                        _sha256(digest, issues, path, f"{field}[{index}]")
+            elif not isinstance(value, (str, int, list)) or isinstance(value, bool):
+                _add(issues, path, field, "must be a string, integer, or array")
+
+    checks = root.get("checks")
+    for category in validate_quality_checks(checks, PANEL_CHECK_IDS):
+        _add(issues, path, f"checks.{category}", category)
+
+    review_fields = {"method", "reviewer", "reviewed_at"}
+    review = _object(root.get("review"), review_fields, review_fields, issues, path, "review")
+    if review is not None:
+        _nonempty_string(review.get("method"), issues, path, "review.method")
+        _nonempty_string(review.get("reviewer"), issues, path, "review.reviewer")
+        _timestamp(review.get("reviewed_at"), issues, path, "review.reviewed_at")
+
+    decision = root.get("decision")
+    if decision not in {"accept", "accept-warning", "regenerate"}:
+        _add(issues, path, "decision", "unknown quality decision")
+    unresolved = _string_list(
+        root.get("unresolved_warnings"), issues, path, "unresolved_warnings"
+    )
+    if decision == "accept-warning" and not unresolved:
+        _add(issues, path, "unresolved_warnings", "accepted warnings must be recorded")
+    if decision == "accept" and unresolved:
+        _add(issues, path, "unresolved_warnings", "accepted record cannot have warnings")
+    return _sorted(issues)
+
+
 def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
+    if isinstance(data, dict) and data.get("schema_version") == "2.0":
+        return _validate_panel_record_v2(data)
     panel_name = data.get("panel_id") if isinstance(data, dict) else "unknown"
     path = f"qa/panels/{panel_name}.json"
     issues: list[ValidationIssue] = []
@@ -947,6 +1013,17 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
             if record is None:
                 continue
             issues.extend(validate_panel_record(record))
+            is_quality_v2 = record.get("schema_version") == "2.0"
+            bindings = record.get("bindings") if is_quality_v2 else None
+            if not isinstance(bindings, dict):
+                bindings = {}
+            if not is_quality_v2:
+                _add(
+                    issues,
+                    record_relative,
+                    "quality-migration-required",
+                    "schema 1.0 quality record remains readable but must be reviewed as schema 2.0",
+                )
             if stage in {"all", "final", "export-ready"}:
                 checks = record.get("checks")
                 has_error_failure = isinstance(checks, list) and any(
@@ -972,28 +1049,33 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                         for warning in unresolved
                         if isinstance(warning, str) and warning.strip()
                     )
-            if record.get("panel_id") != panel_id:
-                _add(issues, record_relative, "panel_id", "must match its storyboard panel")
+            record_panel_id = record.get("subject_id") if is_quality_v2 else record.get("panel_id")
+            if record_panel_id != panel_id:
+                id_field = "subject_id" if is_quality_v2 else "panel_id"
+                _add(issues, record_relative, id_field, "must match its storyboard panel")
             rect = panel.get("rect")
             expected_ratio = None
             if isinstance(rect, dict) and isinstance(rect.get("width"), int) and isinstance(rect.get("height"), int) and rect["height"] > 0:
                 expected_ratio = rect["width"] / rect["height"]
+            raw_path = bindings.get("raw_path") if is_quality_v2 else record.get("raw_path")
+            clean_path = bindings.get("clean_path") if is_quality_v2 else record.get("clean_path")
             raw_size = _validate_raster(
-                project_dir, record.get("raw_path"), record_relative, "raw_path",
+                project_dir, raw_path, record_relative,
+                "bindings.raw_path" if is_quality_v2 else "raw_path",
                 issues, expected_ratio,
             )
             _validate_raster(
-                project_dir, record.get("clean_path"), record_relative, "clean_path",
+                project_dir, clean_path, record_relative,
+                "bindings.clean_path" if is_quality_v2 else "clean_path",
                 issues, expected_ratio,
             )
-            if raw_size is not None:
+            if raw_size is not None and not is_quality_v2:
                 dimensions = record.get("dimensions")
                 if isinstance(dimensions, dict) and (
                     dimensions.get("width"), dimensions.get("height")
                 ) != raw_size:
                     _add(issues, record_relative, "dimensions", "must match the raw image")
-            raw_path = record.get("raw_path")
-            raw_hash = record.get("raw_sha256")
+            raw_hash = bindings.get("raw_sha256") if is_quality_v2 else record.get("raw_sha256")
             if isinstance(raw_path, str) and isinstance(raw_hash, str):
                 try:
                     image_path = _contained_project_path(project_dir, raw_path)
@@ -1005,8 +1087,27 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                             project_dir, raw_path, must_exist=True
                         )
                         if sha256_file(image_path) != raw_hash:
-                            _add(issues, record_relative, "raw_sha256", "hash does not match the raw image")
-            prompt_path = record.get("source_prompt_path")
+                            hash_field = "bindings.raw_sha256" if is_quality_v2 else "raw_sha256"
+                            _add(issues, record_relative, hash_field, "hash does not match the raw image")
+            clean_hash = bindings.get("clean_sha256") if is_quality_v2 else None
+            if is_quality_v2 and isinstance(clean_path, str) and isinstance(clean_hash, str):
+                try:
+                    clean_file = _contained_project_path(project_dir, clean_path)
+                except ValueError:
+                    pass
+                else:
+                    if clean_file.is_file() and SHA256_PATTERN.fullmatch(clean_hash):
+                        clean_file = contained_project_path(
+                            project_dir, clean_path, must_exist=True
+                        )
+                        if sha256_file(clean_file) != clean_hash:
+                            _add(
+                                issues,
+                                record_relative,
+                                "bindings.clean_sha256",
+                                "hash does not match the clean image",
+                            )
+            prompt_path = None if is_quality_v2 else record.get("source_prompt_path")
             if isinstance(prompt_path, str):
                 try:
                     prompt_file = _contained_project_path(project_dir, prompt_path)
@@ -1015,7 +1116,7 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                 else:
                     if not prompt_file.is_file():
                         _add(issues, record_relative, "source_prompt_path", "referenced prompt is missing")
-            generation = record.get("generation")
+            generation = None if is_quality_v2 else record.get("generation")
             if isinstance(generation, dict):
                 for reference_index, reference_path in enumerate(generation.get("reference_paths", [])):
                     _validate_raster(

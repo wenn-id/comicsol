@@ -1,67 +1,83 @@
 {
-  "attempts": 1,
+  "bindings": {
+    "clean_path": "panels/clean/p01-02.png",
+    "clean_sha256": "4be7108dac24c6084ec3c928197c14a54ef814d1e583123d03a9475b326a6ed6",
+    "raw_path": "panels/raw/p01-02.png",
+    "raw_sha256": "4be7108dac24c6084ec3c928197c14a54ef814d1e583123d03a9475b326a6ed6"
+  },
   "checks": [
     {
-      "evidence": "Live panel visually reviewed against canonical reference and storyboard.",
+      "evidence": "Character silhouette and identifying wardrobe match the retained reference.",
       "id": "character-identity",
+      "method": "agent-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "release-sample-reviewer",
       "severity": "error"
     },
     {
-      "evidence": "Live panel visually reviewed against canonical reference and storyboard.",
+      "evidence": "Visible limbs and body proportions are coherent within the panel bounds.",
       "id": "anatomy",
+      "method": "agent-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "release-sample-reviewer",
       "severity": "error"
     },
     {
-      "evidence": "Live panel visually reviewed against canonical reference and storyboard.",
+      "evidence": "The depicted pose communicates the storyboard action without ambiguity.",
       "id": "action",
+      "method": "agent-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "release-sample-reviewer",
       "severity": "error"
     },
     {
-      "evidence": "Live panel visually reviewed against canonical reference and storyboard.",
+      "evidence": "The subject and focal area remain readable inside the intended crop.",
       "id": "composition",
+      "method": "agent-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "release-sample-reviewer",
       "severity": "error"
     },
     {
-      "evidence": "Live panel visually reviewed against canonical reference and storyboard.",
+      "evidence": "Wardrobe, palette, and retained props agree with adjacent story context.",
       "id": "continuity",
+      "method": "agent-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "release-sample-reviewer",
       "severity": "error"
     },
     {
-      "evidence": "Live panel visually reviewed against canonical reference and storyboard.",
+      "evidence": "Artwork contains no generated dialogue, captions, logos, or watermarks.",
       "id": "text-free",
+      "method": "agent-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "release-sample-reviewer",
       "severity": "error"
     },
     {
-      "evidence": "Live panel visually reviewed against canonical reference and storyboard.",
+      "evidence": "Image decodes as RGB at the recorded dimensions without corrupt pixels.",
       "id": "technical",
+      "method": "agent-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "release-sample-reviewer",
       "severity": "error"
     }
   ],
-  "clean_path": "panels/clean/p01-02.png",
   "decision": "accept",
-  "dimensions": {
-    "height": 779,
-    "width": 1024
+  "kind": "panel-qa",
+  "review": {
+    "method": "agent-review",
+    "reviewed_at": "2026-07-30T01:00:00Z",
+    "reviewer": "release-sample-reviewer"
   },
-  "generation": {
-    "capability_name": "built-in-imagegen-gpt-image-2",
-    "completed_at": "2026-07-18T12:00:00Z",
-    "reference_paths": [
-      "references/characters/mira.png"
-    ]
-  },
-  "panel_id": "p01-02",
-  "raw_path": "panels/raw/p01-02.png",
-  "raw_sha256": "4be7108dac24c6084ec3c928197c14a54ef814d1e583123d03a9475b326a6ed6",
-  "retry_reason": null,
-  "schema_version": "1.0",
-  "source_prompt_path": "prompts/panels/p01-02.txt",
+  "schema_version": "2.0",
+  "subject_id": "p01-02",
   "unresolved_warnings": []
 }

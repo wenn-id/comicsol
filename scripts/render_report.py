@@ -37,8 +37,19 @@ class QaSummary:
 
 
 def _attempts(record: dict[str, object]) -> int:
-    value = record.get("attempts", 0)
+    bindings = record.get("bindings")
+    value = (
+        bindings.get("attempts", 0)
+        if record.get("schema_version") == "2.0" and isinstance(bindings, dict)
+        else record.get("attempts", 0)
+    )
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _panel_id(record: dict[str, object]) -> str | None:
+    field = "subject_id" if record.get("schema_version") == "2.0" else "panel_id"
+    value = record.get(field)
+    return value if isinstance(value, str) and value else None
 
 
 def _has_error_failure(record: dict[str, object]) -> bool:
@@ -69,7 +80,8 @@ def summarize_qa(
         generation_attempts=sum(_attempts(record) for record in panel_records),
         regenerated_panels=sum(_attempts(record) > 1 for record in panel_records),
         accepted_warnings=sum(
-            record.get("decision") == "accept_with_warnings" for record in panel_records
+            record.get("decision") in {"accept-warning", "accept_with_warnings"}
+            for record in panel_records
         ),
         hard_failures=sum(
             record.get("failure_category") in hard_categories
@@ -93,10 +105,10 @@ def _load_records(project_dir: Path) -> list[dict[str, object]]:
         return records
     for path in panel_dir.glob("*.json"):
         record = read_json(path)
-        if not isinstance(record.get("panel_id"), str):
-            raise ValueError(f"panel record has no panel_id: {path}")
+        if _panel_id(record) is None:
+            raise ValueError(f"panel record has no panel identity: {path}")
         records.append(record)
-    records.sort(key=lambda record: str(record["panel_id"]))
+    records.sort(key=lambda record: _panel_id(record) or "")
     return records
 
 
@@ -185,7 +197,7 @@ def _panel_table(records: list[dict[str, object]]) -> str:
             for check_id in CHECK_IDS if check_id in check_map
         )
         cells = (
-            record.get("panel_id", "unknown"), _attempts(record), decision,
+            _panel_id(record) or "unknown", _attempts(record), decision,
             *results, evidence,
         )
         lines.append("| " + " | ".join(_escape_table(cell) for cell in cells) + " |")
@@ -204,7 +216,7 @@ def _warnings(
             sources.append(source)
 
     for record in records:
-        panel_id = str(record.get("panel_id", "unknown"))
+        panel_id = _panel_id(record) or "unknown"
         values = record.get("unresolved_warnings", [])
         if isinstance(values, list):
             for value in values:

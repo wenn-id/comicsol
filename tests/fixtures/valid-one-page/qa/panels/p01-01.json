@@ -1,67 +1,83 @@
 {
-  "attempts": 1,
+  "bindings": {
+    "clean_path": "panels/clean/p01-01.png",
+    "clean_sha256": "22d1aa0e264f4e8652ca069e4bb238677769b2e07de7e8b5f8681846aa135618",
+    "raw_path": "panels/raw/p01-01.png",
+    "raw_sha256": "22d1aa0e264f4e8652ca069e4bb238677769b2e07de7e8b5f8681846aa135618"
+  },
   "checks": [
     {
-      "evidence": "synthetic fixture inspected; geometry and pixels are readable",
+      "evidence": "Character silhouette and identifying wardrobe match the retained reference.",
       "id": "character-identity",
+      "method": "deterministic-fixture-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "offline-fixture-reviewer",
       "severity": "error"
     },
     {
-      "evidence": "synthetic fixture inspected; geometry and pixels are readable",
+      "evidence": "Visible limbs and body proportions are coherent within the panel bounds.",
       "id": "anatomy",
+      "method": "deterministic-fixture-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "offline-fixture-reviewer",
       "severity": "error"
     },
     {
-      "evidence": "synthetic fixture inspected; geometry and pixels are readable",
+      "evidence": "The depicted pose communicates the storyboard action without ambiguity.",
       "id": "action",
+      "method": "deterministic-fixture-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "offline-fixture-reviewer",
       "severity": "error"
     },
     {
-      "evidence": "synthetic fixture inspected; geometry and pixels are readable",
+      "evidence": "The subject and focal area remain readable inside the intended crop.",
       "id": "composition",
+      "method": "deterministic-fixture-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "offline-fixture-reviewer",
       "severity": "error"
     },
     {
-      "evidence": "synthetic fixture inspected; geometry and pixels are readable",
+      "evidence": "Wardrobe, palette, and retained props agree with adjacent story context.",
       "id": "continuity",
+      "method": "deterministic-fixture-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "offline-fixture-reviewer",
       "severity": "error"
     },
     {
-      "evidence": "synthetic fixture inspected; geometry and pixels are readable",
+      "evidence": "Artwork contains no generated dialogue, captions, logos, or watermarks.",
       "id": "text-free",
+      "method": "deterministic-fixture-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "offline-fixture-reviewer",
       "severity": "error"
     },
     {
-      "evidence": "synthetic fixture inspected; geometry and pixels are readable",
+      "evidence": "Image decodes as RGB at the recorded dimensions without corrupt pixels.",
       "id": "technical",
+      "method": "deterministic-fixture-review",
+      "regions": [],
       "result": "pass",
+      "reviewer": "offline-fixture-reviewer",
       "severity": "error"
     }
   ],
-  "clean_path": "panels/clean/p01-01.png",
   "decision": "accept",
-  "dimensions": {
-    "height": 588,
-    "width": 736
+  "kind": "panel-qa",
+  "review": {
+    "method": "deterministic-fixture-review",
+    "reviewed_at": "2026-07-30T01:00:00Z",
+    "reviewer": "offline-fixture-reviewer"
   },
-  "generation": {
-    "capability_name": "offline-synthetic-fixture",
-    "completed_at": "2026-07-18T06:00:00Z",
-    "reference_paths": [
-      "references/characters/mira.png"
-    ]
-  },
-  "panel_id": "p01-01",
-  "raw_path": "panels/raw/p01-01.png",
-  "raw_sha256": "22d1aa0e264f4e8652ca069e4bb238677769b2e07de7e8b5f8681846aa135618",
-  "retry_reason": null,
-  "schema_version": "1.0",
-  "source_prompt_path": "prompts/panels/p01-01.txt",
+  "schema_version": "2.0",
+  "subject_id": "p01-01",
   "unresolved_warnings": []
 }
