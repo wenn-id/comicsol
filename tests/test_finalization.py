@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PIL import Image
 
@@ -407,6 +408,116 @@ class GuardedOperationTests(unittest.TestCase):
         pdf_desc = manifest["artifacts"]["pdf"]
         self.assertEqual(result.relative_to(self.project).as_posix(), pdf_desc["path"])
         self.assertEqual(64, len(pdf_desc["sha256"]))
+        verification_path = self.project / "exports/pdf-verification.json"
+        self.assertTrue(verification_path.is_file())
+        verification = read_json(verification_path)
+        self.assertEqual("pdf-verification", verification["kind"])
+        self.assertEqual("1.0", verification["schema_version"])
+        self.assertRegex(verification["verified_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+        self.assertEqual(pdf_desc["sha256"], verification["pdf_sha256"])
+        self.assertEqual(result.relative_to(self.project).as_posix(), verification["pdf_path"])
+        self.assertEqual(1, verification["page_count"])
+        self.assertEqual(1, len(verification["source_pages"]))
+        source = verification["source_pages"][0]
+        self.assertEqual("pages/page-001.png", source["path"])
+        self.assertEqual(sha256_file(self.project / source["path"]), source["sha256"])
+        self.assertEqual("qa/pages/page-001.json", source["page_qa_path"])
+        self.assertEqual(
+            sha256_file(self.project / source["page_qa_path"]),
+            source["page_qa_sha256"],
+        )
+        verification_desc = manifest["artifacts"]["pdf_verification"]
+        self.assertEqual("exports/pdf-verification.json", verification_desc["path"])
+        self.assertEqual(sha256_file(verification_path), verification_desc["sha256"])
+
+    def test_guarded_export_publish_failure_rolls_back_pdf_verification_and_manifest(self):
+        self._make_export_ready()
+        pdf = self.project / "exports/guard-test.pdf"
+        verification = self.project / "exports/pdf-verification.json"
+        pdf.write_bytes(b"previous-pdf")
+        verification.write_bytes(b"previous-verification")
+        before = {
+            "pdf": pdf.read_bytes(),
+            "verification": verification.read_bytes(),
+            "manifest": (self.project / "project.json").read_bytes(),
+        }
+        import project_io
+        from export_pdf import guarded_export
+
+        real_replace = project_io.os.replace
+
+        def fail_verification_publish(source, destination):
+            if (
+                Path(source).name.startswith("staged-")
+                and Path(destination).name == "pdf-verification.json"
+            ):
+                raise OSError("injected verification publish failure")
+            return real_replace(source, destination)
+
+        with mock.patch.object(
+            project_io.os, "replace", side_effect=fail_verification_publish
+        ):
+            with self.assertRaisesRegex(OSError, "injected verification"):
+                guarded_export(self.project)
+
+        self.assertEqual(before["pdf"], pdf.read_bytes())
+        self.assertEqual(before["verification"], verification.read_bytes())
+        self.assertEqual(before["manifest"], (self.project / "project.json").read_bytes())
+
+    def _make_terminal_with_pdf_verification(self):
+        self._make_export_ready()
+        report = self.project / "qa/report.md"
+        report.write_text("# QA Report\n", encoding="utf-8")
+        from export_pdf import guarded_export
+
+        guarded_export(self.project)
+        manifest = read_json(self.project / "project.json")
+        manifest["artifacts"]["qa_report"] = {
+            "path": "qa/report.md",
+            "sha256": sha256_file(report),
+        }
+        manifest["status"] = "EXPORTED"
+        atomic_write_json(self.project / "project.json", manifest)
+
+    def _pdf_verification_fields(self):
+        return {
+            issue.field
+            for issue in validate_project(self.project, "final")
+            if issue.path == "exports/pdf-verification.json"
+        }
+
+    def test_final_gate_rejects_missing_or_corrupt_pdf_verification(self):
+        self._make_terminal_with_pdf_verification()
+        verification = self.project / "exports/pdf-verification.json"
+        verification.unlink()
+        self.assertIn("pdf-verification-stale", self._pdf_verification_fields())
+
+        verification.write_bytes(b"not-json")
+        self.assertIn("pdf-verification-stale", self._pdf_verification_fields())
+
+    def test_final_gate_rejects_pdf_page_and_page_qa_drift(self):
+        mutators = (
+            lambda: (self.project / "exports/sunlight-courier.pdf").write_bytes(
+                b"%PDF-1.4\nchanged\n%%EOF"
+            ),
+            lambda: Image.new("RGB", (1600, 2400), "magenta").save(
+                self.project / "pages/page-001.png"
+            ),
+            lambda: atomic_write_json(
+                self.project / "qa/pages/page-001.json",
+                {
+                    **read_json(self.project / "qa/pages/page-001.json"),
+                    "reviewer": "changed-after-export",
+                },
+            ),
+        )
+        for mutate in mutators:
+            with self.subTest(mutate=mutate):
+                self._make_terminal_with_pdf_verification()
+                mutate()
+                self.assertIn(
+                    "pdf-verification-stale", self._pdf_verification_fields()
+                )
 
     def test_guarded_transition_rejects_incomplete_final(self):
         """RED: transition to COMPLETE must reject when final artifacts missing."""

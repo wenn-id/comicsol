@@ -286,7 +286,7 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         if capability.get("status") in {"available", "unavailable"} and capability.get("detected_at") is None:
             _add(issues, path, "capability.detected_at", "is required after capability detection")
 
-    artifacts = _object(root.get("artifacts"), {"story_plan", "character_bible", "storyboard", "qa_report", "pdf", "composition_cache"}, set(), issues, path, "artifacts")
+    artifacts = _object(root.get("artifacts"), {"story_plan", "character_bible", "storyboard", "qa_report", "pdf", "pdf_verification", "composition_cache"}, set(), issues, path, "artifacts")
     if artifacts is not None:
         for name, descriptor in artifacts.items():
             item = _object(descriptor, {"path", "sha256"}, {"path", "sha256"}, issues, path, f"artifacts.{name}")
@@ -1224,6 +1224,90 @@ def require_valid_project(project_dir: Path, stage: str) -> None:
         raise ProjectValidationError(issues)
 
 
+def validate_pdf_verification(
+    project_dir: Path,
+    project_id: str,
+    page_count: int,
+) -> list[ValidationIssue]:
+    """Validate the exported PDF's hash-bound full-content verification record."""
+    relative = "exports/pdf-verification.json"
+    path = project_dir / relative
+    stale_reasons: list[str] = []
+    try:
+        payload = path.read_bytes()
+        record = json.loads(payload.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        record = None
+        stale_reasons.append("verification record is missing or unreadable")
+
+    if isinstance(record, dict):
+        if record.get("schema_version") != "1.0":
+            stale_reasons.append("schema version is unsupported")
+        if record.get("kind") != "pdf-verification":
+            stale_reasons.append("record kind is invalid")
+        verified_at = record.get("verified_at")
+        if (
+            not isinstance(verified_at, str)
+            or TIMESTAMP_PATTERN.fullmatch(verified_at) is None
+        ):
+            stale_reasons.append("verification timestamp is not ISO 8601 UTC")
+        expected_pdf = f"exports/{project_id}.pdf"
+        if record.get("pdf_path") != expected_pdf:
+            stale_reasons.append("PDF path binding is stale")
+        pdf_path = project_dir / expected_pdf
+        pdf_hash = record.get("pdf_sha256")
+        if (
+            not isinstance(pdf_hash, str)
+            or not SHA256_PATTERN.fullmatch(pdf_hash)
+            or not pdf_path.is_file()
+            or sha256_file(pdf_path) != pdf_hash
+        ):
+            stale_reasons.append("PDF hash binding is stale")
+        if record.get("page_count") != page_count:
+            stale_reasons.append("page count binding is stale")
+
+        sources = record.get("source_pages")
+        if not isinstance(sources, list) or len(sources) != page_count:
+            stale_reasons.append("ordered source page bindings are incomplete")
+        else:
+            for page_number, source in enumerate(sources, 1):
+                expected_page = f"pages/page-{page_number:03d}.png"
+                expected_qa = f"qa/pages/page-{page_number:03d}.json"
+                if not isinstance(source, dict):
+                    stale_reasons.append(f"page {page_number} binding is invalid")
+                    continue
+                if source.get("path") != expected_page:
+                    stale_reasons.append(f"page {page_number} path binding is stale")
+                if source.get("page_qa_path") != expected_qa:
+                    stale_reasons.append(f"page {page_number} QA path binding is stale")
+                if source.get("dimensions") != [PAGE_WIDTH, PAGE_HEIGHT]:
+                    stale_reasons.append(f"page {page_number} dimensions are stale")
+                for binding, current_path in (
+                    ("sha256", project_dir / expected_page),
+                    ("page_qa_sha256", project_dir / expected_qa),
+                ):
+                    expected_hash = source.get(binding)
+                    if (
+                        not isinstance(expected_hash, str)
+                        or not SHA256_PATTERN.fullmatch(expected_hash)
+                        or not current_path.is_file()
+                        or sha256_file(current_path) != expected_hash
+                    ):
+                        stale_reasons.append(
+                            f"page {page_number} {binding} binding is stale"
+                        )
+    elif not stale_reasons:
+        stale_reasons.append("verification record must be an object")
+
+    if not stale_reasons:
+        return []
+    return [ValidationIssue(
+        relative,
+        "pdf-verification-stale",
+        "; ".join(dict.fromkeys(stale_reasons)),
+    )]
+
+
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
     project_dir = Path(project_dir)
     if stage not in STAGES:
@@ -1560,6 +1644,9 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                 if not pdf_path.is_file():
                     _add(issues, f"exports/{project_id}.pdf", "",
                          "exported PDF is missing")
+                issues.extend(
+                    validate_pdf_verification(project_dir, project_id, page_count)
+                )
 
         # Composition cache required.
         comp_cache = project_dir / "cache/composition.json"
@@ -1572,7 +1659,7 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
 
 REQUIRED_ARTIFACT_DESCRIPTORS = frozenset({
     "character_bible", "story_plan", "storyboard",
-    "qa_report", "pdf",
+    "qa_report", "pdf", "pdf_verification",
 })
 
 
@@ -1592,7 +1679,7 @@ def _validate_required_artifacts(
         "character_bible", "story_plan", "storyboard", "composition_cache",
     }
     if require_terminal:
-        required.update({"qa_report", "pdf"})
+        required.update({"qa_report", "pdf", "pdf_verification"})
     for name in sorted(required):
         if name not in artifacts:
             _add(issues, "project.json", f"artifacts.{name}",
@@ -1610,6 +1697,7 @@ def _validate_required_artifacts(
             expected_paths.update({
                 "qa_report": "qa/report.md",
                 "pdf": f"exports/{project_id}.pdf",
+                "pdf_verification": "exports/pdf-verification.json",
             })
     for name, expected in expected_paths.items():
         descriptor = artifacts.get(name)

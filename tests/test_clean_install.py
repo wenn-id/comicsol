@@ -18,6 +18,7 @@ class DistributionContractTests(unittest.TestCase):
         self.assertIn("comic_sol_product/engine/typography.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/layouts.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/page_quality.py", REQUIRED_WHEEL_MEMBERS)
+        self.assertIn("comic_sol_product/engine/pdf_quality.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/assets/fonts/ComicNeue-Regular.ttf", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/templates/manifest.json", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/skill/SKILL.md", REQUIRED_WHEEL_MEMBERS)

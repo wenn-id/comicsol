@@ -45,6 +45,49 @@ TOOL_NAMES = {
 }
 
 
+def valid_page_reviewer_checks():
+    return [
+        {
+            "id": "face-action-obstruction",
+            "result": "pass",
+            "severity": "error",
+            "evidence": "Reviewer inspected every panel region for face and action obstruction.",
+            "method": "bounded-visual-review",
+            "reviewer": "fixture-reviewer",
+            "regions": [{"scope": "all-panels"}],
+        },
+        {
+            "id": "bubble-tail-direction",
+            "result": "pass",
+            "severity": "error",
+            "evidence": "Reviewer inspected every bubble tail against its intended speaker.",
+            "method": "bounded-visual-review",
+            "reviewer": "fixture-reviewer",
+            "regions": [{"scope": "all-bubbles"}],
+        },
+        {
+            "id": "accidental-text-watermark",
+            "result": "pass",
+            "severity": "error",
+            "evidence": "Reviewer inspected the full page for accidental text and watermarks.",
+            "method": "bounded-visual-review",
+            "reviewer": "fixture-reviewer",
+            "regions": [{"scope": "page"}],
+        },
+    ]
+
+
+def write_current_page_qa_records(project: Path, page_numbers):
+    for page_number in page_numbers:
+        write_page_quality_record(
+            project,
+            page_number,
+            build_page_quality_record(
+                project, page_number, valid_page_reviewer_checks()
+            ),
+        )
+
+
 @unittest.skipUnless(MCP_AVAILABLE, "MCP extra is not installed")
 class McpServerUnitTests(unittest.TestCase):
     def setUp(self):
@@ -235,6 +278,7 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
                         "project_id": "sunlight-courier",
                     })
                     self.assertEqual(2, len(pages["result"]))
+                    write_current_page_qa_records(project, (1, 2))
                     exported = await call("comic_export", {
                         "project_id": "sunlight-courier",
                     })
@@ -268,43 +312,7 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
 
             def write_page_qa_records():
                 """Record review of the pages as they currently exist on disk."""
-                for page_number in (1, 2):
-                    reviewer_checks = [
-                        {
-                            "id": "face-action-obstruction",
-                            "result": "pass",
-                            "severity": "error",
-                            "evidence": "Reviewer inspected every panel region for face and action obstruction.",
-                            "method": "bounded-visual-review",
-                            "reviewer": "fixture-reviewer",
-                            "regions": [{"scope": "all-panels"}],
-                        },
-                        {
-                            "id": "bubble-tail-direction",
-                            "result": "pass",
-                            "severity": "error",
-                            "evidence": "Reviewer inspected every bubble tail against its intended speaker.",
-                            "method": "bounded-visual-review",
-                            "reviewer": "fixture-reviewer",
-                            "regions": [{"scope": "all-bubbles"}],
-                        },
-                        {
-                            "id": "accidental-text-watermark",
-                            "result": "pass",
-                            "severity": "error",
-                            "evidence": "Reviewer inspected the full page for accidental text and watermarks.",
-                            "method": "bounded-visual-review",
-                            "reviewer": "fixture-reviewer",
-                            "regions": [{"scope": "page"}],
-                        },
-                    ]
-                    write_page_quality_record(
-                        project,
-                        page_number,
-                        build_page_quality_record(
-                            project, page_number, reviewer_checks
-                        ),
-                    )
+                write_current_page_qa_records(project, (1, 2))
 
             parameters = StdioServerParameters(
                 command=sys.executable,

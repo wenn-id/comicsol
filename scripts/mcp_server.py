@@ -24,7 +24,7 @@ from comic_sol import (
 from validate_project import validate_project, ProjectValidationError
 from letter_panels import letter_project
 from compose_pages import compose_project
-from export_pdf import export_pdf
+from export_pdf import guarded_export
 from render_report import render_report
 
 # Root directory allowed for operations. All project IDs resolve relative to this.
@@ -236,7 +236,7 @@ def comic_export(project_id: str) -> str:
     """Export the finished PDF."""
     project_dir = _resolve_project(project_id)
     try:
-        dest = export_pdf(project_dir)
+        dest = guarded_export(project_dir)
         return str(dest.relative_to(project_dir).as_posix())
     except Exception as e:
         raise ToolError(str(e))

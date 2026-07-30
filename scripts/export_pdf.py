@@ -4,23 +4,30 @@
 from __future__ import annotations
 
 import argparse
-import io
+import hashlib
 import json
 import os
 import re
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 
-from comic_sol import PAGE_HEIGHT, PAGE_WIDTH, read_json, atomic_write_json, sha256_file
-from project_io import durable_atomic_write
+from comic_sol import (
+    PAGE_HEIGHT,
+    PAGE_WIDTH,
+    canonical_artifact_bytes,
+    read_json,
+    sha256_file,
+)
+from pdf_quality import PdfQualityError, verify_pdf_payload
+from project_io import ProjectTransaction, durable_atomic_write
 from validate_project import validate_manifest, require_valid_project
 
 
 PAGE_PATTERN = re.compile(r"^page-([0-9]{3})\.png$")
-PDF_STREAM_PATTERN = re.compile(rb"stream\r?\n(.*?)\r?\nendstream", re.DOTALL)
 
 
 class PdfExportError(ValueError):
@@ -104,83 +111,17 @@ def _load_pages(paths: list[Path]) -> list[Image.Image]:
     return pages
 
 
-def _embedded_pdf_frames(payload: bytes) -> list[Image.Image]:
-    frames: list[Image.Image] = []
-    for match in PDF_STREAM_PATTERN.finditer(payload):
-        stream = match.group(1)
-        if not stream.startswith(b"\xff\xd8"):
-            continue
-        try:
-            with Image.open(io.BytesIO(stream)) as image:
-                converted = image.convert("RGB")
-                converted.load()
-                frames.append(converted)
-        except (OSError, SyntaxError):
-            continue
-    return frames
-
-
-def _verify_written_pdf(path: Path, source_pages: list[Image.Image]) -> None:
-    frames: list[Image.Image] = []
-    opened_pdf: Image.Image | None = None
-    try:
-        try:
-            opened_pdf = Image.open(path)
-            for index in range(opened_pdf.n_frames):
-                opened_pdf.seek(index)
-                frame = opened_pdf.convert("RGB")
-                frame.load()
-                frames.append(frame)
-        except UnidentifiedImageError:
-            frames = _embedded_pdf_frames(path.read_bytes())
-        if len(frames) != len(source_pages):
-            raise PdfExportError("written PDF page count does not match source pages")
-        sample_points = (
-            (0, 0),
-            (PAGE_WIDTH - 1, 0),
-            (0, PAGE_HEIGHT - 1),
-            (PAGE_WIDTH - 1, PAGE_HEIGHT - 1),
-        )
-        for index, (frame, source) in enumerate(zip(frames, source_pages), 1):
-            if frame.mode != "RGB" or frame.size != (PAGE_WIDTH, PAGE_HEIGHT):
-                raise PdfExportError(f"written PDF page {index} has invalid mode or size")
-            for point in sample_points:
-                expected = source.getpixel(point)
-                actual = frame.getpixel(point)
-                if any(abs(left - right) > 4 for left, right in zip(expected, actual)):
-                    raise PdfExportError(f"written PDF page order/content mismatch at page {index}")
-    finally:
-        if opened_pdf is not None:
-            opened_pdf.close()
-        for frame in frames:
-            frame.close()
-
-
-def export_pdf(project_dir: Path, output_path: Path | None = None) -> Path:
-    """Validate, export, reopen, and atomically publish an ordered raster PDF."""
-    project_dir = Path(project_dir)
-    manifest = _validated_manifest(project_dir)
-    page_paths = discover_pages(project_dir)
-    pages = _load_pages(page_paths)
-    try:
-        if output_path is None:
-            project_id = manifest.get("project_id")
-            if not isinstance(project_id, str) or not project_id:
-                raise PdfExportError("manifest project_id is invalid")
-            destination = project_dir / f"exports/{project_id}.pdf"
-        else:
-            destination = Path(output_path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-    except BaseException:
-        for page in pages:
-            page.close()
-        raise
-
+def _render_verified_payload(
+    directory: Path,
+    filename: str,
+    pages: list[Image.Image],
+) -> tuple[bytes, dict[str, object]]:
+    """Render once, fsync, then verify every decoded pixel before publication."""
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            dir=destination.parent,
-            prefix=f".{destination.name}.",
+            dir=directory,
+            prefix=f".{filename}.",
             suffix=".tmp.pdf",
             delete=False,
         ) as handle:
@@ -199,8 +140,39 @@ def export_pdf(project_dir: Path, output_path: Path | None = None) -> Path:
         # Windows rejects fsync on a read-only descriptor.
         with temporary_path.open("rb+") as handle:
             os.fsync(handle.fileno())
-        _verify_written_pdf(temporary_path, pages)
-        durable_atomic_write(destination, temporary_path.read_bytes())
+        payload = temporary_path.read_bytes()
+        try:
+            verification = verify_pdf_payload(payload, pages)
+        except PdfQualityError as error:
+            raise PdfExportError(str(error)) from error
+        return payload, verification
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def export_pdf(project_dir: Path, output_path: Path | None = None) -> Path:
+    """Validate, fully verify, and atomically publish an ordered raster PDF."""
+    project_dir = Path(project_dir)
+    manifest = _validated_manifest(project_dir)
+    page_paths = discover_pages(project_dir)
+    pages = _load_pages(page_paths)
+    try:
+        if output_path is None:
+            project_id = manifest.get("project_id")
+            if not isinstance(project_id, str) or not project_id:
+                raise PdfExportError("manifest project_id is invalid")
+            destination = project_dir / f"exports/{project_id}.pdf"
+        else:
+            destination = Path(output_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        payload, _ = _render_verified_payload(
+            destination.parent, destination.name, pages
+        )
+        durable_atomic_write(destination, payload)
         return destination
     except PdfExportError:
         raise
@@ -209,28 +181,80 @@ def export_pdf(project_dir: Path, output_path: Path | None = None) -> Path:
     finally:
         for page in pages:
             page.close()
-        if temporary_path is not None:
-            try:
-                temporary_path.unlink()
-            except FileNotFoundError:
-                pass
 
 
 def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
-    """Require export-ready validation before exporting, then record descriptor."""
+    """Verify and transactionally publish PDF, provenance, and descriptors."""
     project_dir = Path(project_dir)
     require_valid_project(project_dir, "export-ready")
-    destination = export_pdf(project_dir, output_path)
     manifest = read_json(project_dir / "project.json")
+    project_id = manifest.get("project_id")
+    if not isinstance(project_id, str) or not project_id:
+        raise PdfExportError("manifest project_id is invalid")
+    destination = (
+        Path(output_path)
+        if output_path is not None
+        else project_dir / f"exports/{project_id}.pdf"
+    )
+    try:
+        pdf_relative = destination.relative_to(project_dir).as_posix()
+    except ValueError as error:
+        raise PdfExportError(
+            "guarded export destination must remain inside the project"
+        ) from error
+
+    page_paths = discover_pages(project_dir)
+    pages = _load_pages(page_paths)
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        payload, metrics = _render_verified_payload(
+            destination.parent, destination.name, pages
+        )
+    finally:
+        for page in pages:
+            page.close()
+
+    pdf_sha256 = hashlib.sha256(payload).hexdigest()
+    source_pages: list[dict[str, object]] = []
+    for page_number, page_path in enumerate(page_paths, 1):
+        qa_relative = f"qa/pages/page-{page_number:03d}.json"
+        qa_path = project_dir / qa_relative
+        source_pages.append({
+            "dimensions": [PAGE_WIDTH, PAGE_HEIGHT],
+            "page_qa_path": qa_relative,
+            "page_qa_sha256": sha256_file(qa_path),
+            "path": page_path.relative_to(project_dir).as_posix(),
+            "sha256": sha256_file(page_path),
+        })
+    verification = {
+        **metrics,
+        "kind": "pdf-verification",
+        "pdf_path": pdf_relative,
+        "pdf_sha256": pdf_sha256,
+        "schema_version": "1.0",
+        "source_pages": source_pages,
+        "verified_at": datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
+    }
+    verification_payload = canonical_artifact_bytes(verification)
+
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict):
         artifacts = {}
-    artifacts["pdf"] = {
-        "path": destination.relative_to(project_dir).as_posix(),
-        "sha256": sha256_file(destination),
+    artifacts["pdf"] = {"path": pdf_relative, "sha256": pdf_sha256}
+    artifacts["pdf_verification"] = {
+        "path": "exports/pdf-verification.json",
+        "sha256": hashlib.sha256(verification_payload).hexdigest(),
     }
     manifest["artifacts"] = artifacts
-    atomic_write_json(project_dir / "project.json", manifest)
+    with ProjectTransaction(project_dir, "pdf-export") as transaction:
+        transaction.stage_bytes(pdf_relative, payload)
+        transaction.stage_bytes(
+            "exports/pdf-verification.json", verification_payload
+        )
+        transaction.stage_bytes("project.json", canonical_artifact_bytes(manifest))
     return destination
 
 
