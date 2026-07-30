@@ -126,7 +126,9 @@ class TypographyPreflightTests(unittest.TestCase):
             result = preflight_text_items([item("Safe text")], FONT_POLICY)
             path = write_typography_preflight(project, "p01-01", result)
 
-            self.assertEqual(project / "panels/p01-01/typography.json", path)
+            self.assertEqual(
+                (project / "panels/p01-01/typography.json").resolve(), path
+            )
             data = json.loads(path.read_text("utf-8"))
             self.assertEqual(result, data)
             self.assertEqual(

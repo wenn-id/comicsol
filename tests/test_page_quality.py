@@ -108,7 +108,7 @@ class PageQualityTests(unittest.TestCase):
     def test_write_is_canonical_and_current_record_validates(self):
         record = build_page_quality_record(self.project, 1, reviewer_checks())
         path = write_page_quality_record(self.project, 1, record)
-        self.assertEqual(self.project / "qa/pages/page-001.json", path)
+        self.assertEqual((self.project / "qa/pages/page-001.json").resolve(), path)
         loaded = json.loads(path.read_text("utf-8"))
         self.assertEqual(record, loaded)
         self.assertEqual(
