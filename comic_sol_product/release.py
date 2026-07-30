@@ -14,6 +14,7 @@ REQUIRED_WHEEL_MEMBERS = frozenset(
         "comic_sol_product/engine/comic_sol.py",
         "comic_sol_product/engine/quality_records.py",
         "comic_sol_product/engine/normalize_panels.py",
+        "comic_sol_product/engine/typography.py",
         "comic_sol_product/assets/fonts/ComicNeue-Regular.ttf",
         "comic_sol_product/assets/fonts/ComicNeue-Bold.ttf",
         "comic_sol_product/templates/manifest.json",

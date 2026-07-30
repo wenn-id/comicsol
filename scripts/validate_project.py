@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
 import re
 import sys
 import unicodedata
@@ -17,6 +19,7 @@ from PIL import Image, UnidentifiedImageError
 
 from project_io import contained_project_path
 from quality_records import PANEL_CHECK_IDS, validate_quality_checks
+from typography import lettering_geometry_hash
 
 from comic_sol import (
     ALL_STATUSES,
@@ -25,6 +28,7 @@ from comic_sol import (
     MARGIN,
     PAGE_HEIGHT,
     PAGE_WIDTH,
+    canonical_artifact_bytes,
     layout_rects,
     rectangles_overlap,
     sha256_file,
@@ -958,6 +962,172 @@ def validate_panel_provenance(
     return tuple(_sorted(issues))
 
 
+def validate_lettering_provenance(
+    project_dir: Path,
+    panel_id: str,
+) -> tuple[ValidationIssue, ...]:
+    """Recompute typography/lettering bindings and reject invalid geometry."""
+    issues: list[ValidationIssue] = []
+    geometry_relative = f"panels/{panel_id}/lettering.json"
+    typography_relative = f"panels/{panel_id}/typography.json"
+
+    def stale(field: str, detail: str) -> None:
+        _add(
+            issues,
+            geometry_relative,
+            field,
+            f"lettering-record-stale: {detail}",
+        )
+
+    try:
+        geometry_path = contained_project_path(
+            project_dir, geometry_relative, must_exist=True
+        )
+        geometry = json.loads(geometry_path.read_text("utf-8"))
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        stale("geometry.path", "lettering geometry is missing or unreadable")
+        return tuple(_sorted(issues))
+    if not isinstance(geometry, dict):
+        stale("geometry.path", "lettering geometry must be an object")
+        return tuple(_sorted(issues))
+    if geometry.get("panel_id") != panel_id:
+        stale("panel_id", "geometry panel ID does not match its path")
+    if geometry.get("geometry_sha256") != lettering_geometry_hash(geometry):
+        stale("geometry_sha256", "canonical geometry hash does not match")
+
+    try:
+        typography_path = contained_project_path(
+            project_dir, typography_relative, must_exist=True
+        )
+        typography = json.loads(typography_path.read_text("utf-8"))
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        stale("typography.path", "typography preflight is missing or unreadable")
+        typography = None
+    if isinstance(typography, dict):
+        if typography.get("status") != "pass" or typography.get("issues") != []:
+            stale("typography.status", "typography preflight is not a clean pass")
+        glyphs = typography.get("glyphs")
+        if not isinstance(glyphs, list):
+            stale("glyphs", "typography glyph list is missing")
+        else:
+            for glyph in glyphs:
+                if not isinstance(glyph, dict):
+                    stale("glyphs", "typography glyph entry is invalid")
+                    break
+                font_id = glyph.get("font_id")
+                if (
+                    not isinstance(font_id, str)
+                    or not font_id
+                    or font_id == ".notdef"
+                    or "/" in font_id
+                    or "\\" in font_id
+                ):
+                    stale("glyphs.font_id", "glyph resolves to .notdef or a private path")
+                    break
+                if glyph.get("coverage") != "supported" or glyph.get("shaping") != "supported":
+                    stale("glyphs", "glyph coverage or shaping is unsupported")
+                    break
+
+    bindings = geometry.get("bindings")
+    if not isinstance(bindings, dict):
+        stale("bindings", "geometry bindings are missing")
+        bindings = {}
+    for digest_field, path_field in (
+        ("clean_sha256", "clean_path"),
+        ("storyboard_sha256", "storyboard_path"),
+    ):
+        relative = bindings.get(path_field)
+        expected = bindings.get(digest_field)
+        try:
+            artifact = (
+                contained_project_path(project_dir, relative, must_exist=True)
+                if isinstance(relative, str)
+                else None
+            )
+        except (OSError, ValueError):
+            artifact = None
+        if artifact is None or not artifact.is_file():
+            stale(f"bindings.{path_field}", "bound artifact is missing")
+        elif not isinstance(expected, str) or sha256_file(artifact) != expected:
+            stale(f"bindings.{digest_field}", "bound artifact hash does not match")
+
+    if isinstance(typography, dict):
+        typography_hash = hashlib.sha256(
+            canonical_artifact_bytes(typography)
+        ).hexdigest()
+        if bindings.get("typography_sha256") != typography_hash:
+            stale("typography.path", "typography record hash does not match")
+        if bindings.get("font_policy_sha256") != typography.get("font_policy_sha256"):
+            stale("bindings.font_policy_sha256", "font policy hash does not match preflight")
+
+    lettered = geometry.get("lettered")
+    if not isinstance(lettered, dict):
+        stale("lettered", "lettered artifact descriptor is missing")
+    else:
+        relative = lettered.get("path")
+        try:
+            artifact = (
+                contained_project_path(project_dir, relative, must_exist=True)
+                if isinstance(relative, str)
+                else None
+            )
+        except (OSError, ValueError):
+            artifact = None
+        if artifact is None or not artifact.is_file():
+            stale("lettered.path", "lettered image is missing")
+        elif lettered.get("sha256") != sha256_file(artifact):
+            stale("lettered.sha256", "lettered image hash does not match")
+
+    items = geometry.get("items")
+    if not isinstance(items, list):
+        stale("items", "geometry items must be an array")
+    else:
+        orders: list[int] = []
+        for entry in items:
+            if not isinstance(entry, dict):
+                stale("items", "geometry item must be an object")
+                continue
+            order = entry.get("reading_order")
+            if not isinstance(order, int) or isinstance(order, bool) or order <= 0:
+                stale("items.reading_order", "reading order must be a positive integer")
+            else:
+                orders.append(order)
+            box = entry.get("box")
+            if (
+                not isinstance(box, dict)
+                or any(
+                    not isinstance(box.get(key), int)
+                    or isinstance(box.get(key), bool)
+                    for key in ("x", "y", "width", "height")
+                )
+                or box.get("width", 0) <= 0
+                or box.get("height", 0) <= 0
+            ):
+                stale("items.box", "item box is missing or non-positive")
+            tail = entry.get("tail")
+            if tail is not None:
+                valid_tail = isinstance(tail, dict)
+                for key in ("origin", "target"):
+                    point = tail.get(key) if isinstance(tail, dict) else None
+                    valid_tail = (
+                        valid_tail
+                        and isinstance(point, list)
+                        and len(point) == 2
+                        and all(
+                            isinstance(value, (int, float))
+                            and not isinstance(value, bool)
+                            and math.isfinite(value)
+                            for value in (point or [])
+                        )
+                    )
+                if not valid_tail:
+                    stale("items.tail", "tail coordinates must be finite points")
+        if len(orders) != len(set(orders)):
+            stale("items.reading_order", "reading order values must be unique")
+
+    return tuple(_sorted(issues))
+
+
 def _load_artifact(
     project_dir: Path,
     relative_path: str,
@@ -1358,12 +1528,13 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                         _add(issues, page_qa_relative, "page_sha256",
                              "hash does not match the page image")
 
-        # Lettered panels.
+        # Lettered panels and their current typography/geometry provenance.
         for panel_id in panels:
             lettered = project_dir / f"panels/{panel_id}/lettered.png"
             if not lettered.is_file():
                 _add(issues, f"panels/{panel_id}/lettered.png", "",
                      "lettered panel is missing")
+            issues.extend(validate_lettering_provenance(project_dir, panel_id))
 
         # export-ready does not require report, PDF, or export cache.
         if stage != "export-ready":

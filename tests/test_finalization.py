@@ -26,6 +26,7 @@ from validate_project import (  # noqa: E402
     validate_project,
 )
 from normalize_panels import normalize_panel  # noqa: E402
+from letter_panels import letter_project  # noqa: E402
 
 from test_validation import (  # noqa: E402
     valid_characters,
@@ -104,9 +105,7 @@ class FinalArtifactTests(unittest.TestCase):
                 "status": "reviewed",
             },
         )
-        lettered = self.project / "panels/p01-01/lettered.png"
-        lettered.parent.mkdir(parents=True, exist_ok=True)
-        Image.new("RGB", (736, 1136), (10, 20, 30)).save(lettered)
+        letter_project(self.project)
 
     def test_final_fails_without_any_artifacts(self):
         """RED: an empty project must report missing final artifacts."""
@@ -282,9 +281,7 @@ class GuardedOperationTests(unittest.TestCase):
                 "status": "reviewed",
             },
         )
-        lettered = self.project / "panels/p01-01/lettered.png"
-        lettered.parent.mkdir(parents=True, exist_ok=True)
-        Image.new("RGB", (736, 1136), (10, 20, 30)).save(lettered)
+        letter_project(self.project)
 
     def _make_export_ready(self):
         self._add_panel_files()

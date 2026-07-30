@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import math
@@ -18,8 +19,12 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
-from comic_sol import atomic_write_bytes, read_json
-from project_io import contained_project_path
+from comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json, sha256_file
+from project_io import ProjectTransaction, contained_project_path
+from typography import (
+    lettering_geometry_hash,
+    preflight_text_items,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -805,6 +810,7 @@ def letter_panel(
         "sfx_count": sfx_count,
         "text_count": len(ordered),
         "word_count": word_count,
+        "placements": [],
     }
     if rendered_text_count == 0:
         return summary
@@ -812,13 +818,14 @@ def letter_panel(
     canvas = base.copy()
     draw = ImageDraw.Draw(canvas, "RGBA")
     occupied: list[dict[str, int]] = []
-    for item in ordered:
+    for reading_order, item in enumerate(ordered, 1):
         if item.get("kind") == "sfx":
             continue
         requested = item.get("anchor", "top-left")
         start = ANCHORS.index(requested)
         rect = None
         font = None
+        selected_anchor = None
         for offset in range(len(ANCHORS)):
             candidate_anchor = ANCHORS[(start + offset) % len(ANCHORS)]
             candidate = _anchor_rect(candidate_anchor, panel_width, panel_height)
@@ -829,11 +836,53 @@ def letter_panel(
             if not any(_overlap(fitted, prior) for prior in occupied):
                 rect = fitted
                 font = candidate_font
+                selected_anchor = candidate_anchor
                 break
         if rect is None:
             raise ValueError(f"text item {item.get('id', 'unknown')} has no non-overlapping placement")
         assert font is not None
+        assert selected_anchor is not None
         render_text_item(draw, item, rect, font, character_bible)
+        display = _display_content(item.get("kind"), item.get("content", ""))
+        font_runs = [
+            {
+                "font_id": Path(run_font.path).name,
+                "style": (
+                    "bold"
+                    if Path(run_font.path) == FONT_PATH_BOLD
+                    else "regular"
+                ),
+                "text": run_text,
+            }
+            for run_text, run_font in _styled_font_runs(display, font)
+        ]
+        tail_geometry = None
+        tail = item.get("tail_target")
+        if (
+            item.get("kind") == "dialogue"
+            and isinstance(tail, list)
+            and len(tail) == 2
+            and all(isinstance(value, (int, float)) for value in tail)
+        ):
+            base_one, base_two, target = _ellipse_tail_polygon(
+                rect, tail, panel_width, panel_height
+            )
+            tail_geometry = {
+                "origin": [
+                    round((base_one[0] + base_two[0]) / 2),
+                    round((base_one[1] + base_two[1]) / 2),
+                ],
+                "target": [target[0], target[1]],
+            }
+        summary["placements"].append({
+            "anchor": selected_anchor,
+            "box": {key: int(rect[key]) for key in ("x", "y", "width", "height")},
+            "font_runs": font_runs,
+            "id": item.get("id"),
+            "kind": item.get("kind"),
+            "reading_order": reading_order,
+            "tail": tail_geometry,
+        })
         occupied.append(rect)
 
     encoded = io.BytesIO()
@@ -878,16 +927,35 @@ def _letter_project_with_summaries(
     ).get("characters")
     if not isinstance(bible, list) or any(not isinstance(character, dict) for character in bible):
         raise ValueError("character bible characters must be an array of objects")
+
+    font_policy = {
+        "regular": FONT_PATH,
+        "bold": FONT_PATH_BOLD,
+        "fallback": FONT_PATH_FALLBACK,
+    }
+    preflights: dict[str, dict[str, object]] = {}
+    for panel in panels:
+        preflights[panel["id"]] = preflight_text_items(
+            panel.get("text", []), font_policy
+        )
+
     outputs: list[Path] = []
     summaries: list[dict] = []
-    staged: list[tuple[Path, bytes, dict]] = []
+    staged: list[tuple[str, bytes, bytes, bytes, dict]] = []
+    storyboard_path = contained_project_path(
+        project_dir, "plan/storyboard.json", must_exist=True
+    )
+    storyboard_sha256 = sha256_file(storyboard_path)
     with tempfile.TemporaryDirectory(prefix="comic-sol-lettering-") as temporary:
         temporary_root = Path(temporary)
         for panel in panels:
             panel_id = panel["id"]
-            source_relative = f"panels/clean/{panel_id}.png"
-            destination = contained_project_path(
-                project_dir, f"panels/{panel_id}/lettered.png"
+            canonical_source = f"panels/{panel_id}/clean.png"
+            legacy_source = f"panels/clean/{panel_id}.png"
+            source_relative = (
+                canonical_source
+                if contained_project_path(project_dir, canonical_source).is_file()
+                else legacy_source
             )
             try:
                 source = contained_project_path(project_dir, source_relative, must_exist=True)
@@ -904,11 +972,57 @@ def _letter_project_with_summaries(
             summary = letter_panel(
                 str(staged_path), width, height, panel.get("text", []), bible
             )
+            destination_relative = f"panels/{panel_id}/lettered.png"
+            destination = contained_project_path(project_dir, destination_relative)
             summary["lettered_path"] = str(destination)
-            staged.append((destination, staged_path.read_bytes(), summary))
-        for destination, payload, summary in staged:
-            atomic_write_bytes(destination, payload)
-            outputs.append(destination)
+            lettered_payload = staged_path.read_bytes()
+            preflight = preflights[panel_id]
+            geometry: dict[str, object] = {
+                "bindings": {
+                    "clean_path": source_relative,
+                    "clean_sha256": sha256_file(source),
+                    "font_policy_sha256": preflight["font_policy_sha256"],
+                    "storyboard_path": "plan/storyboard.json",
+                    "storyboard_sha256": storyboard_sha256,
+                    "typography_sha256": hashlib.sha256(
+                        canonical_artifact_bytes(preflight)
+                    ).hexdigest(),
+                },
+                "items": summary["placements"],
+                "kind": "lettering-geometry",
+                "lettered": {
+                    "path": destination_relative,
+                    "sha256": hashlib.sha256(lettered_payload).hexdigest(),
+                },
+                "panel_id": panel_id,
+                "schema_version": "1.0",
+            }
+            geometry["geometry_sha256"] = lettering_geometry_hash(geometry)
+            staged.append((
+                panel_id,
+                lettered_payload,
+                canonical_artifact_bytes(preflight),
+                canonical_artifact_bytes(geometry),
+                summary,
+            ))
+
+        with ProjectTransaction(project_dir, "lettering") as transaction:
+            for panel_id, image_payload, preflight_payload, geometry_payload, _ in staged:
+                transaction.stage_bytes(
+                    f"panels/{panel_id}/lettered.png", image_payload
+                )
+                transaction.stage_bytes(
+                    f"panels/{panel_id}/typography.json", preflight_payload
+                )
+                transaction.stage_bytes(
+                    f"panels/{panel_id}/lettering.json", geometry_payload
+                )
+            transaction.commit()
+
+        for panel_id, _, _, _, summary in staged:
+            outputs.append(contained_project_path(
+                project_dir, f"panels/{panel_id}/lettered.png", must_exist=True
+            ))
             summaries.append(summary)
     return outputs, summaries
 
