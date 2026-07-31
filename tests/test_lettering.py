@@ -699,6 +699,28 @@ class LetteringTests(unittest.TestCase):
         render.assert_not_called()
         self.assertEqual(0, result["rendered_text_count"])
 
+    def test_sfx_does_not_consume_rendered_reading_order(self):
+        result = letter_panel(
+            str(self.panel),
+            800,
+            1000,
+            [
+                sfx("KRAK!", priority=1),
+                dialogue("Too late.", priority=2),
+                caption("The gate closes.", priority=3),
+            ],
+            self.characters,
+        )
+
+        self.assertEqual(
+            ["dialogue-2", "caption-3"],
+            [placement["id"] for placement in result["placements"]],
+        )
+        self.assertEqual(
+            [1, 2],
+            [placement["reading_order"] for placement in result["placements"]],
+        )
+
     def test_sfx_does_not_change_or_reserve_mixed_lettering(self):
         without_sfx = self.root / "without-sfx.png"
         with_sfx = self.root / "with-sfx.png"

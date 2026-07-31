@@ -919,7 +919,8 @@ def letter_panel(
             raise ValueError(f"text item {item.get('id', 'unknown')} has unknown anchor")
         item["content"] = content
 
-    rendered_text_count = sum(item.get("kind") != "sfx" for item in ordered)
+    renderable = [item for item in ordered if item.get("kind") != "sfx"]
+    rendered_text_count = len(renderable)
     sfx_count = len(ordered) - rendered_text_count
     word_count = sum(normalized_word_count(item["content"]) for item in ordered)
     summary = {
@@ -937,9 +938,7 @@ def letter_panel(
     canvas = base.copy()
     draw = ImageDraw.Draw(canvas, "RGBA")
     occupied: list[dict[str, int]] = []
-    for reading_order, item in enumerate(ordered, 1):
-        if item.get("kind") == "sfx":
-            continue
+    for reading_order, item in enumerate(renderable, 1):
         requested = item.get("anchor", "top-left")
         start = ANCHORS.index(requested)
         rect = None
