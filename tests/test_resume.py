@@ -228,6 +228,39 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(raw_before, (self.project / "panels/raw/p01-01.png").read_bytes())
         self.assertEqual(clean_before, (self.project / "panels/clean/p01-01.png").read_bytes())
 
+    def test_v2_panel_quality_record_preserves_generation_cache_reuse(self):
+        legacy = read_json(self.project / "qa/panels/p01-01.json")
+        v2 = {
+            "schema_version": "2.0",
+            "kind": "panel-qa",
+            "subject_id": "p01-01",
+            "bindings": {
+                "source_prompt_path": legacy["source_prompt_path"],
+                "reference_paths": legacy["generation"]["reference_paths"],
+            },
+            "checks": [],
+            "decision": "accept",
+            "review": {
+                "method": "agent-review",
+                "reviewed_at": "2026-07-31T07:22:11Z",
+                "reviewer": "test",
+            },
+            "unresolved_warnings": [],
+        }
+        atomic_write_json(self.project / "qa/panels/p01-01.json", v2)
+
+        actions = build_resume_plan(self.project)
+
+        by_stage = {
+            action.stage: (action.action, action.reason)
+            for action in actions
+            if action.artifact == "stage"
+        }
+        self.assertEqual(
+            ("reuse", "cache key and artifacts match"),
+            by_stage["generation"],
+        )
+
     def test_noop_resume_does_not_write_any_file(self):
         before = {p.relative_to(self.project): (p.stat().st_mtime_ns, sha256_file(p)) for p in self.project.rglob("*") if p.is_file()}
         actions = build_resume_plan(self.project)

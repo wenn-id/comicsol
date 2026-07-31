@@ -612,11 +612,27 @@ def _resume_stage_material(
         prompt_paths: list[str] = []
         for panel_id in panel_ids:
             record = read_json(project_dir / f"qa/panels/{panel_id}.json")
-            if record.get("panel_id") != panel_id:
+            if record.get("schema_version") == "2.0":
+                record_panel_id = record.get("subject_id")
+                bindings = record.get("bindings")
+                source_prompt_path = (
+                    bindings.get("source_prompt_path")
+                    if isinstance(bindings, dict) else None
+                )
+                references = (
+                    bindings.get("reference_paths")
+                    if isinstance(bindings, dict) else None
+                )
+            else:
+                record_panel_id = record.get("panel_id")
+                source_prompt_path = record.get("source_prompt_path")
+                generation = record.get("generation")
+                references = (
+                    generation.get("reference_paths")
+                    if isinstance(generation, dict) else None
+                )
+            if record_panel_id != panel_id:
                 raise ValueError(f"panel QA record does not match {panel_id}")
-            source_prompt_path = record.get("source_prompt_path")
-            generation = record.get("generation")
-            references = generation.get("reference_paths") if isinstance(generation, dict) else None
             if not isinstance(source_prompt_path, str) or not isinstance(references, list) or not all(
                 isinstance(reference, str) for reference in references
             ):
