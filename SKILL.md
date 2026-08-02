@@ -48,6 +48,70 @@ reporting to the bundled Python scripts.
 
 Apply these rules in every session to reduce token waste without reducing output quality.
 
+## Fast Mode
+
+Fast Mode keeps all quality gates while removing the specific waste that turns a
+pilot into a 4+ hour run. Apply it to every new production by default.
+
+### Never read engine source
+
+Do not read, grep, or open any file under `scripts/`, `comic_sol_product/`, or
+`tests/`. The deterministic engine is a black box invoked only via `init`,
+`doctor`, `validate`, `status`, `resume-plan`, and `finalize`. Reading source
+wastes context and risks editing the engine you should not touch.
+
+If doctor reports missing Python/font/Pillow, fix the environment; do not patch the
+engine to make the check pass. If a version pin looks wrong, report it as a skill
+upgrade, not an ad-hoc edit.
+
+### Use init, never hand-write setup scripts
+
+Do not write `setup_batch_*.py`, `build_plans.py`, or equivalent helpers. The engine
+owns project structure. Create a project with one command:
+
+```text
+python3.11 scripts/comic_sol.py init --output-root OUTPUT_ROOT --title TITLE --source SOURCE --request-json REQUEST_JSON
+```
+
+Then edit only the semantic artifacts the engine expects (`plan/*.json`) through
+`transition` stages. Hand-written scaffolding is the single largest hidden time sink.
+
+### Right-size reasoning per stage
+
+Plan, storyboard, QA-evidence, finalize, and report do not need maximum reasoning.
+Reserve the highest reasoning only for the actual image-generation decision loop.
+Statement: use a cheaper/mid reasoning preset for deterministic stages and the
+strongest preset for image prompting and visual rejection decisions. Do not run the
+entire run at `xhigh`.
+
+### Parallel independent panels
+
+Queue independent panel generations without waiting for each to complete before
+starting the next. Panels with no dependency on each other's accepted output can be
+generated in the same batch. Visual QA still inspects every accepted attempt before
+promote.
+
+### One resolution check per artifact
+
+Check panel/source at original resolution during panel QA. Do not re-run a second
+phone-scale (390px) check on every panel. Apply the 390px readability check once,
+on the composed page, in page QA — that is where phone readability is actually
+decided.
+
+### Single-pass finalization
+
+After the last panel is promoted, run `finalize` once to letter and compose, inspect
+the composed pages at full and phone scale, write each `qa/pages/page-*.json` from
+`templates/page-qa.json`, then run `finalize` once more. Never re-run lettering,
+composition, or export turn-by-turn.
+
+### Lock the brief
+
+Before generation, confirm the batch map once (e.g. Batch A pages 1-4, Batch B
+pages 5-8) and do not re-interpret it under a checklist gate. If a final-acceptance
+line contradicts the batch map, resolve to the batch map; do not invent a third
+project to satisfy a miscounted checklist.
+
 ### Progressive loading
 
 Do not read all references at once. Load only the files needed for the current stage:

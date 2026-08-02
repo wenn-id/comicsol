@@ -806,7 +806,7 @@ class SkillContractTests(unittest.TestCase):
 
     def test_skill_is_trigger_focused_and_all_progressive_links_exist(self):
         text = self.skill_text()
-        self.assertLess(len(text.splitlines()), 220)
+        self.assertLess(len(text.splitlines()), 260)
         self.assertTrue(text.startswith("---\n"))
         frontmatter = text.split("---", 2)[1]
         keys = [line.split(":", 1)[0] for line in frontmatter.splitlines() if ":" in line]
@@ -824,6 +824,29 @@ class SkillContractTests(unittest.TestCase):
         ):
             self.assertIn(f"references/{name}.md", text)
             self.assertTrue((ROOT / "references" / f"{name}.md").is_file())
+
+    def test_fast_mode_rules_present_in_skill(self):
+        """Fast Mode contract: engine is a black box, init over scaffolding, one
+        resolution check per artifact, single-pass finalize, locked brief."""
+        text = self.skill_text()
+        self.assertIn("## Fast Mode", text)
+        for rule in (
+            "Never read engine source",
+            "Use init, never hand-write setup scripts",
+            "Right-size reasoning per stage",
+            "Parallel independent panels",
+            "One resolution check per artifact",
+            "Single-pass finalization",
+            "Lock the brief",
+        ):
+            self.assertIn(rule, text)
+        for phrase in (
+            "Do not read, grep, or open any file under `scripts/`",
+            "Do not write `setup_batch_*.py`",
+            "run `finalize` once to letter and compose",
+            "resolve to the batch map; do not invent a third",
+        ):
+            self.assertIn(phrase, text)
 
     def test_scripts_and_capability_reference_are_provider_neutral(self):
         forbidden = re.compile(
