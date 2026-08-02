@@ -47,7 +47,9 @@ py -3.11 -m pip install -r requirements.txt
 ```
 
 Supported environments are Linux, macOS, Windows, and WSL with Python 3.11 and
-Pillow 12.3.0. The deterministic test suite does not need an image provider.
+Pillow 12.3.0. On WSL, follow the Linux instructions above; the PowerShell
+steps apply only when running Comic Sol directly on native Windows. The
+deterministic test suite does not need an image provider.
 
 Install the portable CLI from a checkout and verify the bundled deterministic
 engine, fonts, and templates:
