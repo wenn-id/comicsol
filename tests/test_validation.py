@@ -806,7 +806,7 @@ class SkillContractTests(unittest.TestCase):
 
     def test_skill_is_trigger_focused_and_all_progressive_links_exist(self):
         text = self.skill_text()
-        self.assertLess(len(text.splitlines()), 260)
+        self.assertLess(len(text.splitlines()), 220)
         self.assertTrue(text.startswith("---\n"))
         frontmatter = text.split("---", 2)[1]
         keys = [line.split(":", 1)[0] for line in frontmatter.splitlines() if ":" in line]
@@ -826,8 +826,8 @@ class SkillContractTests(unittest.TestCase):
             self.assertTrue((ROOT / "references" / f"{name}.md").is_file())
 
     def test_fast_mode_rules_present_in_skill(self):
-        """Fast Mode contract: engine is a black box, init over scaffolding, one
-        resolution check per artifact, single-pass finalize, locked brief."""
+        """Fast Mode contract: black-box engine, no scaffolding, per-panel QA,
+        split resolution checks, two-call finalize, and scoped batch precedence."""
         text = self.skill_text()
         self.assertIn("## Fast Mode", text)
         for rule in (
@@ -836,15 +836,21 @@ class SkillContractTests(unittest.TestCase):
             "Right-size reasoning per stage",
             "Parallel independent panels",
             "One resolution check per artifact",
-            "Single-pass finalization",
+            "Two-call finalization",
             "Lock the brief",
         ):
             self.assertIn(rule, text)
         for phrase in (
-            "Do not read, grep, or open any file under `scripts/`",
-            "Do not write `setup_batch_*.py`",
+            "Do not read, grep, or open any file under `scripts/`, `comic_sol_product/`, or",
+            "Do not write `setup_batch_*.py`, `build_plans.py`, or equivalent helpers.",
+            "Visual QA still inspects every accepted attempt before",
+            "Check panel/source at original resolution during panel QA.",
+            "Apply the 390px readability check once,",
             "run `finalize` once to letter and compose",
-            "resolve to the batch map; do not invent a third",
+            "then run `finalize` once more.",
+            "The batch map takes precedence only over contradictory internal checklist counts;",
+            "safety/IP rules, engine validation, visual QA, and final-acceptance gates remain",
+            "authoritative.",
         ):
             self.assertIn(phrase, text)
 

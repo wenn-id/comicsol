@@ -60,9 +60,10 @@ Do not read, grep, or open any file under `scripts/`, `comic_sol_product/`, or
 `doctor`, `validate`, `status`, `resume-plan`, and `finalize`. Reading source
 wastes context and risks editing the engine you should not touch.
 
-If doctor reports missing Python/font/Pillow, fix the environment; do not patch the
-engine to make the check pass. If a version pin looks wrong, report it as a skill
-upgrade, not an ad-hoc edit.
+If doctor reports missing Python/font/Pillow, stop and report the exact required
+environment change. Obtain explicit user approval, then apply only that documented
+fix; do not patch the engine to make the check pass. If a version pin looks wrong,
+report it as a skill upgrade, not an ad-hoc edit.
 
 ### Use init, never hand-write setup scripts
 
@@ -73,8 +74,10 @@ owns project structure. Create a project with one command:
 python3.11 scripts/comic_sol.py init --output-root OUTPUT_ROOT --title TITLE --source SOURCE --request-json REQUEST_JSON
 ```
 
-Then edit only the semantic artifacts the engine expects (`plan/*.json`) through
-`transition` stages. Hand-written scaffolding is the single largest hidden time sink.
+For setup, edit only the semantic artifacts the engine expects (`plan/*.json`) through
+`transition` stages. Page QA later requires agent-authored
+`qa/pages/page-{NNN}.json` records. Hand-written scaffolding is the single largest
+hidden time sink.
 
 ### Right-size reasoning per stage
 
@@ -98,7 +101,7 @@ phone-scale (390px) check on every panel. Apply the 390px readability check once
 on the composed page, in page QA — that is where phone readability is actually
 decided.
 
-### Single-pass finalization
+### Two-call finalization
 
 After the last panel is promoted, run `finalize` once to letter and compose, inspect
 the composed pages at full and phone scale, write each `qa/pages/page-*.json` from
@@ -108,9 +111,11 @@ composition, or export turn-by-turn.
 ### Lock the brief
 
 Before generation, confirm the batch map once (e.g. Batch A pages 1-4, Batch B
-pages 5-8) and do not re-interpret it under a checklist gate. If a final-acceptance
-line contradicts the batch map, resolve to the batch map; do not invent a third
-project to satisfy a miscounted checklist.
+pages 5-8), persist it in project artifacts, and reuse it unchanged when resuming.
+The batch map takes precedence only over contradictory internal checklist counts;
+do not invent a third project to satisfy a miscounted checklist. Page-count limits,
+safety/IP rules, engine validation, visual QA, and final-acceptance gates remain
+authoritative.
 
 ### Progressive loading
 
