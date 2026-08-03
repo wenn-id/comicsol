@@ -52,12 +52,15 @@ class ProductCliTests(unittest.TestCase):
         self.assertIsInstance(payload["data"]["messages"], list)
 
     def test_safe_message_redacts_absolute_paths_with_spaces(self):
-        path = Path("/tmp/Comic Sol/private source.txt")
+        for path in (
+            "/tmp/Comic Sol/private source.txt",
+            r"C:\Users\Comic Sol\private source.txt",
+        ):
+            with self.subTest(path=path):
+                message = cli._safe_message(OSError(f"cannot read '{path}'"))
 
-        message = cli._safe_message(OSError(f"cannot read '{path}'"))
-
-        self.assertEqual("cannot read '<path>'", message)
-        self.assertNotIn(str(path), message)
+                self.assertEqual("cannot read '<path>'", message)
+                self.assertNotIn(path, message)
 
     def test_invalid_source_extension_is_categorized_before_allocation(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
