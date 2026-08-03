@@ -51,6 +51,14 @@ class ProductCliTests(unittest.TestCase):
         self.assertTrue(payload["data"]["healthy"])
         self.assertIsInstance(payload["data"]["messages"], list)
 
+    def test_safe_message_redacts_absolute_paths_with_spaces(self):
+        path = Path("/tmp/Comic Sol/private source.txt")
+
+        message = cli._safe_message(OSError(f"cannot read '{path}'"))
+
+        self.assertEqual("cannot read '<path>'", message)
+        self.assertNotIn(str(path), message)
+
     def test_invalid_source_extension_is_categorized_before_allocation(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

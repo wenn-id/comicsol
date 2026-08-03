@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -86,6 +87,7 @@ def _safe_message(error: Exception) -> str:
     message = str(error)
     if not message:
         return type(error).__name__
+    message = re.sub(r"(['\"])(/[^'\"]+)\1", r"\1<path>\1", message)
     for token in message.split():
         candidate = token.strip("'\"(),:;")
         if candidate and Path(candidate).is_absolute():
