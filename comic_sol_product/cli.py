@@ -7,7 +7,7 @@ import json
 import re
 import sys
 from dataclasses import asdict
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from . import __version__
@@ -90,7 +90,7 @@ def _safe_message(error: Exception) -> str:
 
     def replace_quoted_path(match: re.Match[str]) -> str:
         quote, candidate = match.group(1), match.group(2)
-        if Path(candidate).is_absolute():
+        if PurePosixPath(candidate).is_absolute():
             return f"{quote}<path>{quote}"
         if PureWindowsPath(candidate).is_absolute():
             return f"{quote}<path>{quote}"
