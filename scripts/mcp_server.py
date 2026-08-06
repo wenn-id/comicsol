@@ -34,8 +34,8 @@ from render_report import render_report
 # Root directory allowed for operations. All project IDs resolve relative to this.
 OUTPUT_ROOT: Path
 
-# Cache successful scans as (resolved path, root mtime, immediate child count).
-# Full symlink inspection runs only after a visible root-tree mutation.
+# Successful symlink scans are cached per project ID. Mutating tools invalidate
+# their entry; root mtime and child count catch common direct edits cheaply.
 _SYMLINK_SCAN_CACHE: dict[str, tuple[Path, int, int]] = {}
 
 _VALIDATION_STAGES = frozenset({"all", "plan", "storyboard", "panels", "final", "export-ready"})
