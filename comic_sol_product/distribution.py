@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-_VERSION = "2.0.0rc4"
+from . import __version__
+
+_VERSION = __version__
 _PLATFORMS = {"linux", "macos", "windows"}
 _ARCHITECTURES = {"x86_64", "arm64"}
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")

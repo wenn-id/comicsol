@@ -28,6 +28,11 @@ jobs:
     - name: Install MCP extras (if MCP job)
       if: matrix.extras == 'mcp'
       run: python -m pip install -r requirements-mcp.txt
+    - name: Audit dependency manifests for known vulnerabilities
+      run: |
+        python -m pip install pip-audit==2.10.1
+        python -m pip_audit -r requirements.txt
+        python -m pip_audit -r requirements-mcp.txt
     - name: Test with unittest
       # Unprivileged Windows cannot create file symlinks, so the path-containment
       # tests may only skip there; everywhere else a skip is a coverage loss.

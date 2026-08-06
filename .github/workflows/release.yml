@@ -2,8 +2,13 @@ name: Native Release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and publish (must equal package version, e.g. vX.Y.Z)"
+        required: true
+        type: string
   push:
-    tags: [ 'v2.0.0rc4' ]
+    tags: [ 'v*' ]
 
 permissions:
   contents: read
@@ -26,6 +31,28 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
+      - name: Resolve release identity
+        id: identity
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          TAG="$RELEASE_TAG"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          case "$VERSION" in *-*|*rc[0-9]*) PRERELEASE=true ;; *) PRERELEASE=false ;; esac
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "detected-version=$(python -c 'from comic_sol_product import __version__; print(__version__)')" >> "$GITHUB_OUTPUT"
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          VERSION="${{ steps.identity.outputs.version }}"
+          DETECTED="${{ steps.identity.outputs.detected-version }}"
+          if [ "$VERSION" != "$DETECTED" ]; then
+            echo "release tag $VERSION does not match package version $DETECTED" >&2
+            exit 1
+          fi
       - name: Build wheel
         shell: bash
         run: |
@@ -53,10 +80,18 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Resolve release identity
+        id: identity
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          TAG="$RELEASE_TAG"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
       - name: Build OCI image
-        run: docker build -t comic-sol:2.0.0rc4 .
+        run: docker build -t comic-sol:${{ steps.identity.outputs.version }} .
       - name: Smoke OCI image
-        run: docker run --rm --entrypoint comic-sol comic-sol:2.0.0rc4 doctor --output-root /data/doctor
+        run: docker run --rm --entrypoint comic-sol comic-sol:${{ steps.identity.outputs.version }} doctor --output-root /data/doctor
 
   source:
     runs-on: ubuntu-latest
@@ -82,12 +117,13 @@ jobs:
   publish:
     needs: [native, container, source]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/tags/v2.0.0rc4'
+    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
-      prerelease: true
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -97,30 +133,63 @@ jobs:
         with:
           pattern: comic-sol-*
           path: bundles
+      - name: Resolve release identity
+        id: identity
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          case "$VERSION" in *-*|*rc[0-9]*) PRERELEASE=true ;; *) PRERELEASE=false ;; esac
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
       - name: Verify platform bundles and create global SHA256SUMS
         shell: bash
         run: |
           python - <<'PY'
           import hashlib
+          import json
+          import os
+          import sys
           from pathlib import Path
           from comic_sol_product.distribution import ReleaseIdentity, verify_release_directory
-          root = Path('bundles')
+          version = os.environ["RELEASE_VERSION"]
+          root = Path("bundles")
           records = []
-          for platform in ('linux', 'macos', 'windows'):
-              bundle = root / f'comic-sol-{platform}-x86_64'
-              verify_release_directory(bundle, ReleaseIdentity('2.0.0rc4', platform, 'x86_64'))
+          for platform in ("linux", "macos", "windows"):
+              bundle = root / f"comic-sol-{platform}-x86_64"
+              verify_release_directory(bundle, ReleaseIdentity(version, platform, "x86_64"))
               for path in sorted(bundle.iterdir()):
-                  if path.name == 'SHA256SUMS':
+                  if path.name == "SHA256SUMS":
                       continue
                   records.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}")
-          for path in sorted((root / 'comic-sol-source').iterdir()):
+          for path in sorted((root / "comic-sol-source").iterdir()):
               records.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}")
-          destination = root / 'SHA256SUMS'
-          destination.write_text('\n'.join(sorted(records)) + '\n', encoding='utf-8', newline='\n')
+          destination = root / "SHA256SUMS"
+          destination.write_text("\n".join(sorted(records)) + "\n", encoding="utf-8", newline="\n")
           PY
-      - name: Publish immutable prerelease assets
+        env:
+          RELEASE_VERSION: ${{ steps.identity.outputs.version }}
+      - name: Attest release archives and source packages
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2
+        with:
+          subject-path: |
+            bundles/**/*.zip
+            bundles/**/*.whl
+            bundles/**/*.tar.gz
+      - name: Publish immutable release assets
         shell: bash
         run: |
-          gh release create v2.0.0rc4 --repo "${GITHUB_REPOSITORY}" --verify-tag --prerelease --title 'Comic Sol v2.0.0rc4' --notes-file docs/releases/v2.0.0rc4.md
-          find bundles -type f ! -name SHA256SUMS -print0 | xargs -0 gh release upload v2.0.0rc4 --repo "${GITHUB_REPOSITORY}" --clobber
-          gh release upload v2.0.0rc4 bundles/SHA256SUMS --repo "${GITHUB_REPOSITORY}" --clobber
+          TAG="${{ steps.identity.outputs.tag }}"
+          VERSION="${{ steps.identity.outputs.version }}"
+          PRERELEASE="${{ steps.identity.outputs.prerelease }}"
+          NOTES="docs/releases/${VERSION}.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "release notes not found: $NOTES" >&2
+            exit 1
+          fi
+          gh release create "$TAG" --repo "${GITHUB_REPOSITORY}" --verify-tag \
+            $([ "$PRERELEASE" = "true" ] && echo --prerelease) \
+            --title "Comic Sol ${VERSION}" --notes-file "$NOTES"
+          find bundles -type f ! -name SHA256SUMS -print0 | xargs -0 gh release upload "$TAG" --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release upload "$TAG" bundles/SHA256SUMS --repo "${GITHUB_REPOSITORY}" --clobber

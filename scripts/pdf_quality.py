@@ -10,6 +10,12 @@ from typing import Sequence
 
 from PIL import Image, ImageChops
 
+# One global raster decode budget keeps every Image.open path fail-closed against
+# crafted decompression bombs, while project-specific decoded-size checks remain
+# in place for lettering and normalization. Pages are 1600x2400; sixteen page
+# areas is the generous ceiling for oversampled source art.
+Image.MAX_IMAGE_PIXELS = 1600 * 2400 * 16
+
 PDF_TOLERANCE_VERSION = "1"
 PDF_EXPORTER_VERSION = "comic-sol-pillow-raster-v1"
 

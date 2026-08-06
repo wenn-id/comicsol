@@ -17,6 +17,14 @@ env/
 .DS_Store
 Thumbs.db
 
+# Secrets and private signing material
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+
 # Build Week generated outputs (not part of the skill package)
 comic-sol-output/
 

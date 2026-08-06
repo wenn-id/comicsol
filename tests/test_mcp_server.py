@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -146,6 +147,56 @@ class McpServerUnitTests(unittest.TestCase):
             with self.subTest(tool=tool.__name__):
                 with self.assertRaisesRegex(ToolError, "relative project path"):
                     tool(*arguments)
+
+    def test_tool_errors_never_leak_local_paths_or_sensitive_values(self):
+        project = self.root / "project"
+        project.mkdir()
+        with self.assertRaisesRegex(ToolError, "invalid project ID"):
+            mcp_server.comic_transition("C:\\\\Users\\\\secret-user", "PLANNED")
+        with self.assertRaisesRegex(ToolError, "sensitive request setting") as context:
+            mcp_server.comic_init("Story", "source", {"api_key": "do-not-leak"})
+        self.assertNotIn("do-not-leak", str(context.exception))
+        with self.assertRaisesRegex(ToolError, "unknown validation stage"):
+            mcp_server.comic_validate("project", "../secret")
+        with self.assertRaisesRegex(ToolError, "relative project path"):
+            mcp_server.comic_record_attempt("project", "p01-01", "initial", "C:escape.png")
+        self.assertEqual(
+            "<path>",
+            mcp_server._safe_message(FileNotFoundError(str(self.root / "secret-file"))),
+        )
+        self.assertNotIn(str(self.root), mcp_server._safe_message(FileNotFoundError(str(self.root / "secret-file"))))
+        for quote, path in (
+            ("'", "/tmp/Comic Sol/private payload.json"),
+            ('"', r"C:\\\\Comic Sol\\\\private payload.json"),
+        ):
+            with self.subTest(quote=quote, path=path):
+                message = mcp_server._safe_message(RuntimeError(f"provider failed at {quote}{path}{quote}"))
+                self.assertEqual(f"provider failed at {quote}<path>{quote}", message)
+                self.assertNotIn(path, message)
+        for raw, expected in (
+            ("provider returned api_key=sk-live-1234", "provider returned api_key=<redacted>"),
+            ("config value sk-live-1234 is invalid", "config value sk-live-1234 is invalid"),
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(expected, mcp_server._safe_message(RuntimeError(raw)))
+
+    def test_init_rejects_non_string_request_setting_keys(self):
+        before = list(self.root.iterdir())
+        with self.assertRaisesRegex(ToolError, "keys must be strings"):
+            mcp_server.comic_init("Story", "source", {1: "short_prompt"})
+        self.assertEqual(before, list(self.root.iterdir()))
+
+    def test_symlink_scan_is_cached_per_project_and_invalidated_on_change(self):
+        project = self.root / "cached-project"
+        project.mkdir()
+        mcp_server._resolve_project("cached-project")
+        cached = mcp_server._SYMLINK_SCAN_CACHE.get("cached-project")
+        self.assertIsNotNone(cached)
+        mcp_server._resolve_project("cached-project")
+        self.assertIs(cached, mcp_server._SYMLINK_SCAN_CACHE.get("cached-project"))
+        (project / "arbitrary.txt").write_text("changed")
+        mcp_server._resolve_project("cached-project")
+        self.assertIsNot(cached, mcp_server._SYMLINK_SCAN_CACHE.get("cached-project"))
 
 
 @unittest.skipUnless(MCP_AVAILABLE, "MCP extra is not installed")

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-VERSION="2.0.0rc1"
+VERSION="2.0.0rc4"
 INSTALL_ROOT="${COMIC_SOL_INSTALL_ROOT:-$HOME/.local/share/comic-sol}"
 ARCHIVE=""
 SHA256=""
@@ -47,13 +47,40 @@ if [ "$ACTUAL" != "$SHA256" ]; then
   exit 1
 fi
 
+validate_zip() {
+  archive=$1
+  if ! unzip -Z1 "$archive" | while IFS= read -r member; do
+    case "$member" in
+      comic-sol|comic-sol/*) ;;
+      *) echo "unsafe archive member: $member" >&2; exit 1 ;;
+    esac
+    case "$member" in
+      ../*|*/../*|./*|*/./*|*//*|/*) echo "unsafe archive member: $member" >&2; exit 1 ;;
+    esac
+    case "$member" in
+      *\\*|[A-Za-z]:/*) echo "unsafe archive member: $member" >&2; exit 1 ;;
+    esac
+  done; then
+    echo "archive member validation failed" >&2
+    exit 1
+  fi
+  if ! unzip -Z -l "$archive" | awk 'NR > 3 && $1 ~ /^l/ { found = 1 } END { exit found }'; then
+    echo "unsafe archive member: symbolic links are not allowed" >&2
+    exit 1
+  fi
+}
+
 STAGE="$TMP/stage"
 mkdir -p "$STAGE"
 case "$ARCHIVE" in
-  *.zip) unzip -q "$ARCHIVE" -d "$STAGE" ;;
+  *.zip) validate_zip "$ARCHIVE"; unzip -q -o "$ARCHIVE" -d "$STAGE" ;;
   *) echo "Unsupported archive; POSIX installer currently requires .zip" >&2; exit 2 ;;
 esac
 RUNTIME="$STAGE/comic-sol"
+if [ ! -d "$RUNTIME" ]; then
+  echo "archive must contain top-level comic-sol runtime" >&2
+  exit 1
+fi
 EXE="$RUNTIME/comic-sol"
 chmod 755 "$EXE"
 "$EXE" doctor --output-root "${COMIC_SOL_OUTPUT_ROOT:-$HOME/Comic Sol}"

@@ -179,7 +179,10 @@ class LetteringTests(unittest.TestCase):
                 self.characters,
             )
             interior = image.crop((40, 50, 440, 170))
-            return sum(1 for pixel in interior.getdata() if max(pixel) < 128)
+            return sum(
+                1 for pixel in interior.get_flattened_data()
+                if isinstance(pixel, tuple) and max(pixel) < 128
+            )
 
         regular_ink = rendered_ink("LOUD")
         bold_ink = rendered_ink("**LOUD**")
@@ -384,7 +387,13 @@ class LetteringTests(unittest.TestCase):
     def test_dialogue_has_white_oval_dark_stroke_and_tail(self):
         letter_panel(str(self.panel), 800, 1000, [dialogue()], self.characters)
         image = Image.open(self.panel).convert("RGB")
-        self.assertGreater(sum(1 for pixel in image.getdata() if all(channel > 200 for channel in pixel)), 1000)
+        self.assertGreater(
+            sum(
+                1 for pixel in image.get_flattened_data()
+                if isinstance(pixel, tuple) and all(channel > 200 for channel in pixel)
+            ),
+            1000,
+        )
         self.assertTrue(any(max(image.getpixel((x, 40))) < 80 for x in range(32, 370)))
 
     def test_dialogue_tail_attachment_has_no_internal_seam(self):
@@ -613,7 +622,7 @@ class LetteringTests(unittest.TestCase):
         stride = box[2] - box[0]
         text_pixels = [
             (box[0] + index % stride, box[1] + index // stride)
-            for index, value in enumerate(difference.crop(box).getdata())
+            for index, value in enumerate(difference.crop(box).get_flattened_data())
             if value
         ]
         self.assertGreater(len(text_pixels), 1000)

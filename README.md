@@ -96,6 +96,20 @@ Comic Sol includes an optional `stdio` MCP server that exposes the deterministic
 
 Sampling should remain disabled to preserve deterministic execution.
 
+### MCP trust boundary
+
+MCP uses local `stdio` and has no authentication layer. Any process that can
+launch the configured MCP command can invoke every deterministic tool and write
+inside its configured `--root`. Treat the MCP client and its configuration as
+trusted local code. Use a dedicated absolute output root containing only Comic
+Sol projects; do not point it at a home directory, repository root, or shared
+multi-user folder. The server rejects project traversal and symlinks, but this
+is containment, not user authentication.
+
+The CLI `status`, `validate`, `resume`, and `finalize` commands accept a project
+path directly. For the same containment model, keep project paths beneath the
+output root and use MCP when an explicit fixed root is required.
+
 To run the MCP adapter, install the SDK alongside Pillow:
 
 ```bash

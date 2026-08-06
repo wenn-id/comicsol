@@ -155,7 +155,10 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("/data", compose)
 
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("tags: [ 'v2.0.0rc4' ]", workflow)
+        self.assertIn("inputs:", workflow)
+        self.assertIn("tag:", workflow)
+        self.assertIn("tags: [ 'v*' ]", workflow)
+        self.assertNotIn("refs/tags/v2.0.0rc4", workflow)
         for runner in ("ubuntu-latest", "macos-latest", "windows-latest"):
             self.assertIn(runner, workflow)
         self.assertIn("scripts/build_portable.py", workflow)
@@ -168,10 +171,17 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("dist/*.tar.gz", workflow)
         self.assertIn("installers/install.sh", workflow)
         self.assertIn("installers/install.ps1", workflow)
-        self.assertIn("prerelease: true", workflow)
-        self.assertIn("if: github.ref == 'refs/tags/v2.0.0rc4'", workflow)
-        self.assertIn("comic-sol:2.0.0rc4", workflow)
-        self.assertIn("gh release create v2.0.0rc4", workflow)
+        self.assertIn("prerelease", workflow.lower())
+        self.assertIn("github.ref_name", workflow)
+        self.assertIn("inputs.tag || github.ref_name", workflow)
+        self.assertIn("startsWith(github.ref, 'refs/tags/v')", workflow)
+        self.assertIn("Verify tag matches package version", workflow)
+        self.assertIn("comic-sol:${{ steps.identity.outputs.version }}", workflow)
+        self.assertIn("actions/attest-build-provenance@", workflow)
+        self.assertIn("attestations: write", workflow)
+        self.assertIn("id-token: write", workflow)
+        self.assertNotIn("v2.0.0rc4", workflow)
+        self.assertNotIn("refs/tags/v2.0.0rc4", workflow)
         self.assertNotIn("refs/tags/v2.0.0rc1", workflow)
         for line in workflow.splitlines():
             if "uses:" in line:
@@ -186,8 +196,11 @@ class NativeDistributionContractTests(unittest.TestCase):
         assembler = (root / "scripts/assemble_release.py").read_text(encoding="utf-8")
         compose = (root / "compose.yaml").read_text(encoding="utf-8")
         release_contract = (root / "comic_sol_product/release.py").read_text(encoding="utf-8")
-        for source in (pyproject, package, distribution, assembler, compose):
-            self.assertIn("2.0.0rc4", source)
+        self.assertIn("2.0.0rc4", pyproject)
+        self.assertIn("2.0.0rc4", package)
+        self.assertIn("__version__", distribution)
+        self.assertIn("__version__", assembler)
+        self.assertIn("2.0.0rc4", compose)
         for module in (
             "normalize_panels.py", "typography.py", "layouts.py", "page_quality.py",
             "pdf_quality.py", "quality_sample.py",

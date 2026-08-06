@@ -8,7 +8,7 @@ param(
     [switch]$Uninstall
 )
 $ErrorActionPreference = "Stop"
-$Version = "2.0.0rc1"
+$Version = "2.0.0rc4"
 
 if ($Uninstall) {
     if (Test-Path -LiteralPath $InstallRoot) { Remove-Item -LiteralPath $InstallRoot -Recurse -Force }
@@ -31,8 +31,35 @@ try {
     if ($Actual -ne $SHA256.ToLowerInvariant()) { throw "SHA256 mismatch" }
 
     $Stage = Join-Path $Temp "stage"
+    if (-not $Archive.EndsWith(".zip")) { throw "Unsupported archive; the PowerShell installer requires .zip" }
+
+    function Test-UnsafeArchive {
+        param([string]$ArchivePath)
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $reader = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
+        try {
+            foreach ($entry in $reader.Entries) {
+                $name = $entry.FullName
+                if ($name -eq "" -or $name.EndsWith("/")) { continue }
+                $normalized = $name.Replace('\', '/')
+                if (-not ($normalized -eq "comic-sol" -or $normalized.StartsWith("comic-sol/"))) {
+                    throw "unsafe archive member: $name"
+                }
+                if ($normalized -match '(^|/)\.\.(/|$)' -or $normalized -match '(^|/)\.(/|$)' -or $normalized.StartsWith("/") -or $normalized -match '^[A-Za-z]:/') {
+                    throw "unsafe archive member: $name"
+                }
+                if (($entry.ExternalAttributes -band 0xF0000000) -eq 0xA0000000) {
+                    throw "unsafe archive member: symbolic links are not allowed: $name"
+                }
+            }
+        } finally {
+            $reader.Dispose()
+        }
+    }
+    Test-UnsafeArchive -ArchivePath $Archive
     Expand-Archive -LiteralPath $Archive -DestinationPath $Stage
     $Runtime = Join-Path $Stage "comic-sol"
+    if (-not (Test-Path -LiteralPath $Runtime)) { throw "archive must contain top-level comic-sol runtime" }
     $Exe = Join-Path $Runtime "comic-sol.exe"
     & $Exe doctor --output-root $(if ($env:COMIC_SOL_OUTPUT_ROOT) { $env:COMIC_SOL_OUTPUT_ROOT } else { "$HOME\Documents\Comic Sol" })
     if ($LASTEXITCODE -ne 0) { throw "doctor verification failed" }

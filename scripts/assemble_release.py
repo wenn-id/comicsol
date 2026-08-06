@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from comic_sol_product import __version__
 from comic_sol_product.distribution import (
     ReleaseIdentity,
     artifact_name,
@@ -29,7 +30,7 @@ def main() -> int:
     parser.add_argument("--architecture", default="x86_64", choices=("x86_64", "arm64"))
     args = parser.parse_args()
 
-    identity = ReleaseIdentity("2.0.0rc4", args.platform, args.architecture)
+    identity = ReleaseIdentity(__version__, args.platform, args.architecture)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     archive = output / artifact_name(identity, "zip")

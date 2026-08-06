@@ -14,6 +14,10 @@ from typing import Iterable
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+# Fail closed on crafted raster decompression bombs; explicit per-project decoded
+# size checks below remain the authoritative lettering/normalization ceiling.
+Image.MAX_IMAGE_PIXELS = 1600 * 2400 * 16
+
 from project_io import ProjectTransaction, contained_project_path
 
 

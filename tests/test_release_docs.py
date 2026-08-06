@@ -13,6 +13,8 @@ class ReleaseDocumentationTests(unittest.TestCase):
 
     def test_readme_links_native_install_and_release_security(self):
         self.assertIn("docs/install.md", self.readme)
+        self.assertIn("MCP trust boundary", self.install)
+        self.assertIn("MCP trust boundary", self.readme)
         self.assertIn("v2.0.0rc4", self.readme)
         self.assertIn("SHA256SUMS", self.readme)
         self.assertIn("unsigned", self.readme.lower())

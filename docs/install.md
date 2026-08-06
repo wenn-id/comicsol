@@ -92,7 +92,11 @@ docker run --rm --entrypoint comic-sol comic-sol:2.0.0rc4 doctor --output-root /
 docker compose up
 ```
 
-The image runs as `comic-sol`, uses `/data` for persistent projects, and exposes the MCP server over stdio by default. `compose.yaml` mounts a named `/data` volume, uses a read-only root filesystem, and enables `no-new-privileges`.
+The image runs as `comic-sol`, uses `/data` for persistent projects, and exposes the MCP server over stdio by default. `compose.yaml` mounts a named `/data` volume, uses a read-only root filesystem, disables network access, applies CPU/memory limits, and enables `no-new-privileges`.
+
+### MCP trust boundary
+
+MCP stdio has no authentication. Any local process able to launch the configured MCP command can invoke all tools inside its `--root`. Use only trusted clients and a dedicated absolute root containing Comic Sol projects; never point MCP at `$HOME`, a repository root, or a shared multi-user directory. Path containment and symlink rejection protect the configured root, but do not authenticate clients. CLI commands that accept `project_dir` should likewise use paths beneath the chosen output root.
 
 ## Verify release metadata
 

@@ -108,6 +108,28 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(b"Second", (second / "source/input.txt").read_bytes())
         self.assertEqual(b"Third", (third / "source/input.txt").read_bytes())
 
+    def test_init_rejects_unknown_and_sensitive_request_settings_before_allocation(self):
+        for request, message in (
+            ({"mode": "short_prompt", "language": "en", "unexpected": True}, "unsupported request setting"),
+            ({"api_key": "do-not-persist"}, "sensitive request setting"),
+            ({"metadata": {"token": "do-not-persist"}}, "sensitive request setting"),
+        ):
+            with self.subTest(request=request):
+                with self.assertRaisesRegex(ValueError, message):
+                    init_project(self.root, "Rejected Request", b"Story", request)
+                self.assertEqual([], list(self.root.iterdir()))
+
+    def test_init_rejects_invalid_request_values_before_allocation(self):
+        for request in (
+            {"mode": "provider_payload", "language": "en"},
+            {"mode": "short_prompt", "language": ""},
+            {"mode": "short_prompt", "language": "en", "title": 42},
+        ):
+            with self.subTest(request=request):
+                with self.assertRaises(ValueError):
+                    init_project(self.root, "Rejected Request", b"Story", request)
+                self.assertEqual([], list(self.root.iterdir()))
+
     def test_transition_rejects_skips_and_allows_blocked_and_warning_terminal(self):
         project = init_project(
             self.root,

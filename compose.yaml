@@ -8,6 +8,12 @@ services:
       - comic-sol-data:/data
     tmpfs:
       - /tmp
+    network_mode: none
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
     security_opt:
       - no-new-privileges:true
 
