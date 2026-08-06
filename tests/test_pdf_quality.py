@@ -127,14 +127,21 @@ class PdfCorruptionTests(unittest.TestCase):
 
     def test_decompression_bomb_warning_is_a_decode_failure(self):
         import unittest.mock as mock
+        import warnings
 
         payload = b"%PDF-1.7\nstream\n\xff\xd8fake\nendstream\n%%EOF"
-        with mock.patch(
-            "pdf_quality.Image.open",
-            side_effect=Image.DecompressionBombWarning("unsafe dimensions"),
-        ):
+        decoded = mock.MagicMock()
+        decoded.__enter__.return_value = decoded
+        decoded.convert.return_value = Image.new("RGB", (1, 1))
+
+        def open_with_warning(*args, **kwargs):
+            warnings.warn("unsafe dimensions", Image.DecompressionBombWarning)
+            return decoded
+
+        with mock.patch("pdf_quality.Image.open", side_effect=open_with_warning):
             with self.assertRaisesRegex(PdfQualityError, "decode"):
                 verify_pdf_payload(payload, [self.first])
+        decoded.convert.return_value.close()
 
 
 if __name__ == "__main__":
