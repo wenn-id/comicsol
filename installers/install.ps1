@@ -40,8 +40,8 @@ try {
         try {
             foreach ($entry in $reader.Entries) {
                 $name = $entry.FullName
-                if ($name -eq "" -or $name.EndsWith("/")) { continue }
                 $normalized = $name.Replace('\', '/')
+                if ($normalized -eq "") { continue }
                 if (-not ($normalized -eq "comic-sol" -or $normalized.StartsWith("comic-sol/"))) {
                     throw "unsafe archive member: $name"
                 }

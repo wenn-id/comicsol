@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import re
+import warnings
 from dataclasses import asdict, dataclass
 from typing import Sequence
 
@@ -141,12 +142,14 @@ def _decode_pdf_frames(payload: bytes) -> list[Image.Image]:
         if not stream.startswith(b"\xff\xd8"):
             continue
         try:
-            with Image.open(io.BytesIO(stream)) as image:
-                image.load()
-                frame = image.convert("RGB")
-                frame.load()
-                frames.append(frame)
-        except (OSError, SyntaxError) as error:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with Image.open(io.BytesIO(stream)) as image:
+                    image.load()
+                    frame = image.convert("RGB")
+                    frame.load()
+                    frames.append(frame)
+        except (OSError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
             for frame in frames:
                 frame.close()
             raise PdfQualityError("PDF raster frame could not be decoded") from error

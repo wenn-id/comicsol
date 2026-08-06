@@ -125,6 +125,17 @@ class PdfCorruptionTests(unittest.TestCase):
         with self.assertRaisesRegex(PdfQualityError, "decode|corrupt|page count"):
             verify_pdf_payload(payload[: len(payload) // 3], [self.first, self.second])
 
+    def test_decompression_bomb_warning_is_a_decode_failure(self):
+        import unittest.mock as mock
+
+        payload = b"%PDF-1.7\nstream\n\xff\xd8fake\nendstream\n%%EOF"
+        with mock.patch(
+            "pdf_quality.Image.open",
+            side_effect=Image.DecompressionBombWarning("unsafe dimensions"),
+        ):
+            with self.assertRaisesRegex(PdfQualityError, "decode"):
+                verify_pdf_payload(payload, [self.first])
+
 
 if __name__ == "__main__":
     unittest.main()

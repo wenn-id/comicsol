@@ -11,6 +11,7 @@ import re
 import sys
 import tempfile
 import unicodedata
+import warnings
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1448,14 +1449,16 @@ def record_generation_attempt(
 
 def _verify_raster(path: Path) -> tuple[int, int]:
     try:
-        with Image.open(path) as image:
-            if image.format not in {"PNG", "JPEG", "WEBP"}:
-                raise ValueError("attempt must be a readable raster")
-            image.load()
-            if image.width < 512 or image.height < 512:
-                raise ValueError("attempt must be a readable raster at least 512px")
-            return image.width, image.height
-    except (OSError, SyntaxError, Image.DecompressionBombError) as error:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(path) as image:
+                if image.format not in {"PNG", "JPEG", "WEBP"}:
+                    raise ValueError("attempt must be a readable raster")
+                image.load()
+                if image.width < 512 or image.height < 512:
+                    raise ValueError("attempt must be a readable raster at least 512px")
+                return image.width, image.height
+    except (OSError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
         raise ValueError("attempt must be a readable raster") from error
 
 

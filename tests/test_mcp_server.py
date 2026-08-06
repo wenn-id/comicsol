@@ -176,15 +176,29 @@ class McpServerUnitTests(unittest.TestCase):
         for raw, expected in (
             ("provider returned api_key=sk-live-1234", "provider returned api_key=<redacted>"),
             ("config value sk-live-1234 is invalid", "config value sk-live-1234 is invalid"),
+            ('{"access_token": "ghp_abc123", "client_secret": "s3cr3t"}', '{"access_token": "<redacted>", "client_secret": "<redacted>"}'),
         ):
             with self.subTest(raw=raw):
                 self.assertEqual(expected, mcp_server._safe_message(RuntimeError(raw)))
+                self.assertNotIn("ghp_abc123", mcp_server._safe_message(RuntimeError(raw)))
+                self.assertNotIn("s3cr3t", mcp_server._safe_message(RuntimeError(raw)))
 
     def test_init_rejects_non_string_request_setting_keys(self):
         before = list(self.root.iterdir())
         with self.assertRaisesRegex(ToolError, "keys must be strings"):
             mcp_server.comic_init("Story", "source", {1: "short_prompt"})
         self.assertEqual(before, list(self.root.iterdir()))
+
+    def test_symlink_scan_rechecks_nested_directory_changes(self):
+        project = self.root / "nested-project"
+        nested = project / "existing-child"
+        nested.mkdir(parents=True)
+        mcp_server._resolve_project("nested-project")
+        outside = Path(self.temporary_directory.name) / "nested-secret.txt"
+        outside.write_text("secret")
+        make_symlink(self, nested / "late-link", outside)
+        with self.assertRaisesRegex(ToolError, "symlink"):
+            mcp_server._resolve_project("nested-project")
 
     def test_symlink_scan_is_cached_per_project_and_invalidated_on_change(self):
         project = self.root / "cached-project"

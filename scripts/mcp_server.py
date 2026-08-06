@@ -34,9 +34,14 @@ from render_report import render_report
 # Root directory allowed for operations. All project IDs resolve relative to this.
 OUTPUT_ROOT: Path
 
-# Successful symlink scans are cached per project ID. Mutating tools invalidate
-# their entry; root mtime and child count catch common direct edits cheaply.
-_SYMLINK_SCAN_CACHE: dict[str, tuple[Path, int, int]] = {}
+# Successful symlink scans are cached per project ID. Recursive directory
+# fingerprints invalidate safely when nested entries change, while repeated calls
+# skip the full symlink-entry inspection.
+_SYMLINK_SCAN_CACHE: dict[
+    str,
+    tuple[Path, tuple[tuple[str, int, tuple[str, ...]], ...]],
+] = {}
+_SENSITIVE_NAME = r"api[_-]?key|access[_-]?token|client[_-]?secret|authorization|credential|password|private[_-]?key|secret|token"
 
 _VALIDATION_STAGES = frozenset({"all", "plan", "storyboard", "panels", "final", "export-ready"})
 _PANEL_ID = re.compile(r"^p[0-9]{2}-[0-9]{2}$")
@@ -103,13 +108,22 @@ def _safe_message(error: Exception) -> str:
         return match.group(0)
 
     message = re.sub(r"(['\"])([^'\"]+)\1", replace_quoted_path, message)
-    message = re.sub(
-        r"(?i)\b(api[_-]?key|authorization|credential|password|private[_-]?key|secret|token)(\s*[:=]\s*)[^\s,;]+",
-        lambda match: f"{match.group(1)}{match.group(2)}<redacted>",
+    assignment = re.compile(
+        rf"(?P<quote>['\"]?)(?P<key>{_SENSITIVE_NAME})(?P=quote)"
+        rf"(?P<separator>\s*[:=]\s*)(?P<value_quote>['\"]?)(?P<value>[^'\"}},;\s]+)"
+        rf"(?P=value_quote)",
+        re.IGNORECASE,
+    )
+    message = assignment.sub(
+        lambda match: (
+            f"{match.group('quote')}{match.group('key')}{match.group('quote')}"
+            f"{match.group('separator')}{match.group('value_quote')}<redacted>"
+            f"{match.group('value_quote')}"
+        ),
         message,
     )
     message = re.sub(
-        r"(?i)\b(api[_-]?key|authorization|credential|password|private[_-]?key|secret|token)\b(?!\s*[:=])",
+        rf"(?i)\b(?:{_SENSITIVE_NAME})\b(?!['\"]?\s*[:=])",
         "<redacted>",
         message,
     )
@@ -137,17 +151,32 @@ def _configure_root(path: Path) -> Path:
     return OUTPUT_ROOT
 
 
-def _project_fingerprint(project_dir: Path) -> tuple[Path, int, int]:
-    """Return (resolved project path, root mtime ns, immediate child count)."""
-    try:
-        root_mtime = project_dir.resolve().stat().st_mtime_ns
-    except OSError:
-        root_mtime = 0
-    try:
-        child_count = sum(1 for _ in project_dir.iterdir())
-    except OSError:
-        child_count = 0
-    return project_dir.resolve(), root_mtime, child_count
+def _directory_entries(
+    project_dir: Path,
+) -> tuple[tuple[str, int, tuple[str, ...]], ...]:
+    """Fingerprint directory mtimes and direct entry types across project tree."""
+    records: list[tuple[str, int, tuple[str, ...]]] = []
+    project_dir = project_dir.resolve()
+    for directory, dirnames, filenames in os.walk(project_dir, followlinks=False):
+        root = Path(directory)
+        entries = []
+        for name in (*dirnames, *filenames):
+            candidate = root / name
+            kind = "l" if candidate.is_symlink() else "d" if candidate.is_dir() else "f"
+            entries.append(f"{kind}:{name}")
+        try:
+            relative = root.relative_to(project_dir).as_posix() or "."
+            records.append((relative, root.lstat().st_mtime_ns, tuple(sorted(entries))))
+        except OSError:
+            continue
+    return tuple(sorted(records))
+
+
+def _project_fingerprint(
+    project_dir: Path,
+) -> tuple[Path, tuple[tuple[str, int, tuple[str, ...]], ...]]:
+    """Return (resolved project path, recursive directory-entry fingerprint)."""
+    return project_dir.resolve(), _directory_entries(project_dir)
 
 
 def _resolve_project(project_id: str) -> Path:
