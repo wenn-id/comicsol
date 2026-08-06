@@ -176,7 +176,7 @@ class McpServerUnitTests(unittest.TestCase):
         for raw, expected in (
             ("provider returned api_key=sk-live-1234", "provider returned api_key=<redacted>"),
             ("config value sk-live-1234 is invalid", "config value sk-live-1234 is invalid"),
-            ('{"access_token": "ghp_abc123", "client_secret": "s3cr3t"}', '{"access_token": "<redacted>", "client_secret": "<redacted>"}'),
+            ('{"access_token": "ghp_abc123", "client_secret": "s3cr3t"}', '{"<redacted>": "<redacted>", "<redacted>": "<redacted>"}'),
         ):
             with self.subTest(raw=raw):
                 self.assertEqual(expected, mcp_server._safe_message(RuntimeError(raw)))

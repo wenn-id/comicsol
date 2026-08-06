@@ -116,7 +116,7 @@ def _safe_message(error: Exception) -> str:
     )
     message = assignment.sub(
         lambda match: (
-            f"{match.group('quote')}{match.group('key')}{match.group('quote')}"
+            f"{match.group('quote')}{'<redacted>' if match.group('quote') else match.group('key')}{match.group('quote')}"
             f"{match.group('separator')}{match.group('value_quote')}<redacted>"
             f"{match.group('value_quote')}"
         ),

@@ -172,6 +172,7 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("installers/install.sh", workflow)
         self.assertIn("installers/install.ps1", workflow)
         self.assertIn("prerelease", workflow.lower())
+        self.assertIn("packaging.version", workflow)
         self.assertIn("github.ref_name", workflow)
         self.assertIn("inputs.tag || github.ref_name", workflow)
         self.assertIn("startsWith(github.ref, 'refs/tags/v')", workflow)

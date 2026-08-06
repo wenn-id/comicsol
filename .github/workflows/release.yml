@@ -41,7 +41,8 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           VERSION="${TAG#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          case "$VERSION" in *-*|*rc[0-9]*) PRERELEASE=true ;; *) PRERELEASE=false ;; esac
+          python -m pip install packaging==25.0
+          PRERELEASE=$(RELEASE_VERSION="$VERSION" python -c 'import os; from packaging.version import Version; print(str(Version(os.environ["RELEASE_VERSION"]).is_prerelease).lower())')
           echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
           echo "detected-version=$(python -c 'from comic_sol_product import __version__; print(__version__)')" >> "$GITHUB_OUTPUT"
       - name: Verify tag matches package version
@@ -141,7 +142,8 @@ jobs:
           VERSION="${TAG#v}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          case "$VERSION" in *-*|*rc[0-9]*) PRERELEASE=true ;; *) PRERELEASE=false ;; esac
+          python -m pip install packaging==25.0
+          PRERELEASE=$(RELEASE_VERSION="$VERSION" python -c 'import os; from packaging.version import Version; print(str(Version(os.environ["RELEASE_VERSION"]).is_prerelease).lower())')
           echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
       - name: Verify platform bundles and create global SHA256SUMS
         shell: bash

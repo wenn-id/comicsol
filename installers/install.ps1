@@ -51,6 +51,7 @@ try {
                 if (($entry.ExternalAttributes -band 0xF0000000) -eq 0xA0000000) {
                     throw "unsafe archive member: symbolic links are not allowed: $name"
                 }
+                if ($normalized.EndsWith("/")) { continue }
             }
         } finally {
             $reader.Dispose()
