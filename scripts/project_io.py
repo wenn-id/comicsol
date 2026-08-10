@@ -230,7 +230,12 @@ def open_contained(project_dir: Path, relative: str | Path, *, flags: int = os.O
     parts = _relative_parts(relative)
     if os.name == "nt" or not _HAS_NOFOLLOW:
         path = contained_project_path(project_dir, relative, must_exist=not (flags & os.O_CREAT))
-        descriptor = os.open(path, flags | _O_NOFOLLOW, mode)
+        stream = open_path_nofollow(path, flags=flags, mode=mode)
+        try:
+            yield stream
+        finally:
+            stream.close()
+        return
     else:
         parent_fd, name = _open_parent_fd(project_dir, parts, create=bool(flags & os.O_CREAT))
         try:
@@ -249,12 +254,23 @@ def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -
     path = Path(path)
     if not path.is_absolute():
         raise ValueError("path must be absolute")
-    if os.name == "nt" or not _HAS_NOFOLLOW:
-        return os.fdopen(os.open(path, flags | _O_NOFOLLOW, mode), "rb")
     absolute = path.absolute()
     parts = absolute.parts
     if not absolute.is_absolute() or len(parts) < 2:
         raise ValueError("path must be absolute")
+    if os.name == "nt" or not _HAS_NOFOLLOW:
+        current = Path(parts[0])
+        for part in parts[1:]:
+            current /= part
+            if current.is_symlink():
+                raise ValueError("path must not contain symlinks or reparse points")
+            try:
+                attributes = getattr(current.stat(follow_symlinks=False), "st_file_attributes", 0)
+            except AttributeError:
+                attributes = 0
+            if attributes & 0x400:
+                raise ValueError("path must not contain symlinks or reparse points")
+        return os.fdopen(os.open(absolute, flags, mode), "rb")
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _O_NOFOLLOW
     current = os.open(parts[0], directory_flags)
     try:
@@ -453,6 +469,7 @@ class ProjectTransaction:
                     self.project_dir, entry["staged"], must_exist=True
                 )
                 if os.name == "nt" or not _HAS_NOFOLLOW:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(staged, dest)
                 else:
                     replace_contained(self.project_dir, entry["staged"], entry["path"])
