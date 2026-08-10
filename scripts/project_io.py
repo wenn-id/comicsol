@@ -258,6 +258,11 @@ def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -
     parts = absolute.parts
     if not absolute.is_absolute() or len(parts) < 2:
         raise ValueError("path must be absolute")
+    # macOS exposes /var as a system alias for /private/var. Resolve only this
+    # trusted OS prefix; project-controlled components remain lexical + no-follow.
+    if sys.platform == "darwin" and parts[0] == "/" and len(parts) > 1 and parts[1] == "var":
+        absolute = Path("/private", *parts[1:])
+        parts = absolute.parts
     if os.name == "nt" or not _HAS_NOFOLLOW:
         current = Path(parts[0])
         for part in parts[1:]:

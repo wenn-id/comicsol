@@ -118,7 +118,7 @@ class ClientSetupTests(unittest.TestCase):
         config.write_text(
             json.dumps({"mcpServers": {"comic-sol": {
                 "command": "comic-sol",
-                "args": ["mcp", "--root", str(self.output.resolve()), "--root", "again"],
+                "args": ["mcp", "--root", str(self.output.resolve()), "--root", str(self.output.resolve())],
             }}}),
             encoding="utf-8",
         )
