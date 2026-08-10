@@ -101,14 +101,13 @@ class ContainedProjectPathTests(unittest.TestCase):
         with self.assertRaises((OSError, ValueError)):
             project_io.open_path_nofollow(link / "value.txt")
 
-    @unittest.skipUnless(os.name == "posix", "macOS alias behavior requires POSIX")
+    @unittest.skipUnless(sys.platform == "darwin", "macOS alias behavior requires macOS")
     def test_open_path_nofollow_allows_macos_var_alias_only(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir="/var/tmp", prefix="comic-sol-") as temporary:
             target = Path(temporary) / "value.txt"
             target.write_bytes(b"var-alias")
-            with mock.patch.object(sys, "platform", "darwin"):
-                with project_io.open_path_nofollow(target) as stream:
-                    self.assertEqual(b"var-alias", stream.read())
+            with project_io.open_path_nofollow(target) as stream:
+                self.assertEqual(b"var-alias", stream.read())
 
     @unittest.skipUnless(os.name == "posix", "macOS alias behavior requires POSIX")
     def test_open_path_nofollow_handles_deep_macos_temp_path(self):

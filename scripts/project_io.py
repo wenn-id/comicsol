@@ -258,6 +258,9 @@ def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -
     parts = absolute.parts
     if not absolute.is_absolute() or len(parts) < 2:
         raise ValueError("path must be absolute")
+    if sys.platform == "darwin" and parts[:2] == ("/", "var"):
+        absolute = Path("/private", *parts[1:])
+        parts = absolute.parts
     if os.name == "nt" or not _HAS_NOFOLLOW:
         current = Path(parts[0])
         for part in parts[1:]:
@@ -274,17 +277,7 @@ def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _O_NOFOLLOW
     current = os.open(parts[0], directory_flags)
     try:
-        # macOS exposes /var as a trusted system symlink to /private/var.
-        # Follow only this fixed OS alias; keep no-follow enforcement for every
-        # caller-controlled component below it.
-        first_component = 1
-        if sys.platform == "darwin" and parts[1] == "var":
-            trusted_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-            child = os.open(parts[1], trusted_flags, dir_fd=current)
-            os.close(current)
-            current = child
-            first_component = 2
-        for part in parts[first_component:-1]:
+        for part in parts[1:-1]:
             child = os.open(part, directory_flags, dir_fd=current)
             os.close(current)
             current = child
