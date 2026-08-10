@@ -6,6 +6,60 @@ ARCHIVE=""
 SHA256=""
 URL=""
 UNINSTALL=0
+INSTALL_LOCK_DIR=""
+LOCK_HELD=0
+
+acquire_install_lock() {
+  lock_parent=$(dirname "$INSTALL_LOCK_DIR")
+  mkdir -p -- "$lock_parent"
+  if ! mkdir -- "$INSTALL_LOCK_DIR" 2>/dev/null; then
+    owner=$(cat "$INSTALL_LOCK_DIR/pid" 2>/dev/null || true)
+    case "$owner" in
+      '')
+        echo "another Comic Sol installer is using this install root" >&2
+        return 1
+        ;;
+      *[!0-9]*)
+        echo "cannot validate existing install lock" >&2
+        return 1
+        ;;
+      *)
+        if kill -0 "$owner" 2>/dev/null; then
+          echo "another Comic Sol installer is using this install root" >&2
+          return 1
+        fi
+        rm -rf -- "$INSTALL_LOCK_DIR"
+        mkdir -- "$INSTALL_LOCK_DIR" 2>/dev/null || {
+          echo "another Comic Sol installer is using this install root" >&2
+          return 1
+        }
+        ;;
+    esac
+  fi
+  LOCK_HELD=1
+  if ! printf '%s\n' "$$" > "$INSTALL_LOCK_DIR/pid"; then
+    rm -rf -- "$INSTALL_LOCK_DIR"
+    LOCK_HELD=0
+    return 1
+  fi
+}
+
+release_install_lock() {
+  [ "$LOCK_HELD" -eq 1 ] || return 0
+  rm -rf -- "$INSTALL_LOCK_DIR"
+  LOCK_HELD=0
+}
+
+cleanup_install() {
+  rollback
+  release_install_lock
+  rm -rf -- "$TMP"
+}
+
+abort_install() {
+  cleanup_install
+  exit 130
+}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -18,8 +72,12 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+INSTALL_LOCK_DIR="${INSTALL_ROOT}.lock"
 if [ "$UNINSTALL" -eq 1 ]; then
+  acquire_install_lock
+  trap 'release_install_lock' EXIT INT TERM
   rm -rf -- "$INSTALL_ROOT"
+  release_install_lock
   echo "Comic Sol runtime removed. User projects were preserved."
   exit 0
 fi
@@ -29,6 +87,8 @@ if [ -z "$SHA256" ]; then
   exit 2
 fi
 
+acquire_install_lock
+trap 'release_install_lock' EXIT INT TERM
 TMP=$(mktemp -d)
 INSTALL_STARTED=0
 COMMITTED=0
@@ -64,7 +124,8 @@ rollback() {
     rm -f -- "$INSTALL_ROOT/active-version"
   fi
 }
-trap 'rollback; rm -rf -- "$TMP"' EXIT INT TERM
+trap 'cleanup_install' EXIT
+trap 'abort_install' INT TERM
 
 if [ -n "$URL" ]; then
   ARCHIVE="$TMP/comic-sol.zip"

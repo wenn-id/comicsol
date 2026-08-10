@@ -17,7 +17,7 @@ from typing import Callable, Iterable
 
 from PIL import Image, UnidentifiedImageError
 
-from project_io import contained_project_path
+from project_io import contained_project_path, open_path_nofollow
 from page_quality import validate_page_quality
 from quality_records import PANEL_CHECK_IDS, validate_quality_checks
 from typography import lettering_geometry_hash
@@ -943,7 +943,7 @@ def validate_panel_provenance(
         if path is None:
             continue
         try:
-            with Image.open(path) as image:
+            with open_path_nofollow(path) as stream, Image.open(stream) as image:
                 image.load()
                 actual_size = image.size
         except (OSError, SyntaxError, UnidentifiedImageError, Image.DecompressionBombError):
@@ -1238,7 +1238,7 @@ def _validate_raster(
         return None
     try:
         image_path = contained_project_path(project_dir, relative_path, must_exist=True)
-        with Image.open(image_path) as image:
+        with open_path_nofollow(image_path) as stream, Image.open(stream) as image:
             if image.format not in {"PNG", "JPEG", "WEBP"}:
                 _add(issues, issue_path, field, "must contain PNG, JPEG, or WebP data")
             width, height = image.size

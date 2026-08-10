@@ -8,13 +8,38 @@ param(
     [switch]$Uninstall
 )
 $ErrorActionPreference = "Stop"
+$InstallMutex = $null
+function Acquire-InstallMutex {
+    $name = "ComicSol-Install-" + (($InstallRoot.ToLowerInvariant()) -replace '[^A-Za-z0-9]', '_')
+    $script:InstallMutex = New-Object System.Threading.Mutex($false, $name)
+    try {
+        if (-not $script:InstallMutex.WaitOne(0)) {
+            throw "another Comic Sol installer is using this install root"
+        }
+    } catch [System.Threading.AbandonedMutexException] {
+        # Previous installer died; ownership transferred to this process.
+    }
+}
+function Release-InstallMutex {
+    if ($script:InstallMutex) {
+        try { $script:InstallMutex.ReleaseMutex() } catch [System.Threading.ApplicationException] { }
+        $script:InstallMutex.Dispose()
+        $script:InstallMutex = $null
+    }
+}
 
 if ($Uninstall) {
-    if (Test-Path -LiteralPath $InstallRoot) { Remove-Item -LiteralPath $InstallRoot -Recurse -Force }
-    Write-Output "Comic Sol runtime removed. User projects were preserved."
+    Acquire-InstallMutex
+    try {
+        if (Test-Path -LiteralPath $InstallRoot) { Remove-Item -LiteralPath $InstallRoot -Recurse -Force }
+        Write-Output "Comic Sol runtime removed. User projects were preserved."
+    } finally {
+        Release-InstallMutex
+    }
     exit 0
 }
 if (-not $SHA256) { throw "-SHA256 is required for this unsigned prerelease" }
+Acquire-InstallMutex
 
 $Temp = Join-Path ([System.IO.Path]::GetTempPath()) ("comic-sol-" + [guid]::NewGuid())
 $Committed = $false
@@ -49,8 +74,8 @@ function Restore-Install {
     elseif (Test-Path -LiteralPath $Pointer) { Remove-Item -LiteralPath $Pointer -Force }
 }
 
-New-Item -ItemType Directory -Path $Temp | Out-Null
 try {
+    New-Item -ItemType Directory -Path $Temp | Out-Null
     if ($Url) {
         $Archive = Join-Path $Temp "comic-sol.zip"
         Invoke-WebRequest -Uri $Url -OutFile $Archive -UseBasicParsing
@@ -127,4 +152,5 @@ try {
     try {
         if (Test-Path -LiteralPath $Temp) { Remove-Item -LiteralPath $Temp -Recurse -Force -ErrorAction Stop }
     } catch { Write-Warning "Temporary cleanup failed: $($_.Exception.Message)" }
+    Release-InstallMutex
 }

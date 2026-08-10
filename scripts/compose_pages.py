@@ -21,7 +21,7 @@ from comic_sol import (
     sha256_file,
 )
 from layouts import LAYOUT_VERSION, get_layout, match_layout, validate_custom_layout
-from project_io import ProjectTransaction, contained_project_path
+from project_io import ProjectTransaction, contained_project_path, open_path_nofollow
 
 COMPOSITION_CACHE_PATH = "cache/composition.json"
 
@@ -150,7 +150,7 @@ def _compose_to_bytes(
             source_path = contained_project_path(
                 project_dir, source_relative, must_exist=True
             )
-            with Image.open(source_path) as source:
+            with open_path_nofollow(source_path) as stream, Image.open(stream) as source:
                 source.load()
                 fitted = ImageOps.fit(
                     source.convert("RGB"),

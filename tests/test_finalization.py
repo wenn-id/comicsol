@@ -447,13 +447,13 @@ class GuardedOperationTests(unittest.TestCase):
 
         real_replace = project_io.os.replace
 
-        def fail_verification_publish(source, destination):
+        def fail_verification_publish(source, destination, **kwargs):
             if (
                 Path(source).name.startswith("staged-")
                 and Path(destination).name == "pdf-verification.json"
             ):
                 raise OSError("injected verification publish failure")
-            return real_replace(source, destination)
+            return real_replace(source, destination, **kwargs)
 
         with mock.patch.object(
             project_io.os, "replace", side_effect=fail_verification_publish

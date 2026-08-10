@@ -20,7 +20,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json, sha256_file
-from project_io import ProjectTransaction, contained_project_path
+from project_io import ProjectTransaction, contained_project_path, open_path_nofollow
 from typography import (
     lettering_geometry_hash,
     preflight_text_items,
@@ -867,7 +867,7 @@ def letter_panel(
         raise TypeError("text_items and character_bible must be lists")
     path = Path(output_path)
     try:
-        with Image.open(path) as source:
+        with open_path_nofollow(path) as stream, Image.open(stream) as source:
             _validate_decoded_pixels(source.size, path)
             base = ImageOps.exif_transpose(source).convert("RGBA")
             if base.size != (panel_width, panel_height):
@@ -1077,7 +1077,7 @@ def _letter_project_with_summaries(
             )
             try:
                 source = contained_project_path(project_dir, source_relative, must_exist=True)
-                with Image.open(source) as image:
+                with open_path_nofollow(source) as stream, Image.open(stream) as image:
                     _validate_decoded_pixels(image.size, source)
                     image.load()
                     width, height = image.size

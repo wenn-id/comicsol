@@ -9,8 +9,9 @@ import re
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO
+from typing import BinaryIO, Iterator
 
 
 MAX_SOURCE_BYTES = 200 * 1024
@@ -190,6 +191,126 @@ def contained_project_path(
     return candidate
 
 
+def _relative_parts(relative: str | Path) -> tuple[str, ...]:
+    text = os.fspath(relative).replace("\\", "/")
+    if not text or text.startswith("/") or _DRIVE.match(text):
+        raise ValueError("path must be a relative project path")
+    parts = PurePosixPath(text).parts
+    if not parts or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError("path must be a relative project path")
+    return parts
+
+
+def _open_parent_fd(project_dir: Path, parts: tuple[str, ...], *, create: bool) -> tuple[int, str]:
+    root = Path(project_dir).resolve(strict=True)
+    if os.name == "nt" or not _HAS_NOFOLLOW:
+        raise NotImplementedError
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _O_NOFOLLOW
+    current = os.open(root, flags)
+    try:
+        for part in parts[:-1]:
+            try:
+                child = os.open(part, flags, dir_fd=current)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                os.mkdir(part, 0o755, dir_fd=current)
+                child = os.open(part, flags, dir_fd=current)
+            os.close(current)
+            current = child
+        return current, parts[-1]
+    except BaseException:
+        os.close(current)
+        raise
+
+
+@contextmanager
+def open_contained(project_dir: Path, relative: str | Path, *, flags: int = os.O_RDONLY, mode: int = 0) -> Iterator[BinaryIO]:
+    """Open project file without following symlinked path components on POSIX."""
+    parts = _relative_parts(relative)
+    if os.name == "nt" or not _HAS_NOFOLLOW:
+        path = contained_project_path(project_dir, relative, must_exist=not (flags & os.O_CREAT))
+        descriptor = os.open(path, flags | _O_NOFOLLOW, mode)
+    else:
+        parent_fd, name = _open_parent_fd(project_dir, parts, create=bool(flags & os.O_CREAT))
+        try:
+            descriptor = os.open(name, flags | _O_NOFOLLOW, mode, dir_fd=parent_fd)
+        finally:
+            os.close(parent_fd)
+    stream = os.fdopen(descriptor, "r+b" if flags & os.O_RDWR else "wb" if flags & os.O_WRONLY else "rb")
+    try:
+        yield stream
+    finally:
+        stream.close()
+
+
+def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -> BinaryIO:
+    """Open absolute path while refusing symlink components on POSIX."""
+    path = Path(path)
+    if os.name == "nt" or not _HAS_NOFOLLOW:
+        return os.fdopen(os.open(path, flags | _O_NOFOLLOW, mode), "rb")
+    absolute = path.parent.resolve(strict=True) / path.name
+    parts = absolute.parts
+    if not absolute.is_absolute() or len(parts) < 2:
+        raise ValueError("path must be absolute")
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _O_NOFOLLOW
+    current = os.open(parts[0], directory_flags)
+    try:
+        for part in parts[1:-1]:
+            child = os.open(part, directory_flags, dir_fd=current)
+            os.close(current)
+            current = child
+        descriptor = os.open(parts[-1], flags | _O_NOFOLLOW, mode, dir_fd=current)
+    finally:
+        os.close(current)
+    return os.fdopen(descriptor, "rb" if not flags & os.O_WRONLY else "wb")
+
+
+def read_contained_bytes(project_dir: Path, relative: str | Path) -> bytes:
+    try:
+        with open_contained(project_dir, relative) as stream:
+            return stream.read()
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.EMLINK):
+            raise ValueError("project path must not contain symlinks") from error
+        raise
+
+
+def remove_contained(project_dir: Path, relative: str | Path) -> None:
+    parts = _relative_parts(relative)
+    if os.name == "nt" or not _HAS_NOFOLLOW:
+        path = contained_project_path(project_dir, relative)
+        path.unlink(missing_ok=True)
+        return
+    parent_fd, name = _open_parent_fd(project_dir, parts, create=False)
+    try:
+        os.unlink(name, dir_fd=parent_fd)
+    except FileNotFoundError:
+        pass
+    finally:
+        os.close(parent_fd)
+
+
+def replace_contained(project_dir: Path, source: str | Path, destination: str | Path) -> None:
+    """Atomically replace destination from source with no-follow parent traversal."""
+    source_parts = _relative_parts(source)
+    destination_parts = _relative_parts(destination)
+    if os.name == "nt" or not _HAS_NOFOLLOW:
+        source_path = contained_project_path(project_dir, source, must_exist=True)
+        destination_path = contained_project_path(project_dir, destination)
+        os.replace(source_path, destination_path)
+        return
+    source_fd, source_name = _open_parent_fd(project_dir, source_parts, create=False)
+    try:
+        destination_fd, destination_name = _open_parent_fd(project_dir, destination_parts, create=True)
+        try:
+            os.replace(source_name, destination_name, src_dir_fd=source_fd, dst_dir_fd=destination_fd)
+        finally:
+            os.close(destination_fd)
+    finally:
+        os.close(source_fd)
+
+
 def fsync_directory(path: Path) -> None:
     """Persist directory metadata; Windows has no stdlib directory fsync."""
     if os.name == "nt":
@@ -297,7 +418,10 @@ class ProjectTransaction:
         backup_path = self._dir / backup_name
         staged_path = self._dir / staged_name
         if dest.is_file():
-            durable_atomic_write(backup_path, dest.read_bytes())
+            durable_atomic_write(
+                backup_path,
+                read_contained_bytes(self.project_dir, relative),
+            )
         durable_atomic_write(staged_path, payload)
         entry = {
             "path": relative,
@@ -325,8 +449,7 @@ class ProjectTransaction:
                 staged = contained_project_path(
                     self.project_dir, entry["staged"], must_exist=True
                 )
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(staged, dest)
+                replace_contained(self.project_dir, entry["staged"], entry["path"])
                 published.append((dest, entry))
                 fsync_directory(dest.parent)
             self._phase = "committed"
@@ -337,11 +460,11 @@ class ProjectTransaction:
                 if entry.get("backup"):
                     backup = contained_project_path(self.project_dir, entry["backup"])
                     if backup.is_file():
-                        os.replace(backup, dest)
+                        replace_contained(self.project_dir, entry["backup"], entry["path"])
                         fsync_directory(dest.parent)
                 else:
                     try:
-                        dest.unlink()
+                        remove_contained(self.project_dir, entry["path"])
                     except OSError:
                         pass
             self._phase = "rolled_back"
@@ -424,11 +547,11 @@ class ProjectTransaction:
                         if backup_path:
                             backup = contained_project_path(project_dir, backup_path)
                             if backup.is_file():
-                                os.replace(backup, dest)
+                                replace_contained(project_dir, backup_path, entry["path"])
                                 fsync_directory(dest.parent)
                         else:
                             try:
-                                dest.unlink()
+                                remove_contained(project_dir, entry["path"])
                                 fsync_directory(dest.parent)
                             except OSError:
                                 pass

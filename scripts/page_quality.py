@@ -12,7 +12,7 @@ from PIL import Image
 
 from comic_sol import atomic_write_json, read_json, sha256_file
 from layouts import LAYOUT_VERSION, match_layout, validate_custom_layout
-from project_io import contained_project_path
+from project_io import contained_project_path, open_path_nofollow
 from quality_records import PAGE_CHECK_IDS, validate_quality_checks
 
 DETERMINISTIC_PAGE_CHECK_IDS = frozenset({
@@ -85,7 +85,7 @@ def _page_context(project_dir: Path, page_number: int) -> dict[str, object]:
     page_id = _page_id(page_number)
     page_relative = f"pages/{page_id}.png"
     page_path = contained_project_path(project_dir, page_relative, must_exist=True)
-    with Image.open(page_path) as image:
+    with open_path_nofollow(page_path) as stream, Image.open(stream) as image:
         image.load()
         page_width, page_height = image.size
 

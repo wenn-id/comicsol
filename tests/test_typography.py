@@ -271,10 +271,10 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
 
         real_replace = project_io.os.replace
 
-        def fail_typography_publish(source, destination):
+        def fail_typography_publish(source, destination, **kwargs):
             if Path(source).name.startswith("staged-") and Path(destination).name == "typography.json":
                 raise OSError("injected typography publish failure")
-            return real_replace(source, destination)
+            return real_replace(source, destination, **kwargs)
 
         with mock.patch.object(project_io.os, "replace", side_effect=fail_typography_publish):
             with self.assertRaisesRegex(OSError, "injected typography publish failure"):

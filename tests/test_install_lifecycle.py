@@ -1,5 +1,6 @@
 import os
 import re
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -119,6 +120,34 @@ class NativeInstallLifecycleTests(unittest.TestCase):
         self.assertIn("-Uninstall", powershell)
         self.assertIn("--uninstall", posix)
 
+    def test_public_installers_serialize_install_root_mutations(self):
+        root = Path(__file__).resolve().parents[1]
+        posix = (root / "installers/install.sh").read_text(encoding="utf-8")
+        powershell = (root / "installers/install.ps1").read_text(encoding="utf-8")
+        self.assertIn("INSTALL_LOCK_DIR", posix)
+        self.assertIn("mkdir --", posix)
+        self.assertIn("release_install_lock", posix)
+        self.assertIn("Mutex", powershell)
+        self.assertIn("WaitOne", powershell)
+        self.assertIn("ReleaseMutex", powershell)
+        self.assertIn("InstallRoot", powershell)
+        self.assertIn("uninstall", posix.lower())
+        self.assertIn("uninstall", powershell.lower())
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_installer_refuses_active_install_root_lock(self):
+        root = Path(__file__).resolve().parents[1]
+        install_root = self.root / "locked-install"
+        lock = Path(f"{install_root}.lock")
+        lock.mkdir(parents=True)
+        (lock / "pid").write_text(f"{os.getpid()}\n", encoding="ascii")
+        result = subprocess.run(
+            ["sh", str(root / "installers/install.sh"), "--install-root", str(install_root), "--uninstall"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertTrue(lock.is_dir())
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,7 +13,7 @@ from pathlib import Path
 from PIL import Image
 
 from comic_sol import atomic_write_bytes, atomic_write_json, read_json, sha256_file
-from project_io import contained_project_path
+from project_io import contained_project_path, open_path_nofollow
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -443,7 +443,7 @@ def _integrity(
     ) if (project_dir / "pages").is_dir() else []
     for page in pages:
         try:
-            with Image.open(page) as image:
+            with open_path_nofollow(page) as stream, Image.open(stream) as image:
                 image.load()
                 dimensions = f"{image.width}×{image.height}"
                 valid = image.format == "PNG" and image.mode == "RGB" and image.size == (1600, 2400)

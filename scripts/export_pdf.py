@@ -23,7 +23,7 @@ from comic_sol import (
     sha256_file,
 )
 from pdf_quality import PdfQualityError, verify_pdf_payload
-from project_io import ProjectTransaction, durable_atomic_write
+from project_io import ProjectTransaction, durable_atomic_write, open_path_nofollow
 from validate_project import validate_manifest, require_valid_project
 
 
@@ -88,9 +88,9 @@ def _load_pages(paths: list[Path]) -> list[Image.Image]:
     try:
         for path in paths:
             try:
-                with Image.open(path) as image:
+                with open_path_nofollow(path) as stream, Image.open(stream) as image:
                     image.verify()
-                with Image.open(path) as image:
+                with open_path_nofollow(path) as stream, Image.open(stream) as image:
                     if image.format != "PNG":
                         raise PdfExportError(f"{path.name} must contain PNG data")
                     if image.size != (PAGE_WIDTH, PAGE_HEIGHT):

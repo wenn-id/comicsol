@@ -27,6 +27,8 @@ from project_io import (
     ProjectTransaction,
     contained_project_path,
     durable_atomic_write,
+    open_path_nofollow,
+    read_contained_bytes,
     validate_source_bytes,
 )
 
@@ -183,8 +185,9 @@ def canonical_artifact_bytes(value: object) -> bytes:
 
 
 def read_json(path: Path) -> dict[str, object]:
-    """Read a UTF-8 JSON object."""
-    value = json.loads(path.read_text(encoding="utf-8"))
+    """Read a UTF-8 JSON object without following path symlinks."""
+    with open_path_nofollow(Path(path)) as stream:
+        value = json.load(stream)
     if not isinstance(value, dict):
         raise ValueError(f"expected a JSON object: {path}")
     return value
@@ -203,7 +206,7 @@ def atomic_write_json(path: Path, value: object) -> None:
 def sha256_file(path: Path) -> str:
     """Return a lowercase SHA-256 digest for a file."""
     digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
+    with open_path_nofollow(Path(path)) as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -1451,7 +1454,7 @@ def _verify_raster(path: Path) -> tuple[int, int]:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(path) as image:
+            with open_path_nofollow(path) as stream, Image.open(stream) as image:
                 if image.format not in {"PNG", "JPEG", "WEBP"}:
                     raise ValueError("attempt must be a readable raster")
                 image.load()
@@ -1473,41 +1476,46 @@ def promote_attempt(project_dir: Path, panel_id: str, attempt_path: Path) -> Pat
         raise ValueError("attempt path must be a retained file")
     if attempt_relative.is_absolute():
         attempt_relative = attempt.relative_to(project_dir.resolve(strict=True))
-    with ProjectLock(project_dir):
+    destination_relative = Path(f"panels/raw/{panel_id}.png")
+    destination = project_dir / destination_relative
+    event_details = {"attempt_path": attempt_relative, "panel_id": panel_id}
+    replaced = False
+    with ProjectTransaction(project_dir, "promote-attempt") as transaction:
         attempt = contained_project_path(project_dir, attempt_relative, must_exist=True)
         if not attempt.is_file():
             raise ValueError("attempt path must be a retained file")
         _verify_raster(attempt)
-        destination = project_dir / f"panels/raw/{panel_id}.png"
-        event_details = {"attempt_path": attempt_relative, "panel_id": panel_id}
-        replaced = destination.is_file()
+        new_bytes = read_contained_bytes(project_dir, attempt_relative)
         if destination.is_file():
-            old_bytes = destination.read_bytes()
-            old_sha = sha256_file(destination)
-            new_sha = sha256_file(attempt)
-            if old_sha == new_sha:
+            replaced = True
+            old_bytes = read_contained_bytes(project_dir, destination_relative)
+            if hashlib.sha256(old_bytes).hexdigest() == hashlib.sha256(new_bytes).hexdigest():
                 return destination
             number = 1
             while True:
-                archive = destination.with_name(f"{panel_id}.attempt-{number}.png")
-                candidate = archive.resolve()
-                if not archive.exists() and candidate != attempt.resolve() and candidate != destination.resolve():
-                    durable_atomic_write(archive, old_bytes)
+                archive_relative = Path(f"panels/raw/{panel_id}.attempt-{number}.png")
+                try:
+                    archive = contained_project_path(project_dir, archive_relative)
+                    available = not archive.exists()
+                except ValueError:
+                    available = False
+                if available and archive_relative != attempt_relative and archive_relative != destination_relative:
+                    transaction.stage_bytes(archive_relative.as_posix(), old_bytes)
                     break
                 number += 1
-        attempt = contained_project_path(project_dir, attempt_relative, must_exist=True)
-        durable_atomic_write(destination, attempt.read_bytes())
+        transaction.stage_bytes(destination_relative.as_posix(), new_bytes)
+    with ProjectLock(project_dir):
         append_event(project_dir, "generation.attempt-promoted", event_details)
         if replaced:
             append_event(
                 project_dir,
                 "artifact.regenerated",
                 {
-                    "artifact_path": destination.relative_to(project_dir).as_posix(),
+                    "artifact_path": destination_relative.as_posix(),
                     "reused": False,
                 },
             )
-        return destination
+    return destination
 
 
 def record_override(project_dir: Path, panel_id: str, reason: str) -> None:
