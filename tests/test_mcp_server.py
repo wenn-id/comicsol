@@ -293,7 +293,7 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
                         error: bool = False,
                     ) -> Any:
                         result = await session.call_tool(name, arguments or {})
-                        self.assertEqual(error, result.isError, name)
+                        self.assertEqual(error, result.isError, f"{name}: {result.content}")
                         if error:
                             self.assertIsNone(result.structuredContent)
                         else:
