@@ -43,6 +43,7 @@ function Restore-Install {
     }
     if ($Target) { Remove-Item -LiteralPath "$Target.new" -Recurse -Force -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath (Join-Path $InstallRoot "bin.new") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $InstallRoot "active-version.new") -Force -ErrorAction SilentlyContinue
     $Pointer = Join-Path $InstallRoot "active-version"
     if ($HadPointer) { Set-Content -NoNewline -LiteralPath $Pointer -Value "$PreviousVersion`n" -Encoding utf8 }
     elseif (Test-Path -LiteralPath $Pointer) { Remove-Item -LiteralPath $Pointer -Force }
@@ -81,7 +82,8 @@ try {
     $Exe = Join-Path $Runtime "comic-sol.exe"
     if (-not (Test-Path -LiteralPath $Exe)) { throw "archive executable is missing" }
     $VersionOutput = & $Exe --version
-    $VersionLine = ($VersionOutput | Select-Object -First 1).ToString().Trim()
+    $VersionLine = [string]($VersionOutput | Select-Object -First 1)
+    $VersionLine = $VersionLine.Trim()
     if ($LASTEXITCODE -ne 0 -or $VersionLine -notmatch '^comic-sol ([0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?)$') { throw "unable to determine a valid runtime version" }
     $Version = $Matches[1]
     & $Exe doctor --output-root $(if ($env:COMIC_SOL_OUTPUT_ROOT) { $env:COMIC_SOL_OUTPUT_ROOT } else { "$HOME\Documents\Comic Sol" })
@@ -107,13 +109,22 @@ try {
     $StablePublished = $true
     Set-Content -NoNewline -LiteralPath (Join-Path $InstallRoot "active-version.new") -Value "$Version`n" -Encoding utf8
     Move-Item -Force -LiteralPath (Join-Path $InstallRoot "active-version.new") -Destination $Pointer
-    foreach ($Path in @($StableBackup, $TargetBackup)) { if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force } }
     $Committed = $true
+    foreach ($Path in @($StableBackup, $TargetBackup)) {
+        if (Test-Path -LiteralPath $Path) {
+            try { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop }
+            catch { Write-Warning "Could not remove rollback backup '$Path': $($_.Exception.Message)" }
+        }
+    }
     Write-Output "Installed unsigned Comic Sol $Version at $InstallRoot"
     Write-Output "User projects are outside this directory."
 } catch {
-    throw
+    $originalError = $_
+    try { Restore-Install }
+    catch { Write-Error "Rollback failed: $($_.Exception.Message)" }
+    throw $originalError
 } finally {
-    Restore-Install
-    if (Test-Path -LiteralPath $Temp) { Remove-Item -LiteralPath $Temp -Recurse -Force }
+    try {
+        if (Test-Path -LiteralPath $Temp) { Remove-Item -LiteralPath $Temp -Recurse -Force -ErrorAction Stop }
+    } catch { Write-Warning "Temporary cleanup failed: $($_.Exception.Message)" }
 }
