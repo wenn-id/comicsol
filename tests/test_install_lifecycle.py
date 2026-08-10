@@ -147,6 +147,7 @@ class NativeInstallLifecycleTests(unittest.TestCase):
             text=True,
         )
         self.assertNotEqual(0, result.returncode)
+        self.assertIn("another Comic Sol installer is using this install root", result.stderr)
         self.assertTrue(lock.is_dir())
 
 if __name__ == "__main__":

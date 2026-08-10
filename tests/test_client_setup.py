@@ -112,6 +112,45 @@ class ClientSetupTests(unittest.TestCase):
         )
         self.assertFalse(CodexAdapter(config).verify())
 
+    def test_verify_rejects_duplicate_root_argument(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(
+            json.dumps({"mcpServers": {"comic-sol": {
+                "command": "comic-sol",
+                "args": ["mcp", "--root", str(self.output.resolve()), "--root", "again"],
+            }}}),
+            encoding="utf-8",
+        )
+        self.assertFalse(JsonClientAdapter("cursor", config, "mcpServers").verify())
+
+    def test_type_error_from_verify_hook_is_not_retried(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.write_text("{}", encoding="utf-8")
+        calls = []
+
+        def hook(expected):
+            calls.append(expected)
+            raise TypeError("hook failure")
+
+        with self.assertRaisesRegex(TypeError, "hook failure"):
+            JsonClientAdapter("cursor", config, "mcpServers", verify_hook=hook).verify({})
+        self.assertEqual(1, len(calls))
+
+    def test_zero_argument_verify_hook_is_supported(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.write_text("{}", encoding="utf-8")
+        calls = []
+
+        def hook():
+            calls.append(True)
+            return False
+
+        self.assertFalse(JsonClientAdapter("cursor", config, "mcpServers", verify_hook=hook).verify({}))
+        self.assertEqual([True], calls)
+
     def test_codex_toml_preserves_existing_config_and_is_idempotent(self):
         config = self.home / ".codex" / "config.toml"
         config.parent.mkdir(parents=True)

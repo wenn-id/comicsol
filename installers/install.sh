@@ -28,11 +28,17 @@ acquire_install_lock() {
           echo "another Comic Sol installer is using this install root" >&2
           return 1
         fi
-        rm -rf -- "$INSTALL_LOCK_DIR"
-        mkdir -- "$INSTALL_LOCK_DIR" 2>/dev/null || {
+        tombstone="${INSTALL_LOCK_DIR}.stale.$$"
+        if ! mv -- "$INSTALL_LOCK_DIR" "$tombstone" 2>/dev/null; then
           echo "another Comic Sol installer is using this install root" >&2
           return 1
-        }
+        fi
+        if ! mkdir -- "$INSTALL_LOCK_DIR" 2>/dev/null; then
+          rm -rf -- "$tombstone"
+          echo "another Comic Sol installer is using this install root" >&2
+          return 1
+        fi
+        rm -rf -- "$tombstone"
         ;;
     esac
   fi
@@ -56,6 +62,11 @@ cleanup_install() {
   rm -rf -- "$TMP"
 }
 
+abort_uninstall() {
+  release_install_lock
+  exit 130
+}
+
 abort_install() {
   cleanup_install
   exit 130
@@ -75,7 +86,8 @@ done
 INSTALL_LOCK_DIR="${INSTALL_ROOT}.lock"
 if [ "$UNINSTALL" -eq 1 ]; then
   acquire_install_lock
-  trap 'release_install_lock' EXIT INT TERM
+  trap 'release_install_lock' EXIT
+  trap 'abort_uninstall' INT TERM
   rm -rf -- "$INSTALL_ROOT"
   release_install_lock
   echo "Comic Sol runtime removed. User projects were preserved."

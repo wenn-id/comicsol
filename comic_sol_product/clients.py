@@ -6,6 +6,7 @@ and rollback are centralized in :mod:`comic_sol_product.setup`.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 import tomllib
@@ -37,12 +38,25 @@ def _valid_mcp_entry(entry: object, expected: dict[str, Any] | None = None) -> b
         "comic-sol.exe",
     }:
         return False
-    if not isinstance(args, list) or len(args) < 3 or not all(isinstance(item, str) for item in args):
+    if not isinstance(args, list) or len(args) != 3 or not all(isinstance(item, str) for item in args):
         return False
     if args[0] != "mcp" or args[1] != "--root" or not isinstance(args[2], str):
         return False
     root = args[2]
     return Path(root).is_absolute() or PureWindowsPath(root).is_absolute()
+
+
+def _call_verify_hook(hook: Callable[..., bool], expected: dict[str, Any] | None) -> bool:
+    try:
+        signature = inspect.signature(hook)
+    except (TypeError, ValueError):
+        return bool(hook(expected))
+    try:
+        signature.bind(expected)
+    except TypeError:
+        signature.bind()
+        return bool(hook())
+    return bool(hook(expected))
 
 
 @runtime_checkable
@@ -109,10 +123,7 @@ class JsonClientAdapter:
 
     def verify(self, expected: dict[str, Any] | None = None) -> bool:
         if self._verify_hook is not None:
-            try:
-                return bool(self._verify_hook(expected))
-            except TypeError:
-                return bool(self._verify_hook())
+            return _call_verify_hook(self._verify_hook, expected)
         try:
             value = self.load(self.config_path.read_bytes())
             entry = value.get(self.servers_key, {}).get(MCP_SERVER_NAME)
@@ -181,10 +192,7 @@ class CodexAdapter:
 
     def verify(self, expected: dict[str, Any] | None = None) -> bool:
         if self._verify_hook is not None:
-            try:
-                return bool(self._verify_hook(expected))
-            except TypeError:
-                return bool(self._verify_hook())
+            return _call_verify_hook(self._verify_hook, expected)
         try:
             parsed = tomllib.loads(self.config_path.read_text(encoding="utf-8"))
             entry = parsed["mcp_servers"][MCP_SERVER_NAME]

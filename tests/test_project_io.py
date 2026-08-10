@@ -91,6 +91,15 @@ class ContainedProjectPathTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "symlink|escapes"):
             project_io.read_contained_bytes(self.project, "linked.txt")
 
+    def test_open_path_nofollow_rejects_intermediate_symlink(self):
+        outside = self.root / "outside-dir"
+        outside.mkdir()
+        (outside / "value.txt").write_text("outside", encoding="utf-8")
+        link = self.project / "linked-dir"
+        make_symlink(self, link, outside, directory=True)
+        with self.assertRaises((OSError, ValueError)):
+            project_io.open_path_nofollow(link / "value.txt")
+
 
 class DurableWriteTests(unittest.TestCase):
     def test_orders_write_flush_file_fsync_replace_and_directory_fsync(self):

@@ -247,9 +247,11 @@ def open_contained(project_dir: Path, relative: str | Path, *, flags: int = os.O
 def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -> BinaryIO:
     """Open absolute path while refusing symlink components on POSIX."""
     path = Path(path)
+    if not path.is_absolute():
+        raise ValueError("path must be absolute")
     if os.name == "nt" or not _HAS_NOFOLLOW:
         return os.fdopen(os.open(path, flags | _O_NOFOLLOW, mode), "rb")
-    absolute = path.parent.resolve(strict=True) / path.name
+    absolute = path.absolute()
     parts = absolute.parts
     if not absolute.is_absolute() or len(parts) < 2:
         raise ValueError("path must be absolute")
@@ -298,6 +300,7 @@ def replace_contained(project_dir: Path, source: str | Path, destination: str | 
     if os.name == "nt" or not _HAS_NOFOLLOW:
         source_path = contained_project_path(project_dir, source, must_exist=True)
         destination_path = contained_project_path(project_dir, destination)
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
         os.replace(source_path, destination_path)
         return
     source_fd, source_name = _open_parent_fd(project_dir, source_parts, create=False)
@@ -449,7 +452,10 @@ class ProjectTransaction:
                 staged = contained_project_path(
                     self.project_dir, entry["staged"], must_exist=True
                 )
-                replace_contained(self.project_dir, entry["staged"], entry["path"])
+                if os.name == "nt" or not _HAS_NOFOLLOW:
+                    os.replace(staged, dest)
+                else:
+                    replace_contained(self.project_dir, entry["staged"], entry["path"])
                 published.append((dest, entry))
                 fsync_directory(dest.parent)
             self._phase = "committed"
@@ -460,7 +466,10 @@ class ProjectTransaction:
                 if entry.get("backup"):
                     backup = contained_project_path(self.project_dir, entry["backup"])
                     if backup.is_file():
-                        replace_contained(self.project_dir, entry["backup"], entry["path"])
+                        if os.name == "nt" or not _HAS_NOFOLLOW:
+                            os.replace(backup, dest)
+                        else:
+                            replace_contained(self.project_dir, entry["backup"], entry["path"])
                         fsync_directory(dest.parent)
                 else:
                     try:
@@ -547,7 +556,10 @@ class ProjectTransaction:
                         if backup_path:
                             backup = contained_project_path(project_dir, backup_path)
                             if backup.is_file():
-                                replace_contained(project_dir, backup_path, entry["path"])
+                                if os.name == "nt" or not _HAS_NOFOLLOW:
+                                    os.replace(backup, dest)
+                                else:
+                                    replace_contained(project_dir, backup_path, entry["path"])
                                 fsync_directory(dest.parent)
                         else:
                             try:

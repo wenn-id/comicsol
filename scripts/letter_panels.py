@@ -20,7 +20,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json, sha256_file
-from project_io import ProjectTransaction, contained_project_path, open_path_nofollow
+from project_io import ProjectTransaction, contained_project_path, open_path_nofollow, read_contained_bytes
 from typography import (
     lettering_geometry_hash,
     preflight_text_items,
@@ -1077,12 +1077,11 @@ def _letter_project_with_summaries(
             )
             try:
                 source = contained_project_path(project_dir, source_relative, must_exist=True)
-                with open_path_nofollow(source) as stream, Image.open(stream) as image:
+                source_bytes = read_contained_bytes(project_dir, source_relative)
+                with Image.open(io.BytesIO(source_bytes)) as image:
                     _validate_decoded_pixels(image.size, source)
                     image.load()
                     width, height = image.size
-                source = contained_project_path(project_dir, source_relative, must_exist=True)
-                source_bytes = source.read_bytes()
             except (OSError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
                 raise ValueError(f"panel {panel_id} is not a readable image") from error
             staged_path = temporary_root / f"{panel_id}.png"
@@ -1098,7 +1097,7 @@ def _letter_project_with_summaries(
             geometry: dict[str, object] = {
                 "bindings": {
                     "clean_path": source_relative,
-                    "clean_sha256": sha256_file(source),
+                    "clean_sha256": hashlib.sha256(source_bytes).hexdigest(),
                     "font_policy_sha256": preflight["font_policy_sha256"],
                     "storyboard_path": "plan/storyboard.json",
                     "storyboard_sha256": storyboard_sha256,
