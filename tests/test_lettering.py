@@ -373,6 +373,15 @@ class LetteringTests(unittest.TestCase):
         self.assertEqual(10, result["word_count"])
         self.assertEqual(str(FONT), result["font_used"])
 
+    def test_letter_panel_accepts_source_bytes_before_output_exists(self):
+        output = self.root / "lettered.png"
+        result = letter_panel(
+            str(output), 800, 1000, [caption()], self.characters,
+            source_bytes=self.panel.read_bytes(),
+        )
+        self.assertTrue(output.is_file())
+        self.assertEqual(str(output), result["lettered_path"])
+
     def test_text_items_render_in_priority_then_id_order(self):
         items = [sfx("THREE", 3), caption("SECOND", 2), dialogue("FIRST", 1)]
         seen = []

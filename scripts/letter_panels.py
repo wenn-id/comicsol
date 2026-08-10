@@ -859,15 +859,18 @@ def letter_panel(
     panel_height: int,
     text_items: list[dict],
     character_bible: list[dict],
+    *,
+    source_bytes: bytes | None = None,
 ) -> dict:
-    """Letter an existing panel atomically and return a compact output summary."""
+    """Letter a panel atomically and return a compact output summary."""
     if not isinstance(panel_width, int) or not isinstance(panel_height, int) or panel_width <= 0 or panel_height <= 0:
         raise ValueError("panel dimensions must be positive integers")
     if not isinstance(text_items, list) or not isinstance(character_bible, list):
         raise TypeError("text_items and character_bible must be lists")
     path = Path(output_path)
     try:
-        with open_path_nofollow(path) as stream, Image.open(stream) as source:
+        stream = io.BytesIO(source_bytes) if source_bytes is not None else open_path_nofollow(path)
+        with stream, Image.open(stream) as source:
             _validate_decoded_pixels(source.size, path)
             base = ImageOps.exif_transpose(source).convert("RGBA")
             if base.size != (panel_width, panel_height):
@@ -1089,9 +1092,9 @@ def _letter_project_with_summaries(
             except (OSError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
                 raise ValueError(f"panel {panel_id} is not a readable image") from error
             staged_path = temporary_root / f"{panel_id}.png"
-            atomic_write_bytes(staged_path, source_bytes)
             summary = letter_panel(
-                str(staged_path), width, height, panel.get("text", []), bible
+                str(staged_path), width, height, panel.get("text", []), bible,
+                source_bytes=source_bytes,
             )
             destination_relative = f"panels/{panel_id}/lettered.png"
             destination = contained_project_path(project_dir, destination_relative)
