@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -99,6 +100,17 @@ class ContainedProjectPathTests(unittest.TestCase):
         make_symlink(self, link, outside, directory=True)
         with self.assertRaises((OSError, ValueError)):
             project_io.open_path_nofollow(link / "value.txt")
+
+    @unittest.skipUnless(os.name == "posix", "macOS alias behavior requires POSIX")
+    def test_open_path_nofollow_allows_macos_var_alias_only(self):
+        if not Path("/var/tmp").is_dir():
+            self.skipTest("/var/tmp is unavailable")
+        with tempfile.TemporaryDirectory(dir="/var/tmp", prefix="comic-sol-") as temporary:
+            target = Path(temporary) / "value.txt"
+            target.write_bytes(b"var-alias")
+            with mock.patch.object(sys, "platform", "darwin"):
+                with project_io.open_path_nofollow(target) as stream:
+                    self.assertEqual(b"var-alias", stream.read())
 
 
 class DurableWriteTests(unittest.TestCase):
