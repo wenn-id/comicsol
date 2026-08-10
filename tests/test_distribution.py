@@ -197,11 +197,13 @@ class NativeDistributionContractTests(unittest.TestCase):
         assembler = (root / "scripts/assemble_release.py").read_text(encoding="utf-8")
         compose = (root / "compose.yaml").read_text(encoding="utf-8")
         release_contract = (root / "comic_sol_product/release.py").read_text(encoding="utf-8")
-        self.assertIn("2.0.0rc4", pyproject)
-        self.assertIn("2.0.0rc4", package)
+        version = (root / "comic_sol_product/version.py").read_text(encoding="utf-8")
+        self.assertIn('dynamic = ["version"]', pyproject)
+        self.assertIn("from .version import VERSION", package)
+        self.assertIn('VERSION = "2.0.0rc4"', version)
         self.assertIn("__version__", distribution)
         self.assertIn("__version__", assembler)
-        self.assertIn("2.0.0rc4", compose)
+        self.assertIn("comic-sol:2.0.0rc4", compose)
         for module in (
             "normalize_panels.py", "typography.py", "layouts.py", "page_quality.py",
             "pdf_quality.py", "quality_sample.py",

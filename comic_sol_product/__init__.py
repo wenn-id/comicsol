@@ -1,3 +1,5 @@
 """Installed product surface for Comic Sol."""
 
-__version__ = "2.0.0rc4"
+from .version import VERSION
+
+__version__ = VERSION

@@ -109,6 +109,16 @@ class McpServerUnitTests(unittest.TestCase):
                 with self.assertRaisesRegex(ToolError, "invalid project ID"):
                     mcp_server._resolve_project(project_id)
 
+    def test_missing_or_uninitialized_project_is_rejected(self):
+        with self.assertRaisesRegex(ToolError, "project directory is not an initialized"):
+            mcp_server._resolve_project("missing")
+        (self.root / "file-project").write_text("not a project", encoding="utf-8")
+        with self.assertRaisesRegex(ToolError, "project directory is not an initialized"):
+            mcp_server._resolve_project("file-project")
+        (self.root / "empty-project").mkdir()
+        with self.assertRaisesRegex(ToolError, "project directory is not an initialized"):
+            mcp_server._resolve_project("empty-project")
+
     def test_project_symlink_cannot_escape_root(self):
         outside = Path(self.temporary_directory.name) / "outside"
         outside.mkdir()
@@ -193,6 +203,7 @@ class McpServerUnitTests(unittest.TestCase):
         project = self.root / "nested-project"
         nested = project / "existing-child"
         nested.mkdir(parents=True)
+        (project / "project.json").write_text("{}", encoding="utf-8")
         mcp_server._resolve_project("nested-project")
         outside = Path(self.temporary_directory.name) / "nested-secret.txt"
         outside.write_text("secret")
@@ -203,6 +214,7 @@ class McpServerUnitTests(unittest.TestCase):
     def test_symlink_scan_is_cached_per_project_and_invalidated_on_change(self):
         project = self.root / "cached-project"
         project.mkdir()
+        (project / "project.json").write_text("{}", encoding="utf-8")
         mcp_server._resolve_project("cached-project")
         cached = mcp_server._SYMLINK_SCAN_CACHE.get("cached-project")
         self.assertIsNotNone(cached)

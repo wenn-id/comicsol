@@ -285,11 +285,12 @@ class ProjectTransaction:
         path = Path(relative)
         if path.is_absolute():
             raise ValueError("stage_bytes requires a relative path")
-        # Reject traversal and non-project-relative paths
+        # Reject traversal and use one canonical path for validation and publication.
         resolved = contained_project_path(self.project_dir, relative)
         if resolved.resolve() == self.project_dir.resolve():
             raise ValueError(f"path '{relative}' resolves to the project root")
-        dest = self.project_dir / path
+        relative = resolved.relative_to(self.project_dir.resolve()).as_posix()
+        dest = resolved
         index = len(self._journal) + 1
         backup_name = f"backup-{index:03d}-{path.name}"
         staged_name = f"staged-{index:03d}-{path.name}"
@@ -326,8 +327,8 @@ class ProjectTransaction:
                 )
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(staged, dest)
-                fsync_directory(dest.parent)
                 published.append((dest, entry))
+                fsync_directory(dest.parent)
             self._phase = "committed"
             self._write_journal()
             self._cleanup()

@@ -87,6 +87,15 @@ class NativeInstallLifecycleTests(unittest.TestCase):
         self.assertFalse(self.install_root.exists())
         self.assertEqual("project-data", (self.projects / "keep.txt").read_text())
 
+    def test_public_installers_use_current_runtime_version_and_rollback_hooks(self):
+        root = Path(__file__).resolve().parents[1]
+        posix = (root / "installers/install.sh").read_text(encoding="utf-8")
+        powershell = (root / "installers/install.ps1").read_text(encoding="utf-8")
+        for script in (posix, powershell):
+            self.assertNotIn("2.0.0rc1", script)
+            self.assertIn("--version", script)
+            self.assertIn("rollback", script.lower())
+
     def test_public_installers_verify_checksum_health_and_preserve_projects(self):
         root = Path(__file__).resolve().parents[1]
         posix = (root / "installers/install.sh").read_text(encoding="utf-8")

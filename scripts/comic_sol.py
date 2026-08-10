@@ -1673,6 +1673,15 @@ def doctor(output_root: Path) -> tuple[bool, list[str]]:
 
 
 def finalize_project(project_dir: Path) -> dict[str, object]:
+    """Serialize one complete deterministic finalization workflow."""
+    project_dir = Path(project_dir).resolve(strict=True)
+    lock_dir = project_dir.parent / f".{project_dir.name}.finalize-lock"
+    lock_dir.mkdir(exist_ok=True)
+    with ProjectLock(lock_dir):
+        return _finalize_project_locked(project_dir)
+
+
+def _finalize_project_locked(project_dir: Path) -> dict[str, object]:
     """Run all deterministic finalization steps and transition to terminal status.
 
     Order: lettering → composition → page-QA gate → guarded export →

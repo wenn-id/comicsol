@@ -184,9 +184,14 @@ def _resolve_project(project_id: str) -> Path:
     try:
         if not project_id or not IDENTIFIER.fullmatch(project_id):
             raise ValueError("invalid project ID format")
-        resolved = (OUTPUT_ROOT / project_id).resolve()
+        candidate = OUTPUT_ROOT / project_id
+        if not candidate.exists():
+            raise ValueError("project directory is not an initialized Comic Sol project")
+        resolved = candidate.resolve(strict=True)
         if not resolved.is_relative_to(OUTPUT_ROOT) or resolved == OUTPUT_ROOT:
             raise ValueError("project directory resolves outside output root")
+        if not resolved.is_dir():
+            raise ValueError("project directory is not an initialized Comic Sol project")
         fingerprint = _project_fingerprint(resolved)
         if _SYMLINK_SCAN_CACHE.get(project_id) != fingerprint:
             for directory, dirnames, filenames in os.walk(resolved, followlinks=False):
@@ -194,9 +199,11 @@ def _resolve_project(project_id: str) -> Path:
                     if (Path(directory) / name).is_symlink():
                         raise ValueError("project contains a symlink")
             _SYMLINK_SCAN_CACHE[project_id] = fingerprint
+        if not (resolved / "project.json").is_file():
+            raise ValueError("project directory is not an initialized Comic Sol project")
         return resolved
-    except ValueError as e:
-        raise ToolError(f"Security: {e}")
+    except (OSError, ValueError) as e:
+        raise ToolError(f"Security: {_safe_message(e)}")
 
 
 mcp = FastMCP("Comic Sol", instructions="Deterministic Comic Sol project tools")

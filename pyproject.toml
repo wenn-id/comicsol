@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "comic-sol"
-version = "2.0.0rc4"
+dynamic = ["version"]
 description = "Local-first deterministic comic production pipeline"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,6 +18,9 @@ mcp = ["mcp==1.28.1"]
 
 [project.scripts]
 comic-sol = "comic_sol_product.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "comic_sol_product.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["comic_sol_product*"]
