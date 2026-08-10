@@ -185,6 +185,8 @@ def _resolve_project(project_id: str) -> Path:
         if not project_id or not IDENTIFIER.fullmatch(project_id):
             raise ValueError("invalid project ID format")
         candidate = OUTPUT_ROOT / project_id
+        if candidate.is_symlink():
+            raise ValueError("project directory resolves outside output root")
         if not candidate.exists():
             raise ValueError("project directory is not an initialized Comic Sol project")
         resolved = candidate.resolve(strict=True)
@@ -203,7 +205,7 @@ def _resolve_project(project_id: str) -> Path:
             raise ValueError("project directory is not an initialized Comic Sol project")
         return resolved
     except (OSError, ValueError) as e:
-        raise ToolError(f"Security: {_safe_message(e)}")
+        raise ToolError(f"Security: {_safe_message(e)}") from None
 
 
 mcp = FastMCP("Comic Sol", instructions="Deterministic Comic Sol project tools")

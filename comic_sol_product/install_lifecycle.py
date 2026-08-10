@@ -118,7 +118,7 @@ def install_archive(
         _atomic_write(install_root / "active-version", f"{version}\n".encode("utf-8"))
         if rollback_runtime is not None:
             shutil.rmtree(rollback_runtime, ignore_errors=True)
-    except Exception:
+    except BaseException:
         shutil.rmtree(target, ignore_errors=True)
         shutil.rmtree(stable_runtime, ignore_errors=True)
         if rollback_runtime is not None and rollback_runtime.exists():

@@ -189,7 +189,7 @@ class NativeDistributionContractTests(unittest.TestCase):
                 reference = line.split("uses:", 1)[1].strip().split()[0]
                 self.assertRegex(reference, r"^[^@]+@[0-9a-f]{40}$")
 
-    def test_rc2_version_sources_and_quality_runtime_are_consistent(self):
+    def test_version_sources_and_quality_runtime_are_consistent(self):
         root = Path(__file__).resolve().parents[1]
         pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
         package = (root / "comic_sol_product/__init__.py").read_text(encoding="utf-8")

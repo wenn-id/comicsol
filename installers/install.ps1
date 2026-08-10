@@ -25,14 +25,26 @@ $Target = $null
 $TargetBackup = $null
 $StableRuntime = $null
 $StableBackup = $null
+$StablePublished = $false
+$TargetPublished = $false
 function Restore-Install {
     if (-not $InstallStarted -or $Committed) { return }
-    if ($StableRuntime -and (Test-Path -LiteralPath $StableRuntime)) { Remove-Item -LiteralPath $StableRuntime -Recurse -Force }
-    if ($StableBackup -and (Test-Path -LiteralPath $StableBackup)) { Move-Item -LiteralPath $StableBackup -Destination $StableRuntime }
-    if ($Target -and (Test-Path -LiteralPath $Target)) { Remove-Item -LiteralPath $Target -Recurse -Force }
-    if ($TargetBackup -and (Test-Path -LiteralPath $TargetBackup)) { Move-Item -LiteralPath $TargetBackup -Destination $Target }
+    if ($StableBackup -and (Test-Path -LiteralPath $StableBackup)) {
+        if (Test-Path -LiteralPath $StableRuntime) { Remove-Item -LiteralPath $StableRuntime -Recurse -Force }
+        Move-Item -LiteralPath $StableBackup -Destination $StableRuntime
+    } elseif ($StablePublished -and (Test-Path -LiteralPath $StableRuntime)) {
+        Remove-Item -LiteralPath $StableRuntime -Recurse -Force
+    }
+    if ($TargetBackup -and (Test-Path -LiteralPath $TargetBackup)) {
+        if (Test-Path -LiteralPath $Target) { Remove-Item -LiteralPath $Target -Recurse -Force }
+        Move-Item -LiteralPath $TargetBackup -Destination $Target
+    } elseif ($TargetPublished -and (Test-Path -LiteralPath $Target)) {
+        Remove-Item -LiteralPath $Target -Recurse -Force
+    }
+    if ($Target) { Remove-Item -LiteralPath "$Target.new" -Recurse -Force -ErrorAction SilentlyContinue }
+    Remove-Item -LiteralPath (Join-Path $InstallRoot "bin.new") -Recurse -Force -ErrorAction SilentlyContinue
     $Pointer = Join-Path $InstallRoot "active-version"
-    if ($HadPointer) { Set-Content -NoNewline -LiteralPath $Pointer -Value "$PreviousVersion`n" }
+    if ($HadPointer) { Set-Content -NoNewline -LiteralPath $Pointer -Value "$PreviousVersion`n" -Encoding utf8 }
     elseif (Test-Path -LiteralPath $Pointer) { Remove-Item -LiteralPath $Pointer -Force }
 }
 
@@ -69,7 +81,8 @@ try {
     $Exe = Join-Path $Runtime "comic-sol.exe"
     if (-not (Test-Path -LiteralPath $Exe)) { throw "archive executable is missing" }
     $VersionOutput = & $Exe --version
-    if ($LASTEXITCODE -ne 0 -or $VersionOutput -notmatch '^comic-sol ([0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?)$') { throw "unable to determine a valid runtime version" }
+    $VersionLine = ($VersionOutput | Select-Object -First 1).ToString().Trim()
+    if ($LASTEXITCODE -ne 0 -or $VersionLine -notmatch '^comic-sol ([0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?)$') { throw "unable to determine a valid runtime version" }
     $Version = $Matches[1]
     & $Exe doctor --output-root $(if ($env:COMIC_SOL_OUTPUT_ROOT) { $env:COMIC_SOL_OUTPUT_ROOT } else { "$HOME\Documents\Comic Sol" })
     if ($LASTEXITCODE -ne 0) { throw "doctor verification failed" }
@@ -87,18 +100,20 @@ try {
     Move-Item -LiteralPath $Runtime -Destination "$Target.new"
     if (Test-Path -LiteralPath $Target) { Move-Item -LiteralPath $Target -Destination $TargetBackup }
     Move-Item -LiteralPath "$Target.new" -Destination $Target
+    $TargetPublished = $true
     Copy-Item -LiteralPath $Target -Destination (Join-Path $InstallRoot "bin.new") -Recurse
     if (Test-Path -LiteralPath $StableRuntime) { Move-Item -LiteralPath $StableRuntime -Destination $StableBackup }
     Move-Item -LiteralPath (Join-Path $InstallRoot "bin.new") -Destination $StableRuntime
-    Set-Content -NoNewline -LiteralPath (Join-Path $InstallRoot "active-version.new") -Value "$Version`n"
+    $StablePublished = $true
+    Set-Content -NoNewline -LiteralPath (Join-Path $InstallRoot "active-version.new") -Value "$Version`n" -Encoding utf8
     Move-Item -Force -LiteralPath (Join-Path $InstallRoot "active-version.new") -Destination $Pointer
     foreach ($Path in @($StableBackup, $TargetBackup)) { if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force } }
     $Committed = $true
     Write-Output "Installed unsigned Comic Sol $Version at $InstallRoot"
     Write-Output "User projects are outside this directory."
 } catch {
-    Restore-Install
     throw
 } finally {
+    Restore-Install
     if (Test-Path -LiteralPath $Temp) { Remove-Item -LiteralPath $Temp -Recurse -Force }
 }

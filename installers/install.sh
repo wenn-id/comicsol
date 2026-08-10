@@ -38,21 +38,26 @@ TARGET=""
 TARGET_BACKUP=""
 STABLE_RUNTIME=""
 STABLE_BACKUP=""
+STABLE_PUBLISHED=0
+TARGET_PUBLISHED=0
+ROLLED_BACK=0
 rollback() {
   [ "$INSTALL_STARTED" -eq 1 ] || return 0
-  [ "$COMMITTED" -eq 1 ] && return 0
-  if [ -n "$STABLE_RUNTIME" ]; then
+  [ "$COMMITTED" -eq 1 ] || [ "$ROLLED_BACK" -eq 1 ] && return 0
+  ROLLED_BACK=1
+  if [ -n "$STABLE_BACKUP" ] && [ -d "$STABLE_BACKUP" ]; then
     rm -rf -- "$STABLE_RUNTIME"
-    if [ -n "$STABLE_BACKUP" ] && [ -d "$STABLE_BACKUP" ]; then
-      mv -- "$STABLE_BACKUP" "$STABLE_RUNTIME"
-    fi
+    mv -- "$STABLE_BACKUP" "$STABLE_RUNTIME"
+  elif [ "$STABLE_PUBLISHED" -eq 1 ]; then
+    rm -rf -- "$STABLE_RUNTIME"
   fi
-  if [ -n "$TARGET" ]; then
+  if [ -n "$TARGET_BACKUP" ] && [ -d "$TARGET_BACKUP" ]; then
     rm -rf -- "$TARGET"
-    if [ -n "$TARGET_BACKUP" ] && [ -d "$TARGET_BACKUP" ]; then
-      mv -- "$TARGET_BACKUP" "$TARGET"
-    fi
+    mv -- "$TARGET_BACKUP" "$TARGET"
+  elif [ "$TARGET_PUBLISHED" -eq 1 ]; then
+    rm -rf -- "$TARGET"
   fi
+  rm -rf -- "$TARGET.new" "$INSTALL_ROOT/bin.new"
   if [ "$PREVIOUS_POINTER" -eq 1 ]; then
     printf '%s\n' "$PREVIOUS_VERSION" > "$INSTALL_ROOT/active-version"
   else
@@ -108,11 +113,12 @@ EXE="$RUNTIME/comic-sol"
 [ -d "$RUNTIME" ] || { echo "archive must contain top-level comic-sol runtime" >&2; exit 1; }
 [ -f "$EXE" ] || { echo "archive executable is missing" >&2; exit 1; }
 chmod 755 "$EXE"
-VERSION=$($EXE --version | awk 'NR == 1 && $1 == "comic-sol" { print $2 }')
-case "$VERSION" in
-  [0-9]*.[0-9]*.[0-9]*|[0-9]*.[0-9]*.[0-9]*rc[0-9]*) ;;
-  *) echo "unable to determine a valid runtime version" >&2; exit 1 ;;
-esac
+VERSION_OUTPUT=$("$EXE" --version) || { echo "unable to determine a valid runtime version" >&2; exit 1; }
+VERSION=$(printf '%s\n' "$VERSION_OUTPUT" | awk 'NR == 1 && $1 == "comic-sol" { print $2 }')
+if ! printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$'; then
+  echo "unable to determine a valid runtime version" >&2
+  exit 1
+fi
 "$EXE" doctor --output-root "${COMIC_SOL_OUTPUT_ROOT:-$HOME/Comic Sol}"
 
 INSTALL_STARTED=1
@@ -130,9 +136,11 @@ fi
 mv -- "$RUNTIME" "$TARGET.new"
 if [ -d "$TARGET" ]; then mv -- "$TARGET" "$TARGET_BACKUP"; fi
 mv -- "$TARGET.new" "$TARGET"
+TARGET_PUBLISHED=1
 cp -R -- "$TARGET" "$INSTALL_ROOT/bin.new"
 if [ -d "$STABLE_RUNTIME" ]; then mv -- "$STABLE_RUNTIME" "$STABLE_BACKUP"; fi
 mv -- "$INSTALL_ROOT/bin.new" "$STABLE_RUNTIME"
+STABLE_PUBLISHED=1
 printf '%s\n' "$VERSION" > "$INSTALL_ROOT/active-version.new"
 mv -- "$INSTALL_ROOT/active-version.new" "$INSTALL_ROOT/active-version"
 rm -rf -- "$STABLE_BACKUP" "$TARGET_BACKUP"

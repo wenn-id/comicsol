@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 import unittest
 import zipfile
@@ -92,9 +93,10 @@ class NativeInstallLifecycleTests(unittest.TestCase):
         posix = (root / "installers/install.sh").read_text(encoding="utf-8")
         powershell = (root / "installers/install.ps1").read_text(encoding="utf-8")
         for script in (posix, powershell):
-            self.assertNotIn("2.0.0rc1", script)
+            self.assertIsNone(re.search(r"\b\d+\.\d+\.\d+(?:rc\d+)?\b", script))
             self.assertIn("--version", script)
-            self.assertIn("rollback", script.lower())
+        self.assertIn("rollback()", posix)
+        self.assertIn("Restore-Install", powershell)
 
     def test_public_installers_verify_checksum_health_and_preserve_projects(self):
         root = Path(__file__).resolve().parents[1]
