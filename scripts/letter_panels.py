@@ -873,7 +873,11 @@ def letter_panel(
             if base.size != (panel_width, panel_height):
                 base = ImageOps.fit(base, (panel_width, panel_height), method=Image.Resampling.LANCZOS)
     except (OSError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
-        raise ValueError(f"panel is not a readable image: {path}") from error
+        detail = type(error).__name__
+        errno_value = getattr(error, "errno", None)
+        if errno_value is not None:
+            detail += f" errno={errno_value}"
+        raise ValueError(f"panel is not a readable image ({detail}): {path}") from error
 
     ordered = sorted(
         (dict(item) for item in text_items),

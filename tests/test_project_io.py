@@ -103,14 +103,23 @@ class ContainedProjectPathTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "macOS alias behavior requires POSIX")
     def test_open_path_nofollow_allows_macos_var_alias_only(self):
-        if not Path("/var/tmp").is_dir():
-            self.skipTest("/var/tmp is unavailable")
-        with tempfile.TemporaryDirectory(dir="/var/tmp", prefix="comic-sol-") as temporary:
+        with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "value.txt"
             target.write_bytes(b"var-alias")
             with mock.patch.object(sys, "platform", "darwin"):
                 with project_io.open_path_nofollow(target) as stream:
                     self.assertEqual(b"var-alias", stream.read())
+
+    @unittest.skipUnless(os.name == "posix", "macOS alias behavior requires POSIX")
+    def test_open_path_nofollow_handles_deep_macos_temp_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            nested = Path(temporary) / "output" / "project" / "panels" / "p01-01"
+            nested.mkdir(parents=True)
+            target = nested / "lettered.png"
+            target.write_bytes(b"deep-temp")
+            with mock.patch.object(sys, "platform", "darwin"):
+                with project_io.open_path_nofollow(target) as stream:
+                    self.assertEqual(b"deep-temp", stream.read())
 
 
 class DurableWriteTests(unittest.TestCase):
