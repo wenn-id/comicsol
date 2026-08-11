@@ -15,7 +15,7 @@ RUN groupadd --system comic-sol \
     && mkdir -p /data \
     && chown comic-sol:comic-sol /data
 COPY --from=builder /src/dist /tmp/dist
-RUN python -m pip install --no-cache-dir /tmp/dist/*.whl mcp==1.28.1 \
+RUN python -m pip install --no-cache-dir /tmp/dist/*.whl mcp==2.0.0 \
     && rm -rf /tmp/dist
 USER comic-sol
 WORKDIR /data

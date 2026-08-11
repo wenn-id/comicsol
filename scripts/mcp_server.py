@@ -4,8 +4,12 @@ import re
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+try:
+    from mcp.server.fastmcp import FastMCP
+    from mcp.server.fastmcp.exceptions import ToolError
+except ModuleNotFoundError:
+    from mcp.server.mcpserver import MCPServer as FastMCP
+    from mcp.server.mcpserver.exceptions import ToolError
 
 # Import core business logic from scripts/
 from comic_sol import (

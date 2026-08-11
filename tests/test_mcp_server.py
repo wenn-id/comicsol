@@ -22,7 +22,10 @@ if MCP_AVAILABLE:
     import mcp_server  # noqa: E402
     from mcp import ClientSession, StdioServerParameters  # noqa: E402
     from mcp.client.stdio import stdio_client  # noqa: E402
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: E402
+    try:
+        from mcp.server.fastmcp.exceptions import ToolError  # noqa: E402
+    except ModuleNotFoundError:
+        from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
 
 
 TOOL_NAMES = {
@@ -44,6 +47,16 @@ TOOL_NAMES = {
     "comic_export",
     "comic_finalize",
 }
+
+
+def result_is_error(result: Any) -> bool:
+    """Read MCP tool errors across SDK 1.x and 2.x result models."""
+    return bool(getattr(result, "isError", getattr(result, "is_error", False)))
+
+
+def structured_content(result: Any) -> Any:
+    """Read structured MCP content across SDK 1.x and 2.x result models."""
+    return getattr(result, "structuredContent", getattr(result, "structured_content", None))
 
 
 def valid_page_reviewer_checks(project: Path, page_number: int):
@@ -246,18 +259,18 @@ class InstalledMcpProtocolTests(unittest.IsolatedAsyncioTestCase):
                     listed = await session.list_tools()
                     self.assertEqual(TOOL_NAMES, {tool.name for tool in listed.tools})
                     health = await session.call_tool("comic_doctor", {})
-                    self.assertFalse(health.isError)
-                    self.assertTrue(health.structuredContent["healthy"])
+                    self.assertFalse(result_is_error(health))
+                    self.assertTrue(structured_content(health)["healthy"])
                     created = await session.call_tool("comic_init", {
                         "title": "Installed Wire Test",
                         "source_text": "An installed protocol smoke test.",
                         "request_settings": {"language": "en", "mode": "short_prompt"},
                     })
-                    self.assertFalse(created.isError)
-                    project_id = created.structuredContent["result"]
+                    self.assertFalse(result_is_error(created))
+                    project_id = structured_content(created)["result"]
                     status = await session.call_tool("comic_status", {"project_id": project_id})
-                    self.assertFalse(status.isError)
-                    self.assertEqual("INIT", status.structuredContent["status"])
+                    self.assertFalse(result_is_error(status))
+                    self.assertEqual("INIT", structured_content(status)["status"])
 
 
 @unittest.skipUnless(MCP_AVAILABLE, "MCP extra is not installed")
@@ -293,12 +306,12 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
                         error: bool = False,
                     ) -> Any:
                         result = await session.call_tool(name, arguments or {})
-                        self.assertEqual(error, result.isError, f"{name}: {result.content}")
+                        self.assertEqual(error, result_is_error(result), f"{name}: {result.content}")
                         if error:
-                            self.assertIsNone(result.structuredContent)
+                            self.assertIsNone(structured_content(result))
                         else:
-                            self.assertIsNotNone(result.structuredContent)
-                        return result.structuredContent
+                            self.assertIsNotNone(structured_content(result))
+                        return structured_content(result)
 
                     health = await call("comic_doctor")
                     self.assertTrue(health["healthy"])
@@ -405,12 +418,12 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
                     # recomposition re-encodes pixel-identical PNGs whose bytes
                     # differ by platform zlib.
                     blocked = await session.call_tool("comic_finalize", {"project_id": "sunlight-courier"})
-                    self.assertTrue(blocked.isError, "comic_finalize must gate on page QA")
+                    self.assertTrue(result_is_error(blocked), "comic_finalize must gate on page QA")
                     write_page_qa_records()
 
                     result = await session.call_tool("comic_finalize", {"project_id": "sunlight-courier"})
-                    self.assertFalse(result.isError, "comic_finalize")
-                    content: Any = result.structuredContent
+                    self.assertFalse(result_is_error(result), "comic_finalize")
+                    content: Any = structured_content(result)
                     self.assertEqual("COMPLETE", content["status"])
                     self.assertEqual("exports/sunlight-courier.pdf", content["pdf"])
                     self.assertEqual("qa/report.md", content["report"])
@@ -430,12 +443,12 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
                     validated = await session.call_tool("comic_validate", {
                         "project_id": "sunlight-courier", "stage": "final",
                     })
-                    self.assertFalse(validated.isError)
-                    self.assertEqual([], validated.structuredContent["result"])
+                    self.assertFalse(result_is_error(validated))
+                    self.assertEqual([], structured_content(validated)["result"])
 
                     # Terminal status matches warning state (no warnings → COMPLETE).
                     status = await session.call_tool("comic_status", {"project_id": "sunlight-courier"})
-                    self.assertEqual("COMPLETE", status.structuredContent["status"])
+                    self.assertEqual("COMPLETE", structured_content(status)["status"])
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ authors = [{ name = "Alwan Juliawan" }]
 dependencies = ["Pillow==12.3.0"]
 
 [project.optional-dependencies]
-mcp = ["mcp==1.28.1"]
+mcp = ["mcp==2.0.0"]
 
 [project.scripts]
 comic-sol = "comic_sol_product.cli:main"

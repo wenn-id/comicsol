@@ -45,7 +45,7 @@ async def smoke(executable: Path, output_root: Path) -> None:
                 extra = sorted(names - EXPECTED_TOOLS)
                 raise RuntimeError(f"MCP tool mismatch: missing={missing}, extra={extra}")
             doctor = await session.call_tool("comic_doctor", {})
-            if doctor.isError:
+            if getattr(doctor, "isError", getattr(doctor, "is_error", False)):
                 raise RuntimeError("installed MCP doctor failed")
     print(f"mcp-smoke-ok: {len(EXPECTED_TOOLS)} tools")
 

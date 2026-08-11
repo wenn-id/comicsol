@@ -39,7 +39,7 @@ class NativeDistributionContractTests(unittest.TestCase):
                 "version": "2.0.0rc4",
             },
             {"bom-ref": "Pillow==12.3.0", "name": "Pillow", "purl": "pkg:pypi/pillow@12.3.0", "type": "library", "version": "12.3.0"},
-            {"bom-ref": "mcp==1.28.1", "name": "mcp", "purl": "pkg:pypi/mcp@1.28.1", "type": "library", "version": "1.28.1"},
+            {"bom-ref": "mcp==2.0.0", "name": "mcp", "purl": "pkg:pypi/mcp@2.0.0", "type": "library", "version": "2.0.0"},
             {"bom-ref": "pyinstaller==6.15.0", "name": "pyinstaller", "purl": "pkg:pypi/pyinstaller@6.15.0", "type": "library", "version": "6.15.0"},
             {"bom-ref": "pkg:generic/python@3.11.9", "name": "Python", "purl": "pkg:generic/python@3.11.9", "type": "framework", "version": "3.11.9"},
         ]
@@ -221,6 +221,8 @@ class NativeDistributionContractTests(unittest.TestCase):
         workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
         self.assertIn("USER comic-sol", dockerfile)
+        self.assertIn("mcp==2.0.0", dockerfile)
+        self.assertNotIn("mcp==1.28.1", dockerfile)
         self.assertIn("/data", dockerfile)
         self.assertIn("HEALTHCHECK", dockerfile)
         self.assertIn('["comic-sol", "doctor"', dockerfile)
@@ -256,6 +258,8 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("Verify tag matches package version", workflow)
         self.assertIn("comic-sol:${{ steps.identity.outputs.version }}", workflow)
         self.assertIn("actions/attest-build-provenance@", workflow)
+        self.assertIn("mcp==2.0.0", workflow)
+        self.assertNotIn("mcp==1.28.1", workflow)
         self.assertIn("attestations: write", workflow)
         self.assertIn("id-token: write", workflow)
         self.assertNotIn("v2.0.0rc4", workflow)
