@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-from project_io import contained_project_path, durable_atomic_write
+from project_io import ProjectTransaction, contained_project_path
 
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -114,7 +114,8 @@ def main(argv: list[str] | None = None) -> int:
         payload = (
             json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         ).encode("utf-8")
-        durable_atomic_write(project_dir / "qa/evidence.json", payload)
+        with ProjectTransaction(project_dir, "quality-evidence") as transaction:
+            transaction.stage_bytes("qa/evidence.json", payload)
         return 0
     except (EvidenceModeError, OSError, ValueError) as error:
         print(f"ERROR {type(error).__name__}: {error}", file=sys.stderr)

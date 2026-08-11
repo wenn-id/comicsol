@@ -23,6 +23,7 @@ _LOCK_RETRY_SECONDS = 0.05
 _LOCK_BYTE_OFFSET = 4096
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _HAS_NOFOLLOW = _O_NOFOLLOW != 0
+_REPARSE_POINT = 0x400
 
 
 class ProjectLock:
@@ -184,6 +185,17 @@ def contained_project_path(
     while current != root:
         if current.is_symlink():
             raise ValueError("project path must not contain symlinks")
+        if os.name == "nt":
+            try:
+                attributes = getattr(
+                    current.stat(follow_symlinks=False), "st_file_attributes", 0
+                )
+            except FileNotFoundError:
+                attributes = 0
+            if attributes & _REPARSE_POINT:
+                raise ValueError(
+                    "project path must not contain symlinks or reparse points"
+                )
         current = current.parent
     candidate = unresolved.resolve(strict=must_exist)
     if candidate != root and root not in candidate.parents:
@@ -271,7 +283,7 @@ def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -
                 attributes = getattr(current.stat(follow_symlinks=False), "st_file_attributes", 0)
             except AttributeError:
                 attributes = 0
-            if attributes & 0x400:
+            if attributes & _REPARSE_POINT:
                 raise ValueError("path must not contain symlinks or reparse points")
         return os.fdopen(os.open(absolute, flags, mode), "rb")
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _O_NOFOLLOW

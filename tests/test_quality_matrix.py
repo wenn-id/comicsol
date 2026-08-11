@@ -21,7 +21,14 @@ from comic_sol import (
 from normalize_panels import normalize_panel
 from page_quality import build_page_quality_record, write_page_quality_record
 from quality_sample import EvidenceModeError, build_evidence_record, main
-from tests.support import QUALITY_SCENARIOS, bounded_tail_regions, build_quality_fixture
+from validate_project import validate_project
+
+from tests.support import (
+    QUALITY_SCENARIOS,
+    bounded_tail_regions,
+    build_quality_fixture,
+    make_symlink,
+)
 from tests.test_validation import (
     valid_characters,
     valid_manifest,
@@ -29,8 +36,6 @@ from tests.test_validation import (
     valid_story,
     valid_storyboard,
 )
-from validate_project import validate_project
-
 
 REQUIRED_DIMENSIONS = {
     "characters:recurring-pair",
@@ -250,6 +255,56 @@ class EvidenceModeContractTests(unittest.TestCase):
                 json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
             ).encode("utf-8")
             self.assertEqual(expected, path.read_bytes())
+
+    def test_runner_writes_live_visual_record(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "project"
+            project.mkdir()
+            retained = project / "panels/raw/attempt.png"
+            retained.parent.mkdir(parents=True)
+            retained.write_bytes(b"retained attempt")
+
+            self.assertEqual(
+                0,
+                main(
+                    [
+                        str(project),
+                        "--mode",
+                        "live-visual",
+                        "--retained-attempt",
+                        "panels/raw/attempt.png",
+                        "--provider",
+                        "local-test-provider",
+                        "--model",
+                        "test-model-v1",
+                        "--reviewer-method",
+                        "bounded-visual-review",
+                    ]
+                ),
+            )
+            record = json.loads(
+                (project / "qa/evidence.json").read_text("utf-8")
+            )
+            self.assertEqual("live-visual", record["mode"])
+            self.assertEqual("test-model-v1", record["model"])
+            self.assertEqual(
+                hashlib.sha256(retained.read_bytes()).hexdigest(),
+                record["attempt_sha256"],
+            )
+
+    def test_runner_rejects_qa_directory_link_without_external_write(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            project = root / "project"
+            outside = root / "outside"
+            project.mkdir()
+            outside.mkdir()
+            sentinel = outside / "evidence.json"
+            sentinel.write_bytes(b"outside sentinel")
+            make_symlink(self, project / "qa", outside, directory=True)
+
+            self.assertEqual(2, main([str(project), "--mode", "deterministic"]))
+            self.assertEqual(b"outside sentinel", sentinel.read_bytes())
 
     def test_runner_refuses_live_mode_without_retained_attempt(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

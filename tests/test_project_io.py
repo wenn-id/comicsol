@@ -60,6 +60,14 @@ class ContainedProjectPathTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "escapes|symlinks"):
             contained_project_path(self.project, "panels/image.png")
 
+    def test_rejects_directory_link_to_another_path_inside_project(self):
+        target = self.project / "real-panels"
+        target.mkdir()
+        link = self.project / "panels"
+        make_symlink(self, link, target, directory=True)
+        with self.assertRaisesRegex(ValueError, "symlinks|reparse"):
+            contained_project_path(self.project, "panels/image.png")
+
     @unittest.skipUnless(os.name == "nt", "Windows junction/reparse behavior requires native Windows")
     def test_rejects_windows_directory_junction_escape(self):
         outside = self.root / "outside-junction-target"
