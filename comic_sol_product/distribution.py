@@ -154,6 +154,8 @@ def write_sbom(
         dependency["dependsOn"] = [
             references.get(ref, ref) for ref in dependency.get("dependsOn", [])
         ]
+    components = [item for item in components if item is not application]
+    record["components"] = components
     metadata = record.setdefault("metadata", {})
     if not isinstance(metadata, dict):
         raise ValueError("build environment SBOM has invalid metadata")
@@ -262,6 +264,8 @@ def verify_release_directory(release_dir: Path, identity: ReleaseIdentity) -> No
     component = sbom.get("metadata", {}).get("component", {})
     serial = sbom.get("serialNumber", "")
     try:
+        if not isinstance(serial, str) or not serial.startswith("urn:uuid:"):
+            raise ValueError("missing urn:uuid: prefix")
         uuid.UUID(serial.removeprefix("urn:uuid:"))
     except (AttributeError, ValueError):
         raise ValueError("SBOM serialNumber is not a UUID URN") from None
@@ -282,7 +286,7 @@ def verify_release_directory(release_dir: Path, identity: ReleaseIdentity) -> No
     artifact_names = [name for name in artifact_names if name != sbom_path.name]
     if properties.get("comic-sol:release:artifact") not in artifact_names:
         raise ValueError("SBOM artifact metadata mismatch")
-    expected_components = {"comic-sol", "pillow", "mcp", "pyinstaller", "python"}
+    expected_components = {"pillow", "mcp", "pyinstaller", "python"}
     component_names = {_component_name(item) for item in sbom["components"]}
     if not expected_components <= component_names:
         missing = ", ".join(sorted(expected_components - component_names))
@@ -294,9 +298,14 @@ def verify_release_directory(release_dir: Path, identity: ReleaseIdentity) -> No
         for item in sbom["components"]
         if isinstance(item, dict) and item.get("bom-ref")
     }
-    refs.add(component.get("bom-ref"))
+    root_ref = component.get("bom-ref")
+    if not root_ref:
+        raise ValueError("SBOM metadata component is missing a bom-ref")
+    refs.add(root_ref)
     for dependency in sbom["dependencies"]:
-        if not isinstance(dependency, dict) or dependency.get("ref") not in refs:
+        if not isinstance(dependency, dict) or not dependency.get("ref"):
+            raise ValueError("SBOM dependency graph has a missing reference")
+        if dependency.get("ref") not in refs:
             raise ValueError("SBOM dependency graph has an unknown reference")
         if not all(item in refs for item in dependency.get("dependsOn", [])):
             raise ValueError("SBOM dependency graph has an unknown dependency")

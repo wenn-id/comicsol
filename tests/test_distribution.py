@@ -11,6 +11,7 @@ from comic_sol_product.distribution import (
     ReleaseIdentity,
     artifact_name,
     verify_release_directory,
+    validate_sbom_schema,
     write_checksums,
     write_release_metadata,
     write_sbom,
@@ -118,6 +119,23 @@ class NativeDistributionContractTests(unittest.TestCase):
                 next(item["value"] for item in sbom_record["metadata"]["properties"] if item["name"] == "comic-sol:release:artifact"),
             )
             self.assertGreaterEqual(len(sbom_record["dependencies"]), 5)
+            refs = [item["bom-ref"] for item in sbom_record["components"]]
+            self.assertNotIn(sbom_record["metadata"]["component"]["bom-ref"], refs)
+
+    def test_finalized_sbom_matches_cyclonedx_schema(self):
+        try:
+            import cyclonedx  # noqa: F401
+        except ImportError:
+            self.skipTest("cyclonedx-bom is not installed")
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            release = Path(temporary_directory)
+            artifact = release / artifact_name(self.identity, "zip")
+            artifact.write_bytes(b"portable-runtime")
+            environment = self._write_environment_sbom(release)
+            validate_sbom_schema(
+                write_sbom(release, self.identity, environment, artifact.name)
+            )
 
     def test_verifier_rejects_missing_or_tampered_artifact(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
