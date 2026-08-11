@@ -125,8 +125,9 @@ class NativeDistributionContractTests(unittest.TestCase):
     def test_finalized_sbom_matches_cyclonedx_schema(self):
         try:
             import cyclonedx  # noqa: F401
+            import jsonschema  # noqa: F401
         except ImportError:
-            self.skipTest("cyclonedx-bom is not installed")
+            self.skipTest("CycloneDX JSON validation dependencies are not installed")
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             release = Path(temporary_directory)
