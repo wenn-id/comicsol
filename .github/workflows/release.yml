@@ -70,7 +70,7 @@ jobs:
       - name: Assemble SBOM, metadata, and SHA256SUMS
         run: python scripts/assemble_release.py --runtime native/comic-sol --environment native/build-environment.sbom.json --output release --platform ${{ matrix.platform }} --architecture x86_64
       - name: Upload native bundle
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: comic-sol-${{ matrix.platform }}-x86_64
           path: release/*
@@ -109,7 +109,7 @@ jobs:
           mkdir source-assets
           cp dist/*.whl dist/*.tar.gz installers/install.sh installers/install.ps1 source-assets/
       - name: Upload source packages and installers
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: comic-sol-source
           path: source-assets/*
