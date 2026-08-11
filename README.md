@@ -293,7 +293,7 @@ py -3.11 -m venv "$TempRoot\venv"
 | Lettering | Comic Neue Regular/Bold; per-character Noto Sans fallback | Adaptive oval dialogue, actual inline bold emphasis, compact captions, and hybrid authored SFX are supported. Font licenses and digests are in `assets/README.md`. |
 | Image generation | Agent-exposed image model returning a local raster | References and exact dimensions are used when supported; exact authored SFX is checked by visual QA. |
 | Deterministic scripts | Python 3.11 and Pillow 12.3.0 | Offline and provider-neutral. |
-| Native MCP | Python 3.11 and MCP SDK 1.28.1 via `stdio` | Exposes 17 tools covering the full deterministic lifecycle safely locked to one output root. |
+| Native MCP | Python 3.11 and MCP SDK 2.0.0 via `stdio` | Exposes 17 tools covering the full deterministic lifecycle safely locked to one output root. |
 
 ## Privacy, IP, and Limitations
 

@@ -65,7 +65,7 @@ jobs:
         run: python scripts/build_portable.py --wheel dist/*.whl --output native
       - name: Smoke bundled runtime and MCP
         run: |
-          python -m pip install mcp==1.28.1
+          python -m pip install mcp==2.0.0
           python scripts/portable_release_smoke.py --runtime native/comic-sol
       - name: Assemble SBOM, metadata, and SHA256SUMS
         run: python scripts/assemble_release.py --runtime native/comic-sol --environment native/build-environment.sbom.json --output release --platform ${{ matrix.platform }} --architecture x86_64
