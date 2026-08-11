@@ -306,6 +306,22 @@ class EvidenceModeContractTests(unittest.TestCase):
             self.assertEqual(2, main([str(project), "--mode", "deterministic"]))
             self.assertEqual(b"outside sentinel", sentinel.read_bytes())
 
+    def test_runner_rejects_logs_directory_link_without_external_staging(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            project = root / "project"
+            outside = root / "outside"
+            project.mkdir()
+            outside.mkdir()
+            sentinel = outside / "sentinel.txt"
+            sentinel.write_bytes(b"outside sentinel")
+            make_symlink(self, project / "logs", outside, directory=True)
+
+            self.assertEqual(2, main([str(project), "--mode", "deterministic"]))
+            self.assertEqual(b"outside sentinel", sentinel.read_bytes())
+            self.assertFalse((outside / "transactions").exists())
+            self.assertFalse((outside / "evidence.json").exists())
+
     def test_runner_refuses_live_mode_without_retained_attempt(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             project = Path(temporary_directory) / "project"

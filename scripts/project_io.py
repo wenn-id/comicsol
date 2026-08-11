@@ -421,7 +421,7 @@ class ProjectTransaction:
     def __enter__(self) -> "ProjectTransaction":
         self._lock = ProjectLock(self.project_dir).__enter__()
         try:
-            base = self.project_dir / "logs/transactions"
+            base = contained_project_path(self.project_dir, "logs/transactions")
             base.mkdir(parents=True, exist_ok=True)
             self._id = _find_transaction_dir(base)
             self._dir = base / str(self._id)
@@ -558,7 +558,7 @@ class ProjectTransaction:
     def recover(project_dir: Path) -> None:
         """Roll back incomplete journals while holding the project lock."""
         project_dir = Path(project_dir)
-        base = project_dir / "logs/transactions"
+        base = contained_project_path(project_dir, "logs/transactions")
         if not base.is_dir():
             return
         with ProjectLock(project_dir):
