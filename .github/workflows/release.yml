@@ -57,7 +57,7 @@ jobs:
       - name: Build wheel
         shell: bash
         run: |
-          python -m pip install build==1.3.0 setuptools==80.9.0
+          python -m pip install build==1.3.0 setuptools==80.9.0 cyclonedx-bom==7.3.1
           python -m build
           python -m comic_sol_product.release dist/*.whl dist/*.tar.gz
       - name: Build bundled runtime
@@ -68,7 +68,7 @@ jobs:
           python -m pip install mcp==1.28.1
           python scripts/portable_release_smoke.py --runtime native/comic-sol
       - name: Assemble SBOM, metadata, and SHA256SUMS
-        run: python scripts/assemble_release.py --runtime native/comic-sol --output release --platform ${{ matrix.platform }} --architecture x86_64
+        run: python scripts/assemble_release.py --runtime native/comic-sol --environment native/build-environment.sbom.json --output release --platform ${{ matrix.platform }} --architecture x86_64
       - name: Upload native bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -130,6 +130,8 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
+      - name: Install CycloneDX validator
+        run: python -m pip install cyclonedx-bom==7.3.1
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: comic-sol-*
@@ -154,13 +156,15 @@ jobs:
           import os
           import sys
           from pathlib import Path
-          from comic_sol_product.distribution import ReleaseIdentity, verify_release_directory
+          from comic_sol_product.distribution import ReleaseIdentity, validate_sbom_schema, verify_release_directory
           version = os.environ["RELEASE_VERSION"]
           root = Path("bundles")
           records = []
           for platform in ("linux", "macos", "windows"):
               bundle = root / f"comic-sol-{platform}-x86_64"
-              verify_release_directory(bundle, ReleaseIdentity(version, platform, "x86_64"))
+              identity = ReleaseIdentity(version, platform, "x86_64")
+              verify_release_directory(bundle, identity)
+              validate_sbom_schema(bundle / f"{identity.stem}.sbom.json")
               for path in sorted(bundle.iterdir()):
                   if path.name == "SHA256SUMS":
                       continue

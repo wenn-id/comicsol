@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -90,33 +91,108 @@ def write_release_metadata(
     return destination
 
 
-def write_sbom(release_dir: Path, identity: ReleaseIdentity) -> Path:
-    release_dir.mkdir(parents=True, exist_ok=True)
-    destination = release_dir / _sbom_name(identity)
-    destination.write_text(
-        _canonical_json(
-            {
-                "bomFormat": "CycloneDX",
-                "components": [
-                    {"name": "Pillow", "type": "library", "version": "12.3.0"},
-                    {"name": "mcp", "type": "library", "version": "1.28.1"},
-                ],
-                "metadata": {
-                    "component": {
-                        "name": "comic-sol",
-                        "type": "application",
-                        "version": identity.version,
-                    }
-                },
-                "serialNumber": f"urn:uuid:comic-sol-{identity.version}-{identity.platform}-{identity.architecture}",
-                "specVersion": "1.6",
-                "version": 1,
-            }
-        ),
-        encoding="utf-8",
-        newline="\n",
+def _component_name(component: object) -> str:
+    return str(component.get("name", "")).casefold() if isinstance(component, dict) else ""
+
+
+def _set_sbom_property(properties: list[dict[str, str]], name: str, value: str) -> None:
+    for item in properties:
+        if item.get("name") == name:
+            item["value"] = value
+            return
+    properties.append({"name": name, "value": value})
+
+
+def write_sbom(
+    release_dir: Path,
+    identity: ReleaseIdentity,
+    environment_sbom: Path,
+    artifact: str,
+) -> Path:
+    """Finalize the CycloneDX BOM produced from the frozen build environment."""
+
+    source = environment_sbom.resolve(strict=True)
+    record = json.loads(source.read_text(encoding="utf-8"))
+    components = record.get("components")
+    if not isinstance(components, list) or not components:
+        raise ValueError("build environment SBOM has no components")
+
+    application = next(
+        (component for component in components if _component_name(component) == "comic-sol"),
+        None,
     )
+    if not isinstance(application, dict):
+        raise ValueError("build environment SBOM is missing comic-sol")
+    application["version"] = identity.version
+    application["type"] = "application"
+    application["purl"] = f"pkg:pypi/comic-sol@{identity.version}"
+    for item in components:
+        if not isinstance(item, dict):
+            continue
+        references = item.get("externalReferences")
+        if isinstance(references, list):
+            item["externalReferences"] = [
+                reference
+                for reference in references
+                if not isinstance(reference, dict)
+                or not str(reference.get("url", "")).startswith("file:")
+            ]
+            if not item["externalReferences"]:
+                item.pop("externalReferences")
+    references = {
+        item.get("bom-ref"): item.get("purl") or item.get("bom-ref")
+        for item in components
+        if isinstance(item, dict) and item.get("bom-ref")
+    }
+    for item in components:
+        if isinstance(item, dict) and item.get("bom-ref") in references:
+            item["bom-ref"] = references[item["bom-ref"]]
+    for dependency in record.get("dependencies", []):
+        if not isinstance(dependency, dict):
+            continue
+        dependency["ref"] = references.get(dependency.get("ref"), dependency.get("ref"))
+        dependency["dependsOn"] = [
+            references.get(ref, ref) for ref in dependency.get("dependsOn", [])
+        ]
+    metadata = record.setdefault("metadata", {})
+    if not isinstance(metadata, dict):
+        raise ValueError("build environment SBOM has invalid metadata")
+    metadata["component"] = dict(application)
+    properties = metadata.setdefault("properties", [])
+    if not isinstance(properties, list):
+        raise ValueError("build environment SBOM has invalid metadata properties")
+    _set_sbom_property(properties, "comic-sol:release:artifact", _safe_member(artifact))
+    _set_sbom_property(properties, "comic-sol:release:platform", identity.platform)
+    _set_sbom_property(properties, "comic-sol:release:architecture", identity.architecture)
+
+    if not any(_component_name(component) == "python" for component in components):
+        raise ValueError("build environment SBOM is missing Python")
+    if not isinstance(record.get("dependencies"), list) or not record["dependencies"]:
+        raise ValueError("build environment SBOM has no dependency graph")
+
+    record["bomFormat"] = "CycloneDX"
+    record["specVersion"] = "1.6"
+    record["version"] = 1
+    record["serialNumber"] = f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, identity.stem)}"
+    destination = release_dir / _sbom_name(identity)
+    release_dir.mkdir(parents=True, exist_ok=True)
+    destination.write_text(_canonical_json(record), encoding="utf-8", newline="\n")
     return destination
+
+
+def validate_sbom_schema(sbom_path: Path) -> None:
+    """Validate a finalized BOM with the pinned CycloneDX JSON schema."""
+
+    try:
+        from cyclonedx.schema import SchemaVersion
+        from cyclonedx.validation.json import JsonValidator
+    except ImportError as error:  # pragma: no cover - release-only dependency
+        raise RuntimeError("install cyclonedx-bom==7.3.1 to validate release SBOMs") from error
+    validation_error = JsonValidator(SchemaVersion.V1_6).validate_str(
+        sbom_path.read_text(encoding="utf-8")
+    )
+    if validation_error is not None:
+        raise ValueError(f"CycloneDX 1.6 schema validation failed: {validation_error}")
 
 
 def write_checksums(release_dir: Path, artifacts: Iterable[Path]) -> Path:
@@ -184,5 +260,49 @@ def verify_release_directory(release_dir: Path, identity: ReleaseIdentity) -> No
 
     sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
     component = sbom.get("metadata", {}).get("component", {})
-    if sbom.get("bomFormat") != "CycloneDX" or component.get("version") != identity.version:
+    serial = sbom.get("serialNumber", "")
+    try:
+        uuid.UUID(serial.removeprefix("urn:uuid:"))
+    except (AttributeError, ValueError):
+        raise ValueError("SBOM serialNumber is not a UUID URN") from None
+    if (
+        sbom.get("bomFormat") != "CycloneDX"
+        or sbom.get("specVersion") != "1.6"
+        or component.get("name") != "comic-sol"
+        or component.get("version") != identity.version
+        or not isinstance(sbom.get("components"), list)
+        or not isinstance(sbom.get("dependencies"), list)
+    ):
         raise ValueError("SBOM metadata mismatch")
+    properties = {
+        item.get("name"): item.get("value")
+        for item in sbom.get("metadata", {}).get("properties", [])
+        if isinstance(item, dict)
+    }
+    artifact_names = [name for name in artifact_names if name != sbom_path.name]
+    if properties.get("comic-sol:release:artifact") not in artifact_names:
+        raise ValueError("SBOM artifact metadata mismatch")
+    expected_components = {"comic-sol", "pillow", "mcp", "pyinstaller", "python"}
+    component_names = {_component_name(item) for item in sbom["components"]}
+    if not expected_components <= component_names:
+        missing = ", ".join(sorted(expected_components - component_names))
+        raise ValueError(f"SBOM missing runtime components: {missing}")
+    if any(not isinstance(item, dict) or not item.get("purl") for item in sbom["components"]):
+        raise ValueError("SBOM component is missing a stable Package URL")
+    refs = {
+        item.get("bom-ref")
+        for item in sbom["components"]
+        if isinstance(item, dict) and item.get("bom-ref")
+    }
+    refs.add(component.get("bom-ref"))
+    for dependency in sbom["dependencies"]:
+        if not isinstance(dependency, dict) or dependency.get("ref") not in refs:
+            raise ValueError("SBOM dependency graph has an unknown reference")
+        if not all(item in refs for item in dependency.get("dependsOn", [])):
+            raise ValueError("SBOM dependency graph has an unknown dependency")
+    root_dependency = next(
+        (item for item in sbom["dependencies"] if item.get("ref") == component.get("bom-ref")),
+        None,
+    )
+    if not root_dependency or not root_dependency.get("dependsOn"):
+        raise ValueError("SBOM root dependency graph is incomplete")

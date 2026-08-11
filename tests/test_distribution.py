@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 import zipfile
+import uuid
 from pathlib import Path
 
 from comic_sol_product.distribution import (
@@ -27,6 +28,49 @@ class NativeDistributionContractTests(unittest.TestCase):
             version="2.0.0rc4", platform="linux", architecture="x86_64"
         )
 
+    def _write_environment_sbom(self, release: Path) -> Path:
+        components = [
+            {
+                "bom-ref": "comic-sol==2.0.0rc4",
+                "name": "comic-sol",
+                "purl": "pkg:pypi/comic-sol@2.0.0rc4",
+                "type": "application",
+                "version": "2.0.0rc4",
+            },
+            {"bom-ref": "Pillow==12.3.0", "name": "Pillow", "purl": "pkg:pypi/pillow@12.3.0", "type": "library", "version": "12.3.0"},
+            {"bom-ref": "mcp==1.28.1", "name": "mcp", "purl": "pkg:pypi/mcp@1.28.1", "type": "library", "version": "1.28.1"},
+            {"bom-ref": "pyinstaller==6.15.0", "name": "pyinstaller", "purl": "pkg:pypi/pyinstaller@6.15.0", "type": "library", "version": "6.15.0"},
+            {"bom-ref": "pkg:generic/python@3.11.9", "name": "Python", "purl": "pkg:generic/python@3.11.9", "type": "framework", "version": "3.11.9"},
+        ]
+        destination = release / "build-environment.sbom.json"
+        destination.write_text(
+            json.dumps(
+                {
+                    "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+                    "bomFormat": "CycloneDX",
+                    "components": components,
+                    "dependencies": [
+                        {
+                            "ref": item["bom-ref"],
+                            "dependsOn": [
+                                components[1]["bom-ref"],
+                                components[2]["bom-ref"],
+                                components[4]["bom-ref"],
+                            ]
+                            if item is components[0]
+                            else [],
+                        }
+                        for item in components
+                    ],
+                    "metadata": {},
+                    "specVersion": "1.6",
+                    "version": 1,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return destination
+
     def test_identity_and_artifact_names_are_canonical(self):
         self.assertEqual("v2.0.0rc4", self.identity.tag)
         self.assertEqual(
@@ -45,10 +89,11 @@ class NativeDistributionContractTests(unittest.TestCase):
             second = release / "comic-sol-2.0.0rc4-linux-x86_64.sbom.json"
             first.write_bytes(b"portable-runtime")
             second.write_text("{}\n", encoding="utf-8")
+            environment = self._write_environment_sbom(release)
 
             metadata = write_release_metadata(release, self.identity, [first.name])
             checksums = write_checksums(release, [second, first])
-            sbom = write_sbom(release, self.identity)
+            sbom = write_sbom(release, self.identity, environment, first.name)
 
             metadata_record = json.loads(metadata.read_text(encoding="utf-8"))
             self.assertEqual("unsigned", metadata_record["signature_status"])
@@ -65,14 +110,23 @@ class NativeDistributionContractTests(unittest.TestCase):
             self.assertEqual("1.6", sbom_record["specVersion"])
             self.assertEqual("comic-sol", sbom_record["metadata"]["component"]["name"])
             self.assertEqual("2.0.0rc4", sbom_record["metadata"]["component"]["version"])
+            self.assertEqual("application", sbom_record["metadata"]["component"]["type"])
+            self.assertEqual("pkg:pypi/comic-sol@2.0.0rc4", sbom_record["metadata"]["component"]["purl"])
+            uuid.UUID(sbom_record["serialNumber"].removeprefix("urn:uuid:"))
+            self.assertEqual(
+                first.name,
+                next(item["value"] for item in sbom_record["metadata"]["properties"] if item["name"] == "comic-sol:release:artifact"),
+            )
+            self.assertGreaterEqual(len(sbom_record["dependencies"]), 5)
 
     def test_verifier_rejects_missing_or_tampered_artifact(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             release = Path(temporary_directory)
             artifact = release / artifact_name(self.identity, "tar.gz")
             artifact.write_bytes(b"original")
+            environment = self._write_environment_sbom(release)
             write_release_metadata(release, self.identity, [artifact.name])
-            write_sbom(release, self.identity)
+            write_sbom(release, self.identity, environment, artifact.name)
             write_checksums(
                 release,
                 [artifact, release / "comic-sol-2.0.0rc4-linux-x86_64.sbom.json"],
@@ -162,6 +216,10 @@ class NativeDistributionContractTests(unittest.TestCase):
         for runner in ("ubuntu-latest", "macos-latest", "windows-latest"):
             self.assertIn(runner, workflow)
         self.assertIn("scripts/build_portable.py", workflow)
+        self.assertIn("build-environment.sbom.json", workflow)
+        self.assertIn("--environment", workflow)
+        self.assertIn("cyclonedx-bom==7.3.1", workflow)
+        self.assertIn("validate_sbom_schema", workflow)
         self.assertIn("scripts/portable_release_smoke.py", workflow)
         portable_smoke = (root / "scripts/portable_release_smoke.py").read_text(encoding="utf-8")
         self.assertIn("installed_mcp_smoke.py", portable_smoke)

@@ -14,6 +14,7 @@ from comic_sol_product import __version__
 from comic_sol_product.distribution import (
     ReleaseIdentity,
     artifact_name,
+    validate_sbom_schema,
     verify_release_directory,
     write_checksums,
     write_release_metadata,
@@ -25,6 +26,7 @@ from comic_sol_product.portable import create_portable_archive
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime", required=True, type=Path)
+    parser.add_argument("--environment", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--platform", required=True, choices=("linux", "macos", "windows"))
     parser.add_argument("--architecture", default="x86_64", choices=("x86_64", "arm64"))
@@ -35,7 +37,8 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
     archive = output / artifact_name(identity, "zip")
     create_portable_archive(args.runtime.resolve(strict=True), archive)
-    sbom = write_sbom(output, identity)
+    sbom = write_sbom(output, identity, args.environment, archive.name)
+    validate_sbom_schema(sbom)
     write_release_metadata(output, identity, [archive.name])
     write_checksums(output, [archive, sbom])
     verify_release_directory(output, identity)

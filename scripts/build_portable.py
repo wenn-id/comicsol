@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import platform
 import shutil
 import subprocess
@@ -16,6 +17,71 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def run(command: list[str], cwd: Path) -> None:
     subprocess.run(command, cwd=cwd, check=True)
+
+
+def run_output(command: list[str], cwd: Path) -> str:
+    return subprocess.check_output(command, cwd=cwd, text=True).strip()
+
+
+def write_environment_sbom(
+    python: Path, destination: Path, temporary: Path, generator_python: Path
+) -> None:
+    run(
+        [
+            str(generator_python),
+            "-m",
+            "cyclonedx_py",
+            "environment",
+            str(python),
+            "--sv",
+            "1.6",
+            "--output-reproducible",
+            "--validate",
+            "--of",
+            "JSON",
+            "-o",
+            str(destination),
+        ],
+        temporary,
+    )
+    record = json.loads(destination.read_text(encoding="utf-8"))
+    components = record.setdefault("components", [])
+    python_version = run_output(
+        [str(python), "-c", "import platform; print(platform.python_version())"],
+        temporary,
+    )
+    python_ref = f"pkg:generic/python@{python_version}"
+    if not any(str(item.get("name", "")).casefold() == "python" for item in components):
+        components.append(
+            {
+                "bom-ref": python_ref,
+                "name": "Python",
+                "purl": python_ref,
+                "type": "framework",
+                "version": python_version,
+            }
+        )
+    application = next(
+        (item for item in components if str(item.get("name", "")).casefold() == "comic-sol"),
+        None,
+    )
+    if application is None:
+        raise RuntimeError("CycloneDX environment SBOM is missing comic-sol")
+    dependencies = record.setdefault("dependencies", [])
+    root = next(
+        (item for item in dependencies if item.get("ref") == application.get("bom-ref")),
+        None,
+    )
+    if root is None:
+        root = {"dependsOn": [], "ref": application["bom-ref"]}
+        dependencies.append(root)
+    if python_ref not in root.setdefault("dependsOn", []):
+        root["dependsOn"].append(python_ref)
+    destination.write_text(
+        json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
 
 def main() -> int:
@@ -42,6 +108,26 @@ def main() -> int:
         if target.exists():
             shutil.rmtree(target)
         shutil.copytree(built, target)
+        generator = temporary / "sbom-venv"
+        venv.EnvBuilder(with_pip=True, clear=True).create(generator)
+        generator_python = generator / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+        run(
+            [
+                str(generator_python),
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "cyclonedx-bom==7.3.1",
+            ],
+            temporary,
+        )
+        write_environment_sbom(
+            python,
+            output / "build-environment.sbom.json",
+            temporary,
+            generator_python,
+        )
     executable = target / ("comic-sol.exe" if platform.system() == "Windows" else "comic-sol")
     if not executable.is_file():
         raise RuntimeError("portable executable was not produced")
