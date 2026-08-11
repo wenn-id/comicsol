@@ -27,3 +27,15 @@ Security-sensitive areas include project path containment, archive extraction, t
 The optional MCP server uses local `stdio` and has no authentication. Any local process able to launch the configured command can invoke the complete tool surface inside its configured `--root`. Use a dedicated absolute output root containing only Comic Sol projects, and run it only from a trusted client configuration. Do not point MCP at a home directory, repository root, or shared multi-user folder. Containment and symlink rejection limit filesystem reach; they do not authenticate clients. CLI commands accepting `project_dir` should likewise use paths under the intended output root.
 
 Comic Sol does not bundle image-provider credentials or send data by itself. When an agent invokes an external image capability, that provider's privacy and retention policy applies.
+
+## Repository hardening
+
+The repository uses GitHub vulnerability alerts, Dependabot security updates,
+secret scanning with push protection, and CodeQL analysis on pull requests and
+the `main` branch. Changes to `main` require an independent approving review,
+dismiss stale approvals, and keep the existing required CI checks and
+conversation-resolution rule.
+
+All third-party GitHub Actions are pinned to full commit SHAs. If an action
+cannot be pinned, the pull request must document the action, the reason, the
+owner responsible for the exception, and an expiry date before merge.
