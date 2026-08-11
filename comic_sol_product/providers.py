@@ -201,11 +201,16 @@ def retain_generation_result(
         raise ValueError("invalid panel ID")
     if kind not in {"initial", "visual_retry", "transient_repeat"}:
         raise ValueError("unknown generation attempt kind")
+    if result.sha256 != hashlib.sha256(result.image_bytes).hexdigest():
+        raise ValueError("generation result SHA-256 does not match image bytes")
     engine = _load_engine()
     project = Path(project_dir).resolve(strict=True)
-    extension = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}[result.media_type]
-    relative = Path("panels") / "attempts" / panel_id / f"{kind}.{extension}"
-    destination = engine._contained_project_path(project, relative)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    engine.atomic_write_bytes(destination, result.image_bytes)
-    return engine.record_generation_attempt(project, panel_id, kind, relative)
+    return engine.retain_generation_attempt(
+        project,
+        panel_id,
+        kind,
+        result.image_bytes,
+        result.media_type,
+        result.width,
+        result.height,
+    )

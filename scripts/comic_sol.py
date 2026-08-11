@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -94,6 +95,17 @@ ARTIFACT_STAGE = {
 TIMESTAMP_KEYS = {"created_at", "updated_at", "detected_at", "completed_at", "timestamp"}
 STAGE_CACHE_PATH = Path("logs/stage-cache.json")
 GENERATION_COUNTERS_PATH = Path("logs/generation-counters.json")
+GENERATION_COUNTER_NAMES = {
+    "initial": "initial",
+    "transient_repeat": "transient_repeats",
+    "visual_retry": "visual_retries",
+}
+GENERATION_LIMITS = {"initial": 1, "transient_repeat": 1, "visual_retry": 2}
+GENERATION_LIMIT_MESSAGES = {
+    "initial": "at most one initial attempt is allowed per panel",
+    "transient_repeat": "at most one transient repeat is allowed per panel",
+    "visual_retry": "at most two visual retries are allowed per panel",
+}
 PANEL_CHECK_IDS = (
     "character-identity", "anatomy", "action", "composition", "continuity",
     "text-free", "technical",
@@ -1367,73 +1379,75 @@ def _read_generation_counters(project_dir: Path) -> dict[str, object]:
     return {"global_extra_calls": 0, "panels": {}, "schema_version": "1.0"}
 
 
-def record_generation_attempt(
+def _generation_counter_name(panel_id: str, kind: str) -> str:
+    if not IDENTIFIER.fullmatch(panel_id):
+        raise ValueError("invalid panel ID")
+    try:
+        return GENERATION_COUNTER_NAMES[kind]
+    except KeyError as error:
+        raise ValueError("unknown generation attempt kind") from error
+
+
+def _advance_generation_counters(
     project_dir: Path,
     panel_id: str,
     kind: Literal["initial", "visual_retry", "transient_repeat"],
-    attempt_path: Path,
-) -> dict[str, int]:
-    """Account for a retained image call while enforcing both retry budgets."""
-    if not IDENTIFIER.fullmatch(panel_id):
-        raise ValueError("invalid panel ID")
-    if kind not in {"initial", "visual_retry", "transient_repeat"}:
-        raise ValueError("unknown generation attempt kind")
-    project_dir = Path(project_dir)
-    attempt = _contained_project_path(project_dir, Path(attempt_path))
-    attempt_relative = attempt.relative_to(project_dir.resolve(strict=True))
-    counter_names = {
-        "initial": "initial",
-        "transient_repeat": "transient_repeats",
-        "visual_retry": "visual_retries",
+    counter_name: str,
+) -> tuple[dict[str, object], dict[str, int], int]:
+    counters = _read_generation_counters(project_dir)
+    panels = counters.get("panels")
+    if not isinstance(panels, dict):
+        raise ValueError("generation counter panels must be an object")
+    panel = panels.get(panel_id)
+    if panel is None:
+        panel = {"initial": 0, "transient_repeats": 0, "visual_retries": 0}
+        panels[panel_id] = panel
+    if not isinstance(panel, dict):
+        raise ValueError("panel generation counters must be an object")
+    for name in GENERATION_COUNTER_NAMES.values():
+        value = panel.get(name, 0)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("panel generation counters must be non-negative integers")
+        panel[name] = value
+    global_extras = counters.get("global_extra_calls", 0)
+    if (
+        isinstance(global_extras, bool)
+        or not isinstance(global_extras, int)
+        or global_extras < 0
+    ):
+        raise ValueError("global generation counter must be a non-negative integer")
+    if panel[counter_name] >= GENERATION_LIMITS[kind]:
+        raise ValueError(GENERATION_LIMIT_MESSAGES[kind])
+    if kind != "initial" and global_extras >= 8:
+        raise ValueError("at most eight extra calls are allowed per project")
+
+    panel[counter_name] += 1
+    if kind != "initial":
+        global_extras += 1
+        counters["global_extra_calls"] = global_extras
+    counts = {
+        "global_extra_calls": global_extras,
+        "initial": panel["initial"],
+        "transient_repeats": panel["transient_repeats"],
+        "visual_retries": panel["visual_retries"],
     }
-    limits = {"initial": 1, "transient_repeat": 1, "visual_retry": 2}
-    limit_messages = {
-        "initial": "at most one initial attempt is allowed per panel",
-        "transient_repeat": "at most one transient repeat is allowed per panel",
-        "visual_retry": "at most two visual retries are allowed per panel",
-    }
-    with ProjectLock(project_dir):
-        attempt = contained_project_path(
-            project_dir, attempt_relative, must_exist=True
-        )
-        if not attempt.is_file():
-            raise ValueError("attempt path must be a retained file")
-        _verify_raster(attempt)
+    return counters, counts, panel[counter_name]
 
-        counters = _read_generation_counters(project_dir)
-        panels = counters.get("panels")
-        if not isinstance(panels, dict):
-            raise ValueError("generation counter panels must be an object")
-        panel = panels.get(panel_id)
-        if panel is None:
-            panel = {"initial": 0, "transient_repeats": 0, "visual_retries": 0}
-            panels[panel_id] = panel
-        if not isinstance(panel, dict):
-            raise ValueError("panel generation counters must be an object")
-        for name in counter_names.values():
-            value = panel.get(name, 0)
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError("panel generation counters must be non-negative integers")
-        global_extras = counters.get("global_extra_calls", 0)
-        if (
-            isinstance(global_extras, bool)
-            or not isinstance(global_extras, int)
-            or global_extras < 0
-        ):
-            raise ValueError("global generation counter must be a non-negative integer")
 
-        counter_name = counter_names[kind]
-        if panel[counter_name] >= limits[kind]:
-            raise ValueError(limit_messages[kind])
-        if kind != "initial" and global_extras >= 8:
-            raise ValueError("at most eight extra calls are allowed per project")
-
-        panel[counter_name] += 1
-        if kind != "initial":
-            global_extras += 1
-            counters["global_extra_calls"] = global_extras
-        atomic_write_json(project_dir / GENERATION_COUNTERS_PATH, counters)
-        append_event(
+def _stage_generation_accounting(
+    transaction: ProjectTransaction,
+    project_dir: Path,
+    panel_id: str,
+    kind: Literal["initial", "visual_retry", "transient_repeat"],
+    attempt_relative: Path,
+    counters: dict[str, object],
+) -> None:
+    transaction.stage_bytes(
+        GENERATION_COUNTERS_PATH.as_posix(), canonical_artifact_bytes(counters)
+    )
+    transaction.stage_bytes(
+        "logs/events.jsonl",
+        _event_log_with(
             project_dir,
             "generation.attempt-recorded",
             {
@@ -1441,13 +1455,100 @@ def record_generation_attempt(
                 "kind": kind,
                 "panel_id": panel_id,
             },
+        ),
+    )
+
+
+def record_generation_attempt(
+    project_dir: Path,
+    panel_id: str,
+    kind: Literal["initial", "visual_retry", "transient_repeat"],
+    attempt_path: Path,
+) -> dict[str, int]:
+    """Account for a retained image call while enforcing both retry budgets."""
+    counter_name = _generation_counter_name(panel_id, kind)
+    project_dir = Path(project_dir).resolve(strict=True)
+    attempt = _contained_project_path(project_dir, Path(attempt_path))
+    attempt_relative = attempt.relative_to(project_dir)
+    with ProjectTransaction(project_dir, "record-generation-attempt") as transaction:
+        attempt = contained_project_path(
+            project_dir, attempt_relative, must_exist=True
         )
-        return {
-            "global_extra_calls": global_extras,
-            "initial": panel["initial"],
-            "transient_repeats": panel["transient_repeats"],
-            "visual_retries": panel["visual_retries"],
-        }
+        if not attempt.is_file():
+            raise ValueError("attempt path must be a retained file")
+        _verify_raster(attempt)
+        counters, counts, _ = _advance_generation_counters(
+            project_dir, panel_id, kind, counter_name
+        )
+        _stage_generation_accounting(
+            transaction, project_dir, panel_id, kind, attempt_relative, counters
+        )
+    return counts
+
+
+def retain_generation_attempt(
+    project_dir: Path,
+    panel_id: str,
+    kind: Literal["initial", "visual_retry", "transient_repeat"],
+    payload: bytes,
+    media_type: str,
+    width: int,
+    height: int,
+) -> dict[str, int]:
+    """Validate and atomically retain one provider-generated raster attempt."""
+    counter_name = _generation_counter_name(panel_id, kind)
+    extension = _verify_raster_payload(payload, media_type, width, height)
+    project_dir = Path(project_dir).resolve(strict=True)
+    with ProjectTransaction(project_dir, "retain-generation-attempt") as transaction:
+        counters, counts, sequence = _advance_generation_counters(
+            project_dir, panel_id, kind, counter_name
+        )
+        attempt_relative = Path(
+            f"panels/attempts/{panel_id}/{kind}-{sequence}.{extension}"
+        )
+        if contained_project_path(project_dir, attempt_relative).exists():
+            raise ValueError("generation attempt destination already exists")
+        transaction.stage_bytes(attempt_relative.as_posix(), payload)
+        _stage_generation_accounting(
+            transaction, project_dir, panel_id, kind, attempt_relative, counters
+        )
+    return counts
+
+
+def _verify_raster_payload(
+    payload: bytes, media_type: str, width: int, height: int
+) -> str:
+    formats = {
+        "image/png": ("PNG", "png"),
+        "image/jpeg": ("JPEG", "jpg"),
+        "image/webp": ("WEBP", "webp"),
+    }
+    if not isinstance(payload, bytes) or not payload:
+        raise ValueError("attempt must be a readable raster")
+    try:
+        expected_format, extension = formats[media_type]
+    except (KeyError, TypeError) as error:
+        raise ValueError("unsupported raster media type") from error
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(payload)) as image:
+                if image.format != expected_format:
+                    raise ValueError("result media type does not match raster")
+                image.load()
+                if image.width < 512 or image.height < 512:
+                    raise ValueError("attempt must be a readable raster at least 512px")
+                actual_size = image.size
+    except (
+        OSError,
+        SyntaxError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as error:
+        raise ValueError("attempt must be a readable raster") from error
+    if actual_size != (width, height):
+        raise ValueError("result dimensions do not match raster")
+    return extension
 
 
 def _verify_raster(path: Path) -> tuple[int, int]:

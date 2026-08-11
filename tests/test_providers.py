@@ -1,13 +1,17 @@
+import concurrent.futures
 import hashlib
 import io
 import json
+import os
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
+from comic_sol_product.cli import _load_engine
 from comic_sol_product.providers import (
     GenerationFailure,
     GenerationProvider,
@@ -15,7 +19,6 @@ from comic_sol_product.providers import (
     GenerationResult,
     retain_generation_result,
 )
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,6 +41,23 @@ class FakeProvider:
 
 
 class ProviderContractTests(unittest.TestCase):
+    @staticmethod
+    def _result(color: str) -> GenerationResult:
+        buffer = io.BytesIO()
+        Image.new("RGB", (512, 512), color).save(buffer, "PNG")
+        return GenerationResult.from_bytes(
+            buffer.getvalue(), media_type="image/png", width=512, height=512
+        )
+
+    @staticmethod
+    def _generation_state(project: Path) -> tuple[bytes | None, bytes | None]:
+        counters = project / "logs/generation-counters.json"
+        events = project / "logs/events.jsonl"
+        return (
+            counters.read_bytes() if counters.is_file() else None,
+            events.read_bytes() if events.is_file() else None,
+        )
+
     def test_request_is_immutable_and_serializes_canonically(self):
         request = GenerationRequest(
             panel_id="p01-01",
@@ -137,9 +157,123 @@ class ProviderContractTests(unittest.TestCase):
             )
 
             self.assertEqual(1, counters["initial"])
-            retained = project / "panels/attempts/p01-01/initial.png"
+            retained = project / "panels/attempts/p01-01/initial-1.png"
             self.assertTrue(retained.is_file())
-            self.assertEqual(result.sha256, hashlib.sha256(retained.read_bytes()).hexdigest())
+            self.assertEqual(
+                result.sha256, hashlib.sha256(retained.read_bytes()).hexdigest()
+            )
+
+    def test_rejected_provider_attempt_does_not_overwrite_retained_image(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "project"
+            shutil.copytree(ROOT / "tests/fixtures/valid-one-page", project)
+            first = self._result("red")
+            rejected = self._result("blue")
+            retained = project / "panels/attempts/p01-01/initial-1.png"
+
+            retain_generation_result(project, "p01-01", "initial", first)
+            before = self._generation_state(project), retained.read_bytes()
+            with self.assertRaisesRegex(ValueError, "one initial attempt"):
+                retain_generation_result(project, "p01-01", "initial", rejected)
+
+            self.assertEqual(
+                before, (self._generation_state(project), retained.read_bytes())
+            )
+            self.assertFalse((retained.parent / "initial-2.png").exists())
+
+    def test_invalid_provider_raster_leaves_project_unchanged(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "project"
+            shutil.copytree(ROOT / "tests/fixtures/valid-one-page", project)
+            invalid = GenerationResult.from_bytes(
+                b"not an image", media_type="image/png", width=512, height=512
+            )
+            before = self._generation_state(project)
+
+            with self.assertRaisesRegex(ValueError, "readable raster"):
+                retain_generation_result(project, "p01-01", "initial", invalid)
+
+            self.assertEqual(before, self._generation_state(project))
+            attempt_dir = project / "panels/attempts/p01-01"
+            self.assertFalse(attempt_dir.exists() and any(attempt_dir.iterdir()))
+
+    def test_visual_retries_are_retained_at_unique_paths(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "project"
+            shutil.copytree(ROOT / "tests/fixtures/valid-one-page", project)
+            first = self._result("red")
+            second = self._result("blue")
+
+            retain_generation_result(project, "p01-01", "visual_retry", first)
+            counts = retain_generation_result(project, "p01-01", "visual_retry", second)
+
+            attempts = project / "panels/attempts/p01-01"
+            self.assertEqual(
+                first.image_bytes, (attempts / "visual_retry-1.png").read_bytes()
+            )
+            self.assertEqual(
+                second.image_bytes, (attempts / "visual_retry-2.png").read_bytes()
+            )
+            self.assertEqual(2, counts["visual_retries"])
+
+    def test_concurrent_provider_attempts_cannot_exceed_budget(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "project"
+            shutil.copytree(ROOT / "tests/fixtures/valid-one-page", project)
+            results = (self._result("red"), self._result("blue"))
+
+            def retain(result: GenerationResult) -> str:
+                try:
+                    retain_generation_result(project, "p01-01", "initial", result)
+                    return "success"
+                except ValueError:
+                    return "rejected"
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                outcomes = list(executor.map(retain, results))
+
+            self.assertEqual(["rejected", "success"], sorted(outcomes))
+            retained = project / "panels/attempts/p01-01/initial-1.png"
+            self.assertIn(
+                retained.read_bytes(), {result.image_bytes for result in results}
+            )
+            counters = json.loads(
+                (project / "logs/generation-counters.json").read_text("utf-8")
+            )
+            self.assertEqual(1, counters["panels"]["p01-01"]["initial"])
+
+    def test_publish_failure_rolls_back_attempt_counters_and_event(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "project"
+            shutil.copytree(ROOT / "tests/fixtures/valid-one-page", project)
+            before = self._generation_state(project)
+            engine = _load_engine()
+            import project_io
+
+            original_commit = engine.ProjectTransaction.commit
+            original_replace = project_io.os.replace
+
+            def fail_counter_publish(source, destination, *args, **kwargs):
+                if Path(os.fspath(destination)).name == "generation-counters.json":
+                    raise OSError("injected counter publish failure")
+                return original_replace(source, destination, *args, **kwargs)
+
+            def commit_with_failure(transaction):
+                with patch.object(
+                    project_io.os, "replace", side_effect=fail_counter_publish
+                ):
+                    return original_commit(transaction)
+
+            with patch.object(
+                engine.ProjectTransaction, "commit", commit_with_failure
+            ), self.assertRaisesRegex(OSError, "injected counter publish failure"):
+                retain_generation_result(
+                    project, "p01-01", "initial", self._result("red")
+                )
+
+            self.assertEqual(before, self._generation_state(project))
+            attempt_dir = project / "panels/attempts/p01-01"
+            self.assertFalse(attempt_dir.exists() and any(attempt_dir.iterdir()))
 
 
 if __name__ == "__main__":
