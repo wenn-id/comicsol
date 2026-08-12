@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import tempfile
 import unittest
 import zipfile
@@ -247,7 +248,7 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("requirements/locks/runtime-linux-x86_64.txt", dockerfile)
 
         self.assertNotIn("refs/tags/v2.0.0rc4", workflow)
-        for runner in ("ubuntu-latest", "macos-latest", "windows-latest"):
+        for runner in ("ubuntu-latest", "macos-26-intel", "windows-latest"):
             self.assertIn(runner, workflow)
         self.assertIn("scripts/build_portable.py", workflow)
         self.assertIn("build-environment.sbom.json", workflow)
@@ -287,8 +288,22 @@ class NativeDistributionContractTests(unittest.TestCase):
         for platform in ("linux", "macos", "windows"):
             for kind in ("base", "runtime", "release"):
                 lock = (root / "requirements/locks" / f"{kind}-{platform}-x86_64.txt").read_text(encoding="utf-8")
-                self.assertIn("--hash=sha256:", lock)
-                self.assertNotIn("--index-url", lock)
+                self.assertNotRegex(lock, r"(?m)^\s*--(?:index-url|extra-index-url|find-links)\b")
+                lines = lock.splitlines()
+                blocks = []
+                current = None
+                for line in lines:
+                    if re.match(r"^[A-Za-z0-9_.-]+(?:\[[^]]+\])?==\S+", line):
+                        if current:
+                            blocks.append(current)
+                        current = [line]
+                    elif current is not None:
+                        current.append(line)
+                if current:
+                    blocks.append(current)
+                self.assertTrue(blocks)
+                for block in blocks:
+                    self.assertRegex("\n".join(block), r"--hash=sha256:[0-9a-f]{64}")
                 self.assertIn("pillow==12.3.0", lock.lower())
                 if kind != "base":
                     self.assertIn("mcp==2.0.0", lock.lower())

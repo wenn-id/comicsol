@@ -110,11 +110,25 @@ The CLI `status`, `validate`, `resume`, and `finalize` commands accept a project
 path directly. For the same containment model, keep project paths beneath the
 output root and use MCP when an explicit fixed root is required.
 
-To run the MCP adapter, install the SDK alongside Pillow:
+To run the MCP adapter, install the SDK alongside Pillow. Use matching command
+and lockfile for host platform:
 
 ```bash
+# Linux
 python3.11 -m venv ~/.venvs/comic-sol-mcp
 ~/.venvs/comic-sol-mcp/bin/pip install --require-hashes -r requirements/locks/runtime-linux-x86_64.txt
+```
+
+```bash
+# macOS
+python3.11 -m venv ~/.venvs/comic-sol-mcp
+~/.venvs/comic-sol-mcp/bin/pip install --require-hashes -r requirements/locks/runtime-macos-x86_64.txt
+```
+
+```powershell
+# Windows
+py -3.11 -m venv $HOME\.venvs\comic-sol-mcp
+& $HOME\.venvs\comic-sol-mcp\Scripts\pip.exe install --require-hashes -r requirements/locks/runtime-windows-x86_64.txt
 ```
 
 From the repository root, start the development server with a repository-relative
@@ -129,8 +143,15 @@ For an MCP client configuration, lock the server to one absolute output root and
 keep sampling disabled. An installed package uses the stable launcher:
 
 ```bash
-python3.11 -m pip install --no-deps '.[mcp]'
-comic-sol mcp --root /absolute/path/to/comic-sol-output
+~/.venvs/comic-sol-mcp/bin/pip install --no-deps '.[mcp]'
+~/.venvs/comic-sol-mcp/bin/comic-sol mcp --root /absolute/path/to/comic-sol-output
+```
+
+On native Windows PowerShell:
+
+```powershell
+& "$HOME\.venvs\comic-sol-mcp\Scripts\pip.exe" install --no-deps ".[mcp]"
+& "$HOME\.venvs\comic-sol-mcp\Scripts\comic-sol.exe" mcp --root C:\absolute\path\to\comic-sol-output
 ```
 
 Transactional client integration is available through:

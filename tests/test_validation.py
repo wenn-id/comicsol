@@ -1090,6 +1090,6 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("scripts/mcp_server.py", readme)
         self.assertIn("resume", recovery)
         self.assertIn("17 `comic_*` tools", readme)
-        for platform in ("ubuntu-latest", "macos-latest", "windows-latest"):
+        for platform in ("ubuntu-latest", "macos-26-intel", "windows-latest"):
             self.assertIn(platform, workflow)
         self.assertNotIn("/tmp", workflow)

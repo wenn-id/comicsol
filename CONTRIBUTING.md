@@ -6,12 +6,23 @@
 
 Use Python 3.11 and the pinned dependencies:
 
+# Linux
 ```bash
 python3.11 -m venv .venv
-python3.11 -m pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
+.venv/bin/python -m pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
 ```
 
-On Windows, use `.venv\Scripts\python.exe` in place of `.venv/bin/python`.
+# macOS
+```bash
+python3.11 -m venv .venv
+.venv/bin/python -m pip install --require-hashes -r requirements/locks/base-macos-x86_64.txt
+```
+
+# Windows PowerShell
+```powershell
+py -3.11 -m venv .venv
+& .venv\Scripts\python.exe -m pip install --require-hashes -r requirements/locks/base-windows-x86_64.txt
+```
 
 ## Required validation
 

@@ -39,7 +39,7 @@ def unicode_cmap_subtables(path: str) -> tuple[bytes, ...]:
         if position + 8 > len(cmap):
             raise OSError(f"invalid cmap encoding records: {Path(path).name}")
         platform, encoding, offset = struct.unpack_from(">HHI", cmap, position)
-        if not (platform == 0 or platform == 3 and encoding in {1, 10}):
+        if not (platform == 0 or (platform == 3 and encoding in {1, 10})):
             continue
         if offset in seen or offset + 4 > len(cmap):
             continue
