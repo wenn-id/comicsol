@@ -9,7 +9,6 @@ import io
 import json
 import math
 import re
-import struct
 import sys
 import tempfile
 import unicodedata
@@ -25,6 +24,7 @@ from typography import (
     lettering_geometry_hash,
     preflight_text_items,
 )
+from font_cmap import font_supports
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,128 +87,9 @@ def _parse_emphasis(text: str) -> list[tuple[str, bool]]:
     return [(part, index % 2 != 0) for index, part in enumerate(parts) if part]
 
 
-@lru_cache(maxsize=None)
-def _unicode_cmap_subtables(path: str) -> tuple[bytes, ...]:
-    """Return the Unicode cmap subtables from one deterministic SFNT face."""
-    data = Path(path).read_bytes()
-    sfnt_offset = 0
-    if data[:4] == b"ttcf":
-        if len(data) < 16 or struct.unpack_from(">I", data, 8)[0] < 1:
-            raise OSError(f"invalid TrueType collection: {path}")
-        sfnt_offset = struct.unpack_from(">I", data, 12)[0]
-    if sfnt_offset + 12 > len(data):
-        raise OSError(f"invalid font header: {path}")
-
-    table_count = struct.unpack_from(">H", data, sfnt_offset + 4)[0]
-    cmap: bytes | None = None
-    for index in range(table_count):
-        record_offset = sfnt_offset + 12 + index * 16
-        if record_offset + 16 > len(data):
-            raise OSError(f"invalid font table directory: {path}")
-        tag, _, offset, length = struct.unpack_from(">4sIII", data, record_offset)
-        if tag == b"cmap":
-            if offset + length > len(data):
-                raise OSError(f"invalid cmap table: {path}")
-            cmap = data[offset:offset + length]
-            break
-    if cmap is None or len(cmap) < 4:
-        return ()
-
-    record_count = struct.unpack_from(">H", cmap, 2)[0]
-    subtables: list[bytes] = []
-    seen_offsets: set[int] = set()
-    for index in range(record_count):
-        record_offset = 4 + index * 8
-        if record_offset + 8 > len(cmap):
-            raise OSError(f"invalid cmap encoding records: {path}")
-        platform, encoding, offset = struct.unpack_from(">HHI", cmap, record_offset)
-        if not (platform == 0 or platform == 3 and encoding in {1, 10}):
-            continue
-        if offset in seen_offsets or offset + 4 > len(cmap):
-            continue
-        seen_offsets.add(offset)
-        format_number = struct.unpack_from(">H", cmap, offset)[0]
-        if format_number in {8, 10, 12, 13}:
-            if offset + 8 > len(cmap):
-                continue
-            length = struct.unpack_from(">I", cmap, offset + 4)[0]
-        else:
-            length = struct.unpack_from(">H", cmap, offset + 2)[0]
-        if length >= 4 and offset + length <= len(cmap):
-            subtables.append(cmap[offset:offset + length])
-    return tuple(subtables)
-
-
-def _cmap_glyph_id(table: bytes, codepoint: int) -> int:
-    """Return a cmap glyph id, with zero meaning that no glyph is mapped."""
-    format_number = struct.unpack_from(">H", table, 0)[0]
-    if format_number == 0:
-        return table[6 + codepoint] if codepoint <= 0xFF and 6 + codepoint < len(table) else 0
-    if format_number == 4:
-        if codepoint > 0xFFFF or len(table) < 16:
-            return 0
-        segment_count = struct.unpack_from(">H", table, 6)[0] // 2
-        end_codes = 14
-        start_codes = end_codes + segment_count * 2 + 2
-        deltas = start_codes + segment_count * 2
-        range_offsets = deltas + segment_count * 2
-        if range_offsets + segment_count * 2 > len(table):
-            return 0
-        for index in range(segment_count):
-            end = struct.unpack_from(">H", table, end_codes + index * 2)[0]
-            if codepoint > end:
-                continue
-            start = struct.unpack_from(">H", table, start_codes + index * 2)[0]
-            if codepoint < start:
-                return 0
-            delta = struct.unpack_from(">h", table, deltas + index * 2)[0]
-            range_offset_position = range_offsets + index * 2
-            range_offset = struct.unpack_from(">H", table, range_offset_position)[0]
-            if range_offset == 0:
-                return (codepoint + delta) & 0xFFFF
-            glyph_position = range_offset_position + range_offset + (codepoint - start) * 2
-            if glyph_position + 2 > len(table):
-                return 0
-            glyph_id = struct.unpack_from(">H", table, glyph_position)[0]
-            return (glyph_id + delta) & 0xFFFF if glyph_id else 0
-        return 0
-    if format_number == 6:
-        if len(table) < 10:
-            return 0
-        first, count = struct.unpack_from(">HH", table, 6)
-        index = codepoint - first
-        position = 10 + index * 2
-        return struct.unpack_from(">H", table, position)[0] if 0 <= index < count and position + 2 <= len(table) else 0
-    if format_number == 10:
-        if len(table) < 20:
-            return 0
-        first, count = struct.unpack_from(">II", table, 12)
-        index = codepoint - first
-        position = 20 + index * 2
-        return struct.unpack_from(">H", table, position)[0] if 0 <= index < count and position + 2 <= len(table) else 0
-    if format_number in {12, 13}:
-        if len(table) < 16:
-            return 0
-        group_count = struct.unpack_from(">I", table, 12)[0]
-        for index in range(group_count):
-            position = 16 + index * 12
-            if position + 12 > len(table):
-                return 0
-            start, end, start_glyph = struct.unpack_from(">III", table, position)
-            if codepoint < start:
-                return 0
-            if codepoint <= end:
-                return start_glyph if format_number == 13 else start_glyph + codepoint - start
-        return 0
-    return 0
-
-
 def _font_supports(path: Path, character: str) -> bool:
     """Return whether a font's Unicode cmap maps one character to a glyph."""
-    if len(character) != 1:
-        raise ValueError("glyph coverage requires exactly one character")
-    codepoint = ord(character)
-    return any(_cmap_glyph_id(table, codepoint) != 0 for table in _unicode_cmap_subtables(str(path)))
+    return font_supports(path, character)
 
 
 @lru_cache(maxsize=None)

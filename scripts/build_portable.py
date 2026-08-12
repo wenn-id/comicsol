@@ -23,6 +23,16 @@ def run_output(command: list[str], cwd: Path) -> str:
     return subprocess.check_output(command, cwd=cwd, text=True).strip()
 
 
+def install_locked(python: Path, lock: Path, cwd: Path) -> None:
+    run(
+        [
+            str(python), "-m", "pip", "install", "--disable-pip-version-check",
+            "--require-hashes", "-r", str(lock),
+        ],
+        cwd,
+    )
+
+
 def write_environment_sbom(
     python: Path, destination: Path, temporary: Path, generator_python: Path
 ) -> None:
@@ -88,16 +98,19 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--wheel", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--lock", required=True, type=Path)
     arguments = parser.parse_args()
     wheel = arguments.wheel.resolve(strict=True)
     output = arguments.output.resolve()
+    lock = arguments.lock.resolve(strict=True)
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="comic-sol-freeze-") as raw:
         temporary = Path(raw)
         environment = temporary / "venv"
         venv.EnvBuilder(with_pip=True, clear=True).create(environment)
         python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-        run([str(python), "-m", "pip", "install", "--disable-pip-version-check", "pyinstaller==6.15.0", f"{wheel}[mcp]"], temporary)
+        install_locked(python, lock, temporary)
+        run([str(python), "-m", "pip", "install", "--no-deps", str(wheel)], temporary)
         spec = ROOT / "packaging/comic-sol.spec"
         entrypoint = ROOT / "packaging/entrypoint.py"
         shutil.copy2(spec, temporary / spec.name)
@@ -111,17 +124,7 @@ def main() -> int:
         generator = temporary / "sbom-venv"
         venv.EnvBuilder(with_pip=True, clear=True).create(generator)
         generator_python = generator / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-        run(
-            [
-                str(generator_python),
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "cyclonedx-bom==7.3.1",
-            ],
-            temporary,
-        )
+        install_locked(generator_python, lock, temporary)
         write_environment_sbom(
             python,
             output / "build-environment.sbom.json",

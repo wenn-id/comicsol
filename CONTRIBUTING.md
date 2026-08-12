@@ -8,7 +8,7 @@ Use Python 3.11 and the pinned dependencies:
 
 ```bash
 python3.11 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt -r requirements-mcp.txt
+python3.11 -m pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
 ```
 
 On Windows, use `.venv\Scripts\python.exe` in place of `.venv/bin/python`.
@@ -20,7 +20,7 @@ Run the checks relevant to the change. Before requesting merge, the complete det
 ```bash
 python3.11 -m unittest discover -s tests -v
 python3.11 scripts/comic_sol.py doctor --output-root /tmp/comic-sol-doctor
-python3.11 -m build
+python3.11 -m build --no-isolation
 python3.11 -m comic_sol_product.release dist/*.whl dist/*.tar.gz
 ```
 

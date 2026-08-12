@@ -221,7 +221,7 @@ class NativeDistributionContractTests(unittest.TestCase):
         workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
         self.assertIn("USER comic-sol", dockerfile)
-        self.assertIn("mcp==2.0.0", dockerfile)
+        self.assertIn("mcp==2.0.0", dockerfile + (root / "requirements/locks/runtime-linux-x86_64.txt").read_text(encoding="utf-8"))
         self.assertNotIn("mcp==1.28.1", dockerfile)
         self.assertIn("/data", dockerfile)
         self.assertIn("HEALTHCHECK", dockerfile)
@@ -233,13 +233,26 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("inputs:", workflow)
         self.assertIn("tag:", workflow)
         self.assertIn("tags: [ 'v*' ]", workflow)
+        self.assertIn("name: Prepare release", workflow)
+        self.assertIn('git rev-parse "${TAG}^{commit}"', workflow)
+        self.assertIn("ref: ${{ inputs.tag || github.ref_name }}", workflow)
+        self.assertIn("ref: ${{ needs.prepare.outputs.sha }}", workflow)
+        self.assertGreaterEqual(workflow.count("ref: ${{ needs.prepare.outputs.sha }}"), 4)
+        self.assertIn("needs: [prepare, native, container, source]", workflow)
+        self.assertNotIn("if: startsWith(github.ref, 'refs/tags/v')", workflow)
+        self.assertIn("requirements/locks/release-${{ matrix.platform }}-x86_64.txt", workflow)
+        self.assertIn("--require-hashes", workflow)
+        self.assertIn("DOCKER_BASE_DIGEST", workflow)
+        self.assertIn("python:3.11.15-slim@sha256:", dockerfile)
+        self.assertIn("requirements/locks/runtime-linux-x86_64.txt", dockerfile)
+
         self.assertNotIn("refs/tags/v2.0.0rc4", workflow)
         for runner in ("ubuntu-latest", "macos-latest", "windows-latest"):
             self.assertIn(runner, workflow)
         self.assertIn("scripts/build_portable.py", workflow)
         self.assertIn("build-environment.sbom.json", workflow)
         self.assertIn("--environment", workflow)
-        self.assertIn("cyclonedx-bom==7.3.1", workflow)
+        self.assertIn("cyclonedx-bom==7.3.1", workflow + (root / "requirements/locks/release-linux-x86_64.txt").read_text(encoding="utf-8"))
         self.assertIn("validate_sbom_schema", workflow)
         self.assertIn("scripts/portable_release_smoke.py", workflow)
         portable_smoke = (root / "scripts/portable_release_smoke.py").read_text(encoding="utf-8")
@@ -254,11 +267,10 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("packaging.version", workflow)
         self.assertIn("github.ref_name", workflow)
         self.assertIn("inputs.tag || github.ref_name", workflow)
-        self.assertIn("startsWith(github.ref, 'refs/tags/v')", workflow)
         self.assertIn("Verify tag matches package version", workflow)
-        self.assertIn("comic-sol:${{ steps.identity.outputs.version }}", workflow)
+        self.assertIn("comic-sol:${{ needs.prepare.outputs.version }}", workflow)
         self.assertIn("actions/attest-build-provenance@", workflow)
-        self.assertIn("mcp==2.0.0", workflow)
+        self.assertIn("mcp==2.0.0", workflow + (root / "requirements/locks/release-linux-x86_64.txt").read_text(encoding="utf-8"))
         self.assertNotIn("mcp==1.28.1", workflow)
         self.assertIn("attestations: write", workflow)
         self.assertIn("id-token: write", workflow)
@@ -269,6 +281,39 @@ class NativeDistributionContractTests(unittest.TestCase):
             if "uses:" in line:
                 reference = line.split("uses:", 1)[1].strip().split()[0]
                 self.assertRegex(reference, r"^[^@]+@[0-9a-f]{40}$")
+
+    def test_release_locks_are_hashed_and_complete_for_every_target(self):
+        root = Path(__file__).resolve().parents[1]
+        for platform in ("linux", "macos", "windows"):
+            for kind in ("base", "runtime", "release"):
+                lock = (root / "requirements/locks" / f"{kind}-{platform}-x86_64.txt").read_text(encoding="utf-8")
+                self.assertIn("--hash=sha256:", lock)
+                self.assertNotIn("--index-url", lock)
+                self.assertIn("pillow==12.3.0", lock.lower())
+                if kind != "base":
+                    self.assertIn("mcp==2.0.0", lock.lower())
+
+    def test_dead_quality_and_lifecycle_surfaces_are_removed(self):
+        root = Path(__file__).resolve().parents[1]
+        self.assertFalse((root / "comic_sol_product/install_lifecycle.py").exists())
+        self.assertFalse((root / "tests/test_install_lifecycle.py").exists())
+        self.assertFalse((root / "tests/test_quality_records.py").exists())
+        self.assertFalse((root / "docs/superpowers").exists())
+        self.assertFalse((root / ".superpowers/sdd").exists())
+        quality = (root / "scripts/quality_records.py").read_text(encoding="utf-8")
+        for symbol in ("QualityCheck", "QualityBinding", "quality_record_hash", "read_quality_record", "migrate_quality_record"):
+            self.assertNotIn(symbol, quality)
+
+    def test_font_cmap_has_one_runtime_implementation(self):
+        root = Path(__file__).resolve().parents[1]
+        cmap = (root / "scripts/font_cmap.py").read_text(encoding="utf-8")
+        self.assertIn("def unicode_cmap_subtables", cmap)
+        self.assertIn("def cmap_glyph_id", cmap)
+        for module in ("scripts/letter_panels.py", "scripts/typography.py"):
+            text = (root / module).read_text(encoding="utf-8")
+            self.assertNotIn("def _unicode_cmap_subtables", text)
+            self.assertNotIn("def _cmap_glyph_id", text)
+
 
     def test_version_sources_and_quality_runtime_are_consistent(self):
         root = Path(__file__).resolve().parents[1]

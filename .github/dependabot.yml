@@ -4,6 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  - package-ecosystem: pip
+    directory: /requirements/locks
+    schedule:
+      interval: weekly
   - package-ecosystem: github-actions
     directory: /
     schedule:
