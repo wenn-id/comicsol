@@ -29,6 +29,8 @@
     "category": "Developer Tools",
     "capabilities": ["Read", "Write"],
     "websiteURL": "https://github.com/wenn-id/comicsol",
+    "privacyPolicyURL": "https://github.com/wenn-id/comicsol/blob/main/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/wenn-id/comicsol/blob/main/TERMS.md",
     "defaultPrompt": [
       "Make a 2-page manga about a courier delivering sunlight to an underground city.",
       "Turn this story into a finished comic with editable intermediate files and a PDF.",

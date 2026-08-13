@@ -1,7 +1,7 @@
 # Image capability detection
 
 > **Provider setup:** See [`image-provider-setup.md`](image-provider-setup.md) for
-> provider-neutral setup guidance.
+> platform-specific, provider-neutral setup guidance.
 
 Capability detection belongs to the agent plane, not deterministic Python.
 

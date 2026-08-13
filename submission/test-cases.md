@@ -1,9 +1,10 @@
 # Official Plugin Directory Test Cases
 
-These cases are designed for the skills-only submission flow. No account,
-remote service, demo credentials, private network, or private fixture is
-required. Positive generation cases require the reviewer session to expose a
-compatible image-generation capability.
+These cases are designed for the skills-only submission flow. No Comic Sol account
+or demo credentials, private network, or private fixture is required. Positive
+generation cases require the reviewer session to expose a compatible image-generation
+capability; the reviewer Codex session and selected provider may require their own
+account or access.
 
 ## Positive cases
 
@@ -61,7 +62,7 @@ attempts, and promotes only accepted rasters.
 panel files, and no silent replacement of prior attempts.
 
 **Fixture/data:** A P1/P3 project with one intentionally retained failed
-attempt; no external account required.
+attempt; no Comic Sol account or demo credentials required.
 
 ### P5 — Deterministic finalization and export
 

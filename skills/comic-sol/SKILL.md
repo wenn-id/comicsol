@@ -110,8 +110,8 @@ composition, or export turn-by-turn.
 
 ### Lock the brief
 
-Before generation, confirm the batch map once (e.g. Batch A pages 1-4, Batch B
-pages 5-8), persist it in project artifacts, and reuse it unchanged when resuming.
+Before generation, confirm the batch map once (e.g. Batch A pages 1-2, Batch B
+pages 3-4), persist it in project artifacts, and reuse it unchanged when resuming.
 The batch map takes precedence only over contradictory internal checklist counts;
 do not invent a third project to satisfy a miscounted checklist. Page-count limits,
 safety/IP rules, engine validation, visual QA, and final-acceptance gates remain
@@ -125,9 +125,9 @@ Do not read all references at once. Load only the files needed for the current s
 - Read [creative direction](references/creative-direction.md) before writing plans.
 - Read [capability detection](references/capability-detection.md) just before generating.
 - Read [visual QA](references/visual-qa.md) just before inspecting panels.
-- Read [safety and IP](references/safety-ip.md) only when people, minors, or sensitive
-  content appear in the source.
-- Read [schemas](references/schemas.md) only when resolving a schema field ambiguity.
+- Read [safety and IP](references/safety-ip.md) before external prompts and whenever
+  people, minors, sensitive content, named styles, franchises, or refusals appear.
+- Read [schemas](references/schemas.md) before every JSON write or revision.
 
 ### No subagents
 

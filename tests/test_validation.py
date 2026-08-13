@@ -934,6 +934,25 @@ class SkillContractTests(unittest.TestCase):
             self.assertIn(f"references/{name}.md", text)
             self.assertTrue((ROOT / "references" / f"{name}.md").is_file())
 
+    def test_progressive_loading_names_safety_and_json_write_triggers(self):
+        for path in (ROOT / "SKILL.md", ROOT / "skills/comic-sol/SKILL.md"):
+            with self.subTest(path=path):
+                text = path.read_text("utf-8")
+                progressive_loading = text.split("### Progressive loading", 1)[1].split(
+                    "### No subagents", 1
+                )[0]
+                for trigger in (
+                    "external prompts",
+                    "people",
+                    "minors",
+                    "sensitive content",
+                    "named styles",
+                    "franchises",
+                    "refusals",
+                    "every JSON write or revision",
+                ):
+                    self.assertIn(trigger, progressive_loading)
+
     def test_fast_mode_rules_present_in_skill(self):
         """Fast Mode contract: black-box engine, no scaffolding, per-panel QA,
         split resolution checks, two-call finalize, and scoped batch precedence."""

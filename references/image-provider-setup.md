@@ -4,7 +4,8 @@ Comic Sol is provider-agnostic — it never embeds credentials or vendor client
 libraries. The agent session must expose a compatible text-to-image tool; Comic Sol
 detects it automatically (see [capability-detection.md](capability-detection.md)).
 
-This page lists concrete setup steps for the most common MCP-capable agent platforms.
+This platform-specific document lists concrete setup steps for the most common
+MCP-capable agent platforms.
 
 ---
 
@@ -53,7 +54,8 @@ You must provide one via a separate MCP server.
    }
    ```
 
-5. Restart Claude Desktop. The agent session gains tools like `fal_ge...mage`.
+5. Restart Claude Desktop. The agent session gains image-generation tools exposed
+   by the configured MCP server.
 6. Comic Sol detects and uses them at the planning step.
 
 ### Option B — Direct API via bash (no MCP server needed)

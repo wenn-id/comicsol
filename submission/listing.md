@@ -33,9 +33,11 @@ deterministic lettering, composed pages, a PDF, manifest, hashes, and
 transparent QA evidence. It uses the image-generation capability exposed by
 the current Codex session and keeps provider credentials outside the project.
 
-Comic Sol has no hosted backend or required account. Generated project files
-stay in the local output directory. The skill preserves intermediate artifacts
-so interrupted work can resume instead of restarting from scratch.
+Comic Sol has no hosted backend and requires no Comic Sol account or demo
+credentials. A Codex session and the selected image provider may require their own
+account or access. Generated project files stay in the local output directory. The
+skill preserves intermediate artifacts so interrupted work can resume instead of
+restarting from scratch.
 
 ## Starter prompts
 

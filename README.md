@@ -21,7 +21,9 @@ requests, documentation, and releases happen here.
 
 Requirements are Python 3.11 and `Pillow==12.3.0`. Image creation additionally
 requires an image-generation capability exposed to the active agent session; Comic
-Sol never embeds provider credentials.
+Sol never embeds provider credentials. Comic Sol requires no Comic Sol account or
+demo credentials, although a Codex session and the selected image provider may
+require their own account or access.
 
 Clone the public repository directly into the Codex skills directory, then install
 the one pinned dependency:
@@ -213,7 +215,8 @@ source-file, or resume mode; applies documented defaults; and asks only material
 missing questions. It reports an explicit error if the agent session cannot return
 a local raster image. See
 [`references/capability-detection.md`](references/capability-detection.md) for the
-exact capability check and preserved-project recovery procedure. Provider-neutral image setup is documented in
+exact capability check and preserved-project recovery procedure. Platform-specific,
+provider-neutral image setup is documented in
 [`references/image-provider-setup.md`](references/image-provider-setup.md).
 
 For deterministic diagnostics:
@@ -241,6 +244,7 @@ pages/page-001.png            ordered 1600×2400 page PNGs
 exports/<project-id>.pdf      ordered comic PDF
 qa/panels/*.json              seven-check panel QA records
 qa/report.md                  human-readable QA report
+exports/pdf-verification.json PDF verification (`pdf_verification` descriptor)
 logs/                         sanitized events, cache, and retry accounting
 ```
 
