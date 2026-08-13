@@ -264,6 +264,7 @@ class EvidenceModeContractTests(unittest.TestCase):
             retained = project / "panels/raw/attempt.png"
             retained.parent.mkdir(parents=True)
             retained.write_bytes(b"retained attempt")
+            lexical_project = project / ".." / project.name
 
             with mock.patch(
                 "quality_sample.sha256_file", wraps=sha256_file, create=True
@@ -272,7 +273,7 @@ class EvidenceModeContractTests(unittest.TestCase):
                     0,
                     main(
                         [
-                            str(project),
+                            str(lexical_project),
                             "--mode",
                             "live-visual",
                             "--retained-attempt",
@@ -286,7 +287,9 @@ class EvidenceModeContractTests(unittest.TestCase):
                         ]
                     ),
                 )
-            hashed.assert_called_once_with(retained)
+            hashed.assert_called_once_with(
+                lexical_project / "panels/raw/attempt.png"
+            )
             record = json.loads(
                 (project / "qa/evidence.json").read_text("utf-8")
             )

@@ -1843,14 +1843,17 @@ def doctor(output_root: Path) -> tuple[bool, list[str]]:
 
 def finalize_project(project_dir: Path) -> dict[str, object]:
     """Serialize one complete deterministic finalization workflow."""
-    project_dir = Path(project_dir).resolve(strict=True)
+    caller_project_dir = Path(project_dir)
+    project_dir = caller_project_dir.resolve(strict=True)
     lock_dir = project_dir.parent / f".{project_dir.name}.finalize-lock"
     lock_dir.mkdir(exist_ok=True)
     with ProjectLock(lock_dir):
-        return _finalize_project_locked(project_dir)
+        return _finalize_project_locked(project_dir, caller_project_dir)
 
 
-def _finalize_project_locked(project_dir: Path) -> dict[str, object]:
+def _finalize_project_locked(
+    project_dir: Path, caller_project_dir: Path | None = None
+) -> dict[str, object]:
     """Run all deterministic finalization steps and transition to terminal status.
 
     Order: lettering → composition → page-QA gate → guarded export →
@@ -1858,11 +1861,14 @@ def _finalize_project_locked(project_dir: Path) -> dict[str, object]:
     Page-QA records are agent-produced; this function fails closed if they
     are absent or stale rather than fabricating visual evidence.
     """
+    caller_project_dir = (
+        Path(project_dir) if caller_project_dir is None else Path(caller_project_dir)
+    )
     project_dir = Path(project_dir).resolve(strict=True)
     manifest_path = project_dir / "project.json"
 
     # 1. Determine stale stages from the resume plan.
-    plan = build_resume_plan(project_dir)
+    plan = build_resume_plan(caller_project_dir)
     stale = {
         a.stage for a in plan
         if a.artifact == "stage" and a.action in {"regenerate", "rerun"}
@@ -1883,22 +1889,22 @@ def _finalize_project_locked(project_dir: Path) -> dict[str, object]:
     )
     if need_lettering:
         from letter_panels import letter_project
-        letter_project(project_dir)
-        record_stage(project_dir, "lettering")
+        letter_project(caller_project_dir)
+        record_stage(caller_project_dir, "lettering")
     manifest = read_json(manifest_path)
     if _allowed_transition(str(manifest.get("status")), "LETTERED"):
-        transition(project_dir, "LETTERED")
+        transition(caller_project_dir, "LETTERED")
 
     # 3. Composition (if stale), advance status. compose_project writes
     #    cache/composition.json and its manifest descriptor.
     need_composition = "composition" in stale or not (project_dir / "cache/composition.json").is_file()
     if need_composition:
         from compose_pages import compose_project
-        compose_project(project_dir)
-        record_stage(project_dir, "composition")
+        compose_project(caller_project_dir)
+        record_stage(caller_project_dir, "composition")
     manifest = read_json(manifest_path)
     if _allowed_transition(str(manifest.get("status")), "COMPOSED"):
-        transition(project_dir, "COMPOSED")
+        transition(caller_project_dir, "COMPOSED")
 
     # 4. Fail closed on agent-produced page-QA integrity records.
     from page_quality import validate_page_quality
@@ -1920,7 +1926,7 @@ def _finalize_project_locked(project_dir: Path) -> dict[str, object]:
         page_path = project_dir / page_rel
         if not page_path.is_file():
             raise ValueError(f"page_qa_required: {page_rel} is missing")
-        page_issues = validate_page_quality(project_dir, page_number)
+        page_issues = validate_page_quality(caller_project_dir, page_number)
         if page_issues:
             detail = "; ".join(
                 f"{issue.field}: {issue.message}" for issue in page_issues
@@ -1929,10 +1935,10 @@ def _finalize_project_locked(project_dir: Path) -> dict[str, object]:
 
     # 5. Guarded export (validates export-ready, writes PDF, records descriptor).
     from export_pdf import guarded_export
-    guarded_export(project_dir)
+    guarded_export(caller_project_dir)
     manifest = read_json(manifest_path)
     if _allowed_transition(str(manifest.get("status")), "EXPORTED"):
-        transition(project_dir, "EXPORTED")
+        transition(caller_project_dir, "EXPORTED")
 
     # 6. Render the QA report, which projects the terminal status and records
     #    its own descriptor. Final validation requires both before the terminal
@@ -1945,12 +1951,12 @@ def _finalize_project_locked(project_dir: Path) -> dict[str, object]:
         else "COMPLETE"
     )
     from render_report import render_report
-    render_report(project_dir)
+    render_report(caller_project_dir)
 
     # 7. render_report and compose_project record their own descriptors.
 
     # 8. Record export stage cache.
-    record_stage(project_dir, "export")
+    record_stage(caller_project_dir, "export")
 
     # 9. Confirm the warning state still matches what the report projected.
     manifest = read_json(manifest_path)
@@ -1965,7 +1971,7 @@ def _finalize_project_locked(project_dir: Path) -> dict[str, object]:
 
     # 10. Guarded terminal transition (runs final validation internally).
     if str(manifest.get("status")) not in TERMINAL_STATUSES:
-        transition(project_dir, final_status)
+        transition(caller_project_dir, final_status)
 
     return {
         "status": final_status,

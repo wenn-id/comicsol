@@ -89,7 +89,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Run the deterministic quality sampling command."""
     arguments = _parser().parse_args(argv)
-    project_dir = arguments.project_dir.resolve()
+    project_dir = arguments.project_dir
     try:
         attempt_hash = None
         if arguments.mode == "live-visual":
@@ -102,7 +102,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             if not attempt.is_file():
                 raise EvidenceModeError("retained attempt must be a local file")
-            attempt_hash = sha256_file(attempt)
+            lexical_attempt = project_dir.joinpath(
+                *arguments.retained_attempt.replace("\\", "/").split("/")
+            )
+            attempt_hash = sha256_file(lexical_attempt)
         record = build_evidence_record(
             arguments.mode,
             retained_attempt=arguments.retained_attempt,

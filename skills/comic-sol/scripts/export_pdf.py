@@ -213,7 +213,8 @@ def export_pdf(project_dir: Path, output_path: Path | None = None) -> Path:
 def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
     """Verify and transactionally publish PDF, provenance, and descriptors."""
     try:
-        project_dir = Path(project_dir).resolve(strict=True)
+        caller_project_dir = Path(project_dir)
+        project_dir = caller_project_dir.resolve(strict=True)
         manifest = read_json(
             contained_project_path(project_dir, "project.json", must_exist=True)
         )
@@ -299,7 +300,9 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
         transaction.stage_bytes(
             "project.json", canonical_artifact_bytes(locked_manifest)
         )
-    return destination
+    if output_path is not None and Path(output_path).is_absolute():
+        return Path(output_path)
+    return caller_project_dir / Path(pdf_relative)
 
 
 def _build_parser() -> argparse.ArgumentParser:
