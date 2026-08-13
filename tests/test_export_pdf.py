@@ -15,7 +15,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from comic_sol import atomic_write_json, read_json  # noqa: E402
-from export_pdf import PdfExportError, discover_pages, export_pdf, main  # noqa: E402
+from export_pdf import (  # noqa: E402
+    PdfExportError,
+    discover_pages,
+    export_pdf,
+    guarded_export,
+    main,
+)
 from compose_pages import compose_project  # noqa: E402
 from letter_panels import letter_project  # noqa: E402
 
@@ -144,6 +150,17 @@ class PdfExportTests(unittest.TestCase):
         writer.assert_called_once()
         self.assertEqual(destination, writer.call_args.args[0])
         self.assertTrue(writer.call_args.args[1].startswith(b"%PDF"))
+
+    def test_guarded_export_rejects_traversal_before_creating_directory(self):
+        outside = self.project.parent / "outside" / "comic.pdf"
+        with self.assertRaisesRegex(PdfExportError, "inside the project"):
+            guarded_export(self.project, self.project / ".." / "outside" / "comic.pdf")
+        self.assertFalse(outside.parent.exists())
+
+    def test_guarded_export_reports_missing_page_qa_as_pdf_error(self):
+        with mock.patch("export_pdf.require_valid_project"):
+            with self.assertRaisesRegex(PdfExportError, "qa/pages/page-001.json"):
+                guarded_export(self.project)
 
     def test_missing_noncontiguous_and_wrong_size_pages_are_refused_atomically(self):
         output = self.project / "exports/ordered-comic.pdf"

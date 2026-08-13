@@ -18,10 +18,9 @@ from comic_sol import (
     atomic_write_bytes,
     canonical_artifact_bytes,
     read_json,
-    sha256_file,
 )
 from layouts import LAYOUT_VERSION, get_layout, match_layout, validate_custom_layout
-from project_io import ProjectTransaction, contained_project_path, open_path_nofollow
+from project_io import ProjectTransaction, contained_project_path, read_contained_bytes
 
 COMPOSITION_CACHE_PATH = "cache/composition.json"
 
@@ -84,17 +83,6 @@ def _page_sources(
     return sources
 
 
-def _background_color(manifest_settings: dict) -> tuple[int, int, int]:
-    configured = manifest_settings.get(
-        "page_background", manifest_settings.get("background", "white")
-    )
-    if configured == "black":
-        return (0, 0, 0)
-    if configured == "white" or configured is None:
-        return (255, 255, 255)
-    raise ValueError("manifest page background must be black or white")
-
-
 def _rect(panel: dict) -> tuple[int, int, int, int]:
     rect = panel.get("rect")
     if not isinstance(rect, dict):
@@ -137,20 +125,15 @@ def _page_layout(page: dict) -> tuple[str, tuple[tuple[int, int, int, int], ...]
 
 
 def _compose_to_bytes(
-    project_dir: Path,
     page: dict,
-    sources: list[tuple[dict, str | Path]],
-    manifest_settings: dict,
+    sources: list[tuple[dict, str | Path, bytes]],
 ) -> bytes:
-    canvas = Image.new("RGB", (PAGE_WIDTH, PAGE_HEIGHT), _background_color(manifest_settings))
+    canvas = Image.new("RGB", (PAGE_WIDTH, PAGE_HEIGHT), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)
-    for panel, source_relative in sources:
+    for panel, _, source_payload in sources:
         x, y, width, height = _rect(panel)
         try:
-            source_path = contained_project_path(
-                project_dir, source_relative, must_exist=True
-            )
-            with open_path_nofollow(source_path) as stream, Image.open(stream) as source:
+            with Image.open(io.BytesIO(source_payload)) as source:
                 source.load()
                 fitted = ImageOps.fit(
                     source.convert("RGB"),
@@ -173,6 +156,15 @@ def _compose_to_bytes(
     return encoded.getvalue()
 
 
+def _read_source_payloads(
+    project_dir: Path, sources: list[tuple[dict, str | Path]]
+) -> list[tuple[dict, str | Path, bytes]]:
+    return [
+        (panel, source_relative, read_contained_bytes(project_dir, source_relative))
+        for panel, source_relative in sources
+    ]
+
+
 def compose_page(
     project_dir: Path,
     page_number: int,
@@ -191,7 +183,7 @@ def compose_page(
     page = _storyboard_page(storyboard, page_number)
     _page_layout(page)
     sources = _page_sources(project_dir, page, source_artifacts)
-    payload = _compose_to_bytes(project_dir, page, sources, manifest_settings)
+    payload = _compose_to_bytes(page, _read_source_payloads(project_dir, sources))
     output_path = project_dir / f"pages/page-{page_number:03d}.png"
     atomic_write_bytes(output_path, payload)
     return output_path
@@ -222,27 +214,22 @@ def compose_all_pages(project_dir: Path) -> list[Path]:
     for number in page_numbers:
         page = _storyboard_page(storyboard, number)
         layout_name, rectangles = _page_layout(page)
-        sources = _page_sources(project_dir, page, artifacts)
-        prepared_pages.append((number, page, sources, layout_name, rectangles))
-    payloads = [
-        (f"pages/page-{number:03d}.png", _compose_to_bytes(project_dir, page, sources, settings))
-        for number, page, sources, _, _ in prepared_pages
-    ]
-    payload_by_number = {
-        number: (relative, payload)
-        for (number, _, _, _, _), (relative, payload)
-        in zip(prepared_pages, payloads)
-    }
+        sources = _read_source_payloads(
+            project_dir, _page_sources(project_dir, page, artifacts)
+        )
+        relative = f"pages/page-{number:03d}.png"
+        payload = _compose_to_bytes(page, sources)
+        prepared_pages.append(
+            (number, relative, payload, (page, sources, layout_name, rectangles))
+        )
     cache_pages = []
-    for number, page, sources, layout_name, rectangles in prepared_pages:
-        relative, payload = payload_by_number[number]
-        panel_ids = [panel["id"] for panel, _ in sources]
-        ordered_hashes = []
-        for panel, source_relative in sources:
-            source_path = contained_project_path(
-                project_dir, source_relative, must_exist=True
-            )
-            ordered_hashes.append(f"{panel['id']}:{sha256_file(source_path)}")
+    for number, relative, payload, metadata in prepared_pages:
+        page, sources, layout_name, rectangles = metadata
+        panel_ids = [panel["id"] for panel, _, _ in sources]
+        ordered_hashes = [
+            f"{panel['id']}:{hashlib.sha256(source_payload).hexdigest()}"
+            for panel, _, source_payload in sources
+        ]
         cache_pages.append({
             "layout": {
                 "name": layout_name,
@@ -271,7 +258,7 @@ def compose_all_pages(project_dir: Path) -> list[Path]:
     })
     output_paths = []
     with ProjectTransaction(project_dir, "composition") as transaction:
-        for relative, payload in payloads:
+        for _, relative, payload, _ in prepared_pages:
             transaction.stage_bytes(relative, payload)
             output_paths.append(project_dir / relative)
         transaction.stage_bytes(COMPOSITION_CACHE_PATH, cache_payload)

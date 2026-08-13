@@ -23,7 +23,12 @@ from comic_sol import (
     sha256_file,
 )
 from pdf_quality import PdfQualityError, verify_pdf_payload
-from project_io import ProjectTransaction, durable_atomic_write, open_path_nofollow
+from project_io import (
+    ProjectTransaction,
+    contained_project_path,
+    durable_atomic_write,
+    open_path_nofollow,
+)
 from validate_project import validate_manifest, require_valid_project
 
 
@@ -186,25 +191,47 @@ def export_pdf(project_dir: Path, output_path: Path | None = None) -> Path:
 
 def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
     """Verify and transactionally publish PDF, provenance, and descriptors."""
-    project_dir = Path(project_dir)
-    require_valid_project(project_dir, "export-ready")
-    manifest = read_json(project_dir / "project.json")
+    try:
+        project_dir = Path(project_dir).resolve(strict=True)
+        manifest = read_json(
+            contained_project_path(project_dir, "project.json", must_exist=True)
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise PdfExportError(f"invalid project manifest: {error}") from error
     project_id = manifest.get("project_id")
     if not isinstance(project_id, str) or not project_id:
         raise PdfExportError("manifest project_id is invalid")
-    destination = (
-        Path(output_path)
-        if output_path is not None
-        else project_dir / f"exports/{project_id}.pdf"
-    )
     try:
+        candidate = (
+            Path(output_path)
+            if output_path is not None
+            else Path("exports") / f"{project_id}.pdf"
+        )
+        relative = (
+            candidate.relative_to(project_dir).as_posix()
+            if candidate.is_absolute() else candidate.as_posix()
+        )
+        destination = contained_project_path(project_dir, relative)
         pdf_relative = destination.relative_to(project_dir).as_posix()
     except ValueError as error:
         raise PdfExportError(
             "guarded export destination must remain inside the project"
         ) from error
 
+    require_valid_project(project_dir, "export-ready")
     page_paths = discover_pages(project_dir)
+    page_qa_paths: list[tuple[str, Path]] = []
+    for page_number in range(1, len(page_paths) + 1):
+        qa_relative = f"qa/pages/page-{page_number:03d}.json"
+        try:
+            qa_path = contained_project_path(
+                project_dir, qa_relative, must_exist=True
+            )
+        except (OSError, ValueError) as error:
+            raise PdfExportError(f"missing page QA record: {qa_relative}") from error
+        if not qa_path.is_file():
+            raise PdfExportError(f"missing page QA record: {qa_relative}")
+        page_qa_paths.append((qa_relative, qa_path))
     pages = _load_pages(page_paths)
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -217,9 +244,7 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
 
     pdf_sha256 = hashlib.sha256(payload).hexdigest()
     source_pages: list[dict[str, object]] = []
-    for page_number, page_path in enumerate(page_paths, 1):
-        qa_relative = f"qa/pages/page-{page_number:03d}.json"
-        qa_path = project_dir / qa_relative
+    for page_path, (qa_relative, qa_path) in zip(page_paths, page_qa_paths, strict=True):
         source_pages.append({
             "dimensions": [PAGE_WIDTH, PAGE_HEIGHT],
             "page_qa_path": qa_relative,
@@ -241,21 +266,25 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
     }
     verification_payload = canonical_artifact_bytes(verification)
 
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict):
-        artifacts = {}
-    artifacts["pdf"] = {"path": pdf_relative, "sha256": pdf_sha256}
-    artifacts["pdf_verification"] = {
-        "path": "exports/pdf-verification.json",
-        "sha256": hashlib.sha256(verification_payload).hexdigest(),
-    }
-    manifest["artifacts"] = artifacts
     with ProjectTransaction(project_dir, "pdf-export") as transaction:
         transaction.stage_bytes(pdf_relative, payload)
         transaction.stage_bytes(
             "exports/pdf-verification.json", verification_payload
         )
-        transaction.stage_bytes("project.json", canonical_artifact_bytes(manifest))
+        locked_manifest = read_json(
+            contained_project_path(project_dir, "project.json", must_exist=True)
+        )
+        existing_artifacts = locked_manifest.get("artifacts")
+        artifacts = dict(existing_artifacts) if isinstance(existing_artifacts, dict) else {}
+        artifacts["pdf"] = {"path": pdf_relative, "sha256": pdf_sha256}
+        artifacts["pdf_verification"] = {
+            "path": "exports/pdf-verification.json",
+            "sha256": hashlib.sha256(verification_payload).hexdigest(),
+        }
+        locked_manifest["artifacts"] = artifacts
+        transaction.stage_bytes(
+            "project.json", canonical_artifact_bytes(locked_manifest)
+        )
     return destination
 
 

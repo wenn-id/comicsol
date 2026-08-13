@@ -11,7 +11,8 @@ from scripts import project_io
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from comic_sol import record_generation_attempt  # noqa: E402
+from comic_sol import atomic_write_json, read_json, record_generation_attempt  # noqa: E402
+from export_pdf import guarded_export  # noqa: E402
 
 
 CHILD_LOCK_SCRIPT = r"""
@@ -399,6 +400,48 @@ class PromotionArchiveRaceTests(unittest.TestCase):
         self.assertEqual(1, len(promoted))
         self.assertEqual("p01-01", promoted[0]["details"]["panel_id"])
         self.assertEqual("panels/raw/p01-01.new.png", promoted[0]["details"]["attempt_path"])
+
+
+class PdfExportTransactionTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.project = Path(self.temporary_directory.name) / "project"
+        (self.project / "pages").mkdir(parents=True)
+        manifest = read_json(ROOT / "templates/manifest.json")
+        manifest["project_id"] = "project"
+        manifest["input"]["source_sha256"] = "a" * 64
+        manifest["settings"]["page_count"] = 1
+        manifest["settings"]["panel_count"] = 1
+        manifest["panels"] = ["p01-01"]
+        atomic_write_json(self.project / "project.json", manifest)
+        from PIL import Image
+        Image.new("RGB", (1600, 2400), "red").save(
+            self.project / "pages/page-001.png"
+        )
+        page_qa = self.project / "qa/pages"
+        page_qa.mkdir(parents=True)
+        (page_qa / "page-001.json").write_text("{}", "utf-8")
+
+    def tearDown(self):
+        self.temporary_directory.cleanup()
+
+    def test_guarded_export_preserves_manifest_change_made_before_lock(self):
+        def mutate_manifest(*args, **kwargs):
+            manifest = read_json(self.project / "project.json")
+            manifest["warnings"] = ["concurrent warning"]
+            atomic_write_json(self.project / "project.json", manifest)
+            return b"%PDF-1.4\n%%EOF\n", {"page_count": 1}
+
+        with (
+            mock.patch("export_pdf.require_valid_project"),
+            mock.patch("export_pdf._render_verified_payload", side_effect=mutate_manifest),
+        ):
+            guarded_export(self.project)
+
+        self.assertEqual(
+            ["concurrent warning"],
+            read_json(self.project / "project.json")["warnings"],
+        )
 
 
 if __name__ == "__main__":
