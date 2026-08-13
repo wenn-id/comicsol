@@ -10,10 +10,12 @@ from pathlib import Path
 
 
 def run(command: list[str], cwd: Path) -> None:
+    """Run a release smoke-test command and require success."""
     subprocess.run(command, cwd=cwd, check=True)
 
 
 def main() -> int:
+    """Verify the portable release artifacts."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime", required=True, type=Path)
     args = parser.parse_args()

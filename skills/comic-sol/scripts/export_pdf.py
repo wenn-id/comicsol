@@ -40,6 +40,7 @@ class PdfExportError(ValueError):
 
 
 def _validated_manifest(project_dir: Path) -> dict[str, object]:
+    """Load and validate the project manifest for PDF export."""
     manifest_path = project_dir / "project.json"
     try:
         manifest = read_json(manifest_path)
@@ -89,6 +90,7 @@ def discover_pages(project_dir: Path) -> list[Path]:
 
 
 def _load_pages(paths: list[Path]) -> list[Image.Image]:
+    """Load validated final page images in page order."""
     pages: list[Image.Image] = []
     try:
         for path in paths:
@@ -119,6 +121,7 @@ def _load_pages(paths: list[Path]) -> list[Image.Image]:
 def _required_page_qa_paths(
     project_dir: Path, page_count: int
 ) -> list[tuple[str, Path]]:
+    """Return the page-QA paths required for PDF export."""
     page_qa_paths: list[tuple[str, Path]] = []
     for page_number in range(1, page_count + 1):
         qa_relative = f"qa/pages/page-{page_number:03d}.json"
@@ -300,6 +303,7 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(prog="export_pdf.py")
     parser.add_argument("project_dir", type=Path)
     parser.add_argument("--output", type=Path)
@@ -307,6 +311,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Export final page images as a verified PDF."""
     arguments = _build_parser().parse_args(argv)
     try:
         # The canonical destination records the pdf descriptor that final

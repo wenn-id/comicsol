@@ -26,6 +26,7 @@ COMPOSITION_CACHE_PATH = "cache/composition.json"
 
 
 def _storyboard_page(storyboard: dict, page_number: int) -> dict:
+    """Return the storyboard page matching a page number."""
     pages = storyboard.get("pages")
     if not isinstance(pages, list):
         raise ValueError("storyboard pages must be an array")
@@ -39,6 +40,7 @@ def _storyboard_page(storyboard: dict, page_number: int) -> dict:
 
 
 def _artifact_path(project_dir: Path, panel_id: str, source_artifacts: dict) -> str | Path:
+    """Return the canonical artifact path for a manifest entry."""
     configured = source_artifacts.get(panel_id)
     if isinstance(configured, dict):
         configured = configured.get("path")
@@ -61,6 +63,7 @@ def _artifact_path(project_dir: Path, panel_id: str, source_artifacts: dict) -> 
 def _page_sources(
     project_dir: Path, page: dict, source_artifacts: dict
 ) -> list[tuple[dict, str | Path]]:
+    """Return validated panel source records for one page."""
     panels = page.get("panels")
     if not isinstance(panels, list):
         raise ValueError(f"page {page.get('number')} panels must be an array")
@@ -84,6 +87,7 @@ def _page_sources(
 
 
 def _rect(panel: dict) -> tuple[int, int, int, int]:
+    """Return a validated rectangle from a layout record."""
     rect = panel.get("rect")
     if not isinstance(rect, dict):
         raise ValueError(f"panel {panel.get('id')} has no rectangle")
@@ -128,6 +132,7 @@ def _compose_to_bytes(
     page: dict,
     sources: list[tuple[dict, str | Path, bytes]],
 ) -> bytes:
+    """Compose a page image and return its PNG bytes."""
     canvas = Image.new("RGB", (PAGE_WIDTH, PAGE_HEIGHT), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)
     for panel, _, source_payload in sources:
@@ -159,6 +164,7 @@ def _compose_to_bytes(
 def _read_source_payloads(
     project_dir: Path, sources: list[tuple[dict, str | Path]]
 ) -> list[tuple[dict, str | Path, bytes]]:
+    """Read each page source exactly once and verify its hash."""
     return [
         (panel, source_relative, read_contained_bytes(project_dir, source_relative))
         for panel, source_relative in sources
@@ -285,6 +291,7 @@ def compose_project(project_dir: Path) -> list[Path]:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(prog="compose_pages.py")
     parser.add_argument("project_dir", type=Path)
     selection = parser.add_mutually_exclusive_group(required=True)
@@ -294,6 +301,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Compose final page PNG artifacts from rendered panels."""
     arguments = _build_parser().parse_args(argv)
     try:
         if arguments.all_pages:

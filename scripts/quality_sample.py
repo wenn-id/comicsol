@@ -69,6 +69,7 @@ def build_evidence_record(
 
 
 def _parser() -> argparse.ArgumentParser:
+    """Build the quality-sampling command-line parser."""
     parser = argparse.ArgumentParser(
         description="Record local-only Comic Sol quality evidence provenance"
     )
@@ -86,6 +87,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the deterministic quality sampling command."""
     arguments = _parser().parse_args(argv)
     project_dir = arguments.project_dir.resolve()
     try:

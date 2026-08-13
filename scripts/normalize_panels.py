@@ -49,6 +49,7 @@ class _PreparedNormalization:
 
 
 def _positive_size(value: object, name: str) -> tuple[int, int]:
+    """Return a validated positive image dimension."""
     if (
         not isinstance(value, tuple)
         or len(value) != 2
@@ -111,16 +112,19 @@ def normalization_geometry(
 
 
 def _canonical_json(value: object) -> bytes:
+    """Serialize a value as canonical JSON bytes."""
     return (
         json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
 
 
 def _sha256(payload: bytes) -> str:
+    """Return the SHA-256 digest of bytes."""
     return hashlib.sha256(payload).hexdigest()
 
 
 def _png_bytes(image: Image.Image) -> bytes:
+    """Encode an image as deterministic PNG bytes."""
     output = io.BytesIO()
     image.save(
         output,
@@ -132,6 +136,7 @@ def _png_bytes(image: Image.Image) -> bytes:
 
 
 def _prepare(project_dir: Path, spec: NormalizationSpec) -> _PreparedNormalization:
+    """Prepare an image for canonical panel normalization."""
     if not isinstance(spec, NormalizationSpec):
         raise TypeError("normalization specs must be NormalizationSpec values")
     if PANEL_ID.fullmatch(spec.panel_id) is None:

@@ -66,15 +66,18 @@ class ValidationIssue:
 
 class ProjectValidationError(ValueError):
     def __init__(self, issues: Iterable[ValidationIssue]):
+        """Initialize an error containing project validation issues."""
         self.issues = tuple(issues)
         super().__init__(f"Comic Sol project has {len(self.issues)} validation issue(s)")
 
 
 def _sorted(issues: Iterable[ValidationIssue]) -> list[ValidationIssue]:
+    """Return validation issues in deterministic order."""
     return sorted(issues, key=lambda item: (item.path, item.field, item.message))
 
 
 def _add(issues: list[ValidationIssue], path: str, field: str, message: str) -> None:
+    """Append a validation issue to the issue collection."""
     issues.append(ValidationIssue(path, field, message))
 
 
@@ -86,6 +89,7 @@ def _object(
     path: str,
     field: str,
 ) -> dict[str, object] | None:
+    """Validate an object shape and report field violations."""
     if not isinstance(value, dict):
         _add(issues, path, field, "must be an object")
         return None
@@ -99,6 +103,7 @@ def _object(
 def _nonempty_string(
     value: object, issues: list[ValidationIssue], path: str, field: str
 ) -> bool:
+    """Validate a non-empty string field."""
     if not isinstance(value, str) or not value.strip():
         _add(issues, path, field, "must be a non-empty string")
         return False
@@ -106,6 +111,7 @@ def _nonempty_string(
 
 
 def _identifier(value: object, issues: list[ValidationIssue], path: str, field: str) -> bool:
+    """Validate a Comic Sol identifier field."""
     if not isinstance(value, str) or ID_PATTERN.fullmatch(value) is None:
         _add(issues, path, field, "must match ^[a-z][a-z0-9-]{0,47}$")
         return False
@@ -120,6 +126,7 @@ def _integer(
     path: str,
     field: str,
 ) -> bool:
+    """Validate an integer field within inclusive bounds."""
     if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
         _add(issues, path, field, f"must be an integer from {minimum} to {maximum}")
         return False
@@ -133,6 +140,7 @@ def _relative_path(
     field: str,
     nullable: bool = False,
 ) -> bool:
+    """Validate a normalized relative project path field."""
     if nullable and value is None:
         return True
     if not isinstance(value, str) or not value:
@@ -155,6 +163,7 @@ def _sha256(
     field: str,
     nullable: bool = False,
 ) -> bool:
+    """Validate a lowercase SHA-256 digest field."""
     if nullable and value is None:
         return True
     if not isinstance(value, str) or SHA256_PATTERN.fullmatch(value) is None:
@@ -170,6 +179,7 @@ def _timestamp(
     field: str,
     nullable: bool = False,
 ) -> bool:
+    """Validate an ISO 8601 UTC timestamp field."""
     if nullable and value is None:
         return True
     if not isinstance(value, str) or TIMESTAMP_PATTERN.fullmatch(value) is None:
@@ -191,6 +201,7 @@ def _string_list(
     minimum: int = 0,
     maximum: int | None = None,
 ) -> list[str] | None:
+    """Validate a list of non-empty string values."""
     if not isinstance(value, list):
         _add(issues, path, field, "must be an array")
         return None
@@ -203,6 +214,7 @@ def _string_list(
 
 
 def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
+    """Validate the project manifest structure and references."""
     path = "project.json"
     issues: list[ValidationIssue] = []
     required_fields = {
@@ -312,6 +324,7 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
 
 
 def validate_character_bible(data: dict[str, object]) -> list[ValidationIssue]:
+    """Validate the character bible artifact."""
     path = "plan/character-bible.json"
     issues: list[ValidationIssue] = []
     root = _object(data, {"schema_version", "characters"}, {"schema_version", "characters"}, issues, path, "")
@@ -362,6 +375,7 @@ def validate_character_bible(data: dict[str, object]) -> list[ValidationIssue]:
 
 
 def validate_story_plan(data: dict[str, object]) -> list[ValidationIssue]:
+    """Validate the story-plan artifact."""
     path = "plan/story-plan.json"
     issues: list[ValidationIssue] = []
     fields = {
@@ -414,6 +428,7 @@ def _validate_text_item(
     path: str,
     prefix: str,
 ) -> int:
+    """Validate one storyboard text item."""
     base_fields = {"id", "kind", "speaker", "content", "anchor", "priority"}
     dialogue_fields = {"voice_source", "speaker_anchor", "tail_target"}
     item = _object(value, base_fields | dialogue_fields, base_fields, issues, path, prefix)
@@ -493,6 +508,7 @@ def validate_storyboard(
     story: dict[str, object],
     characters: dict[str, object],
 ) -> list[ValidationIssue]:
+    """Validate the storyboard artifact and panel layout data."""
     path = "plan/storyboard.json"
     issues: list[ValidationIssue] = []
     root = _object(data, {"schema_version", "pages"}, {"schema_version", "pages"}, issues, path, "")
@@ -646,6 +662,7 @@ def validate_storyboard(
 
 
 def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
+    """Validate a schema-v2 panel quality record."""
     panel_name = data.get("subject_id") if isinstance(data, dict) else "unknown"
     path = f"qa/panels/{panel_name}.json"
     issues: list[ValidationIssue] = []
@@ -729,6 +746,7 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
 
 
 def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
+    """Validate a panel quality record from either supported schema."""
     if isinstance(data, dict) and data.get("schema_version") == "2.0":
         return _validate_panel_record_v2(data)
     panel_name = data.get("panel_id") if isinstance(data, dict) else "unknown"
@@ -867,6 +885,7 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
 
 
 def _contained_project_path(project_dir: Path, relative_path: str) -> Path:
+    """Resolve a safe project path while recording validation issues."""
     return contained_project_path(project_dir, relative_path)
 
 
@@ -875,6 +894,7 @@ def _read_canonical_json(
     relative_path: str,
     issues: list[ValidationIssue],
 ) -> dict[str, object] | None:
+    """Read canonical JSON while recording validation issues."""
     try:
         path = _contained_project_path(project_dir, relative_path)
     except ValueError as error:
@@ -913,6 +933,7 @@ def validate_panel_provenance(
     bindings = record.get("bindings")
 
     def stale(field: str, detail: str) -> None:
+        """Report whether a panel quality record is stale."""
         _add(
             issues,
             record_path,
@@ -1033,6 +1054,7 @@ def validate_lettering_provenance(
     typography_relative = f"panels/{panel_id}/typography.json"
 
     def stale(field: str, detail: str) -> None:
+        """Report whether a panel quality record is stale."""
         _add(
             issues,
             geometry_relative,
@@ -1173,6 +1195,7 @@ def validate_lettering_provenance(
                 }
 
                 def finite_point(value: object) -> bool:
+                    """Report whether a value is a finite coordinate point."""
                     return (
                         isinstance(value, list)
                         and len(value) == 2
@@ -1234,6 +1257,7 @@ def _load_artifact(
     validator: Callable[[dict[str, object]], list[ValidationIssue]],
     issues: list[ValidationIssue],
 ) -> dict[str, object] | None:
+    """Load a manifest artifact while recording validation issues."""
     data = _read_canonical_json(project_dir, relative_path, issues)
     if data is None:
         return None
@@ -1249,6 +1273,7 @@ def _validate_raster(
     issues: list[ValidationIssue],
     expected_ratio: float | None = None,
 ) -> tuple[int, int] | None:
+    """Validate raster artifact dimensions and decodability."""
     local_issues: list[ValidationIssue] = []
     if not _relative_path(relative_path, local_issues, issue_path, field):
         issues.extend(local_issues)
@@ -1287,6 +1312,7 @@ def _validate_raster(
 
 
 def _storyboard_panel_map(storyboard: dict[str, object]) -> dict[str, dict[str, object]]:
+    """Return storyboard panels keyed by canonical panel identifier."""
     result: dict[str, dict[str, object]] = {}
     for page in storyboard.get("pages", []):
         if not isinstance(page, dict):
@@ -1419,6 +1445,7 @@ def validate_pdf_verification(
 
 
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
+    """Validate all artifacts required for a project stage."""
     project_dir = Path(project_dir)
     if stage not in STAGES:
         raise ValueError(f"unknown validation stage: {stage}")
@@ -1823,10 +1850,12 @@ def _validate_required_artifacts(
 
 class _ValidationArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
+        """Report command-line validation errors without usage noise."""
         raise ValueError(f"invalid invocation: {message}")
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the command-line argument parser."""
     parser = _ValidationArgumentParser(prog="validate_project.py")
     parser.add_argument("project_dir", type=Path)
     parser.add_argument("--stage", choices=STAGES, default="all")
@@ -1835,6 +1864,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run strict project validation from the command line."""
     try:
         parser = _build_parser()
         arguments = parser.parse_args(argv)

@@ -14,6 +14,7 @@ from pathlib import Path
 
 
 def run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> str:
+    """Run a smoke-test command and require success."""
     completed = subprocess.run(
         command,
         cwd=cwd,
@@ -32,12 +33,14 @@ def run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> 
 
 
 def venv_paths(root: Path) -> tuple[Path, Path]:
+    """Return the platform-specific virtual-environment executable paths."""
     if os.name == "nt":
         return root / "Scripts" / "python.exe", root / "Scripts" / "comic-sol.exe"
     return root / "bin" / "python", root / "bin" / "comic-sol"
 
 
 def main() -> int:
+    """Verify a clean installation in a temporary environment."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--wheel", required=True, type=Path)
     parser.add_argument("--mcp", action="store_true")

@@ -44,6 +44,7 @@ class PdfPageMetrics:
 
 
 def _rounded(numerator: int, denominator: int) -> float:
+    """Return a numeric value rounded for deterministic comparison."""
     return round(numerator / denominator, 6) if denominator else 0.0
 
 
@@ -129,6 +130,7 @@ def compare_full_page(
 
 
 def _decode_pdf_frames(payload: bytes) -> list[Image.Image]:
+    """Decode PDF pages into raster frames for inspection."""
     if not payload.startswith(b"%PDF-") or not payload.rstrip().endswith(b"%%EOF"):
         raise PdfQualityError("PDF payload is corrupt or truncated")
     frames: list[Image.Image] = []
@@ -156,6 +158,7 @@ def _decode_pdf_frames(payload: bytes) -> list[Image.Image]:
 
 
 def _metrics_pass(metrics: PdfPageMetrics) -> bool:
+    """Report whether measured PDF quality metrics pass thresholds."""
     return (
         metrics.mean_absolute_channel_error <= MAX_MEAN_ABSOLUTE_CHANNEL_ERROR
         and metrics.high_error_pixel_ratio <= MAX_HIGH_ERROR_PIXEL_RATIO

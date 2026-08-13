@@ -31,6 +31,7 @@ class LayoutDefinition:
 
 
 def _legacy_layouts() -> dict[str, tuple[Rectangle, ...]]:
+    """Return legacy layout definitions for backward compatibility."""
     inner_width = PAGE_WIDTH - 2 * MARGIN
     inner_height = PAGE_HEIGHT - 2 * MARGIN
     half_width = (inner_width - GUTTER) // 2
@@ -64,6 +65,7 @@ def _legacy_layouts() -> dict[str, tuple[Rectangle, ...]]:
 
 
 def _rectangle(value: object) -> Rectangle:
+    """Return a layout rectangle by normalized coordinates."""
     if isinstance(value, Mapping):
         values = tuple(value.get(key) for key in ("x", "y", "width", "height"))
     elif isinstance(value, (list, tuple)):
@@ -79,6 +81,7 @@ def _rectangle(value: object) -> Rectangle:
 
 
 def _overlap(first: Rectangle, second: Rectangle) -> bool:
+    """Report whether two rectangles overlap."""
     ax, ay, aw, ah = first
     bx, by, bw, bh = second
     return not (

@@ -35,10 +35,12 @@ GENERIC_EVIDENCE = frozenset({"verified", "looks good", "ok", "pass"})
 
 
 def _normalized_text(value: str) -> str:
+    """Return text normalized for deterministic comparison."""
     return " ".join(unicodedata.normalize("NFC", value).split())
 
 
 def _normalized_evidence(value: object) -> str:
+    """Return quality evidence in canonical normalized form."""
     if not isinstance(value, str):
         return ""
     return _normalized_text(value).casefold()

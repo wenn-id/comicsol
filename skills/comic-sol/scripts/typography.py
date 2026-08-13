@@ -37,6 +37,7 @@ class TypographyPreflightError(ValueError):
     """Raised when authored text cannot be rendered under the pinned policy."""
 
     def __init__(self, issues: Sequence[TypographyIssue]):
+        """Initialize an error describing typography preflight issues."""
         self.issues = tuple(issues)
         details = "; ".join(
             f"{issue.category}: {issue.codepoint} in {issue.item_id} "
@@ -50,6 +51,7 @@ class TypographyPreflightError(ValueError):
 
 
 def _canonical_bytes(value: object) -> bytes:
+    """Serialize a value as canonical JSON bytes."""
     return (
         json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         + "\n"
@@ -57,6 +59,7 @@ def _canonical_bytes(value: object) -> bytes:
 
 
 def _sha256_bytes(payload: bytes) -> str:
+    """Return the SHA-256 digest of bytes."""
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -87,6 +90,7 @@ def display_content(kind: object, text: str) -> str:
 
 
 def _style_spans(text: str) -> tuple[tuple[str, str], ...]:
+    """Return validated styled text spans for lettering."""
     parts = text.split("**")
     if len(parts) % 2 == 0 or any(
         not parts[index].strip() for index in range(1, len(parts), 2)
@@ -100,6 +104,7 @@ def _style_spans(text: str) -> tuple[tuple[str, str], ...]:
 
 
 def _shaping_supported(character: str) -> bool:
+    """Report whether the runtime supports text shaping."""
     codepoint = ord(character)
     if codepoint >= 0x1F000:
         return False
@@ -114,6 +119,7 @@ def _shaping_supported(character: str) -> bool:
 
 
 def _font_policy(font_policy: Mapping[str, object]) -> tuple[dict[str, Path], dict[str, str]]:
+    """Return the configured font policy for a lettering style."""
     paths: dict[str, Path] = {}
     identifiers: dict[str, str] = {}
     for role in FONT_ROLES:
@@ -241,6 +247,7 @@ def write_typography_preflight(
     panel_id: str,
     result: Mapping[str, object],
 ) -> Path:
+    """Write typography preflight evidence for a project."""
     if re.fullmatch(r"p[0-9]{2}-[0-9]{2}", panel_id) is None:
         raise ValueError("invalid panel ID")
     destination = contained_project_path(

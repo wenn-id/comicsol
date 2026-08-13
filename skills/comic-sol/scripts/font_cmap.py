@@ -9,6 +9,7 @@ from pathlib import Path
 
 @lru_cache(maxsize=None)
 def unicode_cmap_subtables(path: str) -> tuple[bytes, ...]:
+    """Return Unicode character-map subtables from a font."""
     data = Path(path).read_bytes()
     sfnt_offset = 0
     if data[:4] == b"ttcf":
@@ -57,6 +58,7 @@ def unicode_cmap_subtables(path: str) -> tuple[bytes, ...]:
 
 
 def cmap_glyph_id(table: bytes, codepoint: int) -> int:
+    """Return the glyph identifier for a Unicode code point."""
     format_number = struct.unpack_from(">H", table, 0)[0]
     if format_number == 0:
         return table[6 + codepoint] if codepoint <= 0xFF and 6 + codepoint < len(table) else 0
@@ -120,6 +122,7 @@ def cmap_glyph_id(table: bytes, codepoint: int) -> int:
 
 
 def font_supports(path: Path, character: str) -> bool:
+    """Report whether a font supports every requested character."""
     if len(character) != 1:
         raise ValueError("glyph coverage requires exactly one character")
     return any(cmap_glyph_id(table, ord(character)) != 0 for table in unicode_cmap_subtables(str(path)))

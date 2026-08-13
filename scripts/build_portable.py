@@ -16,14 +16,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def run(command: list[str], cwd: Path) -> None:
+    """Run a command and fail when it returns a nonzero status."""
     subprocess.run(command, cwd=cwd, check=True)
 
 
 def run_output(command: list[str], cwd: Path) -> str:
+    """Run a command and return its captured standard output."""
     return subprocess.check_output(command, cwd=cwd, text=True).strip()
 
 
 def install_locked(python: Path, lock: Path, cwd: Path) -> None:
+    """Install locked dependencies into the target environment."""
     run(
         [
             str(python), "-m", "pip", "install", "--disable-pip-version-check",
@@ -36,6 +39,7 @@ def install_locked(python: Path, lock: Path, cwd: Path) -> None:
 def write_environment_sbom(
     python: Path, destination: Path, temporary: Path, generator_python: Path
 ) -> None:
+    """Write an inventory of installed release dependencies."""
     run(
         [
             str(generator_python),
@@ -95,6 +99,7 @@ def write_environment_sbom(
 
 
 def main() -> int:
+    """Build the portable Comic Sol distribution."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--wheel", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)

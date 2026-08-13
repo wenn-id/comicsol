@@ -54,40 +54,48 @@ _RELATIVE_PATH = re.compile(r"^(?:[A-Za-z0-9._/-]+/)*[A-Za-z0-9._-]+$")
 
 
 def _reject(message: str) -> None:
+    """Raise a tool error for an invalid request field."""
     raise ToolError(message)
 
 
 def _validate_project_id(project_id: str) -> None:
+    """Validate a project identifier supplied to an MCP tool."""
     if not isinstance(project_id, str) or not IDENTIFIER.fullmatch(project_id):
         _reject("invalid project ID")
 
 
 def _validate_stage(stage: str) -> None:
+    """Validate a workflow stage supplied to an MCP tool."""
     if not isinstance(stage, str) or stage not in VALIDATION_STAGES:
         _reject("unknown validation stage")
 
 
 def _validate_resume_stage(stage: str) -> None:
+    """Validate a resumable workflow stage."""
     if not isinstance(stage, str) or stage not in RESUME_STAGES:
         _reject("unknown resume stage")
 
 
 def _validate_target(target: str) -> None:
+    """Validate a project target path supplied to an MCP tool."""
     if not isinstance(target, str) or target not in ALL_STATUSES:
         _reject("invalid target status")
 
 
 def _validate_panel_id(panel_id: str) -> None:
+    """Validate a panel identifier supplied to an MCP tool."""
     if not isinstance(panel_id, str) or not _PANEL_ID.fullmatch(panel_id):
         _reject("invalid panel ID")
 
 
 def _validate_kind(kind: str) -> None:
+    """Validate an artifact kind supplied to an MCP tool."""
     if not isinstance(kind, str) or kind not in _ATTEMPT_KINDS:
         _reject("unknown generation attempt kind")
 
 
 def _validate_relative_path(relative: str) -> None:
+    """Validate a relative project path supplied to an MCP tool."""
     normalized = relative.replace("\\", "/") if isinstance(relative, str) else ""
     if (
         not isinstance(relative, str)
@@ -106,6 +114,7 @@ def _safe_message(error: Exception) -> str:
         return type(error).__name__
 
     def replace_quoted_path(match: re.Match[str]) -> str:
+        """Replace quoted paths with safe display placeholders."""
         quote, candidate = match.group(1), match.group(2)
         if PurePosixPath(candidate).is_absolute() or PureWindowsPath(candidate).is_absolute():
             return f"{quote}<path>{quote}"
@@ -142,10 +151,12 @@ def _safe_message(error: Exception) -> str:
 
 
 def _tool_error(error: Exception) -> ToolError:
+    """Build a structured MCP tool error response."""
     return ToolError(_safe_message(error))
 
 
 def _configure_root(path: Path) -> Path:
+    """Configure and return the Comic Sol projects root."""
     if not path.is_absolute():
         raise ValueError("output root must be an absolute path")
     global OUTPUT_ROOT
@@ -451,6 +462,7 @@ def comic_finalize(project_id: str) -> dict[str, Any]:
 
 
 def main() -> None:
+    """Start the Comic Sol MCP server."""
     parser = argparse.ArgumentParser(description="Comic Sol MCP Server")
     parser.add_argument("--root", type=Path, required=True, help="Absolute path to the output directory")
     args = parser.parse_args()

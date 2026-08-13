@@ -67,12 +67,14 @@ class PageContext:
 
 
 def _page_id(page_number: int) -> str:
+    """Return the canonical identifier for a page number."""
     if not isinstance(page_number, int) or isinstance(page_number, bool) or page_number < 1:
         raise ValueError("page number must be a positive integer")
     return f"page-{page_number:03d}"
 
 
 def _storyboard_page(storyboard: Mapping[str, object], page_number: int) -> dict[str, object]:
+    """Return the storyboard record for a page number."""
     pages = storyboard.get("pages")
     if not isinstance(pages, list):
         raise ValueError("storyboard pages must be an array")
@@ -83,6 +85,7 @@ def _storyboard_page(storyboard: Mapping[str, object], page_number: int) -> dict
 
 
 def _rect_tuple(panel: Mapping[str, object]) -> tuple[int, int, int, int]:
+    """Return a rectangle as integer coordinate bounds."""
     rect = panel.get("rect")
     if not isinstance(rect, dict):
         raise ValueError("storyboard panel rectangle is missing")
@@ -93,6 +96,7 @@ def _rect_tuple(panel: Mapping[str, object]) -> tuple[int, int, int, int]:
 
 
 def _overlap(first: Mapping[str, object], second: Mapping[str, object]) -> bool:
+    """Report whether two page rectangles overlap."""
     ax, ay, aw, ah = (first.get(key) for key in ("x", "y", "width", "height"))
     bx, by, bw, bh = (second.get(key) for key in ("x", "y", "width", "height"))
     if not all(isinstance(value, int) and not isinstance(value, bool)
@@ -102,6 +106,7 @@ def _overlap(first: Mapping[str, object], second: Mapping[str, object]) -> bool:
 
 
 def _page_context(project_dir: Path, page_number: int) -> PageContext:
+    """Build deterministic quality-check context for one page."""
     storyboard_path = contained_project_path(project_dir, "plan/storyboard.json", must_exist=True)
     storyboard = read_json(storyboard_path)
     page = _storyboard_page(storyboard, page_number)
@@ -161,6 +166,7 @@ def _page_context(project_dir: Path, page_number: int) -> PageContext:
 
 
 def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
+    """Return deterministic quality checks for a page."""
     clipped_regions: list[dict[str, object]] = []
     overlap_regions: list[dict[str, object]] = []
     order_regions: list[dict[str, object]] = []
@@ -227,6 +233,7 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
 
 
 def _reviewer_checks(values: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    """Return reviewer-supplied quality checks for a page."""
     checks = [dict(value) for value in values]
     categories = validate_quality_checks(checks, SUBJECTIVE_PAGE_CHECK_IDS)
     if categories:
@@ -319,6 +326,7 @@ def _validate_tail_evidence(context: PageContext, checks: Sequence[Mapping[str, 
 
 
 def _valid_timestamp(value: object) -> bool:
+    """Report whether a value is a valid UTC timestamp."""
     if not isinstance(value, str) or TIMESTAMP_PATTERN.fullmatch(value) is None:
         return False
     try:
@@ -391,6 +399,7 @@ def build_page_quality_record(
 def write_page_quality_record(
     project_dir: Path, page_number: int, record: Mapping[str, object]
 ) -> Path:
+    """Write an authoritative page-QA record."""
     destination = contained_project_path(
         Path(project_dir), f"qa/pages/{_page_id(page_number)}.json"
     )
@@ -405,6 +414,7 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
     issues: list[PageQualityIssue] = []
 
     def stale(field: str, detail: str) -> None:
+        """Report whether a page-QA record is stale for current artifacts."""
         issues.append(PageQualityIssue(relative, field, f"page-quality-stale: {detail}"))
 
     try:

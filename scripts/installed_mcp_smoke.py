@@ -32,6 +32,7 @@ EXPECTED_TOOLS = {
 
 
 async def smoke(executable: Path, output_root: Path) -> None:
+    """Run the installed MCP server smoke test."""
     server = StdioServerParameters(
         command=str(executable),
         args=["mcp", "--root", str(output_root.resolve())],
@@ -51,6 +52,7 @@ async def smoke(executable: Path, output_root: Path) -> None:
 
 
 def main() -> int:
+    """Execute the installed MCP smoke-test command."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--executable", required=True, type=Path)
     parser.add_argument("--output-root", required=True, type=Path)

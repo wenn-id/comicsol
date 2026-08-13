@@ -30,11 +30,13 @@ class ProjectLock:
     """Cross-process advisory lock retained at ``.comic-sol.lock``."""
 
     def __init__(self, project_dir: Path, timeout: float = 10.0):
+        """Initialize lock state for a project directory."""
         self.project_dir = Path(project_dir)
         self.timeout = timeout
         self._handle: BinaryIO | None = None
 
     def __enter__(self) -> "ProjectLock":
+        """Acquire the project lock and return it."""
         deadline = time.monotonic() + self.timeout
         path = self.project_dir / ".comic-sol.lock"
         try:
@@ -119,6 +121,7 @@ class ProjectLock:
 
     @staticmethod
     def _lock(handle: BinaryIO) -> None:
+        """Acquire the platform-specific lock for an open handle."""
         if os.name == "nt":
             import msvcrt
 
@@ -131,12 +134,14 @@ class ProjectLock:
 
     @staticmethod
     def _retryable(error: OSError) -> bool:
+        """Report whether a lock acquisition error may be retried."""
         return error.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK} or getattr(
             error, "winerror", None
         ) in {33, 36}
 
     @staticmethod
     def _unlock(handle: BinaryIO) -> None:
+        """Release the platform-specific lock for an open handle."""
         if os.name == "nt":
             import msvcrt
 
@@ -148,6 +153,7 @@ class ProjectLock:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def __exit__(self, exc_type, exc, traceback) -> None:
+        """Release the project lock when leaving its context."""
         handle = self._handle
         self._handle = None
         if handle is None:
@@ -159,6 +165,7 @@ class ProjectLock:
 
 
 def validate_source_bytes(source: bytes, suffix: str | None = None) -> str:
+    """Validate and decode a supported UTF-8 source payload."""
     if not isinstance(source, bytes):
         raise TypeError("source must be bytes")
     if len(source) > MAX_SOURCE_BYTES:
@@ -177,6 +184,7 @@ def contained_project_path(
     *,
     must_exist: bool = False,
 ) -> Path:
+    """Resolve a safe relative path within a project directory."""
     text = os.fspath(relative).replace("\\", "/")
     if not text or text.startswith("/") or _DRIVE.match(text) or ".." in text.split("/"):
         raise ValueError("path must be a relative project path")
@@ -205,6 +213,7 @@ def contained_project_path(
 
 
 def _relative_parts(relative: str | Path) -> tuple[str, ...]:
+    """Return validated relative path components."""
     text = os.fspath(relative).replace("\\", "/")
     if not text or text.startswith("/") or _DRIVE.match(text):
         raise ValueError("path must be a relative project path")
@@ -224,6 +233,7 @@ def _stream_mode(flags: int) -> str:
 
 
 def _open_parent_fd(project_dir: Path, parts: tuple[str, ...], *, create: bool) -> tuple[int, str]:
+    """Open the no-follow parent directory descriptor for a path."""
     root = Path(project_dir).resolve(strict=True)
     if os.name == "nt" or not _HAS_NOFOLLOW:
         raise NotImplementedError
@@ -310,6 +320,7 @@ def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -
 
 
 def read_contained_bytes(project_dir: Path, relative: str | Path) -> bytes:
+    """Read bytes from a safe relative project path."""
     try:
         with open_contained(project_dir, relative) as stream:
             return stream.read()
@@ -320,6 +331,7 @@ def read_contained_bytes(project_dir: Path, relative: str | Path) -> bytes:
 
 
 def remove_contained(project_dir: Path, relative: str | Path) -> None:
+    """Remove a safe relative project path if it exists."""
     parts = _relative_parts(relative)
     if os.name == "nt" or not _HAS_NOFOLLOW:
         path = contained_project_path(project_dir, relative)
@@ -406,6 +418,7 @@ def _find_transaction_dir(transaction_dir: Path) -> int:
 
 
 def _canonical_json_bytes(value: object) -> bytes:
+    """Serialize a value as canonical JSON bytes."""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
@@ -420,6 +433,7 @@ class ProjectTransaction:
     JOURNAL_SCHEMA_VERSION = "1.0"
 
     def __init__(self, project_dir: Path, operation: str) -> None:
+        """Initialize an unpublished project transaction."""
         self.project_dir = Path(project_dir)
         self.operation = operation
         self._lock: ProjectLock | None = None
@@ -429,6 +443,7 @@ class ProjectTransaction:
         self._id: int | None = None
 
     def __enter__(self) -> "ProjectTransaction":
+        """Start a transaction while holding the project lock."""
         self._lock = ProjectLock(self.project_dir).__enter__()
         try:
             base = contained_project_path(self.project_dir, "logs/transactions")
@@ -523,6 +538,7 @@ class ProjectTransaction:
             raise
 
     def _write_journal(self) -> None:
+        """Persist the transaction journal in canonical JSON."""
         if self._dir is None:
             return
         journal = {
@@ -534,6 +550,7 @@ class ProjectTransaction:
         durable_atomic_write(self._dir / "journal.json", _canonical_json_bytes(journal))
 
     def _cleanup(self) -> None:
+        """Remove completed transaction staging artifacts."""
         if self._dir is None or not self._dir.is_dir():
             return
         for child in self._dir.iterdir():
@@ -550,6 +567,7 @@ class ProjectTransaction:
         self._dir = None
 
     def __exit__(self, exc_type, exc, traceback) -> None:
+        """Commit or roll back the transaction on context exit."""
         try:
             if exc_type is None and self._phase == "staging":
                 self.commit()
