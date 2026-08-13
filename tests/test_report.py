@@ -234,7 +234,7 @@ class ReportTests(unittest.TestCase):
                     if deterministic else "bounded-visual-review"
                 ),
                 "reviewer": "comic-sol" if deterministic else "fixture-reviewer",
-                "regions": [{"scope": "page"}],
+                "regions": [] if deterministic else [{"scope": "page"}],
             })
         atomic_write_json(page_dir / "page-001.json", {
             "bindings": {

@@ -379,6 +379,15 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
     categories = validate_quality_checks(record.get("checks"), PAGE_CHECK_IDS)
     for category in categories:
         stale("checks", category)
+    checks = record.get("checks")
+    if isinstance(checks, list) and any(
+        isinstance(check, dict)
+        and check.get("id") in DETERMINISTIC_PAGE_CHECK_IDS
+        and check.get("result") == "pass"
+        and check.get("regions") != []
+        for check in checks
+    ):
+        stale("checks", "deterministic passing checks must not include failure regions")
 
     bindings = record.get("bindings")
     if not isinstance(bindings, dict):

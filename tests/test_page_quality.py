@@ -174,6 +174,23 @@ class PageQualityTests(unittest.TestCase):
         )
         self.assertEqual((), validate_page_quality(self.project, 1))
 
+    def test_persisted_deterministic_pass_checks_reject_failure_regions(self):
+        record = build_page_quality_record(self.project, 1, reviewer_checks(self.project))
+        deterministic = next(
+            check for check in record["checks"]
+            if check["id"] in DETERMINISTIC_PAGE_CHECK_IDS
+        )
+        deterministic["regions"] = [{"scope": "page"}]
+        write_page_quality_record(self.project, 1, record)
+
+        issues = validate_page_quality(self.project, 1)
+
+        self.assertTrue(any(
+            issue.field == "checks"
+            and "deterministic passing checks" in issue.message
+            for issue in issues
+        ), issues)
+
     def test_page_cache_storyboard_layout_and_lettering_drift_are_stale(self):
         record = build_page_quality_record(self.project, 1, reviewer_checks(self.project))
         write_page_quality_record(self.project, 1, record)
