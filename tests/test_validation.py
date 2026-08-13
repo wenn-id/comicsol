@@ -249,6 +249,7 @@ class LayoutGeometryTests(unittest.TestCase):
             "three-horizontal": 3,
             "hero-top-two-bottom": 3,
             "two-top-hero-bottom": 3,
+            "four-grid": 4,
         }
         for name, count in expected_counts.items():
             rects = layout_rects(name)

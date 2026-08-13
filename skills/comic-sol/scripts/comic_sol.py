@@ -293,6 +293,27 @@ def layout_rects(name: str) -> list[dict[str, int]]:
                 "height": hero_height,
             },
         ],
+        "four-grid": [
+            {"x": MARGIN, "y": MARGIN, "width": half_width, "height": half_height},
+            {
+                "x": MARGIN + half_width + GUTTER,
+                "y": MARGIN,
+                "width": half_width,
+                "height": half_height,
+            },
+            {
+                "x": MARGIN,
+                "y": MARGIN + half_height + GUTTER,
+                "width": half_width,
+                "height": half_height,
+            },
+            {
+                "x": MARGIN + half_width + GUTTER,
+                "y": MARGIN + half_height + GUTTER,
+                "width": half_width,
+                "height": half_height,
+            },
+        ],
     }
     try:
         return [rectangle.copy() for rectangle in layouts[name]]

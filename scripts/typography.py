@@ -8,6 +8,7 @@ import json
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -66,7 +67,8 @@ def lettering_geometry_hash(record: Mapping[str, object]) -> str:
     return _sha256_bytes(_canonical_bytes(payload))
 
 
-def _normalize_content(text: str) -> str:
+def normalize_content(text: str) -> str:
+    """Normalize authored text without changing punctuation, emoji, or newlines."""
     if not isinstance(text, str):
         raise TypeError("text must be a string")
     normalized = unicodedata.normalize("NFC", text)
@@ -76,6 +78,12 @@ def _normalize_content(text: str) -> str:
     )
     lines = [re.sub(r"[^\S\n]+", " ", line).strip() for line in normalized.split("\n")]
     return "\n".join(lines).strip()
+
+
+def display_content(kind: object, text: str) -> str:
+    """Return visible text while preserving the authored storyboard value."""
+    normalized = normalize_content(text)
+    return normalized.upper() if kind == "dialogue" else normalized
 
 
 def _style_spans(text: str) -> tuple[tuple[str, str], ...]:
@@ -120,6 +128,18 @@ def _font_policy(font_policy: Mapping[str, object]) -> tuple[dict[str, Path], di
     return paths, identifiers
 
 
+@lru_cache(maxsize=None)
+def _hash_font_file(path: str) -> str:
+    """Return a cached digest for the immutable font file at ``path``."""
+    return _sha256_bytes(Path(path).read_bytes())
+
+
+@lru_cache(maxsize=None)
+def _font_policy_hashes(paths: tuple[str, ...]) -> tuple[str, ...]:
+    """Return cached font digests in deterministic role order."""
+    return tuple(_hash_font_file(path) for path in paths)
+
+
 def preflight_text_items(
     items: Sequence[Mapping[str, object]],
     font_policy: Mapping[str, object],
@@ -140,7 +160,7 @@ def preflight_text_items(
         raw_content = text_item.get("content", "")
         if not isinstance(raw_content, str):
             raise TypeError(f"text item {item_id} content must be a string")
-        content = _normalize_content(raw_content)
+        content = display_content(text_item.get("kind"), raw_content)
         for span, style in _style_spans(content):
             role = "bold" if style == "bold" else "regular"
             for character in span:
@@ -197,12 +217,11 @@ def preflight_text_items(
         raise TypographyPreflightError(issues)
 
     policy_descriptor = dict(sorted(identifiers.items()))
+    ordered_roles = tuple(sorted(paths))
+    hashes = _font_policy_hashes(tuple(str(paths[role]) for role in ordered_roles))
     policy_binding = {
-        role: {
-            "font_id": identifiers[role],
-            "sha256": _sha256_bytes(paths[role].read_bytes()),
-        }
-        for role in sorted(paths)
+        role: {"font_id": identifiers[role], "sha256": digest}
+        for role, digest in zip(ordered_roles, hashes, strict=True)
     }
     return {
         "font_policy": policy_descriptor,

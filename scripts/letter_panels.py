@@ -11,7 +11,6 @@ import math
 import re
 import sys
 import tempfile
-import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -22,7 +21,9 @@ from comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json, s
 from project_io import ProjectTransaction, contained_project_path, open_path_nofollow, read_contained_bytes
 from raster_limits import MAX_DECODED_PIXELS
 from typography import (
+    display_content,
     lettering_geometry_hash,
+    normalize_content,
     preflight_text_items,
 )
 from font_cmap import font_supports
@@ -51,25 +52,6 @@ CAPTION_PADDING = 20
 # Panels are page-sized at most (1600x2400); sixteen page areas leaves room for
 # oversampled source art while rejecting decompression bombs.
 BALLOON_SUPERSAMPLE = 6
-
-
-def normalize_content(text: str) -> str:
-    """Normalize authored text without changing punctuation, emoji, or newlines."""
-    if not isinstance(text, str):
-        raise TypeError("text must be a string")
-    normalized = unicodedata.normalize("NFC", text)
-    normalized = "".join(
-        " " if unicodedata.category(character) == "Cc" and character != "\n" else character
-        for character in normalized
-    )
-    lines = [re.sub(r"[^\S\n]+", " ", line).strip() for line in normalized.split("\n")]
-    return "\n".join(lines).strip()
-
-
-def _display_content(kind: object, text: str) -> str:
-    """Return display text without modifying the authored storyboard value."""
-    normalized = normalize_content(text)
-    return normalized.upper() if kind == "dialogue" else normalized
 
 
 def normalized_word_count(text: str) -> int:
@@ -388,7 +370,7 @@ def _fitted_item_rect(
         return dict(maximum)
     layout = _layout_styled_text(
         draw,
-        _display_content(kind, item.get("content", "")),
+        display_content(kind, item.get("content", "")),
         font,
         _text_wrap_width(kind, maximum["width"]),
         emphasis=kind == "dialogue",
@@ -537,12 +519,11 @@ def _organic_tail_geometry(
 
 
 def _draw_antialiased_balloon(
-    draw: ImageDraw.ImageDraw,
+    image: Image.Image,
     bounds: tuple[int, int, int, int],
     tail: dict[str, object] | None,
 ) -> None:
     """Draw one seamless supersampled balloon and composite it onto the panel."""
-    image = draw._image
     scale = BALLOON_SUPERSAMPLE
     image_width, image_height = image.size
     x0, y0, x1, y1 = bounds
@@ -624,7 +605,7 @@ def _item_font(
     rect: dict[str, int],
 ) -> ImageFont.FreeTypeFont:
     kind = item.get("kind")
-    content = _display_content(kind, item.get("content", ""))
+    content = display_content(kind, item.get("content", ""))
     for size in range(42, 23, -2):
         font = _load_font(size)
         layout = _layout_styled_text(
@@ -655,7 +636,7 @@ def render_text_item(
 ) -> None:
     """Draw one validated text item inside an explicit bounded rectangle."""
     kind = item.get("kind")
-    content = _display_content(kind, item.get("content", ""))
+    content = display_content(kind, item.get("content", ""))
     if not content:
         raise ValueError(f"text item {item.get('id', 'unknown')} has empty content")
     if kind not in {"dialogue", "caption", "sfx"}:
@@ -699,9 +680,9 @@ def render_text_item(
                 image_height,
                 voice_source,
             )
-            _draw_antialiased_balloon(draw, (x0, y0, x1, y1), tail_geometry)
+            _draw_antialiased_balloon(draw._image, (x0, y0, x1, y1), tail_geometry)
         else:
-            _draw_antialiased_balloon(draw, (x0, y0, x1, y1), None)
+            _draw_antialiased_balloon(draw._image, (x0, y0, x1, y1), None)
         assert layout is not None
         _draw_styled_layout(
             draw,
@@ -821,6 +802,9 @@ def letter_panel(
         "placements": [],
     }
     if rendered_text_count == 0:
+        encoded = io.BytesIO()
+        base.convert("RGB").save(encoded, format="PNG", optimize=False, compress_level=9)
+        atomic_write_bytes(path, encoded.getvalue())
         return summary
 
     canvas = base.copy()
@@ -849,7 +833,7 @@ def letter_panel(
         assert font is not None
         assert selected_anchor is not None
         render_text_item(draw, item, rect, font, character_bible)
-        display = _display_content(item.get("kind"), item.get("content", ""))
+        display = display_content(item.get("kind"), item.get("content", ""))
         font_runs = [
             {
                 "font_id": Path(run_font.path).name,

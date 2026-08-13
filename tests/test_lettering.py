@@ -382,6 +382,22 @@ class LetteringTests(unittest.TestCase):
         self.assertTrue(output.is_file())
         self.assertEqual(str(output), result["lettered_path"])
 
+    def test_no_renderable_text_still_writes_the_base_panel(self):
+        """Persist the supplied panel even when no item produces lettering."""
+        before = Image.open(self.panel).convert("RGB")
+        for items in ([], [sfx()]):
+            output = self.root / f"out-{len(items)}.png"
+            summary = letter_panel(
+                str(output), 800, 1000, items, self.characters,
+                source_bytes=self.panel.read_bytes(),
+            )
+            self.assertTrue(output.is_file())
+            with Image.open(output) as actual:
+                self.assertIsNone(
+                    ImageChops.difference(before, actual.convert("RGB")).getbbox()
+                )
+            self.assertEqual(0, summary["rendered_text_count"])
+
     def test_text_items_render_in_priority_then_id_order(self):
         items = [sfx("THREE", 3), caption("SECOND", 2), dialogue("FIRST", 1)]
         seen = []
@@ -691,10 +707,13 @@ class LetteringTests(unittest.TestCase):
         self.assertEqual(before, self.panel.read_bytes())
 
     def test_sfx_is_validated_counted_and_byte_exact_noop(self):
-        before = self.panel.read_bytes()
+        before = Image.open(self.panel).convert("RGB")
         result = letter_panel(str(self.panel), 800, 1000, [sfx()], self.characters)
 
-        self.assertEqual(before, self.panel.read_bytes())
+        with Image.open(self.panel) as actual:
+            self.assertIsNone(
+                ImageChops.difference(before, actual.convert("RGB")).getbbox()
+            )
         self.assertEqual(1, result["text_count"])
         self.assertEqual(0, result["rendered_text_count"])
         self.assertEqual(1, result["sfx_count"])
@@ -702,9 +721,10 @@ class LetteringTests(unittest.TestCase):
 
         invalid = sfx()
         invalid["anchor"] = "outside-panel"
+        encoded = self.panel.read_bytes()
         with self.assertRaisesRegex(ValueError, "unknown anchor"):
             letter_panel(str(self.panel), 800, 1000, [invalid], self.characters)
-        self.assertEqual(before, self.panel.read_bytes())
+        self.assertEqual(encoded, self.panel.read_bytes())
 
     def test_sfx_never_reaches_placement_or_render(self):
         with (
