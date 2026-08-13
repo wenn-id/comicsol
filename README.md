@@ -37,6 +37,25 @@ The host-agnostic rule is: clone or copy this repository as one `comic-sol` fold
 beneath the Codex skills directory configured by your Codex installation. Keep
 `SKILL.md`, `scripts/`, `references/`, `templates/`, and `assets/` together.
 
+### Codex Plugin — same repository
+
+This repository is also a skills-only Codex Plugin. The plugin manifest lives at
+`.codex-plugin/plugin.json`; its self-contained upload bundle lives under
+`skills/comic-sol/`. No second repository is required.
+
+Test the same repository through Codex's repo marketplace:
+
+```bash
+codex plugin marketplace add wenn-id/comicsol --ref main
+codex plugin list --available --json
+codex plugin add comic-sol@comic-sol --json
+```
+
+The plugin includes the workflow, deterministic scripts, references, templates,
+fonts, and legal assets. Start a fresh Codex session after installation. The
+optional MCP/CLI engine remains in this repository as a separate local surface;
+plugin installation does not require a hosted service or MCP server.
+
 Windows PowerShell:
 
 ```powershell
@@ -92,7 +111,7 @@ MCP client configurations remain preserved.
 
 ## MCP Server (Optional)
 
-Comic Sol includes an optional `stdio` MCP server that exposes the deterministic pipeline as standard tools for Hermes Agent, Claude Desktop, Cursor, or any MCP client.
+Comic Sol includes an optional `stdio` MCP server that exposes the deterministic pipeline as standard tools for Codex-compatible MCP clients.
 
 Sampling should remain disabled to preserve deterministic execution.
 
@@ -194,8 +213,7 @@ source-file, or resume mode; applies documented defaults; and asks only material
 missing questions. It reports an explicit error if the agent session cannot return
 a local raster image. See
 [`references/capability-detection.md`](references/capability-detection.md) for the
-exact capability check and preserved-project recovery procedure. Platform-specific
-image-provider setup is documented in
+exact capability check and preserved-project recovery procedure. Provider-neutral image setup is documented in
 [`references/image-provider-setup.md`](references/image-provider-setup.md).
 
 For deterministic diagnostics:

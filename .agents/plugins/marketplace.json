@@ -1,0 +1,21 @@
+{
+  "name": "comic-sol",
+  "interface": {
+    "displayName": "Comic Sol"
+  },
+  "plugins": [
+    {
+      "name": "comic-sol",
+      "source": {
+        "source": "url",
+        "url": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL",
+        "products": ["CODEX"]
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

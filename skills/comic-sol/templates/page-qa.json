@@ -1,0 +1,83 @@
+{
+  "bindings": {
+    "page_path": "pages/page-001.png",
+    "page_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "checks": [
+    {
+      "evidence": "",
+      "id": "clipped-text",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "text-overlap",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "face-action-obstruction",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "bubble-tail-direction",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "reading-order",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "accidental-text-watermark",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "layout-border-integrity",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    }
+  ],
+  "decision": "regenerate",
+  "kind": "page-qa",
+  "review": {
+    "method": "migration-required",
+    "reviewed_at": "",
+    "reviewer": ""
+  },
+  "schema_version": "2.0",
+  "subject_id": "page-001",
+  "unresolved_warnings": [
+    "quality-migration-required"
+  ]
+}

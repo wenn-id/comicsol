@@ -1,0 +1,44 @@
+{
+  "artifacts": {},
+  "blocked_from": null,
+  "blocked_reason": null,
+  "capability": {
+    "detected_at": null,
+    "name": null,
+    "status": "not_checked",
+    "supports_dimensions": false,
+    "supports_reference_images": false
+  },
+  "created_at": "1970-01-01T00:00:00Z",
+  "input": {
+    "language": "en",
+    "mode": "short_prompt",
+    "request_path": "source/request.json",
+    "source_path": "source/input.txt",
+    "source_sha256": null
+  },
+  "panels": [],
+  "project_id": "comic-sol-project",
+  "schema_version": "1.0",
+  "settings": {
+    "max_panel_retries": 2,
+    "page_count": 2,
+    "page_height": 2400,
+    "page_width": 1600,
+    "panel_count": 0,
+    "reading_direction": "ltr",
+    "style_anchor": "original high-contrast manga/anime; expressive ink-like linework; restrained color accents"
+  },
+  "stage_versions": {
+    "composition": "1",
+    "export": "1",
+    "generation": "1",
+    "lettering": "2",
+    "planning": "1",
+    "storyboard": "1"
+  },
+  "status": "INIT",
+  "title": "Comic Sol Project",
+  "updated_at": "1970-01-01T00:00:00Z",
+  "warnings": []
+}

@@ -1,0 +1,91 @@
+{
+  "bindings": {
+    "clean_height": 1136,
+    "clean_path": "panels/panel-id/clean.png",
+    "clean_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "clean_width": 736,
+    "normalization_path": "panels/panel-id/normalization.json",
+    "normalization_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "raw_height": 1136,
+    "raw_path": "panels/raw/panel-id.png",
+    "raw_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "raw_width": 736
+  },
+  "checks": [
+    {
+      "evidence": "",
+      "id": "character-identity",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "anatomy",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "action",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "composition",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "continuity",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "text-free",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "technical",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    }
+  ],
+  "decision": "regenerate",
+  "kind": "panel-qa",
+  "review": {
+    "method": "migration-required",
+    "reviewed_at": "",
+    "reviewer": ""
+  },
+  "schema_version": "2.0",
+  "subject_id": "panel-id",
+  "unresolved_warnings": [
+    "quality-migration-required"
+  ]
+}
