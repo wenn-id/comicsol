@@ -10,6 +10,7 @@ import math
 import re
 import sys
 import unicodedata
+import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Callable, Iterable
 from PIL import Image, UnidentifiedImageError
 
 from project_io import contained_project_path, open_path_nofollow
+from raster_limits import MAX_DECODED_PIXELS
 from page_quality import validate_page_quality
 from quality_records import PANEL_CHECK_IDS, validate_quality_checks
 from typography import lettering_geometry_hash
@@ -990,11 +992,18 @@ def validate_panel_provenance(
         if path is None:
             continue
         try:
-            with open_path_nofollow(path) as stream, Image.open(stream) as image:
-                image.load()
-                actual_size = image.size
-        except (OSError, SyntaxError, UnidentifiedImageError, Image.DecompressionBombError):
-            stale(f"{prefix}_path", "bound raster is unreadable")
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with open_path_nofollow(path) as stream, Image.open(stream) as image:
+                    if image.width * image.height > MAX_DECODED_PIXELS:
+                        raise Image.DecompressionBombError("raster exceeds decode limit")
+                    image.load()
+                    actual_size = image.size
+        except (
+            OSError, SyntaxError, UnidentifiedImageError,
+            Image.DecompressionBombError, Image.DecompressionBombWarning,
+        ):
+            stale(f"{prefix}_path", "bound raster is unreadable or exceeds the decode limit")
             continue
         for axis, actual in zip(("width", "height"), actual_size):
             field = f"{prefix}_{axis}"
@@ -1292,20 +1301,24 @@ def _validate_raster(
         return None
     try:
         image_path = contained_project_path(project_dir, relative_path, must_exist=True)
-        with open_path_nofollow(image_path) as stream, Image.open(stream) as image:
-            if image.format not in {"PNG", "JPEG", "WEBP"}:
-                _add(issues, issue_path, field, "must contain PNG, JPEG, or WebP data")
-            width, height = image.size
-            if width < 512 or height < 512:
-                _add(issues, issue_path, field, "image dimensions must both be at least 512px")
-            if "A" in image.mode or "transparency" in image.info:
-                _add(issues, issue_path, field, "image has unintended alpha transparency")
-            if expected_ratio is not None and height > 0:
-                actual_ratio = width / height
-                if abs(actual_ratio - expected_ratio) / expected_ratio > 0.02:
-                    _add(issues, issue_path, field, "image aspect ratio differs from storyboard by more than 2%")
-            image.load()
-            return width, height
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with open_path_nofollow(image_path) as stream, Image.open(stream) as image:
+                if image.format not in {"PNG", "JPEG", "WEBP"}:
+                    _add(issues, issue_path, field, "must contain PNG, JPEG, or WebP data")
+                width, height = image.size
+                if width * height > MAX_DECODED_PIXELS:
+                    raise Image.DecompressionBombError("raster exceeds decode limit")
+                if width < 512 or height < 512:
+                    _add(issues, issue_path, field, "image dimensions must both be at least 512px")
+                if "A" in image.mode or "transparency" in image.info:
+                    _add(issues, issue_path, field, "image has unintended alpha transparency")
+                if expected_ratio is not None and height > 0:
+                    actual_ratio = width / height
+                    if abs(actual_ratio - expected_ratio) / expected_ratio > 0.02:
+                        _add(issues, issue_path, field, "image aspect ratio differs from storyboard by more than 2%")
+                image.load()
+                return width, height
     except (OSError, SyntaxError, UnidentifiedImageError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
         _add(issues, issue_path, field, f"image is unreadable: {type(error).__name__}")
         return None

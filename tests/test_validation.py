@@ -220,6 +220,7 @@ class TemplateContractTests(unittest.TestCase):
             },
             set(panel["bindings"]),
         )
+        self.assertEqual([], validate_panel_record(panel))
 
         font_path = ROOT / "assets/fonts/NotoSans-Regular.ttf"
         ImageFont.truetype(str(font_path), 42)
@@ -652,6 +653,15 @@ class ProjectValidationTests(unittest.TestCase):
         ):
             issues = validate_project(self.project, "panels")
         self.assertTrue(any("unreadable" in issue.message for issue in issues), issues)
+
+    def test_panel_stage_rejects_raster_over_decode_limit(self):
+        self.add_panel_files()
+        with patch("validate_project.MAX_DECODED_PIXELS", 1):
+            issues = validate_project(self.project, "panels")
+        self.assertTrue(any(
+            issue.field == "raw_path" and "unreadable" in issue.message
+            for issue in issues
+        ), issues)
 
     def test_non_object_normalization_record_is_a_validation_issue(self):
         self.add_panel_files()

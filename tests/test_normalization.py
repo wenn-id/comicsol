@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PIL import Image
 
@@ -264,6 +265,27 @@ class PanelProvenanceTests(unittest.TestCase):
         self.assert_stale(
             validate_panel_provenance(self.project, self.record), "clean_width"
         )
+
+    def test_provenance_rejects_raster_over_decode_limit_before_loading(self):
+        with mock.patch("validate_project.MAX_DECODED_PIXELS", 1):
+            issues = validate_panel_provenance(self.project, self.record)
+
+        self.assert_stale(issues, "raw_path")
+        self.assertTrue(any(
+            "decode limit" in issue.message for issue in issues
+        ), issues)
+
+    def test_provenance_promotes_decompression_bomb_warning_to_stale_issue(self):
+        with mock.patch(
+            "validate_project.Image.Image.load",
+            side_effect=Image.DecompressionBombWarning("unsafe dimensions"),
+        ):
+            issues = validate_panel_provenance(self.project, self.record)
+
+        self.assert_stale(issues, "raw_path")
+        self.assertTrue(any(
+            "unreadable" in issue.message for issue in issues
+        ), issues)
 
     def test_missing_normalization_and_traversal_fail_closed(self):
         (self.project / "panels/p01-01/normalization.json").unlink()

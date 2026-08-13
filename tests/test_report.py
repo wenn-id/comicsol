@@ -291,6 +291,22 @@ class ReportTests(unittest.TestCase):
 
         self.assertIn("quality-migration-required", text)
 
+    def test_report_retains_malformed_legacy_page_as_migration_required(self):
+        page_dir = self.project / "qa/pages"
+        page_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(page_dir / "page-001.json", {
+            "schema_version": "1.0",
+            "page": "not-a-number",
+            "page_path": "pages/page-001.png",
+            "page_sha256": "a" * 64,
+            "status": "reviewed",
+        })
+
+        text = render_report(self.project).read_text("utf-8")
+
+        self.assertIn("quality-migration-required", text)
+        self.assertIn("page-not-a-number", text)
+
     def test_absent_warnings_use_exact_sentence(self):
         for path in (self.project / "qa/panels").glob("*.json"):
             record = read_json(path)

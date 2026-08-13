@@ -121,11 +121,19 @@ def _load_page_records(project_dir: Path) -> list[dict[str, object]]:
         elif record.get("schema_version") == "1.0":
             record["quality-migration-required"] = True
             records.append(record)
-    records.sort(key=lambda record: (
-        str(record.get("subject_id", ""))
-        if record.get("schema_version") == "2.0"
-        else f"page-{record.get('page', 0):03d}"
-    ))
+    def sort_key(record: dict[str, object]) -> tuple[str, str]:
+        """Order page-QA records without trusting legacy page field types."""
+        if record.get("schema_version") == "2.0":
+            subject_id = record.get("subject_id")
+            return ("v2", subject_id if isinstance(subject_id, str) else "")
+        page = record.get("page")
+        return (
+            "v1",
+            f"page-{page:03d}" if isinstance(page, int) and not isinstance(page, bool)
+            else f"page-{page}",
+        )
+
+    records.sort(key=sort_key)
     return records
 
 

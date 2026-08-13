@@ -13,66 +13,66 @@
   },
   "checks": [
     {
-      "evidence": "",
+      "evidence": "migration required: character identity",
       "id": "character-identity",
       "method": "migration-required",
       "regions": [],
       "result": "fail",
-      "reviewer": "",
+      "reviewer": "template",
       "severity": "error"
     },
     {
-      "evidence": "",
+      "evidence": "migration required: anatomy",
       "id": "anatomy",
       "method": "migration-required",
       "regions": [],
       "result": "fail",
-      "reviewer": "",
+      "reviewer": "template",
       "severity": "error"
     },
     {
-      "evidence": "",
+      "evidence": "migration required: action",
       "id": "action",
       "method": "migration-required",
       "regions": [],
       "result": "fail",
-      "reviewer": "",
+      "reviewer": "template",
       "severity": "error"
     },
     {
-      "evidence": "",
+      "evidence": "migration required: composition",
       "id": "composition",
       "method": "migration-required",
       "regions": [],
       "result": "fail",
-      "reviewer": "",
+      "reviewer": "template",
       "severity": "error"
     },
     {
-      "evidence": "",
+      "evidence": "migration required: continuity",
       "id": "continuity",
       "method": "migration-required",
       "regions": [],
       "result": "fail",
-      "reviewer": "",
+      "reviewer": "template",
       "severity": "error"
     },
     {
-      "evidence": "",
+      "evidence": "migration required: text free",
       "id": "text-free",
       "method": "migration-required",
       "regions": [],
       "result": "fail",
-      "reviewer": "",
+      "reviewer": "template",
       "severity": "error"
     },
     {
-      "evidence": "",
+      "evidence": "migration required: technical",
       "id": "technical",
       "method": "migration-required",
       "regions": [],
       "result": "fail",
-      "reviewer": "",
+      "reviewer": "template",
       "severity": "error"
     }
   ],
@@ -80,8 +80,8 @@
   "kind": "panel-qa",
   "review": {
     "method": "migration-required",
-    "reviewed_at": "",
-    "reviewer": ""
+    "reviewed_at": "1970-01-01T00:00:00Z",
+    "reviewer": "template"
   },
   "schema_version": "2.0",
   "subject_id": "p01-01",
