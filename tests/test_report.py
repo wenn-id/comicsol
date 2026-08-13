@@ -149,6 +149,14 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(text.endswith("\n"))
         self.assertFalse(text.endswith("\n\n"))
 
+    def test_report_preserves_double_braces_in_authored_evidence(self):
+        self.records[0]["checks"][0]["evidence"] = "Observed {{sun gate}} intact."
+        atomic_write_json(
+            self.project / "qa/panels/p01-01.json", self.records[0]
+        )
+        report = render_report(self.project).read_text("utf-8")
+        self.assertIn("{{sun gate}}", report)
+
     def test_report_contains_checks_escaped_evidence_disclosures_and_integrity(self):
         text = render_report(self.project).read_text("utf-8")
         for check_id in PANEL_CHECK_IDS:

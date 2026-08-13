@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PIL import Image
 
@@ -264,24 +265,28 @@ class EvidenceModeContractTests(unittest.TestCase):
             retained.parent.mkdir(parents=True)
             retained.write_bytes(b"retained attempt")
 
-            self.assertEqual(
-                0,
-                main(
-                    [
-                        str(project),
-                        "--mode",
-                        "live-visual",
-                        "--retained-attempt",
-                        "panels/raw/attempt.png",
-                        "--provider",
-                        "local-test-provider",
-                        "--model",
-                        "test-model-v1",
-                        "--reviewer-method",
-                        "bounded-visual-review",
-                    ]
-                ),
-            )
+            with mock.patch(
+                "quality_sample.sha256_file", wraps=sha256_file, create=True
+            ) as hashed:
+                self.assertEqual(
+                    0,
+                    main(
+                        [
+                            str(project),
+                            "--mode",
+                            "live-visual",
+                            "--retained-attempt",
+                            "panels/raw/attempt.png",
+                            "--provider",
+                            "local-test-provider",
+                            "--model",
+                            "test-model-v1",
+                            "--reviewer-method",
+                            "bounded-visual-review",
+                        ]
+                    ),
+                )
+            hashed.assert_called_once_with(retained)
             record = json.loads(
                 (project / "qa/evidence.json").read_text("utf-8")
             )

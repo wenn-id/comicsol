@@ -287,7 +287,7 @@ def compose_project(project_dir: Path) -> list[Path]:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="compose_pages.py")
     parser.add_argument("project_dir", type=Path)
-    selection = parser.add_mutually_exclusive_group()
+    selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument("--page", type=int)
     selection.add_argument("--all", action="store_true", dest="all_pages")
     return parser
@@ -296,7 +296,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     arguments = _build_parser().parse_args(argv)
     try:
-        if arguments.page is None:
+        if arguments.all_pages:
             paths = compose_all_pages(arguments.project_dir)
         else:
             storyboard = read_json(contained_project_path(arguments.project_dir, "plan/storyboard.json", must_exist=True))

@@ -727,7 +727,7 @@ def _resume_stage_material(
         )
     if stage == "lettering":
         text = [panel.get("text", []) for panel in panels]
-        return text and [text] or [[]], _project_files(
+        return [text] if text else [[]], _project_files(
             project_dir, [f"panels/clean/{panel_id}.png" for panel_id in panel_ids]
         )
     if stage == "composition":
@@ -1865,14 +1865,21 @@ def _finalize_project_locked(project_dir: Path) -> dict[str, object]:
     plan = build_resume_plan(project_dir)
     stale = {
         a.stage for a in plan
-        if a.artifact == "stage" and a.action in {"run", "rerun"}
+        if a.artifact == "stage" and a.action in {"regenerate", "rerun"}
     }
 
     # 2. Lettering (if stale), advance status.
     manifest = read_json(manifest_path)
+    panel_ids = manifest.get("panels")
+    if not isinstance(panel_ids, list) or not panel_ids:
+        storyboard = read_json(project_dir / "plan/storyboard.json")
+        panel_ids = [
+            panel["id"] for panel in _storyboard_panels(storyboard)
+            if isinstance(panel.get("id"), str)
+        ]
     need_lettering = "lettering" in stale or not all(
         (project_dir / f"panels/{pid}/lettered.png").is_file()
-        for pid in (manifest.get("panels") if isinstance(manifest.get("panels"), list) else [])
+        for pid in panel_ids
     )
     if need_lettering:
         from letter_panels import letter_project

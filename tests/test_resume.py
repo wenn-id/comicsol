@@ -21,6 +21,7 @@ from comic_sol import (  # noqa: E402
     block_project,
     build_resume_plan,
     canonical_artifact_bytes,
+    finalize_project,
     init_project,
     invalidate_from,
     main,
@@ -193,11 +194,48 @@ class ResumeTests(unittest.TestCase):
             }
         self._write_json("logs/stage-cache.json", {"schema_version": "1.0", "stages": stages})
 
+    def _run_finalize(self):
+        """Run finalization while isolating stages outside the lettering decision."""
+        (self.project / "qa/pages").mkdir(parents=True, exist_ok=True)
+        (self.project / "qa/pages/page-001.json").write_text("{}\n", "utf-8")
+        with (
+            patch("compose_pages.compose_project"),
+            patch("page_quality.validate_page_quality", return_value=[]),
+            patch("export_pdf.guarded_export"),
+            patch("render_report.render_report"),
+            patch("comic_sol.record_stage"),
+            patch("comic_sol.transition"),
+        ):
+            return finalize_project(self.project)
+
     def test_cache_key_is_canonical_and_excludes_timestamps(self):
         first = stage_cache_key("planning", [{"updated_at": "one", "b": 2, "a": 1}], [], "1")
         second = stage_cache_key("planning", [{"a": 1, "b": 2, "updated_at": "two"}], [], "1")
         self.assertEqual(first, second)
         self.assertNotEqual(first, stage_cache_key("planning", [{"a": 1, "b": 3}], [], "1"))
+
+    def test_finalize_treats_regenerate_and_rerun_as_stale(self):
+        for action in ("regenerate", "rerun"):
+            with self.subTest(action=action):
+                plan = [ResumeAction("lettering", action, "stage", "stale")]
+                with (
+                    patch("comic_sol.build_resume_plan", return_value=plan),
+                    patch("letter_panels.letter_project") as letter,
+                ):
+                    self._run_finalize()
+                letter.assert_called_once_with(self.project)
+
+    def test_finalize_does_not_accept_empty_manifest_panels_vacuously(self):
+        manifest = read_json(self.project / "project.json")
+        manifest["panels"] = []
+        atomic_write_json(self.project / "project.json", manifest)
+        (self.project / "panels/p01-01/lettered.png").unlink(missing_ok=True)
+        with (
+            patch("comic_sol.build_resume_plan", return_value=[]),
+            patch("letter_panels.letter_project") as letter,
+        ):
+            self._run_finalize()
+        letter.assert_called_once_with(self.project)
 
     def test_stale_v1_lettering_cache_reruns_lettering_onward_only(self):
         canonical_inputs, files = self._stage_material("lettering")

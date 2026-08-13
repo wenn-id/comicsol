@@ -543,11 +543,11 @@ def render_report(project_dir: Path, output_path: Path | None = None) -> Path:
         "{{INTEGRITY}}": _integrity(project_dir, manifest, records),
         "{{RESUME}}": _resume(project_dir),
     }
+    if set(TOKEN_PATTERN.findall(template)) != set(replacements):
+        raise ValueError("QA report template tokens do not match replacements")
     rendered = template
     for token, content in replacements.items():
         rendered = rendered.replace(token, content)
-    if "{{" in rendered or TOKEN_PATTERN.search(rendered):
-        raise ValueError("QA report contains an unresolved template token")
     destination = Path(output_path) if output_path is not None else project_dir / "qa/report.md"
     atomic_write_bytes(destination, (rendered.rstrip() + "\n").encode("utf-8"))
     if destination == project_dir / "qa/report.md":

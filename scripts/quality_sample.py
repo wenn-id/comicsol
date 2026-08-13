@@ -8,7 +8,6 @@ for an already retained attempt with explicit provenance supplied by the caller.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -16,6 +15,7 @@ from pathlib import Path
 from typing import Sequence
 
 from project_io import ProjectTransaction, contained_project_path
+from comic_sol import sha256_file
 
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -100,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             if not attempt.is_file():
                 raise EvidenceModeError("retained attempt must be a local file")
-            attempt_hash = hashlib.sha256(attempt.read_bytes()).hexdigest()
+            attempt_hash = sha256_file(attempt)
         record = build_evidence_record(
             arguments.mode,
             retained_attempt=arguments.retained_attempt,
