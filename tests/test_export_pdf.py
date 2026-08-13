@@ -158,9 +158,8 @@ class PdfExportTests(unittest.TestCase):
         self.assertFalse(outside.parent.exists())
 
     def test_guarded_export_reports_missing_page_qa_as_pdf_error(self):
-        with mock.patch("export_pdf.require_valid_project"):
-            with self.assertRaisesRegex(PdfExportError, "qa/pages/page-001.json"):
-                guarded_export(self.project)
+        with self.assertRaisesRegex(PdfExportError, "qa/pages/page-001.json"):
+            guarded_export(self.project)
 
     def test_missing_noncontiguous_and_wrong_size_pages_are_refused_atomically(self):
         output = self.project / "exports/ordered-comic.pdf"

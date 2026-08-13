@@ -116,6 +116,24 @@ def _load_pages(paths: list[Path]) -> list[Image.Image]:
     return pages
 
 
+def _required_page_qa_paths(
+    project_dir: Path, page_count: int
+) -> list[tuple[str, Path]]:
+    page_qa_paths: list[tuple[str, Path]] = []
+    for page_number in range(1, page_count + 1):
+        qa_relative = f"qa/pages/page-{page_number:03d}.json"
+        try:
+            qa_path = contained_project_path(
+                project_dir, qa_relative, must_exist=True
+            )
+        except (OSError, ValueError) as error:
+            raise PdfExportError(f"missing page QA record: {qa_relative}") from error
+        if not qa_path.is_file():
+            raise PdfExportError(f"missing page QA record: {qa_relative}")
+        page_qa_paths.append((qa_relative, qa_path))
+    return page_qa_paths
+
+
 def _render_verified_payload(
     directory: Path,
     filename: str,
@@ -218,20 +236,13 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
             "guarded export destination must remain inside the project"
         ) from error
 
+    settings = manifest.get("settings")
+    page_count = settings.get("page_count") if isinstance(settings, dict) else None
+    if isinstance(page_count, int) and not isinstance(page_count, bool) and page_count > 0:
+        _required_page_qa_paths(project_dir, page_count)
     require_valid_project(project_dir, "export-ready")
     page_paths = discover_pages(project_dir)
-    page_qa_paths: list[tuple[str, Path]] = []
-    for page_number in range(1, len(page_paths) + 1):
-        qa_relative = f"qa/pages/page-{page_number:03d}.json"
-        try:
-            qa_path = contained_project_path(
-                project_dir, qa_relative, must_exist=True
-            )
-        except (OSError, ValueError) as error:
-            raise PdfExportError(f"missing page QA record: {qa_relative}") from error
-        if not qa_path.is_file():
-            raise PdfExportError(f"missing page QA record: {qa_relative}")
-        page_qa_paths.append((qa_relative, qa_path))
+    page_qa_paths = _required_page_qa_paths(project_dir, len(page_paths))
     pages = _load_pages(page_paths)
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
