@@ -130,7 +130,8 @@ class FinalArtifactTests(unittest.TestCase):
             self.project,
             1,
             build_page_quality_record(
-                self.project, 1, valid_page_reviewer_checks(self.project, 1)
+                self.project, 1, valid_page_reviewer_checks(self.project, 1),
+                reviewer="fixture-reviewer", reviewed_at="2026-08-14T01:02:03Z",
             ),
         )
 
@@ -292,7 +293,8 @@ class GuardedOperationTests(unittest.TestCase):
             self.project,
             1,
             build_page_quality_record(
-                self.project, 1, valid_page_reviewer_checks(self.project, 1)
+                self.project, 1, valid_page_reviewer_checks(self.project, 1),
+                reviewer="fixture-reviewer", reviewed_at="2026-08-14T01:02:03Z",
             ),
         )
 

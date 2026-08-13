@@ -99,6 +99,10 @@ class PageQualityTests(unittest.TestCase):
         self.assertEqual("alwan-review", record["review"]["reviewer"])
         self.assertEqual("2026-08-14T01:02:03Z", record["review"]["reviewed_at"])
 
+    def test_page_record_requires_caller_supplied_review_provenance(self):
+        with self.assertRaises(TypeError):
+            build_page_quality_record(self.project, 1, reviewer_checks(self.project))
+
     def test_page_validation_rejects_fixture_or_invalid_provenance(self):
         record = self._build_record()
         record["review"]["reviewed_at"] = "fixture-deterministic"
@@ -130,6 +134,46 @@ class PageQualityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "bubble-tail-evidence-mismatch"):
             self._build_record(checks)
 
+    def test_tail_warning_severity_cannot_hide_all_passing_or_empty_regions(self):
+        checks = reviewer_checks(self.project)
+        tail = next(check for check in checks if check["id"] == "bubble-tail-direction")
+        tail["severity"] = "warning"
+
+        with self.assertRaisesRegex(ValueError, "bubble-tail-evidence-mismatch"):
+            self._build_record(checks)
+
+        storyboard_path = self.project / "plan/storyboard.json"
+        storyboard = json.loads(storyboard_path.read_text("utf-8"))
+        for panel in storyboard["pages"][0]["panels"]:
+            for item in panel["text"]:
+                item["kind"] = "caption"
+        storyboard_path.write_text(
+            json.dumps(storyboard, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            "utf-8",
+        )
+        tail["regions"] = []
+        with self.assertRaisesRegex(ValueError, "bubble-tail-evidence-mismatch"):
+            self._build_record(checks)
+
+    def test_persisted_page_record_requires_exact_v2_shape_and_bindings(self):
+        cases = (
+            ("extra", lambda record: record.update({"extra": True})),
+            ("review", lambda record: record["review"].update({"extra": True})),
+            ("bindings", lambda record: record["bindings"].update({"extra": True})),
+            ("bindings.page_path", lambda record: record["bindings"].update({"page_path": "pages/page-999.png"})),
+            ("bindings.composition_cache_path", lambda record: record["bindings"].pop("composition_cache_path")),
+            ("bindings.page_width", lambda record: record["bindings"].update({"page_width": "1600"})),
+        )
+        for field, mutate in cases:
+            with self.subTest(field=field):
+                record = self._build_record()
+                mutate(record)
+                write_page_quality_record(self.project, 1, record)
+                self.assertTrue(any(
+                    issue.field == field
+                    for issue in validate_page_quality(self.project, 1)
+                ))
+
     def test_exact_check_ids_and_method_boundaries(self):
         self.assertEqual(
             (
@@ -144,7 +188,7 @@ class PageQualityTests(unittest.TestCase):
             DETERMINISTIC_PAGE_CHECK_IDS,
         )
 
-        record = build_page_quality_record(self.project, 1, reviewer_checks(self.project))
+        record = self._build_record()
         checks = {check["id"]: check for check in record["checks"]}
         self.assertEqual(set(PAGE_CHECK_IDS), set(checks))
         for check_id in DETERMINISTIC_PAGE_CHECK_IDS:
@@ -157,24 +201,24 @@ class PageQualityTests(unittest.TestCase):
 
     def test_missing_or_generic_subjective_evidence_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "quality-check-ids"):
-            build_page_quality_record(self.project, 1, [])
+            self._build_record([])
         generic = reviewer_checks(self.project)
         generic[0]["evidence"] = "ok"
         with self.assertRaisesRegex(ValueError, "quality-evidence-generic"):
-            build_page_quality_record(self.project, 1, generic)
+            self._build_record(generic)
 
     def test_subjective_page_checks_use_their_normative_subset(self):
         checks = reviewer_checks(self.project)
         checks[0], checks[1] = checks[1], checks[0]
         with self.assertRaisesRegex(ValueError, "quality-check-ids"):
-            build_page_quality_record(self.project, 1, checks)
+            self._build_record(checks)
 
     def test_page_context_rejects_lettering_panel_count_mismatch(self):
         checks = reviewer_checks(self.project)
         geometry = self.project / "panels/p01-01/lettering.json"
         geometry.unlink()
         with self.assertRaisesRegex(ValueError, "lettering|panel"):
-            build_page_quality_record(self.project, 1, checks)
+            self._build_record(checks)
 
     def test_tail_direction_requires_one_current_region_per_dialogue(self):
         missing = reviewer_checks(self.project)
@@ -183,7 +227,7 @@ class PageQualityTests(unittest.TestCase):
         )
         tail_check["regions"] = []
         with self.assertRaisesRegex(ValueError, "bubble-tail-evidence-mismatch"):
-            build_page_quality_record(self.project, 1, missing)
+            self._build_record(missing)
 
         stale = reviewer_checks(self.project)
         tail_check = next(
@@ -191,10 +235,10 @@ class PageQualityTests(unittest.TestCase):
         )
         tail_check["regions"][0]["tip"][0] += 1
         with self.assertRaisesRegex(ValueError, "bubble-tail-evidence-mismatch"):
-            build_page_quality_record(self.project, 1, stale)
+            self._build_record(stale)
 
     def test_record_binds_page_cache_layout_storyboard_and_ordered_lettering(self):
-        record = build_page_quality_record(self.project, 1, reviewer_checks(self.project))
+        record = self._build_record()
         bindings = record["bindings"]
         self.assertEqual("2.0", record["schema_version"])
         self.assertEqual("page-qa", record["kind"])
@@ -211,7 +255,7 @@ class PageQualityTests(unittest.TestCase):
                             for value in bindings["lettering_sha256s"]))
 
     def test_write_is_canonical_and_current_record_validates(self):
-        record = build_page_quality_record(self.project, 1, reviewer_checks(self.project))
+        record = self._build_record()
         path = write_page_quality_record(self.project, 1, record)
         self.assertEqual((self.project / "qa/pages/page-001.json").resolve(), path)
         loaded = json.loads(path.read_text("utf-8"))
@@ -223,7 +267,7 @@ class PageQualityTests(unittest.TestCase):
         self.assertEqual((), validate_page_quality(self.project, 1))
 
     def test_persisted_deterministic_pass_checks_reject_failure_regions(self):
-        record = build_page_quality_record(self.project, 1, reviewer_checks(self.project))
+        record = self._build_record()
         deterministic = next(
             check for check in record["checks"]
             if check["id"] in DETERMINISTIC_PAGE_CHECK_IDS
@@ -240,7 +284,7 @@ class PageQualityTests(unittest.TestCase):
         ), issues)
 
     def test_page_cache_storyboard_layout_and_lettering_drift_are_stale(self):
-        record = build_page_quality_record(self.project, 1, reviewer_checks(self.project))
+        record = self._build_record()
         write_page_quality_record(self.project, 1, record)
         cases = (
             ("pages/page-001.png", "bindings.page_sha256", "append"),
@@ -283,7 +327,7 @@ class PageQualityTests(unittest.TestCase):
             json.dumps(geometry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             "utf-8",
         )
-        record = build_page_quality_record(self.project, 1, reviewer_checks(self.project))
+        record = self._build_record()
         checks = {check["id"]: check for check in record["checks"]}
         self.assertEqual("fail", checks["clipped-text"]["result"])
         self.assertEqual("fail", checks["text-overlap"]["result"])
@@ -291,7 +335,7 @@ class PageQualityTests(unittest.TestCase):
         self.assertEqual("regenerate", record["decision"])
 
     def test_export_ready_gate_requires_current_schema_two_page_quality(self):
-        record = build_page_quality_record(self.project, 1, reviewer_checks(self.project))
+        record = self._build_record()
         write_page_quality_record(self.project, 1, record)
         current = validate_project(self.project, "export-ready")
         self.assertFalse(any(

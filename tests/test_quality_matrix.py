@@ -343,7 +343,10 @@ class DeterministicLifecycleTests(unittest.TestCase):
             write_page_quality_record(
                 project,
                 1,
-                build_page_quality_record(project, 1, page_reviewer_checks(project, 1)),
+                build_page_quality_record(
+                    project, 1, page_reviewer_checks(project, 1),
+                    reviewer="fixture-reviewer", reviewed_at="2026-08-14T01:02:03Z",
+                ),
             )
             result = finalize_project(project)
 
@@ -366,7 +369,10 @@ class DeterministicLifecycleTests(unittest.TestCase):
             write_page_quality_record(
                 project,
                 1,
-                build_page_quality_record(project, 1, page_reviewer_checks(project, 1)),
+                build_page_quality_record(
+                    project, 1, page_reviewer_checks(project, 1),
+                    reviewer="fixture-reviewer", reviewed_at="2026-08-14T01:02:03Z",
+                ),
             )
             first_result = finalize_project(project)
             pdf = project / first_result["pdf"]

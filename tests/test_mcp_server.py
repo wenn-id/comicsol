@@ -97,7 +97,8 @@ def write_current_page_qa_records(project: Path, page_numbers):
             project,
             page_number,
             build_page_quality_record(
-                project, page_number, valid_page_reviewer_checks(project, page_number)
+                project, page_number, valid_page_reviewer_checks(project, page_number),
+                reviewer="fixture-reviewer", reviewed_at="2026-08-14T01:02:03Z",
             ),
         )
 

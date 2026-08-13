@@ -30,6 +30,17 @@ SUBJECTIVE_PAGE_CHECK_IDS = tuple(
 TIMESTAMP_PATTERN = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
 )
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+PAGE_RECORD_FIELDS = {
+    "bindings", "checks", "decision", "kind", "review", "schema_version",
+    "subject_id", "unresolved_warnings",
+}
+PAGE_REVIEW_FIELDS = {"method", "reviewer", "reviewed_at"}
+PAGE_BINDING_FIELDS = {
+    "composition_cache_path", "composition_cache_sha256", "layout_name",
+    "layout_version", "lettering_sha256s", "page_height", "page_path",
+    "page_sha256", "page_width", "storyboard_path", "storyboard_sha256",
+}
 
 
 @dataclass(frozen=True)
@@ -299,10 +310,10 @@ def _validate_tail_evidence(context: PageContext, checks: Sequence[Mapping[str, 
 
     results = [region.get("result") for region in observed.values()]
     check_result = tail_check.get("result")
+    is_warning = check_result == "warning" or tail_check.get("severity") == "warning"
     if (check_result == "pass" and any(result != "pass" for result in results)) or (
         check_result == "fail" and results and all(result == "pass" for result in results)
-    ) or (
-        check_result == "warning" and results and all(result == "pass" for result in results)
+    ) or (is_warning and not any(result == "fail" for result in results)
     ):
         raise ValueError("bubble-tail-evidence-mismatch: check result is inconsistent")
 
@@ -322,8 +333,8 @@ def build_page_quality_record(
     page_number: int,
     visual_checks: Sequence[Mapping[str, object]],
     *,
-    reviewer: str = "fixture-reviewer",
-    reviewed_at: str = "2026-08-14T01:02:03Z",
+    reviewer: str,
+    reviewed_at: str,
 ) -> dict[str, object]:
     """Build a current schema-2.0 page QA record without inventing visual evidence."""
     project_dir = Path(project_dir)
@@ -402,6 +413,15 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
     except (OSError, ValueError, json.JSONDecodeError):
         stale("record.path", "page quality record is missing or unreadable")
         return tuple(issues)
+    if not isinstance(record, dict):
+        stale("record", "page quality record must be an object")
+        return tuple(issues)
+    unknown_fields = set(record) - PAGE_RECORD_FIELDS
+    missing_fields = PAGE_RECORD_FIELDS - set(record)
+    for field in sorted(unknown_fields):
+        stale(field, "unknown page quality record field")
+    for field in sorted(missing_fields):
+        stale(field, "required page quality record field is missing")
     if record.get("schema_version") != "2.0" or record.get("kind") != "page-qa":
         stale("schema_version", "page quality record is not schema 2.0")
         return tuple(issues)
@@ -424,6 +444,8 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
     if not isinstance(review, dict):
         stale("review", "page quality review is missing")
     else:
+        if set(review) != PAGE_REVIEW_FIELDS:
+            stale("review", "page quality review fields are invalid")
         if review.get("method") != "deterministic-plus-bounded-visual-review":
             stale("review.method", "page quality review method is invalid")
         if not isinstance(review.get("reviewer"), str) or not review["reviewer"].strip():
@@ -451,6 +473,28 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
     if not isinstance(bindings, dict):
         stale("bindings", "page quality bindings are missing")
         return tuple(sorted(issues, key=lambda issue: (issue.path, issue.field, issue.message)))
+    unexpected_bindings = set(bindings) - PAGE_BINDING_FIELDS
+    missing_bindings = PAGE_BINDING_FIELDS - set(bindings)
+    if unexpected_bindings:
+        stale("bindings", "page quality bindings contain unknown fields")
+    for field in sorted(missing_bindings):
+        stale(f"bindings.{field}", "required page quality binding is missing")
+    for field in ("composition_cache_path", "page_path", "storyboard_path"):
+        if not isinstance(bindings.get(field), str):
+            stale(f"bindings.{field}", "bound artifact path must be a string")
+    for field in (
+        "composition_cache_sha256", "page_sha256", "storyboard_sha256",
+    ):
+        if not isinstance(bindings.get(field), str) or SHA256_PATTERN.fullmatch(bindings[field]) is None:
+            stale(f"bindings.{field}", "bound artifact hash must be a lowercase SHA-256")
+    for field in ("page_width", "page_height"):
+        value = bindings.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            stale(f"bindings.{field}", "bound page dimension must be a positive integer")
+    if not isinstance(bindings.get("layout_name"), str) or not bindings["layout_name"]:
+        stale("bindings.layout_name", "bound layout name must be non-empty")
+    if not isinstance(bindings.get("layout_version"), str) or not bindings["layout_version"]:
+        stale("bindings.layout_version", "bound layout version must be non-empty")
 
     # Verify byte bindings before parsing their semantic contents. Corrupt JSON
     # must still identify the exact stale artifact rather than collapse into one
@@ -512,11 +556,14 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
             stale("checks", str(error))
 
     expected = {
+        "composition_cache_path": context.cache_relative,
         "page_sha256": sha256_file(context.page_path),
         "page_width": context.page_width,
         "page_height": context.page_height,
+        "page_path": context.page_relative,
         "composition_cache_sha256": sha256_file(context.cache_path),
         "storyboard_sha256": sha256_file(context.storyboard_path),
+        "storyboard_path": "plan/storyboard.json",
         "layout_name": context.declared_layout,
         "layout_version": LAYOUT_VERSION,
         "lettering_sha256s": [
