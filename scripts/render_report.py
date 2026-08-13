@@ -118,7 +118,14 @@ def _load_page_records(project_dir: Path) -> list[dict[str, object]]:
         record = read_json(path)
         if record.get("schema_version") == "2.0" and record.get("kind") == "page-qa":
             records.append(record)
-    records.sort(key=lambda record: str(record.get("subject_id", "")))
+        elif record.get("schema_version") == "1.0":
+            record["quality-migration-required"] = True
+            records.append(record)
+    records.sort(key=lambda record: (
+        str(record.get("subject_id", ""))
+        if record.get("schema_version") == "2.0"
+        else f"page-{record.get('page', 0):03d}"
+    ))
     return records
 
 
@@ -319,6 +326,15 @@ def _page_qa_table(records: list[dict[str, object]]) -> str:
         "| " + " | ".join("---" for _ in headings) + " |",
     ]
     for record in records:
+        if record.get("quality-migration-required"):
+            lines.append(
+                "| " + " | ".join(_escape_table(cell) for cell in (
+                    f"page-{record.get('page', 'unknown')}",
+                    "quality-migration-required", "migration-required", "missing",
+                    "migration-required", "migration-required",
+                )) + " |"
+            )
+            continue
         bindings = record.get("bindings")
         layout = bindings.get("layout_name", "unknown") if isinstance(bindings, dict) else "unknown"
         version = bindings.get("layout_version", "unknown") if isinstance(bindings, dict) else "unknown"

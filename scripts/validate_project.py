@@ -1265,7 +1265,7 @@ def _storyboard_panel_map(storyboard: dict[str, object]) -> dict[str, dict[str, 
 
 
 def validate_page_qa_record(record: dict[str, object]) -> list[ValidationIssue]:
-    """Validate a page-QA record schema."""
+    """Validate a readable legacy schema-1.0 page-QA record for migration."""
     issues: list[ValidationIssue] = []
     allowed = {"page", "page_path", "page_sha256", "schema_version", "status"}
     required = {"page", "page_path", "page_sha256", "schema_version", "status"}

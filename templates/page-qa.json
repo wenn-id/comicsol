@@ -1,7 +1,16 @@
 {
   "bindings": {
+    "composition_cache_path": "cache/composition.json",
+    "composition_cache_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "layout_name": "",
+    "layout_version": "",
+    "lettering_sha256s": [],
+    "page_height": 0,
     "page_path": "pages/page-001.png",
-    "page_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    "page_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "page_width": 0,
+    "storyboard_path": "plan/storyboard.json",
+    "storyboard_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "checks": [
     {

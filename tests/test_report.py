@@ -248,7 +248,7 @@ class ReportTests(unittest.TestCase):
             "kind": "page-qa",
             "review": {
                 "method": "deterministic-plus-bounded-visual-review",
-                "reviewed_at": "fixture",
+                "reviewed_at": "2026-08-14T01:02:03Z",
                 "reviewer": "fixture-reviewer",
             },
             "schema_version": "2.0",
@@ -262,6 +262,21 @@ class ReportTests(unittest.TestCase):
         self.assertIn("deterministic-geometry-v1", text)
         self.assertIn("bounded-visual-review", text)
         self.assertIn("face-action-obstruction", text)
+
+    def test_report_retains_legacy_page_record_as_migration_required(self):
+        page_dir = self.project / "qa/pages"
+        page_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(page_dir / "page-001.json", {
+            "schema_version": "1.0",
+            "page": 1,
+            "page_path": "pages/page-001.png",
+            "page_sha256": "a" * 64,
+            "status": "reviewed",
+        })
+
+        text = render_report(self.project).read_text("utf-8")
+
+        self.assertIn("quality-migration-required", text)
 
     def test_absent_warnings_use_exact_sentence(self):
         for path in (self.project / "qa/panels").glob("*.json"):

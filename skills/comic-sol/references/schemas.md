@@ -259,13 +259,22 @@ Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-nu
 
 ## Page QA record: `qa/pages/page-{NNN}.json`
 
-One record per composed page, created from `templates/page-qa.json` after the agent visually inspects that page. It contains exactly `page`, `page_path`, `page_sha256`, `schema_version`, and `status`:
+One schema-2.0 `page-qa` record per composed page is created from `templates/page-qa.json`
+after bounded visual inspection. It contains `schema_version: "2.0"`, `kind: "page-qa"`,
+and `subject_id: "page-{NNN}"`; seven checks in the normative page order; a review object
+with the fixed method `deterministic-plus-bounded-visual-review`, a non-empty reviewer, and
+an ISO-8601 UTC `reviewed_at`; `decision`; and `unresolved_warnings`.
 
-- `page`: the page number, matching the file's zero-padded `NNN`.
-- `page_path`: exactly `pages/page-{NNN}.png`.
-- `page_sha256`: the SHA-256 of that composed page PNG as it exists on disk.
-- `status`: exactly `"reviewed"`.
+`bindings` contains exactly `composition_cache_path`, `composition_cache_sha256`,
+`layout_name`, `layout_version`, ordered `lettering_sha256s` values (`panel-id:sha256`),
+`page_height`, `page_path`, `page_sha256`, `page_width`, `storyboard_path`, and
+`storyboard_sha256`. Every value is bound to the artifacts inspected by the record.
 
+An error-level failed check selects `regenerate`; otherwise any check whose result or severity
+is `warning` selects `accept-warning` and places its evidence, in check order, in
+`unresolved_warnings`; all passing checks select `accept`. A legacy five-field record
+(`page`, `page_path`, `page_sha256`, `schema_version`, `status`) is schema-1.0 input only:
+it remains readable for reporting but requires migration and cannot satisfy final validation.
 These records are the integrity gate on finalization. `comic_sol.py finalize` and `validate_project.py --stage final|export-ready` fail closed when a record is missing or when `page_sha256` no longer matches the page, because a terminal status must not claim visual review that did not happen. Recompose a page and its record goes stale; write it again after re-inspecting.
 
 ## Composition cache: `cache/composition.json`

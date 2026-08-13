@@ -82,6 +82,54 @@ class PageQualityTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
+    def _build_record(self, checks=None, **provenance):
+        return build_page_quality_record(
+            self.project,
+            1,
+            reviewer_checks(self.project) if checks is None else checks,
+            reviewer=provenance.get("reviewer", "fixture-reviewer"),
+            reviewed_at=provenance.get("reviewed_at", "2026-08-14T01:02:03Z"),
+        )
+
+    def test_page_record_uses_supplied_review_provenance(self):
+        record = self._build_record(
+            reviewer="alwan-review", reviewed_at="2026-08-14T01:02:03Z"
+        )
+
+        self.assertEqual("alwan-review", record["review"]["reviewer"])
+        self.assertEqual("2026-08-14T01:02:03Z", record["review"]["reviewed_at"])
+
+    def test_page_validation_rejects_fixture_or_invalid_provenance(self):
+        record = self._build_record()
+        record["review"]["reviewed_at"] = "fixture-deterministic"
+        write_page_quality_record(self.project, 1, record)
+
+        self.assertTrue(any(
+            issue.field == "review.reviewed_at"
+            for issue in validate_page_quality(self.project, 1)
+        ))
+
+    def test_tail_warning_requires_failed_region_and_records_warning(self):
+        checks = reviewer_checks(self.project)
+        tail = next(check for check in checks if check["id"] == "bubble-tail-direction")
+        tail["result"] = "warning"
+        tail["severity"] = "warning"
+        tail["evidence"] = "One tail terminates slightly wide of its speaker."
+        tail["regions"][0]["result"] = "fail"
+
+        record = self._build_record(checks)
+
+        self.assertEqual("accept-warning", record["decision"])
+        self.assertEqual([tail["evidence"]], record["unresolved_warnings"])
+
+    def test_tail_warning_cannot_hide_all_passing_regions(self):
+        checks = reviewer_checks(self.project)
+        tail = next(check for check in checks if check["id"] == "bubble-tail-direction")
+        tail.update({"result": "warning", "severity": "warning"})
+
+        with self.assertRaisesRegex(ValueError, "bubble-tail-evidence-mismatch"):
+            self._build_record(checks)
+
     def test_exact_check_ids_and_method_boundaries(self):
         self.assertEqual(
             (

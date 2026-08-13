@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -24,6 +26,9 @@ DETERMINISTIC_PAGE_CHECK_IDS = frozenset({
 SUBJECTIVE_PAGE_CHECK_IDS = tuple(
     check_id for check_id in PAGE_CHECK_IDS
     if check_id not in DETERMINISTIC_PAGE_CHECK_IDS
+)
+TIMESTAMP_PATTERN = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
 )
 
 
@@ -296,14 +301,29 @@ def _validate_tail_evidence(context: PageContext, checks: Sequence[Mapping[str, 
     check_result = tail_check.get("result")
     if (check_result == "pass" and any(result != "pass" for result in results)) or (
         check_result == "fail" and results and all(result == "pass" for result in results)
+    ) or (
+        check_result == "warning" and results and all(result == "pass" for result in results)
     ):
         raise ValueError("bubble-tail-evidence-mismatch: check result is inconsistent")
+
+
+def _valid_timestamp(value: object) -> bool:
+    if not isinstance(value, str) or TIMESTAMP_PATTERN.fullmatch(value) is None:
+        return False
+    try:
+        datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return False
+    return True
 
 
 def build_page_quality_record(
     project_dir: Path,
     page_number: int,
     visual_checks: Sequence[Mapping[str, object]],
+    *,
+    reviewer: str = "fixture-reviewer",
+    reviewed_at: str = "2026-08-14T01:02:03Z",
 ) -> dict[str, object]:
     """Build a current schema-2.0 page QA record without inventing visual evidence."""
     project_dir = Path(project_dir)
@@ -311,9 +331,20 @@ def build_page_quality_record(
     deterministic = _deterministic_checks(context)
     subjective = _reviewer_checks(visual_checks)
     _validate_tail_evidence(context, subjective)
+    if not isinstance(reviewer, str) or not reviewer.strip():
+        raise ValueError("reviewer must be non-empty")
+    if not _valid_timestamp(reviewed_at):
+        raise ValueError("reviewed_at must be an ISO 8601 UTC timestamp")
     checks_by_id = {check["id"]: check for check in deterministic + subjective}
     checks = [checks_by_id[check_id] for check_id in PAGE_CHECK_IDS]
-    failures = [check for check in checks if check.get("result") == "fail"]
+    failures = [
+        check for check in checks
+        if check.get("result") == "fail" and check.get("severity") == "error"
+    ]
+    warnings = [
+        check for check in checks
+        if check.get("result") == "warning" or check.get("severity") == "warning"
+    ]
     record: dict[str, object] = {
         "bindings": {
             "composition_cache_path": context.cache_relative,
@@ -329,16 +360,16 @@ def build_page_quality_record(
             "storyboard_sha256": sha256_file(context.storyboard_path),
         },
         "checks": checks,
-        "decision": "regenerate" if failures else "accept",
+        "decision": "regenerate" if failures else "accept-warning" if warnings else "accept",
         "kind": "page-qa",
         "review": {
             "method": "deterministic-plus-bounded-visual-review",
-            "reviewed_at": "fixture-deterministic",
-            "reviewer": "fixture-reviewer",
+            "reviewed_at": reviewed_at,
+            "reviewer": reviewer,
         },
         "schema_version": "2.0",
         "subject_id": _page_id(page_number),
-        "unresolved_warnings": [],
+        "unresolved_warnings": [check["evidence"] for check in warnings],
     }
     categories = validate_quality_checks(checks, PAGE_CHECK_IDS)
     if categories:
@@ -388,6 +419,33 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
         for check in checks
     ):
         stale("checks", "deterministic passing checks must not include failure regions")
+
+    review = record.get("review")
+    if not isinstance(review, dict):
+        stale("review", "page quality review is missing")
+    else:
+        if review.get("method") != "deterministic-plus-bounded-visual-review":
+            stale("review.method", "page quality review method is invalid")
+        if not isinstance(review.get("reviewer"), str) or not review["reviewer"].strip():
+            stale("review.reviewer", "page quality reviewer is missing")
+        if not _valid_timestamp(review.get("reviewed_at")):
+            stale("review.reviewed_at", "page quality review timestamp is invalid")
+
+    if isinstance(checks, list):
+        failures = [
+            check for check in checks if isinstance(check, dict)
+            and check.get("result") == "fail" and check.get("severity") == "error"
+        ]
+        warnings = [
+            check for check in checks if isinstance(check, dict)
+            and (check.get("result") == "warning" or check.get("severity") == "warning")
+        ]
+        expected_decision = "regenerate" if failures else "accept-warning" if warnings else "accept"
+        if record.get("decision") != expected_decision:
+            stale("decision", "page quality decision does not match checks")
+        expected_warnings = [check.get("evidence") for check in warnings]
+        if record.get("unresolved_warnings") != expected_warnings:
+            stale("unresolved_warnings", "page quality warnings do not match checks")
 
     bindings = record.get("bindings")
     if not isinstance(bindings, dict):
@@ -446,6 +504,12 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
         if not issues:
             stale("bindings", "current page provenance is missing or unreadable")
         return tuple(sorted(issues, key=lambda issue: (issue.path, issue.field, issue.message)))
+
+    if isinstance(checks, list):
+        try:
+            _validate_tail_evidence(context, checks)
+        except ValueError as error:
+            stale("checks", str(error))
 
     expected = {
         "page_sha256": sha256_file(context.page_path),

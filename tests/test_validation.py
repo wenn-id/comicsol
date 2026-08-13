@@ -197,6 +197,14 @@ class TemplateContractTests(unittest.TestCase):
         page = json.loads(page_raw)
         self.assertEqual("2.0", page["schema_version"])
         self.assertEqual("page-qa", page["kind"])
+        self.assertEqual(
+            {
+                "composition_cache_path", "composition_cache_sha256", "layout_name",
+                "layout_version", "lettering_sha256s", "page_height", "page_path",
+                "page_sha256", "page_width", "storyboard_path", "storyboard_sha256",
+            },
+            set(page["bindings"]),
+        )
         self.assertEqual(list(PAGE_CHECK_IDS), [check["id"] for check in page["checks"]])
         self.assertEqual(
             (json.dumps(page, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(),
