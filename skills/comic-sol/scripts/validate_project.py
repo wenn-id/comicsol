@@ -664,25 +664,21 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
     if not isinstance(subject_id, str) or PANEL_ID_PATTERN.fullmatch(subject_id) is None:
         _add(issues, path, "subject_id", "must match pNN-NN")
 
-    bindings = root.get("bindings")
-    if not isinstance(bindings, dict):
-        _add(issues, path, "bindings", "must be an object")
-    else:
-        for name, value in sorted(bindings.items()):
-            field = f"bindings.{name}"
-            if name.endswith("_path"):
-                _relative_path(value, issues, path, field)
-            elif name.endswith("_sha256"):
-                _sha256(value, issues, path, field)
-            elif name.endswith(("_width", "_height")):
-                _integer(value, 1, 100_000, issues, path, field)
-            elif name.endswith("_sha256s"):
-                values = _string_list(value, issues, path, field)
-                if values is not None:
-                    for index, digest in enumerate(values):
-                        _sha256(digest, issues, path, f"{field}[{index}]")
-            elif not isinstance(value, (str, int, list)) or isinstance(value, bool):
-                _add(issues, path, field, "must be a string, integer, or array")
+    binding_fields = {
+        "raw_path", "raw_sha256", "raw_width", "raw_height",
+        "clean_path", "clean_sha256", "clean_width", "clean_height",
+        "normalization_path", "normalization_sha256",
+    }
+    bindings = _object(
+        root.get("bindings"), binding_fields, binding_fields, issues, path, "bindings"
+    )
+    if bindings is not None:
+        for name in ("raw_path", "clean_path", "normalization_path"):
+            _relative_path(bindings.get(name), issues, path, f"bindings.{name}")
+        for name in ("raw_sha256", "clean_sha256", "normalization_sha256"):
+            _sha256(bindings.get(name), issues, path, f"bindings.{name}")
+        for name in ("raw_width", "raw_height", "clean_width", "clean_height"):
+            _integer(bindings.get(name), 1, 100_000, issues, path, f"bindings.{name}")
 
     checks = root.get("checks")
     for category in validate_quality_checks(checks, PANEL_CHECK_IDS):
@@ -698,6 +694,21 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
     decision = root.get("decision")
     if decision not in {"accept", "accept-warning", "regenerate"}:
         _add(issues, path, "decision", "unknown quality decision")
+    has_error_failure = isinstance(checks, list) and any(
+        isinstance(check, dict)
+        and check.get("result") == "fail"
+        and check.get("severity") == "error"
+        for check in checks
+    )
+    if has_error_failure and decision != "regenerate":
+        _add(issues, path, "decision", "error-level failures require regenerate")
+    has_warning = isinstance(checks, list) and any(
+        isinstance(check, dict)
+        and (check.get("result") == "warning" or check.get("severity") == "warning")
+        for check in checks
+    )
+    if has_warning and decision not in {"accept-warning", "regenerate"}:
+        _add(issues, path, "decision", "warnings require accept-warning or regenerate")
     unresolved = _string_list(
         root.get("unresolved_warnings"), issues, path, "unresolved_warnings"
     )

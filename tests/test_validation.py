@@ -498,6 +498,29 @@ class StrictSchemaValidationTests(unittest.TestCase):
         private_path["bindings"]["raw_path"] = "/home/private/panel.png"
         self.assert_issue(validate_panel_record(private_path), "bindings.raw_path")
 
+    def test_v2_panel_record_rejects_legacy_panel_id(self):
+        record = valid_panel_record_v2()
+        record["panel_id"] = record["subject_id"]
+
+        self.assert_issue(validate_panel_record(record), "panel_id")
+
+    def test_v2_error_failure_requires_regenerate(self):
+        record = valid_panel_record_v2()
+        record["checks"][0]["result"] = "fail"
+
+        self.assert_issue(validate_panel_record(record), "decision")
+
+    def test_v2_warning_requires_accept_warning_or_regenerate(self):
+        record = valid_panel_record_v2()
+        record["checks"][0].update({"result": "warning", "severity": "warning"})
+
+        self.assert_issue(validate_panel_record(record), "decision")
+        record.update({
+            "decision": "accept-warning",
+            "unresolved_warnings": ["minor visual drift"],
+        })
+        self.assertEqual([], validate_panel_record(record))
+
     def test_panel_override_fields_require_a_recorded_visual_warning(self):
         reason = "minor prop drift is acceptable"
         valid = valid_panel_record()

@@ -149,11 +149,16 @@ class ResumeTests(unittest.TestCase):
             actual_references = []
             for panel in panels:
                 record = read_json(self.project / f"qa/panels/{panel['id']}.json")
-                references = record["generation"]["reference_paths"]
+                if record.get("schema_version") == "2.0":
+                    references = []
+                    source_prompt_path = f"prompts/panels/{panel['id']}.txt"
+                else:
+                    references = record["generation"]["reference_paths"]
+                    source_prompt_path = record["source_prompt_path"]
                 dependencies.append({
                     "panel_id": panel["id"],
                     "reference_paths": references,
-                    "source_prompt_path": record["source_prompt_path"],
+                    "source_prompt_path": source_prompt_path,
                 })
                 actual_references.extend(references)
             relatives = [dependency["source_prompt_path"] for dependency in dependencies]
@@ -229,25 +234,10 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(clean_before, (self.project / "panels/clean/p01-01.png").read_bytes())
 
     def test_v2_panel_quality_record_preserves_generation_cache_reuse(self):
-        legacy = read_json(self.project / "qa/panels/p01-01.json")
-        v2 = {
-            "schema_version": "2.0",
-            "kind": "panel-qa",
-            "subject_id": "p01-01",
-            "bindings": {
-                "source_prompt_path": legacy["source_prompt_path"],
-                "reference_paths": legacy["generation"]["reference_paths"],
-            },
-            "checks": [],
-            "decision": "accept",
-            "review": {
-                "method": "agent-review",
-                "reviewed_at": "2026-07-31T07:22:11Z",
-                "reviewer": "test",
-            },
-            "unresolved_warnings": [],
-        }
-        atomic_write_json(self.project / "qa/panels/p01-01.json", v2)
+        atomic_write_json(
+            self.project / "qa/panels/p01-01.json", self._panel_record_v2()
+        )
+        self._write_cache_snapshot()
 
         actions = build_resume_plan(self.project)
 
@@ -630,6 +620,69 @@ class ResumeTests(unittest.TestCase):
             if reference_paths is None else reference_paths
         )
         return record
+
+    def _quality_checks(self):
+        check_ids = (
+            "character-identity", "anatomy", "action", "composition",
+            "continuity", "text-free", "technical",
+        )
+        return [{
+            "id": check_id,
+            "result": "pass",
+            "severity": "error",
+            "evidence": f"Observed {check_id} against current panel artifacts",
+            "method": "bounded-visual-review",
+            "reviewer": "fixture-reviewer",
+            "regions": [],
+        } for check_id in check_ids]
+
+    def _panel_record_v2(self, panel_id="p01-01"):
+        raw = self.project / f"panels/raw/{panel_id}.png"
+        clean = self.project / f"panels/{panel_id}/clean.png"
+        normalization = self.project / f"panels/{panel_id}/normalization.json"
+        clean.parent.mkdir(exist_ok=True)
+        if not clean.exists():
+            shutil.copy2(self.project / f"panels/clean/{panel_id}.png", clean)
+        if not normalization.exists():
+            atomic_write_json(normalization, {"schema_version": "1.0"})
+        with Image.open(raw) as image:
+            raw_width, raw_height = image.size
+        with Image.open(clean) as image:
+            clean_width, clean_height = image.size
+        return {
+            "schema_version": "2.0",
+            "kind": "panel-qa",
+            "subject_id": panel_id,
+            "bindings": {
+                "raw_path": f"panels/raw/{panel_id}.png",
+                "raw_sha256": sha256_file(raw),
+                "raw_width": raw_width,
+                "raw_height": raw_height,
+                "clean_path": f"panels/{panel_id}/clean.png",
+                "clean_sha256": sha256_file(clean),
+                "clean_width": clean_width,
+                "clean_height": clean_height,
+                "normalization_path": f"panels/{panel_id}/normalization.json",
+                "normalization_sha256": sha256_file(normalization),
+            },
+            "checks": self._quality_checks(),
+            "review": {
+                "method": "bounded-visual-review",
+                "reviewer": "fixture-reviewer",
+                "reviewed_at": "2026-08-14T00:00:00Z",
+            },
+            "decision": "accept",
+            "unresolved_warnings": [],
+        }
+
+    def test_resume_matches_valid_v2_record_by_subject_id(self):
+        self._write_json("qa/panels/p01-01.json", self._panel_record_v2())
+        self._write_cache_snapshot()
+
+        actions = build_resume_plan(self.project)
+
+        action = next(item for item in actions if item.artifact == "p01-01")
+        self.assertEqual("reuse", action.action, action.reason)
 
     def test_corrupt_and_safety_failures_cannot_be_overridden(self):
         record_path = self.project / "qa/panels/p01-01.json"

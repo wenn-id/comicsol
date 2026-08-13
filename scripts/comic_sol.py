@@ -668,15 +668,8 @@ def _resume_stage_material(
             record = read_json(project_dir / f"qa/panels/{panel_id}.json")
             if record.get("schema_version") == "2.0":
                 record_panel_id = record.get("subject_id")
-                bindings = record.get("bindings")
-                source_prompt_path = (
-                    bindings.get("source_prompt_path")
-                    if isinstance(bindings, dict) else None
-                )
-                references = (
-                    bindings.get("reference_paths")
-                    if isinstance(bindings, dict) else None
-                )
+                source_prompt_path = f"prompts/panels/{panel_id}.txt"
+                references = []
             else:
                 record_panel_id = record.get("panel_id")
                 source_prompt_path = record.get("source_prompt_path")
@@ -904,6 +897,50 @@ def _accepted_panel_problem(
     project_dir: Path,
     record: dict[str, object],
 ) -> str | None:
+    # Import lazily because the standalone validator imports this lifecycle module.
+    # Reuse must nevertheless honor the exact public panel-record schema.
+    from validate_project import validate_panel_record
+
+    schema_issues = validate_panel_record(record)
+    if schema_issues:
+        first = schema_issues[0]
+        return f"accepted panel QA record is invalid: {first.field}: {first.message}"
+    if record.get("schema_version") == "2.0":
+        panel_id = record.get("subject_id")
+        bindings = record.get("bindings")
+        if not isinstance(panel_id, str) or not isinstance(bindings, dict):
+            return "accepted panel QA record is invalid"
+        expected = {
+            "raw_path": f"panels/raw/{panel_id}.png",
+            "clean_path": f"panels/{panel_id}/clean.png",
+            "normalization_path": f"panels/{panel_id}/normalization.json",
+        }
+        if any(bindings.get(field) != value for field, value in expected.items()):
+            return "accepted panel paths do not match the canonical project layout"
+        try:
+            raw = _contained_project_path(project_dir, Path(expected["raw_path"]))
+            clean = _contained_project_path(project_dir, Path(expected["clean_path"]))
+            normalization = _contained_project_path(
+                project_dir, Path(expected["normalization_path"])
+            )
+        except ValueError:
+            return "accepted panel path escapes the project directory"
+        for name, path in (("raw", raw), ("clean", clean), ("normalization", normalization)):
+            if not path.is_file():
+                return f"artifact is missing: {expected[f'{name}_path']}"
+            if sha256_file(path) != bindings.get(f"{name}_sha256"):
+                return f"artifact hash mismatch: {expected[f'{name}_path']}"
+        try:
+            raw_size = _verify_raster(raw)
+            clean_size = _verify_raster(clean)
+        except ValueError:
+            return "accepted panel image is corrupt"
+        if (
+            raw_size != (bindings.get("raw_width"), bindings.get("raw_height"))
+            or clean_size != (bindings.get("clean_width"), bindings.get("clean_height"))
+        ):
+            return "accepted panel dimensions do not match recorded artifacts"
+        return None
     required_fields = {
         "schema_version", "panel_id", "source_prompt_path", "raw_path", "clean_path",
         "raw_sha256", "dimensions", "attempts", "generation", "checks", "decision",
@@ -919,14 +956,6 @@ def _accepted_panel_problem(
         "corrupt", "corrupt_image", "safety", "safety_refusal",
     }:
         return "non-overridable panel failure cannot be reused"
-    # Import lazily because the standalone validator imports this lifecycle module.
-    # Reuse must nevertheless honor the exact public panel-record schema.
-    from validate_project import validate_panel_record
-
-    schema_issues = validate_panel_record(record)
-    if schema_issues:
-        first = schema_issues[0]
-        return f"accepted panel QA record is invalid: {first.field}: {first.message}"
     panel_id = record.get("panel_id")
     if not isinstance(panel_id, str) or not IDENTIFIER.fullmatch(panel_id):
         return "accepted panel QA record is invalid"
@@ -1111,11 +1140,19 @@ def build_resume_plan(project_dir: Path) -> list[ResumeAction]:
                 f"panel QA record is invalid: {type(error).__name__}",
             ))
             continue
-        panel_id = record.get("panel_id")
+        panel_id = (
+            record.get("subject_id")
+            if record.get("schema_version") == "2.0"
+            else record.get("panel_id")
+        )
         decision = record.get("decision")
         if not isinstance(panel_id, str):
             continue
-        accepted = decision in {"accept", "accept_with_warnings"}
+        accepted = decision in (
+            {"accept", "accept-warning"}
+            if record.get("schema_version") == "2.0"
+            else {"accept", "accept_with_warnings"}
+        )
         panel_problem = _accepted_panel_problem(project_dir, record) if accepted else None
         if accepted and panel_problem is None and not generation_cache_reusable:
             panel_problem = "generation stage cache is stale or missing"
