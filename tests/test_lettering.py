@@ -177,6 +177,7 @@ class LetteringTests(unittest.TestCase):
                 {"x": 20, "y": 20, "width": 440, "height": 180},
                 regular,
                 self.characters,
+                canvas=image,
             )
             interior = image.crop((40, 50, 440, 170))
             return sum(
@@ -329,6 +330,7 @@ class LetteringTests(unittest.TestCase):
                 rect,
                 regular,
                 self.characters,
+                canvas=centered_image,
             )
         expected_center = rect["x"] + rect["width"] / 2
         self.assertEqual(len(centered_layout.lines), len(starts))
@@ -343,6 +345,7 @@ class LetteringTests(unittest.TestCase):
             rect,
             regular,
             self.characters,
+            canvas=centered_image,
         )
         line_top = rect["y"] + max(24, (rect["height"] - centered_layout.height) / 2)
         for line in centered_layout.lines:
@@ -402,7 +405,7 @@ class LetteringTests(unittest.TestCase):
         items = [sfx("THREE", 3), caption("SECOND", 2), dialogue("FIRST", 1)]
         seen = []
 
-        def observe(draw, item, rect, font, character_bible):
+        def observe(draw, item, rect, font, character_bible, *, canvas):
             seen.append(item["content"])
 
         with mock.patch("letter_panels.render_text_item", side_effect=observe):
@@ -435,7 +438,8 @@ class LetteringTests(unittest.TestCase):
         attachment = tuple(geometry["attachment"])
 
         render_text_item(
-            draw, item, rect, ImageFont.truetype(str(FONT), 24), self.characters
+            draw, item, rect, ImageFont.truetype(str(FONT), 24), self.characters,
+            canvas=image,
         )
 
         root_pixel = image.getpixel(attachment)
@@ -465,6 +469,7 @@ class LetteringTests(unittest.TestCase):
                 {"x": 30, "y": 20, "width": 420, "height": 250},
                 ImageFont.truetype(str(FONT), 32),
                 self.characters,
+                canvas=image,
             )
 
         self.assertEqual(original, item["content"])
@@ -596,9 +601,12 @@ class LetteringTests(unittest.TestCase):
             "letter_panels._draw_antialiased_balloon",
             wraps=__import__("letter_panels")._draw_antialiased_balloon,
         ) as balloon_draw:
-            render_text_item(draw, short, short_rect, short_font, self.characters)
+            render_text_item(
+                draw, short, short_rect, short_font, self.characters, canvas=image
+            )
 
         balloon_draw.assert_called_once()
+        self.assertIs(image, balloon_draw.call_args.args[0])
         self.assertIsNotNone(balloon_draw.call_args.args[2])
         self.assertEqual((28, 32, 40), image.getpixel((short_rect["x"] + 2, short_rect["y"] + 2)))
         self.assertGreater(min(image.getpixel((short_rect["x"] + short_rect["width"] // 2, short_rect["y"] + 6))), 220)
@@ -637,9 +645,10 @@ class LetteringTests(unittest.TestCase):
         balloon = image.copy()
         with mock.patch("letter_panels._draw_font_runs"):
             render_text_item(
-                ImageDraw.Draw(balloon, "RGBA"), item, rect, font, self.characters
+                ImageDraw.Draw(balloon, "RGBA"), item, rect, font, self.characters,
+                canvas=balloon,
             )
-        render_text_item(draw, item, rect, font, self.characters)
+        render_text_item(draw, item, rect, font, self.characters, canvas=image)
 
         difference = ImageChops.difference(image, balloon).convert("L")
         box = difference.getbbox()
@@ -819,7 +828,7 @@ class LetteringTests(unittest.TestCase):
             mock.patch.object(draw, "rectangle", side_effect=record_rectangle),
             mock.patch.object(draw, "rounded_rectangle", side_effect=record_rounded),
         ):
-            render_text_item(draw, item, fitted, font, self.characters)
+            render_text_item(draw, item, fitted, font, self.characters, canvas=image)
 
         self.assertEqual(["rectangle"], calls)
         self.assertTrue(
@@ -842,7 +851,7 @@ class LetteringTests(unittest.TestCase):
             captured_runs.extend(runs)
 
         with mock.patch("letter_panels._draw_font_runs", side_effect=capture_runs):
-            render_text_item(draw, item, fitted, font, self.characters)
+            render_text_item(draw, item, fitted, font, self.characters, canvas=image)
 
         self.assertEqual(item["content"], "".join(text for text, _ in captured_runs))
         self.assertEqual(
@@ -866,7 +875,7 @@ class LetteringTests(unittest.TestCase):
         ):
             item = dialogue(anchor=anchor)
             item["speaker_anchor"] = [0.9, 0.85]
-            render_text_item(draw, item, rect, font, self.characters)
+            render_text_item(draw, item, rect, font, self.characters, canvas=image)
         self.assertEqual((512, 512), image.size)
 
     def test_unknown_dialogue_character_raises_without_partial_write(self):

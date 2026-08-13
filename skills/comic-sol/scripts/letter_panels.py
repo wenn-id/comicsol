@@ -633,8 +633,10 @@ def render_text_item(
     rect: dict,
     font: ImageFont.FreeTypeFont,
     character_bible: list[dict],
+    *,
+    canvas: Image.Image,
 ) -> None:
-    """Draw one validated text item inside an explicit bounded rectangle."""
+    """Draw one validated text item inside a rectangle on the supplied canvas."""
     kind = item.get("kind")
     content = display_content(kind, item.get("content", ""))
     if not content:
@@ -646,7 +648,7 @@ def render_text_item(
     if kind == "sfx":
         return
 
-    image_width, image_height = draw._image.size
+    image_width, image_height = canvas.size
     x0 = max(0, int(rect["x"]))
     y0 = max(0, int(rect["y"]))
     x1 = min(image_width - 1, x0 + max(1, int(rect["width"])))
@@ -680,9 +682,9 @@ def render_text_item(
                 image_height,
                 voice_source,
             )
-            _draw_antialiased_balloon(draw._image, (x0, y0, x1, y1), tail_geometry)
+            _draw_antialiased_balloon(canvas, (x0, y0, x1, y1), tail_geometry)
         else:
-            _draw_antialiased_balloon(draw._image, (x0, y0, x1, y1), None)
+            _draw_antialiased_balloon(canvas, (x0, y0, x1, y1), None)
         assert layout is not None
         _draw_styled_layout(
             draw,
@@ -832,7 +834,7 @@ def letter_panel(
             raise ValueError(f"text item {item.get('id', 'unknown')} has no non-overlapping placement")
         assert font is not None
         assert selected_anchor is not None
-        render_text_item(draw, item, rect, font, character_bible)
+        render_text_item(draw, item, rect, font, character_bible, canvas=canvas)
         display = display_content(item.get("kind"), item.get("content", ""))
         font_runs = [
             {
