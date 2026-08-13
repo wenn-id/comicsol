@@ -392,8 +392,8 @@ class GuardedOperationTests(unittest.TestCase):
         (self.project / "cache/composition.json").write_text(
             json.dumps({"schema_version": "1.0", "stages": {}})
         )
-        from export_pdf import guarded_export
-        with self.assertRaises(ProjectValidationError):
+        from export_pdf import PdfExportError, guarded_export
+        with self.assertRaises(PdfExportError):
             guarded_export(self.project)
         self.assertFalse(
             (self.project / "exports/guard-test.pdf").is_file(),
