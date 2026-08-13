@@ -53,10 +53,6 @@ ANCHORS = {
     "top-left", "top-center", "top-right", "middle-left", "middle-right",
     "bottom-left", "bottom-center", "bottom-right",
 }
-CHECK_IDS = (
-    "character-identity", "anatomy", "action", "composition", "continuity",
-    "text-free", "technical",
-)
 MAX_PAGES = 4
 MAX_PANELS = 12
 
@@ -762,7 +758,7 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
         _add(issues, path, "checks", "must be an array")
     else:
         actual_ids = [check.get("id") if isinstance(check, dict) else None for check in checks]
-        if tuple(actual_ids) != CHECK_IDS:
+        if tuple(actual_ids) != PANEL_CHECK_IDS:
             _add(issues, path, "checks", "must contain the seven required checks in normative order")
         check_fields = {"id", "result", "severity", "evidence"}
         for index, value in enumerate(checks):

@@ -14,14 +14,11 @@ from PIL import Image
 
 from comic_sol import atomic_write_bytes, atomic_write_json, read_json, sha256_file
 from project_io import contained_project_path, open_path_nofollow
+from quality_records import PANEL_CHECK_IDS
 
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_PATH = ROOT / "templates/qa-report.md.tmpl"
-CHECK_IDS = (
-    "character-identity", "anatomy", "action", "composition",
-    "continuity", "text-free", "technical",
-)
 TOKEN_PATTERN = re.compile(r"\{\{[A-Z0-9_]+\}\}")
 PAGE_PATTERN = re.compile(r"^page-[0-9]{3}\.png$")
 
@@ -229,7 +226,7 @@ def _evidence_provenance(project_dir: Path) -> str:
 
 
 def _panel_table(records: list[dict[str, object]]) -> str:
-    headings = ("Panel", "Attempts", "Decision", *CHECK_IDS, "Evidence")
+    headings = ("Panel", "Attempts", "Decision", *PANEL_CHECK_IDS, "Evidence")
     lines = [
         "| " + " | ".join(headings) + " |",
         "| " + " | ".join("---" for _ in headings) + " |",
@@ -246,7 +243,7 @@ def _panel_table(records: list[dict[str, object]]) -> str:
         if isinstance(override, str) and override:
             decision += f" (override: {override})"
         results = []
-        for check_id in CHECK_IDS:
+        for check_id in PANEL_CHECK_IDS:
             check = check_map.get(check_id, {})
             result = str(check.get("result", "missing"))
             if result == "fail" and check.get("severity") == "warning":
@@ -254,7 +251,7 @@ def _panel_table(records: list[dict[str, object]]) -> str:
             results.append(result)
         evidence = "; ".join(
             f"{check_id}: {check_map[check_id].get('evidence', '')}"
-            for check_id in CHECK_IDS if check_id in check_map
+            for check_id in PANEL_CHECK_IDS if check_id in check_map
         )
         cells = (
             _panel_id(record) or "unknown", _attempts(record), decision,

@@ -40,7 +40,7 @@ def reviewer_checks(project=None):
             "reviewer": "fixture-reviewer",
             "regions": [],
         }
-        for check_id in sorted(SUBJECTIVE)
+        for check_id in PAGE_CHECK_IDS if check_id in SUBJECTIVE
     ]
     if project is None:
         return checks
@@ -102,18 +102,31 @@ class PageQualityTests(unittest.TestCase):
         for check_id in DETERMINISTIC_PAGE_CHECK_IDS:
             self.assertEqual("deterministic-geometry-v1", checks[check_id]["method"])
             self.assertEqual("comic-sol", checks[check_id]["reviewer"])
-            self.assertNotEqual([], checks[check_id]["regions"])
+            self.assertEqual([], checks[check_id]["regions"])
         for check_id in SUBJECTIVE:
             self.assertEqual("bounded-visual-review", checks[check_id]["method"])
             self.assertEqual("fixture-reviewer", checks[check_id]["reviewer"])
 
     def test_missing_or_generic_subjective_evidence_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "subjective page checks"):
+        with self.assertRaisesRegex(ValueError, "quality-check-ids"):
             build_page_quality_record(self.project, 1, [])
         generic = reviewer_checks(self.project)
         generic[0]["evidence"] = "ok"
         with self.assertRaisesRegex(ValueError, "quality-evidence-generic"):
             build_page_quality_record(self.project, 1, generic)
+
+    def test_subjective_page_checks_use_their_normative_subset(self):
+        checks = reviewer_checks(self.project)
+        checks[0], checks[1] = checks[1], checks[0]
+        with self.assertRaisesRegex(ValueError, "quality-check-ids"):
+            build_page_quality_record(self.project, 1, checks)
+
+    def test_page_context_rejects_lettering_panel_count_mismatch(self):
+        checks = reviewer_checks(self.project)
+        geometry = self.project / "panels/p01-01/lettering.json"
+        geometry.unlink()
+        with self.assertRaisesRegex(ValueError, "lettering|panel"):
+            build_page_quality_record(self.project, 1, checks)
 
     def test_tail_direction_requires_one_current_region_per_dialogue(self):
         missing = reviewer_checks(self.project)

@@ -14,13 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from comic_sol import atomic_write_json, canonical_json_bytes, read_json  # noqa: E402
+from quality_records import PANEL_CHECK_IDS  # noqa: E402
 from render_report import QaSummary, main, render_report, summarize_qa  # noqa: E402
-
-
-CHECK_IDS = (
-    "character-identity", "anatomy", "action", "composition",
-    "continuity", "text-free", "technical",
-)
 
 
 def panel_record(panel_id, *, attempts=1, decision="accept", warning=None,
@@ -32,7 +27,7 @@ def panel_record(panel_id, *, attempts=1, decision="accept", warning=None,
         ),
         "severity": "error" if failing or not warning else "warning",
         "evidence": "pipe | line\nnext" if check_id == "composition" else f"{check_id} checked",
-    } for check_id in CHECK_IDS]
+    } for check_id in PANEL_CHECK_IDS]
     record = {
         "schema_version": "1.0", "panel_id": panel_id,
         "source_prompt_path": f"prompts/panels/{panel_id}.txt",
@@ -151,7 +146,7 @@ class ReportTests(unittest.TestCase):
 
     def test_report_contains_checks_escaped_evidence_disclosures_and_integrity(self):
         text = render_report(self.project).read_text("utf-8")
-        for check_id in CHECK_IDS:
+        for check_id in PANEL_CHECK_IDS:
             self.assertIn(check_id, text)
         self.assertIn("pipe \\| line<br>next", text)
         self.assertIn("5 panels", text)

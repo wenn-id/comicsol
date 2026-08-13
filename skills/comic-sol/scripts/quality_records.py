@@ -54,8 +54,11 @@ def validate_quality_checks(
     if not isinstance(checks, list):
         return ("quality-check-ids",)
 
-    ids = [item.get("id") if isinstance(item, dict) else None for item in checks]
-    if len(ids) != len(expected) or set(ids) != set(expected) or len(ids) != len(set(ids)):
+    ids = tuple(
+        item.get("id") if isinstance(item, dict) else None
+        for item in checks
+    )
+    if ids != expected:
         issues.add("quality-check-ids")
 
     evidence_values: list[str] = []

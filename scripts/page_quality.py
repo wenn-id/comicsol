@@ -21,7 +21,10 @@ DETERMINISTIC_PAGE_CHECK_IDS = frozenset({
     "reading-order",
     "layout-border-integrity",
 })
-SUBJECTIVE_PAGE_CHECK_IDS = frozenset(PAGE_CHECK_IDS) - DETERMINISTIC_PAGE_CHECK_IDS
+SUBJECTIVE_PAGE_CHECK_IDS = tuple(
+    check_id for check_id in PAGE_CHECK_IDS
+    if check_id not in DETERMINISTIC_PAGE_CHECK_IDS
+)
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,22 @@ class PageQualityIssue:
     path: str
     field: str
     message: str
+
+
+@dataclass(frozen=True)
+class PageContext:
+    storyboard_path: Path
+    panels: tuple[dict[str, object], ...]
+    rectangles: tuple[tuple[int, int, int, int], ...]
+    declared_layout: str
+    matched_layout: str
+    page_relative: str
+    page_path: Path
+    page_width: int
+    page_height: int
+    cache_relative: str
+    cache_path: Path
+    lettering: tuple[tuple[str, str, dict[str, object]], ...]
 
 
 def _page_id(page_number: int) -> str:
@@ -66,16 +85,17 @@ def _overlap(first: Mapping[str, object], second: Mapping[str, object]) -> bool:
     return not (ax + aw <= bx or bx + bw <= ax or ay + ah <= by or by + bh <= ay)  # type: ignore[operator]
 
 
-def _page_context(project_dir: Path, page_number: int) -> dict[str, object]:
+def _page_context(project_dir: Path, page_number: int) -> PageContext:
     storyboard_path = contained_project_path(project_dir, "plan/storyboard.json", must_exist=True)
     storyboard = read_json(storyboard_path)
     page = _storyboard_page(storyboard, page_number)
     panels = page.get("panels")
     if not isinstance(panels, list) or not panels:
         raise ValueError("storyboard page panels must be a non-empty array")
-    rectangles = tuple(_rect_tuple(panel) for panel in panels if isinstance(panel, dict))
-    if len(rectangles) != len(panels):
+    if not all(isinstance(panel, dict) for panel in panels):
         raise ValueError("storyboard page contains an invalid panel")
+    typed_panels = tuple(panels)
+    rectangles = tuple(_rect_tuple(panel) for panel in typed_panels)
     validate_custom_layout(rectangles, tuple(range(1, len(rectangles) + 1)))
     matched_layout = match_layout(rectangles)
     declared_layout = page.get("layout")
@@ -92,49 +112,52 @@ def _page_context(project_dir: Path, page_number: int) -> dict[str, object]:
     cache_relative = "cache/composition.json"
     cache_path = contained_project_path(project_dir, cache_relative, must_exist=True)
     lettering: list[tuple[str, str, dict[str, object]]] = []
-    for panel in panels:
-        panel_id = panel.get("id") if isinstance(panel, dict) else None
+    for panel in typed_panels:
+        panel_id = panel.get("id")
         if not isinstance(panel_id, str):
             raise ValueError("storyboard panel ID is invalid")
         relative = f"panels/{panel_id}/lettering.json"
-        path = contained_project_path(project_dir, relative, must_exist=True)
+        try:
+            path = contained_project_path(project_dir, relative, must_exist=True)
+        except (OSError, ValueError) as error:
+            raise ValueError(
+                f"lettering geometry is missing for panel {panel_id}"
+            ) from error
         geometry = read_json(path)
+        if not isinstance(geometry, dict):
+            raise ValueError(f"lettering geometry is invalid for panel {panel_id}")
         lettering.append((panel_id, sha256_file(path), geometry))
 
-    return {
-        "storyboard": storyboard,
-        "storyboard_path": storyboard_path,
-        "page": page,
-        "panels": panels,
-        "rectangles": rectangles,
-        "declared_layout": declared_layout,
-        "matched_layout": matched_layout,
-        "page_relative": page_relative,
-        "page_path": page_path,
-        "page_width": page_width,
-        "page_height": page_height,
-        "cache_relative": cache_relative,
-        "cache_path": cache_path,
-        "lettering": lettering,
-    }
+    return PageContext(
+        storyboard_path=storyboard_path,
+        panels=typed_panels,
+        rectangles=rectangles,
+        declared_layout=declared_layout,
+        matched_layout=matched_layout,
+        page_relative=page_relative,
+        page_path=page_path,
+        page_width=page_width,
+        page_height=page_height,
+        cache_relative=cache_relative,
+        cache_path=cache_path,
+        lettering=tuple(lettering),
+    )
 
 
-def _deterministic_checks(context: Mapping[str, object]) -> list[dict[str, object]]:
-    panels = context["panels"]
-    lettering = context["lettering"]
-    assert isinstance(panels, list) and isinstance(lettering, list)
+def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
     clipped_regions: list[dict[str, object]] = []
     overlap_regions: list[dict[str, object]] = []
     order_regions: list[dict[str, object]] = []
 
-    for panel_index, ((panel_id, _, geometry), panel) in enumerate(zip(lettering, panels), 1):
-        assert isinstance(panel_id, str) and isinstance(geometry, dict) and isinstance(panel, dict)
+    for panel_index, ((panel_id, _, geometry), panel) in enumerate(
+        zip(context.lettering, context.panels, strict=True), 1
+    ):
         items = geometry.get("items")
         if not isinstance(items, list):
             items = []
         boxes: list[tuple[str, dict[str, object]]] = []
         orders: list[int] = []
-        clean = context["rectangles"][panel_index - 1]  # type: ignore[index]
+        clean = context.rectangles[panel_index - 1]
         _, _, panel_width, panel_height = clean
         for item in items:
             if not isinstance(item, dict):
@@ -162,15 +185,15 @@ def _deterministic_checks(context: Mapping[str, object]) -> list[dict[str, objec
             order_regions.append({"panel_id": panel_id, "observed": orders})
 
     layout_regions = [{
-        "layout": context["declared_layout"],
-        "matched_layout": context["matched_layout"],
-        "rectangles": [list(rectangle) for rectangle in context["rectangles"]],
+        "layout": context.declared_layout,
+        "matched_layout": context.matched_layout,
+        "rectangles": [list(rectangle) for rectangle in context.rectangles],
     }]
     definitions = (
         ("clipped-text", clipped_regions, "All lettering boxes remain inside their source panel bounds."),
         ("text-overlap", overlap_regions, "No lettering boxes overlap within any source panel."),
         ("reading-order", order_regions, "Every panel uses a contiguous one-based lettering reading order."),
-        ("layout-border-integrity", [] if context["declared_layout"] == context["matched_layout"] else layout_regions,
+        ("layout-border-integrity", [] if context.declared_layout == context.matched_layout else layout_regions,
          "Storyboard rectangles are contained, non-overlapping, and match the declared layout."),
     )
     checks = []
@@ -182,39 +205,20 @@ def _deterministic_checks(context: Mapping[str, object]) -> list[dict[str, objec
             "evidence": evidence if not failures else f"Deterministic geometry found {len(failures)} failure region(s) for {check_id}.",
             "method": "deterministic-geometry-v1",
             "reviewer": "comic-sol",
-            "regions": failures or layout_regions,
+            "regions": failures,
         })
     return checks
 
 
 def _reviewer_checks(values: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
     checks = [dict(value) for value in values]
-    ids = [value.get("id") for value in checks]
-    if len(checks) != len(SUBJECTIVE_PAGE_CHECK_IDS) or set(ids) != SUBJECTIVE_PAGE_CHECK_IDS:
-        raise ValueError("subjective page checks require exact bounded reviewer evidence")
-    categories = validate_quality_checks(
-        checks + [
-            {
-                "id": check_id,
-                "result": "pass",
-                "severity": "error",
-                "evidence": f"Deterministic evidence for {check_id} is independently derived.",
-                "method": "deterministic-geometry-v1",
-                "reviewer": "comic-sol",
-                "regions": [{"scope": "page"}],
-            }
-            for check_id in DETERMINISTIC_PAGE_CHECK_IDS
-        ],
-        PAGE_CHECK_IDS,
-    )
+    categories = validate_quality_checks(checks, SUBJECTIVE_PAGE_CHECK_IDS)
     if categories:
         raise ValueError(", ".join(categories))
     return checks
 
 
-def _validate_tail_evidence(
-    context: Mapping[str, object], checks: Sequence[Mapping[str, object]]
-) -> None:
+def _validate_tail_evidence(context: PageContext, checks: Sequence[Mapping[str, object]]) -> None:
     """Require one current bounded-review region for every authored dialogue."""
     tail_check = next(
         (check for check in checks if check.get("id") == "bubble-tail-direction"),
@@ -226,18 +230,13 @@ def _validate_tail_evidence(
     if not isinstance(regions, list):
         raise ValueError("bubble-tail-evidence-mismatch: regions must be an array")
 
-    panels = context.get("panels")
-    lettering = context.get("lettering")
-    if not isinstance(panels, list) or not isinstance(lettering, list):
-        raise ValueError("bubble-tail-evidence-mismatch: page context is invalid")
     geometry_by_panel = {
         panel_id: geometry
-        for panel_id, _, geometry in lettering
-        if isinstance(panel_id, str) and isinstance(geometry, dict)
+        for panel_id, _, geometry in context.lettering
     }
     expected: dict[tuple[str, str], dict[str, object]] = {}
-    for panel in panels:
-        if not isinstance(panel, dict) or not isinstance(panel.get("id"), str):
+    for panel in context.panels:
+        if not isinstance(panel.get("id"), str):
             raise ValueError("bubble-tail-evidence-mismatch: panel is invalid")
         panel_id = panel["id"]
         geometry = geometry_by_panel.get(panel_id)
@@ -315,21 +314,19 @@ def build_page_quality_record(
     checks_by_id = {check["id"]: check for check in deterministic + subjective}
     checks = [checks_by_id[check_id] for check_id in PAGE_CHECK_IDS]
     failures = [check for check in checks if check.get("result") == "fail"]
-    lettering = context["lettering"]
-    assert isinstance(lettering, list)
     record: dict[str, object] = {
         "bindings": {
-            "composition_cache_path": context["cache_relative"],
-            "composition_cache_sha256": sha256_file(context["cache_path"]),  # type: ignore[arg-type]
-            "layout_name": context["declared_layout"],
+            "composition_cache_path": context.cache_relative,
+            "composition_cache_sha256": sha256_file(context.cache_path),
+            "layout_name": context.declared_layout,
             "layout_version": LAYOUT_VERSION,
-            "lettering_sha256s": [f"{panel_id}:{digest}" for panel_id, digest, _ in lettering],
-            "page_height": context["page_height"],
-            "page_path": context["page_relative"],
-            "page_sha256": sha256_file(context["page_path"]),  # type: ignore[arg-type]
-            "page_width": context["page_width"],
+            "lettering_sha256s": [f"{panel_id}:{digest}" for panel_id, digest, _ in context.lettering],
+            "page_height": context.page_height,
+            "page_path": context.page_relative,
+            "page_sha256": sha256_file(context.page_path),
+            "page_width": context.page_width,
             "storyboard_path": "plan/storyboard.json",
-            "storyboard_sha256": sha256_file(context["storyboard_path"]),  # type: ignore[arg-type]
+            "storyboard_sha256": sha256_file(context.storyboard_path),
         },
         "checks": checks,
         "decision": "regenerate" if failures else "accept",
@@ -442,15 +439,15 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
         return tuple(sorted(issues, key=lambda issue: (issue.path, issue.field, issue.message)))
 
     expected = {
-        "page_sha256": sha256_file(context["page_path"]),  # type: ignore[arg-type]
-        "page_width": context["page_width"],
-        "page_height": context["page_height"],
-        "composition_cache_sha256": sha256_file(context["cache_path"]),  # type: ignore[arg-type]
-        "storyboard_sha256": sha256_file(context["storyboard_path"]),  # type: ignore[arg-type]
-        "layout_name": context["declared_layout"],
+        "page_sha256": sha256_file(context.page_path),
+        "page_width": context.page_width,
+        "page_height": context.page_height,
+        "composition_cache_sha256": sha256_file(context.cache_path),
+        "storyboard_sha256": sha256_file(context.storyboard_path),
+        "layout_name": context.declared_layout,
         "layout_version": LAYOUT_VERSION,
         "lettering_sha256s": [
-            f"{panel_id}:{digest}" for panel_id, digest, _ in context["lettering"]  # type: ignore[union-attr]
+            f"{panel_id}:{digest}" for panel_id, digest, _ in context.lettering
         ],
     }
     for field, current in expected.items():

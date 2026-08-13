@@ -473,6 +473,10 @@ class StrictSchemaValidationTests(unittest.TestCase):
     def test_panel_record_v2_uses_shared_quality_contract(self):
         self.assertEqual([], validate_panel_record(valid_panel_record_v2()))
 
+        reordered = valid_panel_record_v2()
+        reordered["checks"] = list(reversed(reordered["checks"]))
+        self.assert_issue(validate_panel_record(reordered), "quality-check-ids")
+
         generic = valid_panel_record_v2()
         for check in generic["checks"]:
             check["evidence"] = "verified"
