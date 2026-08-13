@@ -32,6 +32,12 @@ class NormalizationGeometryTests(unittest.TestCase):
         self.assertEqual(raster_limits.MAX_DECODED_PIXELS, normalize_panels_module.MAX_DECODED_PIXELS)
         self.assertEqual(raster_limits.MAX_DECODED_PIXELS, letter_panels.MAX_DECODED_PIXELS)
         self.assertEqual(raster_limits.MAX_DECODED_PIXELS, pdf_quality.MAX_DECODED_PIXELS)
+
+    def test_runtime_modules_do_not_mutate_pillow_global_pixel_limit(self):
+        for name in ("comic_sol.py", "normalize_panels.py", "letter_panels.py", "pdf_quality.py"):
+            with self.subTest(name=name):
+                source = (ROOT / "scripts" / name).read_text("utf-8")
+                self.assertNotIn("Image.MAX_IMAGE_PIXELS =", source)
     def test_center_crop_records_oriented_source_box(self):
         geometry = normalization_geometry((1200, 800), (600, 600), "crop")
         self.assertEqual((200, 0, 1000, 800), geometry.crop_box)

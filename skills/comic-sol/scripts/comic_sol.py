@@ -20,9 +20,6 @@ from typing import Literal
 
 from PIL import Image, ImageFont
 
-# Fail closed on crafted raster decompression bombs before any project image is opened.
-Image.MAX_IMAGE_PIXELS = 1600 * 2400 * 16
-
 from project_io import (
     ProjectLock,
     ProjectTransaction,
@@ -32,6 +29,7 @@ from project_io import (
     read_contained_bytes,
     validate_source_bytes,
 )
+from raster_limits import MAX_DECODED_PIXELS
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1572,6 +1570,8 @@ def _verify_raster_payload(
             with Image.open(io.BytesIO(payload)) as image:
                 if image.format != expected_format:
                     raise ValueError("result media type does not match raster")
+                if image.width * image.height > MAX_DECODED_PIXELS:
+                    raise ValueError("attempt exceeds the decoded pixel limit")
                 image.load()
                 if image.width < 512 or image.height < 512:
                     raise ValueError("attempt must be a readable raster at least 512px")
@@ -1595,6 +1595,8 @@ def _verify_raster(path: Path) -> tuple[int, int]:
             with open_path_nofollow(path) as stream, Image.open(stream) as image:
                 if image.format not in {"PNG", "JPEG", "WEBP"}:
                     raise ValueError("attempt must be a readable raster")
+                if image.width * image.height > MAX_DECODED_PIXELS:
+                    raise ValueError("attempt exceeds the decoded pixel limit")
                 image.load()
                 if image.width < 512 or image.height < 512:
                     raise ValueError("attempt must be a readable raster at least 512px")
