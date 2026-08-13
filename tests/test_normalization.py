@@ -17,6 +17,10 @@ from normalize_panels import (  # noqa: E402
     normalize_panels,
 )
 from validate_project import validate_panel_provenance  # noqa: E402
+import letter_panels  # noqa: E402
+import pdf_quality  # noqa: E402
+import raster_limits  # noqa: E402
+import normalize_panels as normalize_panels_module  # noqa: E402
 
 
 def sha256(path: Path) -> str:
@@ -24,6 +28,10 @@ def sha256(path: Path) -> str:
 
 
 class NormalizationGeometryTests(unittest.TestCase):
+    def test_raster_modules_share_one_decode_ceiling(self):
+        self.assertEqual(raster_limits.MAX_DECODED_PIXELS, normalize_panels_module.MAX_DECODED_PIXELS)
+        self.assertEqual(raster_limits.MAX_DECODED_PIXELS, letter_panels.MAX_DECODED_PIXELS)
+        self.assertEqual(raster_limits.MAX_DECODED_PIXELS, pdf_quality.MAX_DECODED_PIXELS)
     def test_center_crop_records_oriented_source_box(self):
         geometry = normalization_geometry((1200, 800), (600, 600), "crop")
         self.assertEqual((200, 0, 1000, 800), geometry.crop_box)

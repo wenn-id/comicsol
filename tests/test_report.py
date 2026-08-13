@@ -124,6 +124,11 @@ class ReportTests(unittest.TestCase):
             regenerated_panels=3, accepted_warnings=2, hard_failures=1,
         ), summary)
 
+    def test_integrity_handles_pillow_decompression_bomb(self):
+        with mock.patch("render_report.Image.open", side_effect=Image.DecompressionBombError("unsafe")):
+            report = render_report(self.project).read_text("utf-8")
+        self.assertIn("valid page: no", report)
+
     def test_safety_category_counts_as_hard_failure_without_failed_check(self):
         record = panel_record("p01-01", decision="regenerate")
         record["failure_category"] = "safety_refusal"

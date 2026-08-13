@@ -460,7 +460,7 @@ def _integrity(
                 image.load()
                 dimensions = f"{image.width}×{image.height}"
                 valid = image.format == "PNG" and image.mode == "RGB" and image.size == (1600, 2400)
-        except OSError:
+        except (OSError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning):
             dimensions, valid = "unreadable", False
         lines.append(
             f"- `{_relative(project_dir, page)}` — dimensions: {dimensions}; valid page: {'yes' if valid else 'no'}; sha256: `{sha256_file(page) if page.is_file() else 'missing'}`"

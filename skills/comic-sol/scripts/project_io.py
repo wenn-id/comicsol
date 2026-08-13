@@ -62,8 +62,9 @@ class ProjectLock:
                         self._lock(handle)
                         acquired = True
                         break
-                    except OSError:
-                        pass  # real contention, keep waiting
+                    except OSError as error:
+                        if not self._retryable(error):
+                            raise
                     if time.monotonic() >= deadline:
                         raise TimeoutError(
                             "project is locked by another process"
@@ -213,6 +214,15 @@ def _relative_parts(relative: str | Path) -> tuple[str, ...]:
     return parts
 
 
+def _stream_mode(flags: int) -> str:
+    """Return the binary file-object mode implied by low-level open flags."""
+    if flags & os.O_RDWR:
+        return "r+b"
+    if flags & os.O_WRONLY:
+        return "wb"
+    return "rb"
+
+
 def _open_parent_fd(project_dir: Path, parts: tuple[str, ...], *, create: bool) -> tuple[int, str]:
     root = Path(project_dir).resolve(strict=True)
     if os.name == "nt" or not _HAS_NOFOLLOW:
@@ -254,7 +264,7 @@ def open_contained(project_dir: Path, relative: str | Path, *, flags: int = os.O
             descriptor = os.open(name, flags | _O_NOFOLLOW, mode, dir_fd=parent_fd)
         finally:
             os.close(parent_fd)
-    stream = os.fdopen(descriptor, "r+b" if flags & os.O_RDWR else "wb" if flags & os.O_WRONLY else "rb")
+    stream = os.fdopen(descriptor, _stream_mode(flags))
     try:
         yield stream
     finally:
@@ -281,11 +291,11 @@ def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -
                 raise ValueError("path must not contain symlinks or reparse points")
             try:
                 attributes = getattr(current.stat(follow_symlinks=False), "st_file_attributes", 0)
-            except AttributeError:
+            except (AttributeError, FileNotFoundError):
                 attributes = 0
             if attributes & _REPARSE_POINT:
                 raise ValueError("path must not contain symlinks or reparse points")
-        return os.fdopen(os.open(absolute, flags, mode), "rb")
+        return os.fdopen(os.open(absolute, flags, mode), _stream_mode(flags))
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _O_NOFOLLOW
     current = os.open(parts[0], directory_flags)
     try:
@@ -296,7 +306,7 @@ def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -
         descriptor = os.open(parts[-1], flags | _O_NOFOLLOW, mode, dir_fd=current)
     finally:
         os.close(current)
-    return os.fdopen(descriptor, "rb" if not flags & os.O_WRONLY else "wb")
+    return os.fdopen(descriptor, _stream_mode(flags))
 
 
 def read_contained_bytes(project_dir: Path, relative: str | Path) -> bytes:

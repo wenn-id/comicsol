@@ -14,15 +14,11 @@ from typing import Iterable
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-# Fail closed on crafted raster decompression bombs; explicit per-project decoded
-# size checks below remain the authoritative lettering/normalization ceiling.
-Image.MAX_IMAGE_PIXELS = 1600 * 2400 * 16
-
 from project_io import ProjectTransaction, contained_project_path
+from raster_limits import MAX_DECODED_PIXELS
 
 
 IMPLEMENTATION_VERSION = "1"
-MAX_DECODED_PIXELS = 100_000_000
 PANEL_ID = re.compile(r"^p[0-9]{2}-[0-9]{2}$")
 MODES = frozenset({"crop", "fit", "exact"})
 

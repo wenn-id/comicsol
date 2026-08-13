@@ -652,6 +652,73 @@ class ProjectValidationTests(unittest.TestCase):
             issues = validate_project(self.project, "panels")
         self.assertTrue(any("unreadable" in issue.message for issue in issues), issues)
 
+    def test_non_object_normalization_record_is_a_validation_issue(self):
+        self.add_panel_files()
+        clean = normalize_panel(
+            self.project, "p01-01", "panels/raw/p01-01.png", (736, 1136), "exact"
+        )
+        record = valid_panel_record_v2()
+        record["bindings"].update({
+            "raw_sha256": sha256_file(self.project / "panels/raw/p01-01.png"),
+            "clean_sha256": sha256_file(clean),
+            "normalization_sha256": sha256_file(self.project / "panels/p01-01/normalization.json"),
+        })
+        atomic_write_json(self.project / "qa/panels/p01-01.json", record)
+        (self.project / "panels/p01-01/normalization.json").write_text("[]\n", "utf-8")
+        issues = validate_project(self.project, "panels")
+        self.assertTrue(any("normalization record must be an object" in issue.message for issue in issues), issues)
+
+    def test_truncated_raster_payload_is_reported_as_unreadable(self):
+        self.add_panel_files()
+        raw = self.project / "panels/raw/p01-01.png"
+        raw.write_bytes(raw.read_bytes()[:32])
+        issues = validate_project(self.project, "panels")
+        self.assertTrue(any(
+            issue.field == "raw_path" and "unreadable" in issue.message
+            for issue in issues
+        ), issues)
+
+    def test_invalid_project_id_still_checks_terminal_artifact_paths(self):
+        manifest_path = self.project / "project.json"
+        manifest = read_json(manifest_path)
+        manifest["project_id"] = "../escape"
+        manifest["artifacts"] = {
+            "qa_report": {"path": "wrong.md", "sha256": "a" * 64},
+            "pdf_verification": {"path": "wrong.json", "sha256": "a" * 64},
+        }
+        atomic_write_json(manifest_path, manifest)
+        with patch(
+            "validate_project.validate_pdf_verification",
+            side_effect=AssertionError("invalid project ID must not drive PDF validation"),
+        ):
+            issues = validate_project(self.project, "final")
+        fields = {issue.field for issue in issues}
+        self.assertIn("artifacts.qa_report.path", fields)
+        self.assertIn("artifacts.pdf_verification.path", fields)
+
+    def test_escaped_artifact_descriptor_skips_hashing(self):
+        manifest_path = self.project / "project.json"
+        manifest = read_json(manifest_path)
+        manifest["artifacts"] = {
+            "story_plan": {"path": "../outside.json", "sha256": "a" * 64},
+        }
+        atomic_write_json(manifest_path, manifest)
+        outside = self.root / "outside.json"
+        outside.write_text("must not be hashed", "utf-8")
+
+        def guarded_hash(path):
+            if Path(path).resolve() == outside.resolve():
+                raise AssertionError("validator hashed an escaped artifact")
+            return sha256_file(path)
+
+        with patch("validate_project.sha256_file", side_effect=guarded_hash):
+            issues = validate_project(self.project, "final")
+        self.assertTrue(any(
+            issue.field == "artifacts.story_plan.path"
+            and "escapes" in issue.message
+            for issue in issues
+        ), issues)
+
     def test_final_stage_rejects_safety_failure_despite_complete_manifest(self):
         self.add_panel_files()
         record_path = self.project / "qa/panels/p01-01.json"

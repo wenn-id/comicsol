@@ -987,36 +987,39 @@ def validate_panel_provenance(
         except (OSError, UnicodeError, json.JSONDecodeError):
             stale("normalization_path", "normalization record is unreadable")
         else:
-            source = normalization.get("source")
-            clean = normalization.get("clean")
-            if not isinstance(source, dict) or not isinstance(clean, dict):
-                stale("normalization_path", "normalization record structure is invalid")
+            if not isinstance(normalization, dict):
+                stale("normalization_path", "normalization record must be an object")
             else:
-                for field, normalized_value in (
-                    ("raw_path", source.get("path")),
-                    ("raw_sha256", source.get("sha256")),
-                    ("clean_path", clean.get("path")),
-                    ("clean_sha256", clean.get("sha256")),
-                ):
-                    if bindings.get(field) != normalized_value:
-                        stale(field, "binding disagrees with normalization record")
-                for prefix, size in (
-                    ("raw", source.get("size")),
-                    ("clean", clean.get("size")),
-                ):
-                    if not isinstance(size, list) or len(size) != 2:
-                        stale(
-                            "normalization_path",
-                            f"normalization {prefix} size is invalid",
-                        )
-                        continue
-                    for axis, actual in zip(("width", "height"), size):
-                        field = f"{prefix}_{axis}"
-                        if field in bindings and bindings.get(field) != actual:
+                source = normalization.get("source")
+                clean = normalization.get("clean")
+                if not isinstance(source, dict) or not isinstance(clean, dict):
+                    stale("normalization_path", "normalization record structure is invalid")
+                else:
+                    for field, normalized_value in (
+                        ("raw_path", source.get("path")),
+                        ("raw_sha256", source.get("sha256")),
+                        ("clean_path", clean.get("path")),
+                        ("clean_sha256", clean.get("sha256")),
+                    ):
+                        if bindings.get(field) != normalized_value:
+                            stale(field, "binding disagrees with normalization record")
+                    for prefix, size in (
+                        ("raw", source.get("size")),
+                        ("clean", clean.get("size")),
+                    ):
+                        if not isinstance(size, list) or len(size) != 2:
                             stale(
-                                field,
-                                "binding disagrees with normalization record",
+                                "normalization_path",
+                                f"normalization {prefix} size is invalid",
                             )
+                            continue
+                        for axis, actual in zip(("width", "height"), size):
+                            field = f"{prefix}_{axis}"
+                            if field in bindings and bindings.get(field) != actual:
+                                stale(
+                                    field,
+                                    "binding disagrees with normalization record",
+                                )
     return tuple(_sorted(issues))
 
 
@@ -1276,9 +1279,9 @@ def _validate_raster(
                 actual_ratio = width / height
                 if abs(actual_ratio - expected_ratio) / expected_ratio > 0.02:
                     _add(issues, issue_path, field, "image aspect ratio differs from storyboard by more than 2%")
-            image.verify()
+            image.load()
             return width, height
-    except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as error:
+    except (OSError, SyntaxError, UnidentifiedImageError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
         _add(issues, issue_path, field, f"image is unreadable: {type(error).__name__}")
         return None
 
@@ -1326,7 +1329,10 @@ def validate_pdf_verification(
 ) -> list[ValidationIssue]:
     """Validate the exported PDF's hash-bound full-content verification record."""
     relative = "exports/pdf-verification.json"
-    path = project_dir / relative
+    try:
+        path = contained_project_path(project_dir, relative)
+    except (OSError, ValueError):
+        return [ValidationIssue(relative, "pdf-verification-stale", "verification path escapes the project boundary")]
     stale_reasons: list[str] = []
     try:
         payload = path.read_bytes()
@@ -1349,11 +1355,15 @@ def validate_pdf_verification(
         expected_pdf = f"exports/{project_id}.pdf"
         if record.get("pdf_path") != expected_pdf:
             stale_reasons.append("PDF path binding is stale")
-        pdf_path = project_dir / expected_pdf
+        try:
+            pdf_path = contained_project_path(project_dir, expected_pdf)
+        except (OSError, ValueError):
+            pdf_path = None
         pdf_hash = record.get("pdf_sha256")
         if (
             not isinstance(pdf_hash, str)
             or not SHA256_PATTERN.fullmatch(pdf_hash)
+            or pdf_path is None
             or not pdf_path.is_file()
             or sha256_file(pdf_path) != pdf_hash
         ):
@@ -1377,14 +1387,19 @@ def validate_pdf_verification(
                     stale_reasons.append(f"page {page_number} QA path binding is stale")
                 if source.get("dimensions") != [PAGE_WIDTH, PAGE_HEIGHT]:
                     stale_reasons.append(f"page {page_number} dimensions are stale")
-                for binding, current_path in (
-                    ("sha256", project_dir / expected_page),
-                    ("page_qa_sha256", project_dir / expected_qa),
+                for binding, relative_path in (
+                    ("sha256", expected_page),
+                    ("page_qa_sha256", expected_qa),
                 ):
                     expected_hash = source.get(binding)
+                    try:
+                        current_path = contained_project_path(project_dir, relative_path)
+                    except (OSError, ValueError):
+                        current_path = None
                     if (
                         not isinstance(expected_hash, str)
                         or not SHA256_PATTERN.fullmatch(expected_hash)
+                        or current_path is None
                         or not current_path.is_file()
                         or sha256_file(current_path) != expected_hash
                     ):
@@ -1721,7 +1736,12 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
 
         # Lettered panels and their current typography/geometry provenance.
         for panel_id in panels:
-            lettered = project_dir / f"panels/{panel_id}/lettered.png"
+            lettered_relative = f"panels/{panel_id}/lettered.png"
+            try:
+                lettered = contained_project_path(project_dir, lettered_relative)
+            except (OSError, ValueError):
+                _add(issues, lettered_relative, "", "lettered panel path escapes the project boundary")
+                continue
             if not lettered.is_file():
                 _add(issues, f"panels/{panel_id}/lettered.png", "",
                      "lettered panel is missing")
@@ -1735,13 +1755,19 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
 
             project_id = manifest.get("project_id")
             if isinstance(project_id, str) and project_id:
-                pdf_path = project_dir / f"exports/{project_id}.pdf"
-                if not pdf_path.is_file():
-                    _add(issues, f"exports/{project_id}.pdf", "",
-                         "exported PDF is missing")
-                issues.extend(
-                    validate_pdf_verification(project_dir, project_id, page_count)
-                )
+                pdf_relative = f"exports/{project_id}.pdf"
+                try:
+                    pdf_path = contained_project_path(project_dir, pdf_relative)
+                except (OSError, ValueError):
+                    _add(issues, "project.json", "project_id", "exported PDF path escapes the project boundary")
+                    pdf_path = None
+                if pdf_path is not None:
+                    if not pdf_path.is_file():
+                        _add(issues, f"exports/{project_id}.pdf", "",
+                             "exported PDF is missing")
+                    issues.extend(
+                        validate_pdf_verification(project_dir, project_id, page_count)
+                    )
 
         # Composition cache required.
         comp_cache = project_dir / "cache/composition.json"
@@ -1750,12 +1776,6 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                  "composition stage cache is missing")
 
     return _sorted(issues)
-
-
-REQUIRED_ARTIFACT_DESCRIPTORS = frozenset({
-    "character_bible", "story_plan", "storyboard",
-    "qa_report", "pdf", "pdf_verification",
-})
 
 
 def _validate_required_artifacts(
@@ -1787,13 +1807,13 @@ def _validate_required_artifacts(
         "composition_cache": "cache/composition.json",
     }
     if require_terminal:
+        expected_paths.update({
+            "qa_report": "qa/report.md",
+            "pdf_verification": "exports/pdf-verification.json",
+        })
         project_id = manifest.get("project_id")
-        if isinstance(project_id, str):
-            expected_paths.update({
-                "qa_report": "qa/report.md",
-                "pdf": f"exports/{project_id}.pdf",
-                "pdf_verification": "exports/pdf-verification.json",
-            })
+        if isinstance(project_id, str) and ID_PATTERN.fullmatch(project_id):
+            expected_paths["pdf"] = f"exports/{project_id}.pdf"
     for name, expected in expected_paths.items():
         descriptor = artifacts.get(name)
         if isinstance(descriptor, dict) and descriptor.get("path") != expected:

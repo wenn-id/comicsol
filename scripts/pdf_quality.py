@@ -10,12 +10,7 @@ from dataclasses import asdict, dataclass
 from typing import Sequence
 
 from PIL import Image, ImageChops
-
-# One global raster decode budget keeps every Image.open path fail-closed against
-# crafted decompression bombs, while project-specific decoded-size checks remain
-# in place for lettering and normalization. Pages are 1600x2400; sixteen page
-# areas is the generous ceiling for oversampled source art.
-Image.MAX_IMAGE_PIXELS = 1600 * 2400 * 16
+from raster_limits import MAX_DECODED_PIXELS
 
 PDF_TOLERANCE_VERSION = "1"
 PDF_EXPORTER_VERSION = "comic-sol-pillow-raster-v1"
@@ -145,6 +140,8 @@ def _decode_pdf_frames(payload: bytes) -> list[Image.Image]:
             with warnings.catch_warnings():
                 warnings.simplefilter("error", Image.DecompressionBombWarning)
                 with Image.open(io.BytesIO(stream)) as image:
+                    if image.width * image.height > MAX_DECODED_PIXELS:
+                        raise PdfQualityError("PDF raster frame exceeds the decoded pixel limit")
                     image.load()
                     frame = image.convert("RGB")
                     frame.load()

@@ -20,6 +20,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json, sha256_file
 from project_io import ProjectTransaction, contained_project_path, open_path_nofollow, read_contained_bytes
+from raster_limits import MAX_DECODED_PIXELS
 from typography import (
     lettering_geometry_hash,
     preflight_text_items,
@@ -49,7 +50,6 @@ BALLOON_PADDING = 19
 CAPTION_PADDING = 20
 # Panels are page-sized at most (1600x2400); sixteen page areas leaves room for
 # oversampled source art while rejecting decompression bombs.
-MAX_DECODED_PIXELS = 1600 * 2400 * 16
 BALLOON_SUPERSAMPLE = 6
 
 
