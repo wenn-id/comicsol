@@ -504,6 +504,12 @@ class StrictSchemaValidationTests(unittest.TestCase):
 
         self.assert_issue(validate_panel_record(record), "panel_id")
 
+    def test_v2_bindings_must_match_subject_id_paths(self):
+        record = valid_panel_record_v2()
+        record["bindings"]["raw_path"] = "panels/raw/p99-99.png"
+
+        self.assert_issue(validate_panel_record(record), "bindings.raw_path")
+
     def test_v2_error_failure_requires_regenerate(self):
         record = valid_panel_record_v2()
         record["checks"][0]["result"] = "fail"

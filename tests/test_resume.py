@@ -34,6 +34,7 @@ from comic_sol import (  # noqa: E402
     stage_cache_key,
     transition,
 )
+from normalize_panels import normalize_panel  # noqa: E402
 from validate_project import validate_panel_record  # noqa: E402
 
 
@@ -640,11 +641,9 @@ class ResumeTests(unittest.TestCase):
         raw = self.project / f"panels/raw/{panel_id}.png"
         clean = self.project / f"panels/{panel_id}/clean.png"
         normalization = self.project / f"panels/{panel_id}/normalization.json"
-        clean.parent.mkdir(exist_ok=True)
-        if not clean.exists():
-            shutil.copy2(self.project / f"panels/clean/{panel_id}.png", clean)
-        if not normalization.exists():
-            atomic_write_json(normalization, {"schema_version": "1.0"})
+        normalize_panel(
+            self.project, panel_id, f"panels/raw/{panel_id}.png", (512, 512), "exact"
+        )
         with Image.open(raw) as image:
             raw_width, raw_height = image.size
         with Image.open(clean) as image:

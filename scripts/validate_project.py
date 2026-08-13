@@ -675,6 +675,15 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
     if bindings is not None:
         for name in ("raw_path", "clean_path", "normalization_path"):
             _relative_path(bindings.get(name), issues, path, f"bindings.{name}")
+        if isinstance(subject_id, str):
+            canonical_paths = {
+                "raw_path": f"panels/raw/{subject_id}.png",
+                "clean_path": f"panels/{subject_id}/clean.png",
+                "normalization_path": f"panels/{subject_id}/normalization.json",
+            }
+            for name, expected in canonical_paths.items():
+                if bindings.get(name) != expected:
+                    _add(issues, path, f"bindings.{name}", "must match the canonical panel path")
         for name in ("raw_sha256", "clean_sha256", "normalization_sha256"):
             _sha256(bindings.get(name), issues, path, f"bindings.{name}")
         for name in ("raw_width", "raw_height", "clean_width", "clean_height"):
@@ -922,6 +931,16 @@ def validate_panel_provenance(
     }
     for field in sorted(required - set(bindings)):
         stale(field, "required provenance binding is missing")
+
+    if isinstance(panel_id, str):
+        canonical_paths = {
+            "raw_path": f"panels/raw/{panel_id}.png",
+            "clean_path": f"panels/{panel_id}/clean.png",
+            "normalization_path": f"panels/{panel_id}/normalization.json",
+        }
+        for field, expected in canonical_paths.items():
+            if bindings.get(field) != expected:
+                stale(field, "binding does not match the canonical panel path")
 
     resolved: dict[str, Path] = {}
     for prefix in ("raw", "clean", "normalization"):
