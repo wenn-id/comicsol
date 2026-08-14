@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -86,6 +88,61 @@ class ClientSetupTests(unittest.TestCase):
         self.assertEqual(result.status, "rolled-back")
         self.assertEqual(config.read_bytes(), original)
         self.assertIsNotNone(result.backup_path)
+
+    @unittest.skipIf(os.name == "nt", "POSIX mode semantics are unavailable on Windows")
+    def test_posix_setup_preserves_restrictive_config_backup_and_parent_modes(self):
+        previous_umask = os.umask(0o022)
+        self.addCleanup(os.umask, previous_umask)
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.parent.chmod(0o700)
+        config.write_text("{}\n", encoding="utf-8")
+        config.chmod(0o600)
+        parent_mode = stat.S_IMODE(config.parent.stat().st_mode)
+
+        result = setup_clients(
+            self.output,
+            adapters=[JsonClientAdapter("cursor", config, "mcpServers")],
+        )[0]
+
+        self.assertEqual("configured", result.status)
+        self.assertIsNotNone(result.backup_path)
+        self.assertEqual(0o600, stat.S_IMODE(config.stat().st_mode))
+        self.assertEqual(
+            0o600,
+            stat.S_IMODE(Path(result.backup_path).stat().st_mode),
+        )
+        self.assertEqual(parent_mode, stat.S_IMODE(config.parent.stat().st_mode))
+
+    @unittest.skipIf(os.name == "nt", "POSIX mode semantics are unavailable on Windows")
+    def test_posix_rollback_preserves_restrictive_config_and_backup_modes(self):
+        previous_umask = os.umask(0o022)
+        self.addCleanup(os.umask, previous_umask)
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.parent.chmod(0o700)
+        original = b'{"theme":"dark"}\n'
+        config.write_bytes(original)
+        config.chmod(0o600)
+        parent_mode = stat.S_IMODE(config.parent.stat().st_mode)
+        adapter = JsonClientAdapter(
+            "cursor",
+            config,
+            "mcpServers",
+            verify_hook=lambda: False,
+        )
+
+        result = setup_clients(self.output, adapters=[adapter])[0]
+
+        self.assertEqual("rolled-back", result.status)
+        self.assertEqual(original, config.read_bytes())
+        self.assertIsNotNone(result.backup_path)
+        self.assertEqual(0o600, stat.S_IMODE(config.stat().st_mode))
+        self.assertEqual(
+            0o600,
+            stat.S_IMODE(Path(result.backup_path).stat().st_mode),
+        )
+        self.assertEqual(parent_mode, stat.S_IMODE(config.parent.stat().st_mode))
 
     def test_json_verify_rejects_parseable_but_unsafe_comic_sol_entries(self):
         config = self.home / ".cursor" / "mcp.json"

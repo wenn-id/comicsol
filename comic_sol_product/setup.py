@@ -101,7 +101,7 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
 
     backup = _backup_path(path)
     try:
-        shutil.copyfile(path, backup)
+        shutil.copy2(path, backup)
         _atomic_write(path, adapter.dump(updated))
         if not remove and not adapter.verify(entry):
             _atomic_write(path, original)
