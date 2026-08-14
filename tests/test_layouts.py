@@ -9,6 +9,7 @@ from scripts.layouts import (
     match_layout,
     validate_custom_layout,
 )
+from scripts.comic_sol import layout_rects
 
 
 EXPECTED_LAYOUTS = {
@@ -38,14 +39,19 @@ class LayoutRegistryTests(unittest.TestCase):
     def test_four_grid_uses_exact_approved_geometry(self):
         self.assertEqual(
             (
-                (50, 50, 740, 1135),
-                (810, 50, 740, 1135),
-                (50, 1215, 740, 1135),
-                (810, 1215, 740, 1135),
+                (64, 64, 720, 1120),
+                (816, 64, 720, 1120),
+                (64, 1216, 720, 1120),
+                (816, 1216, 720, 1120),
             ),
             FOUR_GRID_RECTS,
         )
         self.assertEqual(FOUR_GRID_RECTS, get_layout("four-grid").rectangles)
+        self.assertEqual(
+            [dict(zip(("x", "y", "width", "height"), rectangle))
+             for rectangle in FOUR_GRID_RECTS],
+            layout_rects("four-grid"),
+        )
 
     def test_every_layout_is_contained_positive_non_overlapping_and_ordered(self):
         for name in EXPECTED_LAYOUTS:

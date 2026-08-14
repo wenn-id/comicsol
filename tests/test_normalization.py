@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PIL import Image
 
@@ -17,6 +18,10 @@ from normalize_panels import (  # noqa: E402
     normalize_panels,
 )
 from validate_project import validate_panel_provenance  # noqa: E402
+import letter_panels  # noqa: E402
+import pdf_quality  # noqa: E402
+import raster_limits  # noqa: E402
+import normalize_panels as normalize_panels_module  # noqa: E402
 
 
 def sha256(path: Path) -> str:
@@ -24,6 +29,16 @@ def sha256(path: Path) -> str:
 
 
 class NormalizationGeometryTests(unittest.TestCase):
+    def test_raster_modules_share_one_decode_ceiling(self):
+        self.assertEqual(raster_limits.MAX_DECODED_PIXELS, normalize_panels_module.MAX_DECODED_PIXELS)
+        self.assertEqual(raster_limits.MAX_DECODED_PIXELS, letter_panels.MAX_DECODED_PIXELS)
+        self.assertEqual(raster_limits.MAX_DECODED_PIXELS, pdf_quality.MAX_DECODED_PIXELS)
+
+    def test_runtime_modules_do_not_mutate_pillow_global_pixel_limit(self):
+        for name in ("comic_sol.py", "normalize_panels.py", "letter_panels.py", "pdf_quality.py"):
+            with self.subTest(name=name):
+                source = (ROOT / "scripts" / name).read_text("utf-8")
+                self.assertNotIn("Image.MAX_IMAGE_PIXELS =", source)
     def test_center_crop_records_oriented_source_box(self):
         geometry = normalization_geometry((1200, 800), (600, 600), "crop")
         self.assertEqual((200, 0, 1000, 800), geometry.crop_box)
@@ -250,6 +265,27 @@ class PanelProvenanceTests(unittest.TestCase):
         self.assert_stale(
             validate_panel_provenance(self.project, self.record), "clean_width"
         )
+
+    def test_provenance_rejects_raster_over_decode_limit_before_loading(self):
+        with mock.patch("validate_project.MAX_DECODED_PIXELS", 1):
+            issues = validate_panel_provenance(self.project, self.record)
+
+        self.assert_stale(issues, "raw_path")
+        self.assertTrue(any(
+            "decode limit" in issue.message for issue in issues
+        ), issues)
+
+    def test_provenance_promotes_decompression_bomb_warning_to_stale_issue(self):
+        with mock.patch(
+            "validate_project.Image.Image.load",
+            side_effect=Image.DecompressionBombWarning("unsafe dimensions"),
+        ):
+            issues = validate_panel_provenance(self.project, self.record)
+
+        self.assert_stale(issues, "raw_path")
+        self.assertTrue(any(
+            "unreadable" in issue.message for issue in issues
+        ), issues)
 
     def test_missing_normalization_and_traversal_fail_closed(self):
         (self.project / "panels/p01-01/normalization.json").unlink()

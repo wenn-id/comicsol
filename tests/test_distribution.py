@@ -84,6 +84,20 @@ class NativeDistributionContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ReleaseIdentity("2.0.0rc4", "Linux", "amd64")
 
+    def test_plugin_manifest_has_public_legal_urls(self):
+        root = Path(__file__).resolve().parents[1]
+        manifest = json.loads(
+            (root / ".codex-plugin/plugin.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            "https://github.com/wenn-id/comicsol/blob/main/PRIVACY.md",
+            manifest["interface"]["privacyPolicyURL"],
+        )
+        self.assertEqual(
+            "https://github.com/wenn-id/comicsol/blob/main/TERMS.md",
+            manifest["interface"]["termsOfServiceURL"],
+        )
+
     def test_metadata_checksum_and_sbom_are_deterministic(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             release = Path(temporary_directory)

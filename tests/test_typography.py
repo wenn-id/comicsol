@@ -9,6 +9,8 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import typography  # noqa: E402
+
 from typography import (  # noqa: E402
     TypographyPreflightError,
     lettering_geometry_hash,
@@ -38,6 +40,25 @@ def item(content, item_id="dialogue-1", kind="dialogue"):
 
 
 class TypographyPreflightTests(unittest.TestCase):
+    def test_dialogue_preflight_checks_uppercase_display_codepoints(self):
+        """Validate the same uppercase text that dialogue lettering displays."""
+        result = preflight_text_items([item("stra\u00dfe")], FONT_POLICY)
+
+        displayed = "".join(entry["character"] for entry in result["glyphs"])
+        self.assertIn("STRASSE", displayed)
+        self.assertNotIn("\u00df", displayed)
+
+    def test_font_hashes_are_cached_by_path(self):
+        """Reuse immutable font digests across separate preflight calls."""
+        typography._hash_font_file.cache_clear()
+        typography._font_policy_hashes.cache_clear()
+        with mock.patch(
+            "typography._hash_font_file", wraps=typography._hash_font_file
+        ) as hashed:
+            preflight_text_items([item("First")], FONT_POLICY)
+            preflight_text_items([item("Second")], FONT_POLICY)
+        self.assertEqual(3, hashed.call_count)
+
     def test_latin_bold_greek_and_cyrillic_select_bundled_fonts(self):
         result = preflight_text_items(
             [item("Stay **LOUD** Ω Ж")], FONT_POLICY
@@ -62,7 +83,7 @@ class TypographyPreflightTests(unittest.TestCase):
 
         self.assertEqual("pass", result["status"])
         codepoints = [entry["codepoint"] for entry in result["glyphs"]]
-        self.assertIn("U+00E9", codepoints)
+        self.assertIn("U+00C9", codepoints)
         self.assertNotIn("U+0301", codepoints)
 
     def test_whitespace_and_controls_have_explicit_non_glyph_policy(self):

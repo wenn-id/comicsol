@@ -24,6 +24,7 @@ from comic_sol_product.portable import create_portable_archive
 
 
 def main() -> int:
+    """Assemble the portable release from repository artifacts."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime", required=True, type=Path)
     parser.add_argument("--environment", required=True, type=Path)

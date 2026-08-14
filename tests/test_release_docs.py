@@ -59,6 +59,22 @@ class ReleaseDocumentationTests(unittest.TestCase):
             self.assertIn(phrase.lower(), self.notes.lower())
         self.assertIn("2.0.0rc1", self.changelog)
 
+    def test_public_docs_describe_provider_and_pdf_contracts(self):
+        provider_setup = (
+            self.root / "references/image-provider-setup.md"
+        ).read_text(encoding="utf-8")
+        workflow = (
+            self.root / "skills/comic-sol/references/workflow.md"
+        ).read_text(encoding="utf-8")
+        listing = (self.root / "submission/listing.md").read_text(encoding="utf-8")
+        cases = (self.root / "submission/test-cases.md").read_text(encoding="utf-8")
+        public_docs = " ".join("\n".join((self.readme, listing, cases)).split())
+
+        self.assertIn("platform-specific", provider_setup)
+        self.assertNotIn("fal_ge...mage", provider_setup)
+        self.assertIn("`pdf_verification` at `exports/pdf-verification.json`", workflow)
+        self.assertIn("no Comic Sol account or demo credentials", public_docs)
+
 
 if __name__ == "__main__":
     unittest.main()

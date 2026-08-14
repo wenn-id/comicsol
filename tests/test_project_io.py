@@ -1,4 +1,5 @@
 import os
+import errno
 import subprocess
 import sys
 import tempfile
@@ -127,6 +128,26 @@ class ContainedProjectPathTests(unittest.TestCase):
             with mock.patch.object(sys, "platform", "darwin"):
                 with project_io.open_path_nofollow(target) as stream:
                     self.assertEqual(b"deep-temp", stream.read())
+
+    def test_open_path_nofollow_honors_write_and_readwrite_flags(self):
+        target = (self.project / "mode.bin").resolve()
+        with project_io.open_path_nofollow(
+            target, flags=os.O_WRONLY | os.O_CREAT, mode=0o600
+        ) as stream:
+            stream.write(b"write")
+        with project_io.open_path_nofollow(target, flags=os.O_RDWR) as stream:
+            self.assertEqual(b"write", stream.read())
+            stream.seek(0)
+            stream.write(b"W")
+
+    def test_empty_lock_metadata_reraises_nonretryable_error(self):
+        (self.project / ".comic-sol.lock").write_bytes(b"")
+        error = OSError(errno.EINVAL, "invalid lock")
+        with mock.patch.object(project_io.ProjectLock, "_lock", side_effect=error):
+            with self.assertRaises(OSError) as raised:
+                with project_io.ProjectLock(self.project, timeout=0.01):
+                    pass
+        self.assertEqual(errno.EINVAL, raised.exception.errno)
 
 
 class DurableWriteTests(unittest.TestCase):

@@ -197,6 +197,14 @@ class TemplateContractTests(unittest.TestCase):
         page = json.loads(page_raw)
         self.assertEqual("2.0", page["schema_version"])
         self.assertEqual("page-qa", page["kind"])
+        self.assertEqual(
+            {
+                "composition_cache_path", "composition_cache_sha256", "layout_name",
+                "layout_version", "lettering_sha256s", "page_height", "page_path",
+                "page_sha256", "page_width", "storyboard_path", "storyboard_sha256",
+            },
+            set(page["bindings"]),
+        )
         self.assertEqual(list(PAGE_CHECK_IDS), [check["id"] for check in page["checks"]])
         self.assertEqual(
             (json.dumps(page, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(),
@@ -212,6 +220,7 @@ class TemplateContractTests(unittest.TestCase):
             },
             set(panel["bindings"]),
         )
+        self.assertEqual([], validate_panel_record(panel))
 
         font_path = ROOT / "assets/fonts/NotoSans-Regular.ttf"
         ImageFont.truetype(str(font_path), 42)
@@ -241,6 +250,7 @@ class LayoutGeometryTests(unittest.TestCase):
             "three-horizontal": 3,
             "hero-top-two-bottom": 3,
             "two-top-hero-bottom": 3,
+            "four-grid": 4,
         }
         for name, count in expected_counts.items():
             rects = layout_rects(name)
@@ -473,6 +483,10 @@ class StrictSchemaValidationTests(unittest.TestCase):
     def test_panel_record_v2_uses_shared_quality_contract(self):
         self.assertEqual([], validate_panel_record(valid_panel_record_v2()))
 
+        reordered = valid_panel_record_v2()
+        reordered["checks"] = list(reversed(reordered["checks"]))
+        self.assert_issue(validate_panel_record(reordered), "quality-check-ids")
+
         generic = valid_panel_record_v2()
         for check in generic["checks"]:
             check["evidence"] = "verified"
@@ -485,6 +499,35 @@ class StrictSchemaValidationTests(unittest.TestCase):
         private_path = valid_panel_record_v2()
         private_path["bindings"]["raw_path"] = "/home/private/panel.png"
         self.assert_issue(validate_panel_record(private_path), "bindings.raw_path")
+
+    def test_v2_panel_record_rejects_legacy_panel_id(self):
+        record = valid_panel_record_v2()
+        record["panel_id"] = record["subject_id"]
+
+        self.assert_issue(validate_panel_record(record), "panel_id")
+
+    def test_v2_bindings_must_match_subject_id_paths(self):
+        record = valid_panel_record_v2()
+        record["bindings"]["raw_path"] = "panels/raw/p99-99.png"
+
+        self.assert_issue(validate_panel_record(record), "bindings.raw_path")
+
+    def test_v2_error_failure_requires_regenerate(self):
+        record = valid_panel_record_v2()
+        record["checks"][0]["result"] = "fail"
+
+        self.assert_issue(validate_panel_record(record), "decision")
+
+    def test_v2_warning_requires_accept_warning_or_regenerate(self):
+        record = valid_panel_record_v2()
+        record["checks"][0].update({"result": "warning", "severity": "warning"})
+
+        self.assert_issue(validate_panel_record(record), "decision")
+        record.update({
+            "decision": "accept-warning",
+            "unresolved_warnings": ["minor visual drift"],
+        })
+        self.assertEqual([], validate_panel_record(record))
 
     def test_panel_override_fields_require_a_recorded_visual_warning(self):
         reason = "minor prop drift is acceptable"
@@ -610,6 +653,82 @@ class ProjectValidationTests(unittest.TestCase):
         ):
             issues = validate_project(self.project, "panels")
         self.assertTrue(any("unreadable" in issue.message for issue in issues), issues)
+
+    def test_panel_stage_rejects_raster_over_decode_limit(self):
+        self.add_panel_files()
+        with patch("validate_project.MAX_DECODED_PIXELS", 1):
+            issues = validate_project(self.project, "panels")
+        self.assertTrue(any(
+            issue.field == "raw_path" and "unreadable" in issue.message
+            for issue in issues
+        ), issues)
+
+    def test_non_object_normalization_record_is_a_validation_issue(self):
+        self.add_panel_files()
+        clean = normalize_panel(
+            self.project, "p01-01", "panels/raw/p01-01.png", (736, 1136), "exact"
+        )
+        record = valid_panel_record_v2()
+        record["bindings"].update({
+            "raw_sha256": sha256_file(self.project / "panels/raw/p01-01.png"),
+            "clean_sha256": sha256_file(clean),
+            "normalization_sha256": sha256_file(self.project / "panels/p01-01/normalization.json"),
+        })
+        atomic_write_json(self.project / "qa/panels/p01-01.json", record)
+        (self.project / "panels/p01-01/normalization.json").write_text("[]\n", "utf-8")
+        issues = validate_project(self.project, "panels")
+        self.assertTrue(any("normalization record must be an object" in issue.message for issue in issues), issues)
+
+    def test_truncated_raster_payload_is_reported_as_unreadable(self):
+        self.add_panel_files()
+        raw = self.project / "panels/raw/p01-01.png"
+        raw.write_bytes(raw.read_bytes()[:32])
+        issues = validate_project(self.project, "panels")
+        self.assertTrue(any(
+            issue.field == "raw_path" and "unreadable" in issue.message
+            for issue in issues
+        ), issues)
+
+    def test_invalid_project_id_still_checks_terminal_artifact_paths(self):
+        manifest_path = self.project / "project.json"
+        manifest = read_json(manifest_path)
+        manifest["project_id"] = "../escape"
+        manifest["artifacts"] = {
+            "qa_report": {"path": "wrong.md", "sha256": "a" * 64},
+            "pdf_verification": {"path": "wrong.json", "sha256": "a" * 64},
+        }
+        atomic_write_json(manifest_path, manifest)
+        with patch(
+            "validate_project.validate_pdf_verification",
+            side_effect=AssertionError("invalid project ID must not drive PDF validation"),
+        ):
+            issues = validate_project(self.project, "final")
+        fields = {issue.field for issue in issues}
+        self.assertIn("artifacts.qa_report.path", fields)
+        self.assertIn("artifacts.pdf_verification.path", fields)
+
+    def test_escaped_artifact_descriptor_skips_hashing(self):
+        manifest_path = self.project / "project.json"
+        manifest = read_json(manifest_path)
+        manifest["artifacts"] = {
+            "story_plan": {"path": "../outside.json", "sha256": "a" * 64},
+        }
+        atomic_write_json(manifest_path, manifest)
+        outside = self.root / "outside.json"
+        outside.write_text("must not be hashed", "utf-8")
+
+        def guarded_hash(path):
+            if Path(path).resolve() == outside.resolve():
+                raise AssertionError("validator hashed an escaped artifact")
+            return sha256_file(path)
+
+        with patch("validate_project.sha256_file", side_effect=guarded_hash):
+            issues = validate_project(self.project, "final")
+        self.assertTrue(any(
+            issue.field == "artifacts.story_plan.path"
+            and "escapes" in issue.message
+            for issue in issues
+        ), issues)
 
     def test_final_stage_rejects_safety_failure_despite_complete_manifest(self):
         self.add_panel_files()
@@ -824,6 +943,25 @@ class SkillContractTests(unittest.TestCase):
         ):
             self.assertIn(f"references/{name}.md", text)
             self.assertTrue((ROOT / "references" / f"{name}.md").is_file())
+
+    def test_progressive_loading_names_safety_and_json_write_triggers(self):
+        for path in (ROOT / "SKILL.md", ROOT / "skills/comic-sol/SKILL.md"):
+            with self.subTest(path=path):
+                text = path.read_text("utf-8")
+                progressive_loading = text.split("### Progressive loading", 1)[1].split(
+                    "### No subagents", 1
+                )[0]
+                for trigger in (
+                    "external prompts",
+                    "people",
+                    "minors",
+                    "sensitive content",
+                    "named styles",
+                    "franchises",
+                    "refusals",
+                    "every JSON write or revision",
+                ):
+                    self.assertIn(trigger, progressive_loading)
 
     def test_fast_mode_rules_present_in_skill(self):
         """Fast Mode contract: black-box engine, no scaffolding, per-panel QA,

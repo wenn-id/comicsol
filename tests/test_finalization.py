@@ -130,7 +130,8 @@ class FinalArtifactTests(unittest.TestCase):
             self.project,
             1,
             build_page_quality_record(
-                self.project, 1, valid_page_reviewer_checks(self.project, 1)
+                self.project, 1, valid_page_reviewer_checks(self.project, 1),
+                reviewer="fixture-reviewer", reviewed_at="2026-08-14T01:02:03Z",
             ),
         )
 
@@ -292,7 +293,8 @@ class GuardedOperationTests(unittest.TestCase):
             self.project,
             1,
             build_page_quality_record(
-                self.project, 1, valid_page_reviewer_checks(self.project, 1)
+                self.project, 1, valid_page_reviewer_checks(self.project, 1),
+                reviewer="fixture-reviewer", reviewed_at="2026-08-14T01:02:03Z",
             ),
         )
 
@@ -390,8 +392,8 @@ class GuardedOperationTests(unittest.TestCase):
         (self.project / "cache/composition.json").write_text(
             json.dumps({"schema_version": "1.0", "stages": {}})
         )
-        from export_pdf import guarded_export
-        with self.assertRaises(ProjectValidationError):
+        from export_pdf import PdfExportError, guarded_export
+        with self.assertRaises(PdfExportError):
             guarded_export(self.project)
         self.assertFalse(
             (self.project / "exports/guard-test.pdf").is_file(),
@@ -401,13 +403,18 @@ class GuardedOperationTests(unittest.TestCase):
         """GREEN: guarded_export with valid export-ready writes PDF and records descriptor."""
         self._make_export_ready()
         from export_pdf import guarded_export
-        result = guarded_export(self.project)
+        lexical_project = self.project / ".." / self.project.name
+        result = guarded_export(lexical_project)
+        self.assertEqual(
+            lexical_project / "exports/sunlight-courier.pdf",
+            result,
+        )
         self.assertTrue(result.is_file())
         # Descriptor recorded in manifest
         manifest = read_json(self.project / "project.json")
         self.assertIn("pdf", manifest["artifacts"])
         pdf_desc = manifest["artifacts"]["pdf"]
-        self.assertEqual(result.relative_to(self.project).as_posix(), pdf_desc["path"])
+        self.assertEqual("exports/sunlight-courier.pdf", pdf_desc["path"])
         self.assertEqual(64, len(pdf_desc["sha256"]))
         verification_path = self.project / "exports/pdf-verification.json"
         self.assertTrue(verification_path.is_file())
@@ -416,7 +423,7 @@ class GuardedOperationTests(unittest.TestCase):
         self.assertEqual("1.0", verification["schema_version"])
         self.assertRegex(verification["verified_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
         self.assertEqual(pdf_desc["sha256"], verification["pdf_sha256"])
-        self.assertEqual(result.relative_to(self.project).as_posix(), verification["pdf_path"])
+        self.assertEqual("exports/sunlight-courier.pdf", verification["pdf_path"])
         self.assertEqual(1, verification["page_count"])
         self.assertEqual(1, len(verification["source_pages"]))
         source = verification["source_pages"][0]

@@ -1,0 +1,43 @@
+{
+  "name": "comic-sol",
+  "version": "2.0.0",
+  "description": "Create finished original manga/anime comics from prompts with editable plans, visual QA, deterministic lettering, page composition, and PDF export.",
+  "author": {
+    "name": "Alwan Juliawan",
+    "url": "https://github.com/wenn-id"
+  },
+  "homepage": "https://github.com/wenn-id/comicsol",
+  "repository": "https://github.com/wenn-id/comicsol",
+  "license": "MIT",
+  "keywords": [
+    "comic-generation",
+    "manga",
+    "anime",
+    "codex-skill",
+    "developer-tools",
+    "image-generation",
+    "visual-qa",
+    "pdf-export",
+    "local-first"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Comic Sol",
+    "shortDescription": "Turn prompts into editable, QA-checked manga comics",
+    "longDescription": "Comic Sol is a local-first Codex workflow for turning a short prompt, story, or source file into an original manga/anime comic. It creates editable story plans, character and scene references, panel prompts, generated panel PNGs, deterministic lettering, composed pages, a PDF, manifest, and transparent QA evidence. It uses the image-generation capability exposed by the current Codex session and keeps provider credentials outside the project.",
+    "developerName": "Alwan Juliawan",
+    "category": "Developer Tools",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/wenn-id/comicsol",
+    "privacyPolicyURL": "https://github.com/wenn-id/comicsol/blob/main/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/wenn-id/comicsol/blob/main/TERMS.md",
+    "defaultPrompt": [
+      "Make a 2-page manga about a courier delivering sunlight to an underground city.",
+      "Turn this story into a finished comic with editable intermediate files and a PDF.",
+      "Resume my interrupted Comic Sol project and finish only valid stale stages."
+    ],
+    "brandColor": "#0B1115",
+    "composerIcon": "./assets/comic-sol-logo.png",
+    "logo": "./assets/comic-sol-logo.png"
+  }
+}

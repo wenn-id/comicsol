@@ -14,13 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from comic_sol import atomic_write_json, canonical_json_bytes, read_json  # noqa: E402
+from quality_records import PANEL_CHECK_IDS  # noqa: E402
 from render_report import QaSummary, main, render_report, summarize_qa  # noqa: E402
-
-
-CHECK_IDS = (
-    "character-identity", "anatomy", "action", "composition",
-    "continuity", "text-free", "technical",
-)
 
 
 def panel_record(panel_id, *, attempts=1, decision="accept", warning=None,
@@ -32,7 +27,7 @@ def panel_record(panel_id, *, attempts=1, decision="accept", warning=None,
         ),
         "severity": "error" if failing or not warning else "warning",
         "evidence": "pipe | line\nnext" if check_id == "composition" else f"{check_id} checked",
-    } for check_id in CHECK_IDS]
+    } for check_id in PANEL_CHECK_IDS]
     record = {
         "schema_version": "1.0", "panel_id": panel_id,
         "source_prompt_path": f"prompts/panels/{panel_id}.txt",
@@ -129,6 +124,11 @@ class ReportTests(unittest.TestCase):
             regenerated_panels=3, accepted_warnings=2, hard_failures=1,
         ), summary)
 
+    def test_integrity_handles_pillow_decompression_bomb(self):
+        with mock.patch("render_report.Image.open", side_effect=Image.DecompressionBombError("unsafe")):
+            report = render_report(self.project).read_text("utf-8")
+        self.assertIn("valid page: no", report)
+
     def test_safety_category_counts_as_hard_failure_without_failed_check(self):
         record = panel_record("p01-01", decision="regenerate")
         record["failure_category"] = "safety_refusal"
@@ -149,9 +149,17 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(text.endswith("\n"))
         self.assertFalse(text.endswith("\n\n"))
 
+    def test_report_preserves_double_braces_in_authored_evidence(self):
+        self.records[0]["checks"][0]["evidence"] = "Observed {{sun gate}} intact."
+        atomic_write_json(
+            self.project / "qa/panels/p01-01.json", self.records[0]
+        )
+        report = render_report(self.project).read_text("utf-8")
+        self.assertIn("{{sun gate}}", report)
+
     def test_report_contains_checks_escaped_evidence_disclosures_and_integrity(self):
         text = render_report(self.project).read_text("utf-8")
-        for check_id in CHECK_IDS:
+        for check_id in PANEL_CHECK_IDS:
             self.assertIn(check_id, text)
         self.assertIn("pipe \\| line<br>next", text)
         self.assertIn("5 panels", text)
@@ -239,7 +247,7 @@ class ReportTests(unittest.TestCase):
                     if deterministic else "bounded-visual-review"
                 ),
                 "reviewer": "comic-sol" if deterministic else "fixture-reviewer",
-                "regions": [{"scope": "page"}],
+                "regions": [] if deterministic else [{"scope": "page"}],
             })
         atomic_write_json(page_dir / "page-001.json", {
             "bindings": {
@@ -253,7 +261,7 @@ class ReportTests(unittest.TestCase):
             "kind": "page-qa",
             "review": {
                 "method": "deterministic-plus-bounded-visual-review",
-                "reviewed_at": "fixture",
+                "reviewed_at": "2026-08-14T01:02:03Z",
                 "reviewer": "fixture-reviewer",
             },
             "schema_version": "2.0",
@@ -267,6 +275,37 @@ class ReportTests(unittest.TestCase):
         self.assertIn("deterministic-geometry-v1", text)
         self.assertIn("bounded-visual-review", text)
         self.assertIn("face-action-obstruction", text)
+
+    def test_report_retains_legacy_page_record_as_migration_required(self):
+        page_dir = self.project / "qa/pages"
+        page_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(page_dir / "page-001.json", {
+            "schema_version": "1.0",
+            "page": 1,
+            "page_path": "pages/page-001.png",
+            "page_sha256": "a" * 64,
+            "status": "reviewed",
+        })
+
+        text = render_report(self.project).read_text("utf-8")
+
+        self.assertIn("quality-migration-required", text)
+
+    def test_report_retains_malformed_legacy_page_as_migration_required(self):
+        page_dir = self.project / "qa/pages"
+        page_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(page_dir / "page-001.json", {
+            "schema_version": "1.0",
+            "page": "not-a-number",
+            "page_path": "pages/page-001.png",
+            "page_sha256": "a" * 64,
+            "status": "reviewed",
+        })
+
+        text = render_report(self.project).read_text("utf-8")
+
+        self.assertIn("quality-migration-required", text)
+        self.assertIn("page-not-a-number", text)
 
     def test_absent_warnings_use_exact_sentence(self):
         for path in (self.project / "qa/panels").glob("*.json"):

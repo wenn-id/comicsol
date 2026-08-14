@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import sys
 import tempfile
@@ -12,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from comic_sol import atomic_write_json  # noqa: E402
-from compose_pages import compose_all_pages, compose_page  # noqa: E402
+from compose_pages import compose_all_pages, compose_page, main as compose_main  # noqa: E402
 from layouts import FOUR_GRID_RECTS  # noqa: E402
 from tests.support import make_symlink  # noqa: E402
 
@@ -55,6 +56,16 @@ class CompositionTests(unittest.TestCase):
             self.assertEqual((1600, 2400), page.size)
             self.assertEqual("RGB", page.mode)
             self.assertEqual("PNG", page.format)
+
+    def test_compose_main_honors_explicit_all_flag(self):
+        with patch("compose_pages.compose_all_pages", return_value=[]) as compose_all:
+            self.assertEqual(0, compose_main([str(self.project), "--all"]))
+        compose_all.assert_called_once_with(self.project)
+
+    def test_compose_main_rejects_missing_selection(self):
+        with self.assertRaises(SystemExit) as error:
+            compose_main([str(self.project)])
+        self.assertEqual(2, error.exception.code)
 
     def test_two_panels_are_pasted_at_exact_rect_centers(self):
         path = compose_page(self.project, 1, self.storyboard, self.settings, {})
@@ -211,6 +222,34 @@ class CompositionTests(unittest.TestCase):
         self.assertEqual(
             json.dumps(cache, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             cache_path.read_text("utf-8"),
+        )
+
+    def test_composition_hashes_the_exact_source_bytes_it_composes(self):
+        source = self.project / "panels/p01-01/lettered.png"
+        original = source.read_bytes()
+        replacement = io.BytesIO()
+        Image.new("RGB", (800, 800), "blue").save(replacement, format="PNG")
+        self.storyboard["pages"][0] = {
+            "number": 1,
+            "layout": "full-page",
+            "panels": [{
+                "id": "p01-01",
+                "rect": {"x": 64, "y": 64, "width": 1472, "height": 2272},
+            }],
+        }
+        atomic_write_json(self.project / "plan/storyboard.json", self.storyboard)
+
+        with patch(
+            "compose_pages.read_contained_bytes",
+            side_effect=(original, replacement.getvalue()),
+        ) as read:
+            compose_all_pages(self.project)
+
+        cache = json.loads((self.project / "cache/composition.json").read_text("utf-8"))
+        self.assertEqual(1, read.call_count)
+        self.assertIn(
+            hashlib.sha256(original).hexdigest(),
+            cache["pages"][0]["ordered_lettered_sha256s"][0],
         )
 
     def test_all_pages_returns_numeric_paths_and_writes_each_file(self):

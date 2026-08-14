@@ -21,7 +21,9 @@ requests, documentation, and releases happen here.
 
 Requirements are Python 3.11 and `Pillow==12.3.0`. Image creation additionally
 requires an image-generation capability exposed to the active agent session; Comic
-Sol never embeds provider credentials.
+Sol never embeds provider credentials. Comic Sol requires no Comic Sol account or
+demo credentials, although a Codex session and the selected image provider may
+require their own account or access.
 
 Clone the public repository directly into the Codex skills directory, then install
 the one pinned dependency:
@@ -36,6 +38,25 @@ python3.11 -m pip install --require-hashes -r requirements/locks/base-linux-x86_
 The host-agnostic rule is: clone or copy this repository as one `comic-sol` folder
 beneath the Codex skills directory configured by your Codex installation. Keep
 `SKILL.md`, `scripts/`, `references/`, `templates/`, and `assets/` together.
+
+### Codex Plugin — same repository
+
+This repository is also a skills-only Codex Plugin. The plugin manifest lives at
+`.codex-plugin/plugin.json`; its self-contained upload bundle lives under
+`skills/comic-sol/`. No second repository is required.
+
+Test the same repository through Codex's repo marketplace:
+
+```bash
+codex plugin marketplace add wenn-id/comicsol --ref main
+codex plugin list --available --json
+codex plugin add comic-sol@comic-sol --json
+```
+
+The plugin includes the workflow, deterministic scripts, references, templates,
+fonts, and legal assets. Start a fresh Codex session after installation. The
+optional MCP/CLI engine remains in this repository as a separate local surface;
+plugin installation does not require a hosted service or MCP server.
 
 Windows PowerShell:
 
@@ -92,7 +113,7 @@ MCP client configurations remain preserved.
 
 ## MCP Server (Optional)
 
-Comic Sol includes an optional `stdio` MCP server that exposes the deterministic pipeline as standard tools for Hermes Agent, Claude Desktop, Cursor, or any MCP client.
+Comic Sol includes an optional `stdio` MCP server that exposes the deterministic pipeline as standard tools for Codex-compatible MCP clients.
 
 Sampling should remain disabled to preserve deterministic execution.
 
@@ -194,8 +215,8 @@ source-file, or resume mode; applies documented defaults; and asks only material
 missing questions. It reports an explicit error if the agent session cannot return
 a local raster image. See
 [`references/capability-detection.md`](references/capability-detection.md) for the
-exact capability check and preserved-project recovery procedure. Platform-specific
-image-provider setup is documented in
+exact capability check and preserved-project recovery procedure. Platform-specific,
+provider-neutral image setup is documented in
 [`references/image-provider-setup.md`](references/image-provider-setup.md).
 
 For deterministic diagnostics:
@@ -223,6 +244,7 @@ pages/page-001.png            ordered 1600×2400 page PNGs
 exports/<project-id>.pdf      ordered comic PDF
 qa/panels/*.json              seven-check panel QA records
 qa/report.md                  human-readable QA report
+exports/pdf-verification.json PDF verification (`pdf_verification` descriptor)
 logs/                         sanitized events, cache, and retry accounting
 ```
 

@@ -1,7 +1,7 @@
 # Image capability detection
 
-> **Platform setup:** See [`image-provider-setup.md`](image-provider-setup.md) for
-> concrete steps per platform (Codex, Claude Desktop, Cline, Hermes).
+> **Provider setup:** See [`image-provider-setup.md`](image-provider-setup.md) for
+> platform-specific, provider-neutral setup guidance.
 
 Capability detection belongs to the agent plane, not deterministic Python.
 

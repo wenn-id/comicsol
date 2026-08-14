@@ -21,6 +21,7 @@ from comic_sol import (  # noqa: E402
     block_project,
     build_resume_plan,
     canonical_artifact_bytes,
+    finalize_project,
     init_project,
     invalidate_from,
     main,
@@ -34,6 +35,7 @@ from comic_sol import (  # noqa: E402
     stage_cache_key,
     transition,
 )
+from normalize_panels import normalize_panel  # noqa: E402
 from validate_project import validate_panel_record  # noqa: E402
 
 
@@ -149,11 +151,16 @@ class ResumeTests(unittest.TestCase):
             actual_references = []
             for panel in panels:
                 record = read_json(self.project / f"qa/panels/{panel['id']}.json")
-                references = record["generation"]["reference_paths"]
+                if record.get("schema_version") == "2.0":
+                    references = []
+                    source_prompt_path = f"prompts/panels/{panel['id']}.txt"
+                else:
+                    references = record["generation"]["reference_paths"]
+                    source_prompt_path = record["source_prompt_path"]
                 dependencies.append({
                     "panel_id": panel["id"],
                     "reference_paths": references,
-                    "source_prompt_path": record["source_prompt_path"],
+                    "source_prompt_path": source_prompt_path,
                 })
                 actual_references.extend(references)
             relatives = [dependency["source_prompt_path"] for dependency in dependencies]
@@ -162,7 +169,13 @@ class ResumeTests(unittest.TestCase):
             files = [self.project / relative for relative in dict.fromkeys(relatives)]
             return [visual_panels, characters, manifest["capability"], dependencies], files
         if stage == "lettering":
-            return [[panel["text"] for panel in panels]], [self.project / "panels/clean/p01-01.png"]
+            record = read_json(self.project / "qa/panels/p01-01.json")
+            clean_relative = (
+                "panels/p01-01/clean.png"
+                if record.get("schema_version") == "2.0"
+                else "panels/clean/p01-01.png"
+            )
+            return [[panel["text"] for panel in panels]], [self.project / clean_relative]
         if stage == "composition":
             geometry = [{"number": page["number"], "layout": page["layout"], "panels": [p["rect"] for p in page["panels"]]} for page in storyboard["pages"]]
             return [geometry], [self.project / "panels/p01-01/lettered.png"]
@@ -170,10 +183,16 @@ class ResumeTests(unittest.TestCase):
 
     def _write_cache_snapshot(self):
         manifest = read_json(self.project / "project.json")
+        panel_record = read_json(self.project / "qa/panels/p01-01.json")
+        clean_relative = (
+            "panels/p01-01/clean.png"
+            if panel_record.get("schema_version") == "2.0"
+            else "panels/clean/p01-01.png"
+        )
         outputs = {
             "planning": ["plan/story-plan.json", "plan/character-bible.json"],
             "storyboard": ["plan/storyboard.json"],
-            "generation": ["panels/raw/p01-01.png", "panels/clean/p01-01.png"],
+            "generation": ["panels/raw/p01-01.png", clean_relative],
             "lettering": ["panels/p01-01/lettered.png"],
             "composition": ["pages/page-001.png"],
             "export": ["qa/report.md", "exports/sunlight-courier.pdf"],
@@ -187,11 +206,73 @@ class ResumeTests(unittest.TestCase):
             }
         self._write_json("logs/stage-cache.json", {"schema_version": "1.0", "stages": stages})
 
+    def _run_finalize(self, project_dir=None):
+        """Run finalization while isolating stages outside the lettering decision."""
+        (self.project / "qa/pages").mkdir(parents=True, exist_ok=True)
+        (self.project / "qa/pages/page-001.json").write_text("{}\n", "utf-8")
+        with (
+            patch("compose_pages.compose_project"),
+            patch("page_quality.validate_page_quality", return_value=[]),
+            patch("export_pdf.guarded_export"),
+            patch("render_report.render_report"),
+            patch("comic_sol.record_stage"),
+            patch("comic_sol.transition"),
+        ):
+            return finalize_project(self.project if project_dir is None else project_dir)
+
     def test_cache_key_is_canonical_and_excludes_timestamps(self):
         first = stage_cache_key("planning", [{"updated_at": "one", "b": 2, "a": 1}], [], "1")
         second = stage_cache_key("planning", [{"a": 1, "b": 2, "updated_at": "two"}], [], "1")
         self.assertEqual(first, second)
         self.assertNotEqual(first, stage_cache_key("planning", [{"a": 1, "b": 3}], [], "1"))
+
+    def test_finalize_treats_regenerate_and_rerun_as_stale(self):
+        for action in ("regenerate", "rerun"):
+            with self.subTest(action=action):
+                plan = [ResumeAction("lettering", action, "stage", "stale")]
+                with (
+                    patch("comic_sol.build_resume_plan", return_value=plan),
+                    patch("letter_panels.letter_project") as letter,
+                ):
+                    self._run_finalize()
+                letter.assert_called_once_with(self.project)
+
+    def test_finalize_preserves_lexical_path_for_stale_stage_callback(self):
+        """Finalization must not leak a platform-specific resolved path to callbacks."""
+        lexical_project = self.project / ".." / self.project.name
+        plan = [ResumeAction("lettering", "rerun", "stage", "stale")]
+        with (
+            patch("comic_sol.build_resume_plan", return_value=plan),
+            patch("letter_panels.letter_project") as letter,
+        ):
+            self._run_finalize(lexical_project)
+        letter.assert_called_once_with(lexical_project)
+
+    def test_finalize_does_not_accept_empty_manifest_panels_vacuously(self):
+        manifest = read_json(self.project / "project.json")
+        manifest["panels"] = []
+        atomic_write_json(self.project / "project.json", manifest)
+        (self.project / "panels/p01-01/lettered.png").unlink(missing_ok=True)
+        with (
+            patch("comic_sol.build_resume_plan", return_value=[]),
+            patch("letter_panels.letter_project") as letter,
+        ):
+            self._run_finalize()
+        letter.assert_called_once_with(self.project)
+
+    def test_finalize_preserves_lexical_path_for_empty_panel_callback(self):
+        """Storyboard fallback must preserve the caller path passed to lettering."""
+        manifest = read_json(self.project / "project.json")
+        manifest["panels"] = []
+        atomic_write_json(self.project / "project.json", manifest)
+        (self.project / "panels/p01-01/lettered.png").unlink(missing_ok=True)
+        lexical_project = self.project / ".." / self.project.name
+        with (
+            patch("comic_sol.build_resume_plan", return_value=[]),
+            patch("letter_panels.letter_project") as letter,
+        ):
+            self._run_finalize(lexical_project)
+        letter.assert_called_once_with(lexical_project)
 
     def test_stale_v1_lettering_cache_reruns_lettering_onward_only(self):
         canonical_inputs, files = self._stage_material("lettering")
@@ -229,25 +310,14 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(clean_before, (self.project / "panels/clean/p01-01.png").read_bytes())
 
     def test_v2_panel_quality_record_preserves_generation_cache_reuse(self):
-        legacy = read_json(self.project / "qa/panels/p01-01.json")
-        v2 = {
-            "schema_version": "2.0",
-            "kind": "panel-qa",
-            "subject_id": "p01-01",
-            "bindings": {
-                "source_prompt_path": legacy["source_prompt_path"],
-                "reference_paths": legacy["generation"]["reference_paths"],
-            },
-            "checks": [],
-            "decision": "accept",
-            "review": {
-                "method": "agent-review",
-                "reviewed_at": "2026-07-31T07:22:11Z",
-                "reviewer": "test",
-            },
-            "unresolved_warnings": [],
-        }
-        atomic_write_json(self.project / "qa/panels/p01-01.json", v2)
+        atomic_write_json(
+            self.project / "qa/panels/p01-01.json", self._panel_record_v2()
+        )
+        self._write_cache_snapshot()
+        cache = read_json(self.project / "logs/stage-cache.json")
+        generation_artifacts = cache["stages"]["generation"]["artifacts"]
+        self.assertIn("panels/p01-01/clean.png", generation_artifacts)
+        self.assertTrue((self.project / "panels/clean/p01-01.png").is_file())
 
         actions = build_resume_plan(self.project)
 
@@ -259,6 +329,90 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(
             ("reuse", "cache key and artifacts match"),
             by_stage["generation"],
+        )
+
+        Image.new("RGB", (512, 512), "purple").save(
+            self.project / "panels/p01-01/clean.png"
+        )
+        generation = next(
+            action for action in build_resume_plan(self.project)
+            if action.stage == "generation" and action.artifact == "stage"
+        )
+        self.assertEqual("regenerate", generation.action, generation.reason)
+
+    def test_v2_canonical_and_legacy_clean_artifacts_do_not_cross_fingerprint(self):
+        atomic_write_json(
+            self.project / "qa/panels/p01-01.json", self._panel_record_v2()
+        )
+        self._write_cache_snapshot()
+
+        Image.new("RGB", (512, 512), "purple").save(
+            self.project / "panels/clean/p01-01.png"
+        )
+        generation = next(
+            action for action in build_resume_plan(self.project)
+            if action.stage == "generation" and action.artifact == "stage"
+        )
+        self.assertEqual("reuse", generation.action, generation.reason)
+
+        Image.new("RGB", (512, 512), "green").save(
+            self.project / "panels/p01-01/clean.png"
+        )
+        generation = next(
+            action for action in build_resume_plan(self.project)
+            if action.stage == "generation" and action.artifact == "stage"
+        )
+        self.assertEqual("regenerate", generation.action, generation.reason)
+
+    def test_v2_canonical_clean_artifact_is_fingerprinted(self):
+        atomic_write_json(
+            self.project / "qa/panels/p01-01.json", self._panel_record_v2()
+        )
+        (self.project / "panels/clean/p01-01.png").unlink()
+        self._write_cache_snapshot()
+        baseline = build_resume_plan(self.project)
+        baseline_generation = next(
+            action for action in baseline
+            if action.stage == "generation" and action.artifact == "stage"
+        )
+        self.assertEqual("reuse", baseline_generation.action, baseline_generation.reason)
+
+        Image.new("RGB", (512, 512), "purple").save(
+            self.project / "panels/p01-01/clean.png"
+        )
+
+        actions = build_resume_plan(self.project)
+        by_stage = {
+            action.stage: action.action
+            for action in actions
+            if action.artifact == "stage"
+        }
+        self.assertEqual("regenerate", by_stage["generation"])
+        self.assertTrue(
+            all(by_stage[stage] == "rerun" for stage in ("lettering", "composition", "export"))
+        )
+
+    def test_v1_legacy_clean_artifact_remains_fingerprinted(self):
+        baseline = build_resume_plan(self.project)
+        baseline_generation = next(
+            action for action in baseline
+            if action.stage == "generation" and action.artifact == "stage"
+        )
+        self.assertEqual("reuse", baseline_generation.action, baseline_generation.reason)
+
+        Image.new("RGB", (512, 512), "purple").save(
+            self.project / "panels/clean/p01-01.png"
+        )
+
+        actions = build_resume_plan(self.project)
+        by_stage = {
+            action.stage: action.action
+            for action in actions
+            if action.artifact == "stage"
+        }
+        self.assertEqual("regenerate", by_stage["generation"])
+        self.assertTrue(
+            all(by_stage[stage] == "rerun" for stage in ("lettering", "composition", "export"))
         )
 
     def test_noop_resume_does_not_write_any_file(self):
@@ -630,6 +784,67 @@ class ResumeTests(unittest.TestCase):
             if reference_paths is None else reference_paths
         )
         return record
+
+    def _quality_checks(self):
+        check_ids = (
+            "character-identity", "anatomy", "action", "composition",
+            "continuity", "text-free", "technical",
+        )
+        return [{
+            "id": check_id,
+            "result": "pass",
+            "severity": "error",
+            "evidence": f"Observed {check_id} against current panel artifacts",
+            "method": "bounded-visual-review",
+            "reviewer": "fixture-reviewer",
+            "regions": [],
+        } for check_id in check_ids]
+
+    def _panel_record_v2(self, panel_id="p01-01"):
+        raw = self.project / f"panels/raw/{panel_id}.png"
+        clean = self.project / f"panels/{panel_id}/clean.png"
+        normalization = self.project / f"panels/{panel_id}/normalization.json"
+        normalize_panel(
+            self.project, panel_id, f"panels/raw/{panel_id}.png", (512, 512), "exact"
+        )
+        with Image.open(raw) as image:
+            raw_width, raw_height = image.size
+        with Image.open(clean) as image:
+            clean_width, clean_height = image.size
+        return {
+            "schema_version": "2.0",
+            "kind": "panel-qa",
+            "subject_id": panel_id,
+            "bindings": {
+                "raw_path": f"panels/raw/{panel_id}.png",
+                "raw_sha256": sha256_file(raw),
+                "raw_width": raw_width,
+                "raw_height": raw_height,
+                "clean_path": f"panels/{panel_id}/clean.png",
+                "clean_sha256": sha256_file(clean),
+                "clean_width": clean_width,
+                "clean_height": clean_height,
+                "normalization_path": f"panels/{panel_id}/normalization.json",
+                "normalization_sha256": sha256_file(normalization),
+            },
+            "checks": self._quality_checks(),
+            "review": {
+                "method": "bounded-visual-review",
+                "reviewer": "fixture-reviewer",
+                "reviewed_at": "2026-08-14T00:00:00Z",
+            },
+            "decision": "accept",
+            "unresolved_warnings": [],
+        }
+
+    def test_resume_matches_valid_v2_record_by_subject_id(self):
+        self._write_json("qa/panels/p01-01.json", self._panel_record_v2())
+        self._write_cache_snapshot()
+
+        actions = build_resume_plan(self.project)
+
+        action = next(item for item in actions if item.artifact == "p01-01")
+        self.assertEqual("reuse", action.action, action.reason)
 
     def test_corrupt_and_safety_failures_cannot_be_overridden(self):
         record_path = self.project / "qa/panels/p01-01.json"
