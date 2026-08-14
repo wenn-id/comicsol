@@ -177,6 +177,45 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertEqual("keep me", foreign.read_text(encoding="utf-8"))
             self.assertTrue((install_root / ".git").is_dir())
 
+    @unittest.skipUnless(os.name == "nt", "PowerShell installer test")
+    def test_powershell_relative_root_uses_the_current_powershell_location(self):
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        self.assertIsNotNone(shell)
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            process_directory = root / "process"
+            powershell_location = root / "location"
+            wrong_root = process_directory / "runtime"
+            requested_root = powershell_location / "runtime"
+            wrong_root.mkdir(parents=True)
+            requested_root.mkdir(parents=True)
+            self.write_marker(wrong_root)
+            self.write_marker(requested_root)
+            (wrong_root / "foreign.txt").write_text("preserve", encoding="utf-8")
+            runner = root / "run-relative-uninstall.ps1"
+            runner.write_text(
+                "param([string]$Installer, [string]$Location)\n"
+                "Set-Location -LiteralPath $Location\n"
+                "& $Installer -InstallRoot 'runtime' -Uninstall\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    shell, "-NoProfile", "-File", str(runner),
+                    "-Installer", str(self.root / "installers/install.ps1"),
+                    "-Location", str(powershell_location),
+                ],
+                cwd=process_directory,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertFalse(requested_root.exists())
+            self.assertTrue((wrong_root / "foreign.txt").is_file())
+
     @unittest.skipUnless(os.name != "nt", "POSIX installer test")
     def test_posix_installer_refuses_active_install_root_lock(self):
         with tempfile.TemporaryDirectory() as raw:

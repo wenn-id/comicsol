@@ -34,7 +34,8 @@ function Resolve-CanonicalInstallRoot {
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
         throw "install root is not a directory"
     }
-    $absolute = [System.IO.Path]::GetFullPath($Path)
+    $providerPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    $absolute = [System.IO.Path]::GetFullPath($providerPath)
     $item = Get-Item -Force -LiteralPath $absolute
     while ($item) {
         if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
