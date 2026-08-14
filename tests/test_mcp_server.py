@@ -259,6 +259,7 @@ class McpServerUnitTests(unittest.TestCase):
     def test_symlink_scan_is_cached_per_project_and_invalidated_on_change(self):
         project = self.root / "cached-project"
         project.mkdir()
+        project = project.resolve()
         (project / "project.json").write_text("{}", encoding="utf-8")
         mcp_server._resolve_project("cached-project")
         cached = mcp_server._SYMLINK_SCAN_CACHE.get("cached-project")
@@ -311,6 +312,7 @@ class McpServerUnitTests(unittest.TestCase):
         project = self.root / "racing-project"
         nested = project / "nested"
         nested.mkdir(parents=True)
+        nested = nested.resolve()
         (project / "project.json").write_text("{}", encoding="utf-8")
         outside = Path(self.temporary_directory.name) / "secret.txt"
         outside.write_text("secret", encoding="utf-8")
