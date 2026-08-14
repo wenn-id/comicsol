@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -39,7 +40,7 @@ def _backup_path(path: Path) -> Path:
     return path.with_name(f"{path.name}.bak-{stamp}")
 
 
-def _atomic_write(path: Path, data: bytes) -> None:
+def _atomic_write(path: Path, data: bytes, mode: int | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     temporary = Path(temporary_name)
@@ -47,6 +48,8 @@ def _atomic_write(path: Path, data: bytes) -> None:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(data)
             stream.flush()
+            if mode is not None:
+                os.fchmod(stream.fileno(), mode)
             os.fsync(stream.fileno())
         os.replace(temporary, path)
         if os.name != "nt":
@@ -90,6 +93,7 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
         return SetupResult(adapter.name, "skipped", str(path), None, "client config not found")
     try:
         original = path.read_bytes()
+        original_mode = stat.S_IMODE(path.stat().st_mode) if os.name != "nt" else None
         config = adapter.load(original)
     except (OSError, UnicodeError, ValueError) as error:
         return SetupResult(adapter.name, "failed", str(path), None, f"malformed or unreadable config: {error}")
@@ -102,14 +106,14 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
     backup = _backup_path(path)
     try:
         shutil.copy2(path, backup)
-        _atomic_write(path, adapter.dump(updated))
+        _atomic_write(path, adapter.dump(updated), original_mode)
         if not remove and not adapter.verify(entry):
-            _atomic_write(path, original)
+            _atomic_write(path, original, original_mode)
             return SetupResult(adapter.name, "rolled-back", str(path), str(backup), "verification failed; original restored")
     except (OSError, UnicodeError, ValueError) as error:
         try:
             if backup.exists():
-                _atomic_write(path, original)
+                _atomic_write(path, original, original_mode)
         except OSError:
             pass
         return SetupResult(adapter.name, "failed", str(path), str(backup) if backup.exists() else None, str(error))

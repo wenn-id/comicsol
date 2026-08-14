@@ -144,6 +144,46 @@ class ClientSetupTests(unittest.TestCase):
         )
         self.assertEqual(parent_mode, stat.S_IMODE(config.parent.stat().st_mode))
 
+    @unittest.skipIf(os.name == "nt", "POSIX mode semantics are unavailable on Windows")
+    def test_posix_setup_preserves_group_read_mode(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.write_text("{}\n", encoding="utf-8")
+        config.chmod(0o640)
+
+        result = setup_clients(
+            self.output,
+            adapters=[JsonClientAdapter("cursor", config, "mcpServers")],
+        )[0]
+
+        self.assertEqual(0o640, stat.S_IMODE(config.stat().st_mode))
+        self.assertEqual(
+            0o640,
+            stat.S_IMODE(Path(result.backup_path).stat().st_mode),
+        )
+
+    @unittest.skipIf(os.name == "nt", "POSIX mode semantics are unavailable on Windows")
+    def test_posix_rollback_preserves_group_read_mode(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.write_text("{}\n", encoding="utf-8")
+        config.chmod(0o640)
+        adapter = JsonClientAdapter(
+            "cursor",
+            config,
+            "mcpServers",
+            verify_hook=lambda: False,
+        )
+
+        result = setup_clients(self.output, adapters=[adapter])[0]
+
+        self.assertEqual("rolled-back", result.status)
+        self.assertEqual(0o640, stat.S_IMODE(config.stat().st_mode))
+        self.assertEqual(
+            0o640,
+            stat.S_IMODE(Path(result.backup_path).stat().st_mode),
+        )
+
     def test_json_verify_rejects_parseable_but_unsafe_comic_sol_entries(self):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)

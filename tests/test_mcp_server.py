@@ -268,6 +268,97 @@ class McpServerUnitTests(unittest.TestCase):
         mcp_server._resolve_project("cached-project")
         self.assertIsNot(cached, mcp_server._SYMLINK_SCAN_CACHE.get("cached-project"))
 
+    def test_symlink_cache_hit_avoids_directory_rescan(self):
+        project = self.root / "unchanged-project"
+        (project / "nested").mkdir(parents=True)
+        (project / "project.json").write_text("{}", encoding="utf-8")
+        expected = mcp_server._resolve_project("unchanged-project")
+
+        with mock.patch.object(
+            mcp_server.os,
+            "scandir",
+            side_effect=AssertionError("cache hit rescanned the project"),
+        ):
+            actual = mcp_server._resolve_project("unchanged-project")
+
+        self.assertEqual(expected, actual)
+
+    @unittest.skipIf(sys.platform == "win32", "requires POSIX symlink semantics")
+    def test_symlink_created_during_scan_is_rejected(self):
+        project = self.root / "racing-project"
+        nested = project / "nested"
+        nested.mkdir(parents=True)
+        (project / "project.json").write_text("{}", encoding="utf-8")
+        outside = Path(self.temporary_directory.name) / "secret.txt"
+        outside.write_text("secret", encoding="utf-8")
+        real_scandir = mcp_server.os.scandir
+        injected = False
+
+        class InjectOnExhaustion:
+            def __init__(self, iterator):
+                self.iterator = iterator
+
+            def __enter__(self):
+                self.iterator.__enter__()
+                return self
+
+            def __exit__(self, *args):
+                return self.iterator.__exit__(*args)
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                nonlocal injected
+                try:
+                    return next(self.iterator)
+                except StopIteration:
+                    if not injected:
+                        make_symlink(self_test, nested / "late-link", outside)
+                        injected = True
+                    raise
+
+        self_test = self
+
+        def injecting_scandir(path):
+            iterator = real_scandir(path)
+            if Path(path) == nested and not injected:
+                return InjectOnExhaustion(iterator)
+            return iterator
+
+        with mock.patch.object(mcp_server.os, "scandir", side_effect=injecting_scandir):
+            with self.assertRaisesRegex(ToolError, "symlink|changed during validation"):
+                mcp_server._resolve_project("racing-project")
+
+    @unittest.skipIf(sys.platform == "win32", "requires POSIX symlink semantics")
+    def test_disappearing_project_root_cannot_leave_trusted_empty_cache(self):
+        project = self.root / "recreated-project"
+        project.mkdir()
+        (project / "project.json").write_text("{}", encoding="utf-8")
+        resolved = mcp_server._resolve_project("recreated-project")
+        real_is_dir = Path.is_dir
+        removed = False
+
+        def remove_after_root_validation(path):
+            nonlocal removed
+            result = real_is_dir(path)
+            if path == resolved and result and not removed:
+                shutil.rmtree(path)
+                removed = True
+            return result
+
+        with mock.patch.object(Path, "is_dir", new=remove_after_root_validation):
+            with self.assertRaises(ToolError):
+                mcp_server._resolve_project("recreated-project")
+
+        project.mkdir()
+        (project / "project.json").write_text("{}", encoding="utf-8")
+        outside = Path(self.temporary_directory.name) / "secret.txt"
+        outside.write_text("secret", encoding="utf-8")
+        make_symlink(self, project / "late-link", outside)
+        with self.assertRaisesRegex(ToolError, "symlink"):
+            mcp_server._resolve_project("recreated-project")
+
     def test_override_tool_accepts_valid_v2_visual_failure(self):
         project = self.root / "sunlight-courier"
         shutil.copytree(ROOT / "samples/sunlight-courier", project)

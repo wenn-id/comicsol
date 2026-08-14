@@ -1,6 +1,7 @@
 import argparse
 import os
 import re
+import stat
 from pathlib import Path
 from typing import Any, Literal
 
@@ -38,12 +39,12 @@ from render_report import render_report
 # Root directory allowed for operations. All project IDs resolve relative to this.
 OUTPUT_ROOT: Path
 
-# Successful symlink scans are cached per project ID. Recursive directory
-# fingerprints invalidate safely when nested entries change, while repeated calls
-# skip the full symlink-entry inspection.
+# Successful symlink scans are cached per project ID. Unchanged directories need
+# only an lstat; changed and newly discovered directories are scanned again.
+_DirectorySnapshot = tuple[int, int, int, int, int, int, tuple[str, ...]]
 _SYMLINK_SCAN_CACHE: dict[
     str,
-    tuple[Path, tuple[tuple[str, int, tuple[str, ...]], ...]],
+    tuple[Path, dict[str, _DirectorySnapshot]],
 ] = {}
 
 _VALIDATION_STAGES = frozenset({"all", "plan", "storyboard", "panels", "final", "export-ready"})
@@ -154,32 +155,98 @@ def _configure_root(path: Path) -> Path:
     return OUTPUT_ROOT
 
 
-def _directory_entries(
+def _directory_path(project_dir: Path, relative: str) -> Path:
+    return project_dir if relative == "." else project_dir / relative
+
+
+def _discard_snapshot_subtree(
+    snapshots: dict[str, _DirectorySnapshot], relative: str
+) -> None:
+    prefix = f"{relative}/"
+    for cached in tuple(snapshots):
+        if cached == relative or cached.startswith(prefix):
+            snapshots.pop(cached)
+
+
+def _directory_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_size,
+        metadata.st_nlink,
+    )
+
+
+def _scan_directory(
     project_dir: Path,
-) -> tuple[tuple[str, int, tuple[str, ...]], ...]:
-    """Fingerprint directory mtimes and direct entry types across project tree."""
-    records: list[tuple[str, int, tuple[str, ...]]] = []
-    project_dir = project_dir.resolve()
-    for directory, dirnames, filenames in os.walk(project_dir, followlinks=False):
-        root = Path(directory)
-        entries = []
-        for name in (*dirnames, *filenames):
-            candidate = root / name
-            kind = "l" if candidate.is_symlink() else "d" if candidate.is_dir() else "f"
-            entries.append(f"{kind}:{name}")
-        try:
-            relative = root.relative_to(project_dir).as_posix() or "."
-            records.append((relative, root.lstat().st_mtime_ns, tuple(sorted(entries))))
-        except OSError:
+    relative: str,
+    snapshots: dict[str, _DirectorySnapshot],
+) -> list[str]:
+    """Scan one changed directory and return uncached child directories."""
+    directory = _directory_path(project_dir, relative)
+    before = directory.lstat()
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISDIR(before.st_mode):
+        _reject("security-error: project directory structure is invalid")
+    children: list[str] = []
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            if entry.is_symlink():
+                _reject("security-error: project contains a symlink")
+            if entry.is_dir(follow_symlinks=False):
+                children.append(entry.name if relative == "." else f"{relative}/{entry.name}")
+
+    after = directory.lstat()
+    if stat.S_ISLNK(after.st_mode) or not stat.S_ISDIR(after.st_mode):
+        _reject("security-error: project directory structure is invalid")
+    identity = _directory_identity(after)
+    if _directory_identity(before) != identity:
+        _reject("security-error: project changed during validation")
+    current_children = tuple(sorted(children))
+    previous_children = snapshots.get(relative, (0, 0, 0, 0, 0, 0, ()))[6]
+    for removed in set(previous_children) - set(current_children):
+        _discard_snapshot_subtree(snapshots, removed)
+    snapshots[relative] = (*identity, current_children)
+    return [child for child in current_children if child not in snapshots]
+
+
+def _scan_subtree(
+    project_dir: Path,
+    relative: str,
+    snapshots: dict[str, _DirectorySnapshot],
+) -> None:
+    pending = [relative]
+    while pending:
+        pending.extend(_scan_directory(project_dir, pending.pop(), snapshots))
+
+
+def _refresh_project_snapshot(
+    project_dir: Path,
+    cached: dict[str, _DirectorySnapshot],
+) -> tuple[dict[str, _DirectorySnapshot], bool]:
+    """Refresh only directories whose own metadata changed."""
+    snapshots = dict(cached)
+    changed = False
+    for relative in sorted(tuple(snapshots), key=lambda item: (item.count("/"), item)):
+        if relative not in snapshots:
             continue
-    return tuple(sorted(records))
-
-
-def _project_fingerprint(
-    project_dir: Path,
-) -> tuple[Path, tuple[tuple[str, int, tuple[str, ...]], ...]]:
-    """Return (resolved project path, recursive directory-entry fingerprint)."""
-    return project_dir.resolve(), _directory_entries(project_dir)
+        directory = _directory_path(project_dir, relative)
+        try:
+            metadata = directory.lstat()
+        except FileNotFoundError:
+            if relative == ".":
+                raise
+            _discard_snapshot_subtree(snapshots, relative)
+            changed = True
+            continue
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            _reject("security-error: project directory structure is invalid")
+        previous = snapshots[relative]
+        if _directory_identity(metadata) != previous[:6]:
+            _scan_subtree(project_dir, relative, snapshots)
+            changed = True
+    return snapshots, changed
 
 
 def _resolve_project(project_id: str) -> Path:
@@ -197,13 +264,19 @@ def _resolve_project(project_id: str) -> Path:
             _reject("security-error: project directory resolves outside output root")
         if not resolved.is_dir():
             _reject("security-error: project directory is not an initialized Comic Sol project")
-        fingerprint = _project_fingerprint(resolved)
-        if _SYMLINK_SCAN_CACHE.get(project_id) != fingerprint:
-            for directory, dirnames, filenames in os.walk(resolved, followlinks=False):
-                for name in (*dirnames, *filenames):
-                    if (Path(directory) / name).is_symlink():
-                        _reject("security-error: project contains a symlink")
-            _SYMLINK_SCAN_CACHE[project_id] = fingerprint
+        cached = _SYMLINK_SCAN_CACHE.get(project_id)
+        if cached is None or cached[0] != resolved or "." not in cached[1]:
+            snapshots: dict[str, _DirectorySnapshot] = {}
+            _scan_subtree(resolved, ".", snapshots)
+            _SYMLINK_SCAN_CACHE[project_id] = (resolved, snapshots)
+        else:
+            try:
+                snapshots, changed = _refresh_project_snapshot(resolved, cached[1])
+            except Exception:
+                _SYMLINK_SCAN_CACHE.pop(project_id, None)
+                raise
+            if changed:
+                _SYMLINK_SCAN_CACHE[project_id] = (resolved, snapshots)
         if not (resolved / "project.json").is_file():
             _reject("security-error: project directory is not an initialized Comic Sol project")
         return resolved
