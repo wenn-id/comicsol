@@ -58,6 +58,10 @@ release_install_lock() {
   LOCK_HELD=0
 }
 
+canonical_install_root() {
+  (cd -P -- "$1" && pwd -P)
+}
+
 cleanup_install() {
   rollback
   release_install_lock
@@ -85,14 +89,8 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-INSTALL_LOCK_DIR="${INSTALL_ROOT}.lock"
 if [ "$UNINSTALL" -eq 1 ]; then
-  acquire_install_lock
-  trap 'release_install_lock' EXIT
-  trap 'abort_uninstall' INT TERM
-
   if [ ! -e "$INSTALL_ROOT" ]; then
-    release_install_lock
     echo "Comic Sol runtime is already removed. User projects were preserved."
     exit 0
   fi
@@ -100,8 +98,21 @@ if [ "$UNINSTALL" -eq 1 ]; then
     echo "refusing to uninstall: install root is not a directory" >&2
     exit 1
   fi
+else
+  if [ -z "$SHA256" ]; then
+    echo "--sha256 is required for this unsigned prerelease" >&2
+    exit 2
+  fi
+  mkdir -p "$INSTALL_ROOT"
+fi
 
-  INSTALL_ROOT=$(cd -P -- "$INSTALL_ROOT" && pwd -P)
+INSTALL_ROOT=$(canonical_install_root "$INSTALL_ROOT")
+INSTALL_LOCK_DIR="${INSTALL_ROOT}.lock"
+if [ "$UNINSTALL" -eq 1 ]; then
+  acquire_install_lock
+  trap 'release_install_lock' EXIT
+  trap 'abort_uninstall' INT TERM
+
   CURRENT_ROOT=$(pwd -P)
   HOME_ROOT=$(cd -P -- "$HOME" && pwd -P)
   case "$INSTALL_ROOT" in
@@ -146,11 +157,6 @@ if [ "$UNINSTALL" -eq 1 ]; then
   release_install_lock
   echo "Comic Sol runtime removed. User projects were preserved."
   exit 0
-fi
-
-if [ -z "$SHA256" ]; then
-  echo "--sha256 is required for this unsigned prerelease" >&2
-  exit 2
 fi
 
 acquire_install_lock
@@ -250,8 +256,6 @@ fi
 "$EXE" doctor --output-root "${COMIC_SOL_OUTPUT_ROOT:-$HOME/Comic Sol}"
 
 INSTALL_STARTED=1
-mkdir -p "$INSTALL_ROOT"
-INSTALL_ROOT=$(cd -P -- "$INSTALL_ROOT" && pwd -P)
 VERSIONS="$INSTALL_ROOT/versions"
 TARGET="$VERSIONS/$VERSION"
 TARGET_BACKUP="$VERSIONS/.${VERSION}.rollback"
@@ -275,8 +279,12 @@ printf '%s\n' "$VERSION" > "$INSTALL_ROOT/active-version.new"
 mv -- "$INSTALL_ROOT/active-version.new" "$INSTALL_ROOT/active-version"
 printf '%s\n%s\n%s\n' "$INSTALL_MARKER_MAGIC" "$VERSION" "$INSTALL_ROOT" > "$INSTALL_ROOT/.comic-sol-install.new"
 mv -- "$INSTALL_ROOT/.comic-sol-install.new" "$INSTALL_ROOT/$INSTALL_MARKER_NAME"
-rm -rf -- "$STABLE_BACKUP" "$TARGET_BACKUP"
 COMMITTED=1
+for backup in "$STABLE_BACKUP" "$TARGET_BACKUP"; do
+  if ! rm -rf -- "$backup"; then
+    echo "Could not remove rollback backup '$backup'" >&2
+  fi
+done
 
 echo "Installed unsigned Comic Sol $VERSION at $INSTALL_ROOT"
 echo "Add $INSTALL_ROOT/bin to PATH. User projects are outside this directory."

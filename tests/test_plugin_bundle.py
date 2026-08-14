@@ -1,10 +1,15 @@
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import sync_plugin_bundle  # noqa: E402
 
 
 class PluginBundleTests(unittest.TestCase):
@@ -18,6 +23,40 @@ class PluginBundleTests(unittest.TestCase):
         )
 
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_check_detects_a_deleted_bundled_script(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            bundle = root / "skills/comic-sol"
+            source = root / "scripts/comic_sol.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("canonical\n", encoding="utf-8")
+
+            with (
+                patch.object(sync_plugin_bundle, "ROOT", root),
+                patch.object(sync_plugin_bundle, "BUNDLE", bundle),
+            ):
+                self.assertIn(
+                    Path("scripts/comic_sol.py"), sync_plugin_bundle.check()
+                )
+
+    def test_check_detects_deleted_canonical_and_orphaned_bundle_references(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            bundle = root / "skills/comic-sol"
+            references = bundle / "references"
+            references.mkdir(parents=True)
+            (references / "workflow.md").write_text("stale\n", encoding="utf-8")
+            (references / "orphan.md").write_text("orphan\n", encoding="utf-8")
+
+            with (
+                patch.object(sync_plugin_bundle, "ROOT", root),
+                patch.object(sync_plugin_bundle, "BUNDLE", bundle),
+            ):
+                drift = sync_plugin_bundle.check()
+
+            self.assertIn(Path("references/workflow.md"), drift)
+            self.assertIn(Path("references/orphan.md"), drift)
 
 
 if __name__ == "__main__":

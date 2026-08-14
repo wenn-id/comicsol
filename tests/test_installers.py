@@ -1,9 +1,11 @@
+import hashlib
 import os
 import re
 import shutil
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -80,6 +82,30 @@ class PublicInstallerContractTests(unittest.TestCase):
         self.assertIn("ReleaseMutex", self.powershell)
         self.assertIn("InstallRoot", self.powershell)
 
+    def test_installers_canonicalize_or_reject_aliases_before_locking(self):
+        self.assertLess(
+            self.posix.index('INSTALL_ROOT=$(canonical_install_root "$INSTALL_ROOT")'),
+            self.posix.index('INSTALL_LOCK_DIR="${INSTALL_ROOT}.lock"'),
+        )
+        self.assertLess(
+            self.powershell.index(
+                '$InstallRoot = Resolve-CanonicalInstallRoot -Path $InstallRoot'
+            ),
+            self.powershell.index("Acquire-InstallMutex", self.powershell.index("if ($Uninstall)")),
+        )
+        self.assertIn("ReparsePoint", self.powershell)
+
+    def test_posix_sentinel_publication_is_the_commit_point(self):
+        marker = self.posix.index(
+            'mv -- "$INSTALL_ROOT/.comic-sol-install.new" '
+            '"$INSTALL_ROOT/$INSTALL_MARKER_NAME"'
+        )
+        committed = self.posix.index("COMMITTED=1", marker)
+        cleanup = self.posix.index('for backup in "$STABLE_BACKUP" "$TARGET_BACKUP"', marker)
+        self.assertLess(marker, committed)
+        self.assertLess(committed, cleanup)
+        self.assertIn("Could not remove rollback backup", self.posix)
+
     def test_native_uninstall_refuses_root_without_marker(self):
         with tempfile.TemporaryDirectory() as raw:
             install_root = Path(raw) / "unmarked-install"
@@ -155,6 +181,7 @@ class PublicInstallerContractTests(unittest.TestCase):
     def test_posix_installer_refuses_active_install_root_lock(self):
         with tempfile.TemporaryDirectory() as raw:
             install_root = Path(raw) / "locked-install"
+            install_root.mkdir()
             lock = Path(f"{install_root}.lock")
             lock.mkdir(parents=True)
             (lock / "pid").write_text(f"{os.getpid()}\n", encoding="ascii")
@@ -170,6 +197,98 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertNotEqual(0, result.returncode)
             self.assertIn("another Comic Sol installer is using this install root", result.stderr)
             self.assertTrue(lock.is_dir())
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_alias_uses_the_canonical_install_lock(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            install_root = root / "runtime"
+            install_root.mkdir()
+            self.write_marker(install_root)
+            alias = root / "runtime-alias"
+            alias.symlink_to(install_root, target_is_directory=True)
+            lock = Path(f"{install_root}.lock")
+            lock.mkdir()
+            (lock / "pid").write_text(f"{os.getpid()}\n", encoding="ascii")
+
+            result = self.run_uninstall(alias)
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn(
+                "another Comic Sol installer is using this install root", result.stderr
+            )
+            self.assertTrue((install_root / ".comic-sol-install").is_file())
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_cleanup_failure_does_not_roll_back_published_sentinel(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            install_root = root / "runtime"
+            (install_root / "bin").mkdir(parents=True)
+            (install_root / "bin/old.txt").write_text("old", encoding="utf-8")
+            (install_root / "versions/2.0.0rc4").mkdir(parents=True)
+            (install_root / "versions/2.0.0rc5").mkdir(parents=True)
+            self.write_marker(install_root)
+
+            archive = root / "comic-sol.zip"
+            executable = (
+                "#!/bin/sh\n"
+                "case \"$1\" in\n"
+                "  --version) echo 'comic-sol 2.0.0rc5' ;;\n"
+                "  doctor) exit 0 ;;\n"
+                "esac\n"
+            ).encode("utf-8")
+            member = zipfile.ZipInfo("comic-sol/comic-sol")
+            member.create_system = 3
+            member.external_attr = 0o100755 << 16
+            with zipfile.ZipFile(archive, "w") as package:
+                package.writestr(member, executable)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+
+            shim = root / "shim"
+            shim.mkdir()
+            real_rm = shutil.which("rm")
+            self.assertIsNotNone(real_rm)
+            rm_shim = shim / "rm"
+            rm_shim.write_text(
+                "#!/bin/sh\n"
+                "case \"$*\" in\n"
+                "  *rollback*)\n"
+                "    if grep -q '2.0.0rc5' \"$TEST_INSTALL_ROOT/.comic-sol-install\" 2>/dev/null; then\n"
+                "      exit 1\n"
+                "    fi\n"
+                "    ;;\n"
+                "esac\n"
+                "exec \"$REAL_RM\" \"$@\"\n",
+                encoding="utf-8",
+            )
+            rm_shim.chmod(0o755)
+            environment = os.environ.copy()
+            environment.update({
+                "PATH": f"{shim}{os.pathsep}{environment['PATH']}",
+                "REAL_RM": real_rm,
+                "TEST_INSTALL_ROOT": str(install_root),
+            })
+
+            result = subprocess.run(
+                [
+                    "sh", str(self.root / "installers/install.sh"),
+                    "--archive", str(archive), "--sha256", digest,
+                    "--install-root", str(install_root),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
+
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertEqual(
+                "2.0.0rc5", (install_root / "active-version").read_text("utf-8").strip()
+            )
+            marker_lines = (install_root / ".comic-sol-install").read_text("utf-8").splitlines()
+            self.assertEqual("2.0.0rc5", marker_lines[1])
+            self.assertIn("Could not remove rollback backup", result.stderr)
 
 
 if __name__ == "__main__":

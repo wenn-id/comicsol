@@ -771,7 +771,6 @@ class ResumeTests(unittest.TestCase):
             "retry_reason": "anatomy repair required",
             "unresolved_warnings": [],
             "failure_category": category,
-            "override_reason": None,
         }
 
     def _accepted_panel_record(self, reference_paths=None):
@@ -893,6 +892,29 @@ class ResumeTests(unittest.TestCase):
 
         self.assertEqual(original_record, record_path.read_bytes())
         self.assertEqual(original_manifest, manifest_path.read_bytes())
+
+    def test_override_rejects_invalid_v2_normalization_atomically(self):
+        reason = "minor prop drift is acceptable"
+        record_path = self.project / "qa/panels/p01-01.json"
+        manifest_path = self.project / "project.json"
+        event_path = self.project / "logs/events.jsonl"
+        record = self._panel_record_v2()
+        normalization_path = self.project / "panels/p01-01/normalization.json"
+        normalization_path.write_text("[]\n", encoding="utf-8")
+        record["bindings"]["normalization_sha256"] = sha256_file(normalization_path)
+        record["checks"][0].update({"result": "fail", "severity": "error"})
+        record["decision"] = "regenerate"
+        atomic_write_json(record_path, record)
+        original_record = record_path.read_bytes()
+        original_manifest = manifest_path.read_bytes()
+        original_events = event_path.read_bytes()
+
+        with self.assertRaisesRegex(ValueError, "cannot be overridden"):
+            record_override(self.project, "p01-01", reason)
+
+        self.assertEqual(original_record, record_path.read_bytes())
+        self.assertEqual(original_manifest, manifest_path.read_bytes())
+        self.assertEqual(original_events, event_path.read_bytes())
 
     def test_override_panel_cli_accepts_valid_v2_visual_failure(self):
         reason = "minor prop drift is acceptable"

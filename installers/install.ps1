@@ -29,6 +29,21 @@ function Release-InstallMutex {
         $script:InstallMutex = $null
     }
 }
+function Resolve-CanonicalInstallRoot {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "install root is not a directory"
+    }
+    $absolute = [System.IO.Path]::GetFullPath($Path)
+    $item = Get-Item -Force -LiteralPath $absolute
+    while ($item) {
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "install root must not contain symlinks or reparse points"
+        }
+        $item = $item.Parent
+    }
+    return (Resolve-Path -LiteralPath $absolute).Path
+}
 function Test-SensitiveInstallRoot {
     param([string]$Path)
     $comparison = [System.StringComparison]::OrdinalIgnoreCase
@@ -46,16 +61,13 @@ function Test-SensitiveInstallRoot {
 }
 
 if ($Uninstall) {
+    if (-not (Test-Path -LiteralPath $InstallRoot)) {
+        Write-Output "Comic Sol runtime is already removed. User projects were preserved."
+        exit 0
+    }
+    $InstallRoot = Resolve-CanonicalInstallRoot -Path $InstallRoot
     Acquire-InstallMutex
     try {
-        if (-not (Test-Path -LiteralPath $InstallRoot)) {
-            Write-Output "Comic Sol runtime is already removed. User projects were preserved."
-            exit 0
-        }
-        if (-not (Test-Path -LiteralPath $InstallRoot -PathType Container)) {
-            throw "refusing to uninstall: install root is not a directory"
-        }
-        $InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path
         if (Test-SensitiveInstallRoot -Path $InstallRoot) {
             throw "refusing to uninstall from a filesystem root, home, current directory, repository, or Comic Sol project root"
         }
@@ -95,6 +107,8 @@ if ($Uninstall) {
     exit 0
 }
 if (-not $SHA256) { throw "-SHA256 is required for this unsigned prerelease" }
+New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
+$InstallRoot = Resolve-CanonicalInstallRoot -Path $InstallRoot
 Acquire-InstallMutex
 
 $Temp = Join-Path ([System.IO.Path]::GetTempPath()) ("comic-sol-" + [guid]::NewGuid())
@@ -172,8 +186,6 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "doctor verification failed" }
 
     $InstallStarted = $true
-    New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
-    $InstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path
     $Versions = Join-Path $InstallRoot "versions"
     $Target = Join-Path $Versions $Version
     $TargetBackup = Join-Path $Versions ("." + $Version + ".rollback")

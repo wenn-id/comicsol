@@ -545,6 +545,7 @@ class StrictSchemaValidationTests(unittest.TestCase):
         data = deepcopy(valid); data["unresolved_warnings"] = ["different warning"]; cases.append(data)
         data = deepcopy(valid); data["checks"][0].update({"result": "pass", "severity": "error"}); cases.append(data)
         data = deepcopy(valid); data["override_reason"] = " "; cases.append(data)
+        data = deepcopy(valid); data["override_reason"] = None; cases.append(data)
         for data in cases:
             with self.subTest(data=data):
                 self.assert_issue(validate_panel_record(data), "override_reason")
@@ -566,6 +567,7 @@ class StrictSchemaValidationTests(unittest.TestCase):
         data = deepcopy(valid); data["decision"] = "accept"; cases.append((data, "override_reason"))
         data = deepcopy(valid); data["unresolved_warnings"] = ["different warning"]; cases.append((data, "override_reason"))
         data = deepcopy(valid); data["checks"][0].update({"result": "pass", "severity": "error"}); cases.append((data, "override_reason"))
+        data = deepcopy(valid); data["override_reason"] = None; cases.append((data, "override_reason"))
         for data, field in cases:
             with self.subTest(field=field):
                 self.assert_issue(validate_panel_record(data), field)

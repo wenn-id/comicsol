@@ -746,7 +746,7 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
     if decision == "accept" and unresolved:
         _add(issues, path, "unresolved_warnings", "accepted record cannot have warnings")
     override_reason = root.get("override_reason")
-    if override_reason is not None:
+    if "override_reason" in root:
         _nonempty_string(override_reason, issues, path, "override_reason")
         if decision != "accept-warning":
             _add(issues, path, "override_reason", "is allowed only for accept-warning")
@@ -870,12 +870,12 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
     ):
         _add(issues, path, "failure_category", "must be a sanitized category string or null")
     override_reason = root.get("override_reason")
-    if override_reason is not None:
+    if "override_reason" in root:
         _nonempty_string(override_reason, issues, path, "override_reason")
     unresolved = _string_list(root.get("unresolved_warnings"), issues, path, "unresolved_warnings")
     if decision == "accept_with_warnings" and (not has_warning or not unresolved):
         _add(issues, path, "unresolved_warnings", "accepted warnings require check evidence and user-visible impact")
-    if override_reason is not None:
+    if "override_reason" in root:
         has_overridden_failure = isinstance(checks, list) and any(
             isinstance(check, dict)
             and check.get("result") == "fail"

@@ -936,13 +936,17 @@ def _accepted_panel_problem(
 ) -> str | None:
     # Import lazily because the standalone validator imports this lifecycle module.
     # Reuse must nevertheless honor the exact public panel-record schema.
-    from validate_project import validate_panel_record
+    from validate_project import validate_panel_provenance, validate_panel_record
 
     schema_issues = validate_panel_record(record)
     if schema_issues:
         first = schema_issues[0]
         return f"accepted panel QA record is invalid: {first.field}: {first.message}"
     if record.get("schema_version") == "2.0":
+        provenance_issues = validate_panel_provenance(project_dir, record)
+        if provenance_issues:
+            first = provenance_issues[0]
+            return f"accepted panel provenance is invalid: {first.field}: {first.message}"
         panel_id = record.get("subject_id")
         bindings = record.get("bindings")
         if not isinstance(panel_id, str) or not isinstance(bindings, dict):
