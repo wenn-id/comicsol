@@ -123,7 +123,7 @@ Validate with `validate_project.py PROJECT_DIR --stage panels`, then transition 
 After the last panel is accepted and promoted, prefer one combined command:
 
 ```text
-python scripts/comic_sol.py finalize PROJECT_DIR
+PYTHON scripts/comic_sol.py finalize PROJECT_DIR
 ```
 
 `finalize` runs lettering, composition, PDF export, report rendering, final validation,

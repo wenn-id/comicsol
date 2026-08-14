@@ -8,31 +8,41 @@ Use Python 3.11+ and the pinned dependencies:
 
 # Linux
 ```bash
-python -m venv .venv
+PYTHON=python  # replace with resolved Python 3.11+ launcher
+"$PYTHON" -m venv .venv
 .venv/bin/python -m pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
 ```
 
 # macOS
 ```bash
-python -m venv .venv
+PYTHON=python  # replace with resolved Python 3.11+ launcher
+"$PYTHON" -m venv .venv
 .venv/bin/python -m pip install --require-hashes -r requirements/locks/base-macos-x86_64.txt
 ```
 
 # Windows PowerShell
 ```powershell
-py -3 -m venv .venv
+$PYTHON = "py"  # resolve Python 3.11+ first; use `py -3`
+& $PYTHON -3 -m venv .venv
 & .venv\Scripts\python.exe -m pip install --require-hashes -r requirements/locks/base-windows-x86_64.txt
 ```
 
 ## Required validation
 
-Run the checks relevant to the change. Before requesting merge, the complete deterministic suite must pass:
+Run checks through same `.venv` interpreter used for dependency installation. Before requesting merge, complete deterministic suite must pass:
 
 ```bash
-python -m unittest discover -s tests -v
-python scripts/comic_sol.py doctor --output-root /tmp/comic-sol-doctor
-python -m build --no-isolation
-python -m comic_sol_product.release dist/*.whl dist/*.tar.gz
+# POSIX
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python scripts/comic_sol.py doctor --output-root /tmp/comic-sol-doctor
+.venv/bin/python -m build --no-isolation
+.venv/bin/python -m comic_sol_product.release dist/*.whl dist/*.tar.gz
+
+# Windows PowerShell equivalents:
+# & .venv\Scripts\python.exe -m unittest discover -s tests -v
+# & .venv\Scripts\python.exe scripts\comic_sol.py doctor --output-root "$env:TEMP\comic-sol-doctor"
+# & .venv\Scripts\python.exe -m build --no-isolation
+# & .venv\Scripts\python.exe -m comic_sol_product.release dist\*.whl dist\*.tar.gz
 ```
 
 Changes to packaging, runtime freezing, MCP, release automation, or distribution must also pass clean-install and portable-runtime smoke tests. Visual output changes require an actual before/after render and visual inspection; green geometry tests alone are insufficient.

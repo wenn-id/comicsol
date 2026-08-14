@@ -19,7 +19,7 @@ requests, documentation, and releases happen here.
 
 ## Install
 
-Requirements are Python 3.11+ and `Pillow==12.3.0`. Use the active Python interpreter (`python` or `python3` on POSIX; `py -3` on Windows) consistently for each run. Image creation additionally
+Requirements are Python 3.11+ and `Pillow==12.3.0`. Resolve one Python 3.11+ launcher per device, store it as `PYTHON`, then use `"$PYTHON"` consistently for each run. Image creation additionally
 requires an image-generation capability exposed to the active agent session; Comic
 Sol never embeds provider credentials. Comic Sol requires no Comic Sol account or
 demo credentials, although a Codex session and the selected image provider may
@@ -32,7 +32,8 @@ the one pinned dependency:
 git clone https://github.com/wenn-id/comicsol.git \
   "${CODEX_HOME:-$HOME/.codex}/skills/comic-sol"
 cd "${CODEX_HOME:-$HOME/.codex}/skills/comic-sol"
-python -m pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
+PYTHON=python  # replace with resolved Python 3.11+ launcher
+"$PYTHON" -m pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
 ```
 
 The host-agnostic rule is: clone or copy this repository as one `comic-sol` folder
@@ -64,7 +65,8 @@ Windows PowerShell:
 git clone https://github.com/wenn-id/comicsol.git `
   "$env:USERPROFILE\.codex\skills\comic-sol"
 Set-Location "$env:USERPROFILE\.codex\skills\comic-sol"
-py -3 -m pip install --require-hashes -r requirements/locks/base-windows-x86_64.txt
+$PYTHON = "py"  # use: py -3; resolve Python 3.11+ first
+& $PYTHON -3 -m pip install --require-hashes -r requirements/locks/base-windows-x86_64.txt
 ```
 
 Supported environments are Linux, macOS, Windows, and WSL with Python 3.11+ and
@@ -76,7 +78,7 @@ Install the portable CLI from a checkout and verify the bundled deterministic
 engine, fonts, and templates:
 
 ```bash
-python -m pip install .
+"$PYTHON" -m pip install .
 comic-sol --json doctor
 ```
 
@@ -136,19 +138,19 @@ and lockfile for host platform:
 
 ```bash
 # Linux
-python -m venv ~/.venvs/comic-sol-mcp
+"$PYTHON" -m venv ~/.venvs/comic-sol-mcp
 ~/.venvs/comic-sol-mcp/bin/pip install --require-hashes -r requirements/locks/runtime-linux-x86_64.txt
 ```
 
 ```bash
 # macOS
-python -m venv ~/.venvs/comic-sol-mcp
+"$PYTHON" -m venv ~/.venvs/comic-sol-mcp
 ~/.venvs/comic-sol-mcp/bin/pip install --require-hashes -r requirements/locks/runtime-macos-x86_64.txt
 ```
 
 ```powershell
 # Windows
-py -3 -m venv $HOME\.venvs\comic-sol-mcp
+& $PYTHON -3 -m venv $HOME\.venvs\comic-sol-mcp
 & $HOME\.venvs\comic-sol-mcp\Scripts\pip.exe install --require-hashes -r requirements/locks/runtime-windows-x86_64.txt
 ```
 
@@ -157,7 +159,7 @@ script path and an absolute selected output root:
 
 ```bash
 OUTPUT_ROOT="$(pwd)/comic-sol-output"
-python scripts/mcp_server.py --root "$OUTPUT_ROOT"
+"$PYTHON" scripts/mcp_server.py --root "$OUTPUT_ROOT"
 ```
 
 For an MCP client configuration, lock the server to one absolute output root and
@@ -190,7 +192,7 @@ preserves comic projects. Codex TOML and detected JSON client configs are mutate
 only at verified locations; clients whose native format or location has not been
 verified are reported as `unsupported` rather than guessed.
 
-During source development, `python scripts/mcp_server.py --root PATH` remains
+During source development, `"$PYTHON" scripts/mcp_server.py --root PATH` remains
 available. Both entry points expose the same protocol-tested deterministic lifecycle
 as exactly 17 `comic_*` tools.
 
@@ -222,7 +224,7 @@ provider-neutral image setup is documented in
 For deterministic diagnostics:
 
 ```bash
-python scripts/comic_sol.py doctor --output-root /tmp/comic-sol-doctor
+"$PYTHON" scripts/comic_sol.py doctor --output-root /tmp/comic-sol-doctor
 # Installed equivalent:
 comic-sol --json doctor --output-root /tmp/comic-sol-doctor
 ```
@@ -285,8 +287,8 @@ Pillow validates and counts SFX but reserves no placement and changes no pixels 
 Run the complete offline suite:
 
 ```bash
-python -m unittest discover -s tests -v
-python scripts/comic_sol.py doctor
+"$PYTHON" -m unittest discover -s tests -v
+"$PYTHON" scripts/comic_sol.py doctor
 ```
 
 ### Base environment (Pillow only, MCP tests skipped)
@@ -294,7 +296,7 @@ python scripts/comic_sol.py doctor
 Create a clean virtual environment and install only the base dependency:
 
 ```bash
-python -m venv /tmp/comic-sol-base
+"$PYTHON" -m venv /tmp/comic-sol-base
 /tmp/comic-sol-base/bin/pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
 /tmp/comic-sol-base/bin/python -m unittest discover -s tests -v
 ```
@@ -304,7 +306,7 @@ MCP tests (`test_mcp_server.py`) are skipped gracefully when the `mcp` package i
 ### MCP-extra environment (Pillow + MCP, all tests run)
 
 ```bash
-python -m venv /tmp/comic-sol-mcp-extra
+"$PYTHON" -m venv /tmp/comic-sol-mcp-extra
 /tmp/comic-sol-mcp-extra/bin/pip install --require-hashes -r requirements/locks/runtime-linux-x86_64.txt
 /tmp/comic-sol-mcp-extra/bin/python -m unittest discover -s tests -v
 ```
@@ -313,7 +315,7 @@ Clean-room Linux/macOS/WSL check:
 
 ```bash
 tmp_dir=$(mktemp -d)
-python -m venv "$tmp_dir/venv"
+"$PYTHON" -m venv "$tmp_dir/venv"
 "$tmp_dir/venv/bin/python" -m pip install Pillow==12.3.0
 "$tmp_dir/venv/bin/python" scripts/comic_sol.py doctor --output-root "$tmp_dir/output"
 ```
@@ -322,7 +324,7 @@ Windows clean-room equivalent:
 
 ```powershell
 $TempRoot = Join-Path $env:TEMP "comic-sol-clean-room"
-py -3 -m venv "$TempRoot\venv"
+& $PYTHON -3 -m venv "$TempRoot\venv"
 & "$TempRoot\venv\Scripts\python.exe" -m pip install Pillow==12.3.0
 & "$TempRoot\venv\Scripts\python.exe" scripts\comic_sol.py doctor --output-root "$TempRoot\output"
 ```

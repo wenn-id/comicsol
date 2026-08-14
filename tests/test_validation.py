@@ -1109,30 +1109,35 @@ class PackagingTests(unittest.TestCase):
         readme = self.readme()
         for required in (
             "Pillow==12.3.0",
-            "python -m unittest discover -s tests -v",
-            "python scripts/comic_sol.py doctor",
+            '"$PYTHON" -m unittest discover -s tests -v',
+            '"$PYTHON" scripts/comic_sol.py doctor',
             "One natural-language",
         ):
             self.assertIn(required, readme)
         self.assertNotRegex(readme.lower(), r"npm run|start the server|docker compose")
 
     def test_runtime_instructions_use_active_python_not_a_fixed_minor_version(self):
-        skill_documents = (
+        documents = (
             ROOT / "SKILL.md",
             ROOT / "skills/comic-sol/SKILL.md",
+            ROOT / "README.md",
+            ROOT / "CONTRIBUTING.md",
+            ROOT / "SUPPORT.md",
             ROOT / "references/workflow.md",
             ROOT / "skills/comic-sol/references/workflow.md",
-            ROOT / "SUPPORT.md",
+            ROOT / "references/image-provider-setup.md",
         )
-        for path in skill_documents:
+        fixed_minor = re.compile(r"(?i)\b(?:python3?\.\d+|py\s+-3\.\d+)\b")
+        for launcher in ("python3.11", "python3.12", "py -3.11"):
+            self.assertIsNotNone(fixed_minor.search(launcher), launcher)
+        for path in documents:
             text = path.read_text("utf-8")
-            self.assertIn("python", text, path)
-            self.assertNotIn("python3.11 scripts/", text, path)
+            self.assertFalse(fixed_minor.search(text), path)
 
-        readme = self.readme()
-        self.assertIn("active Python interpreter", readme)
-        self.assertNotIn("python3.11", readme.lower())
-        self.assertIn("Python 3.11+", readme)
+        for path in (ROOT / "SKILL.md", ROOT / "skills/comic-sol/SKILL.md"):
+            self.assertIn("`PYTHON`", path.read_text("utf-8"), path)
+        self.assertIn("$PYTHON", (ROOT / "README.md").read_text("utf-8"))
+        self.assertIn("Python 3.11+", (ROOT / "README.md").read_text("utf-8"))
         self.assertIn("Python 3.11+", (ROOT / "SKILL.md").read_text("utf-8"))
 
     def test_public_surface_uses_the_canonical_independent_repository(self):
