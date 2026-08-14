@@ -176,44 +176,70 @@ class McpServerUnitTests(unittest.TestCase):
         with self.assertRaisesRegex(ToolError, "relative project path"):
             mcp_server._validate_relative_path("-/" * 30 + "!")
 
-    def test_tool_errors_never_leak_local_paths_or_sensitive_values(self):
+    def test_tool_request_validation_rejects_unsafe_inputs(self):
         project = self.root / "project"
         project.mkdir()
         with self.assertRaisesRegex(ToolError, "invalid project ID"):
             mcp_server.comic_transition("C:\\\\Users\\\\secret-user", "PLANNED")
-        with self.assertRaisesRegex(ToolError, "sensitive request setting") as context:
-            mcp_server.comic_init("Story", "source", {"api_key": "do-not-leak"})
-        self.assertNotIn("do-not-leak", str(context.exception))
         with self.assertRaisesRegex(ToolError, "unknown validation stage"):
             mcp_server.comic_validate("project", "../secret")
         with self.assertRaisesRegex(ToolError, "relative project path"):
             mcp_server.comic_record_attempt("project", "p01-01", "initial", "C:escape.png")
-        self.assertEqual(
-            "<path>",
-            mcp_server._safe_message(FileNotFoundError(str(self.root / "secret-file"))),
-        )
-        self.assertNotIn(str(self.root), mcp_server._safe_message(FileNotFoundError(str(self.root / "secret-file"))))
-        for quote, path in (
-            ("'", "/tmp/Comic Sol/private payload.json"),
-            ('"', r"C:\\\\Comic Sol\\\\private payload.json"),
-        ):
-            with self.subTest(quote=quote, path=path):
-                message = mcp_server._safe_message(RuntimeError(f"provider failed at {quote}{path}{quote}"))
-                self.assertEqual(f"provider failed at {quote}<path>{quote}", message)
-                self.assertNotIn(path, message)
-        for raw, expected in (
-            ("provider returned api_key=sk-live-1234", "provider returned api_key=<redacted>"),
-            ("config value sk-live-1234 is invalid", "config value sk-live-1234 is invalid"),
-            ('{"access_token": "ghp_abc123", "client_secret": "s3cr3t"}', '{"<redacted>": "<redacted>", "<redacted>": "<redacted>"}'),
-        ):
-            with self.subTest(raw=raw):
-                self.assertEqual(expected, mcp_server._safe_message(RuntimeError(raw)))
-                self.assertNotIn("ghp_abc123", mcp_server._safe_message(RuntimeError(raw)))
-                self.assertNotIn("s3cr3t", mcp_server._safe_message(RuntimeError(raw)))
 
-    def test_init_rejects_non_string_request_setting_keys(self):
+    def test_tool_error_maps_exception_categories_to_safe_messages(self):
+        cases = (
+            (FileNotFoundError("password=file-value"), "not-found: required project data was not found"),
+            (PermissionError("password=permission-value"), "permission-denied: project data could not be accessed"),
+            (OSError("password=os-value"), "io-error: project data operation failed"),
+            (UnicodeError("password=unicode-value"), "invalid-data: project data encoding is invalid"),
+            (ValueError("password=value-error"), "invalid-data: tool request or project data is invalid"),
+            (TypeError("password=type-error"), "invalid-data: tool request or project data is invalid"),
+            (RuntimeError("password=runtime-value"), "internal-error: tool operation failed"),
+        )
+        for error, expected in cases:
+            with self.subTest(error_type=type(error).__name__):
+                converted = str(mcp_server._tool_error(error))
+                self.assertEqual(expected, converted)
+                self.assertNotIn("password=", converted)
+
+    def test_tool_errors_never_leak_credentials_or_paths(self):
+        cases = (
+            ('password="top secret"', ("top secret",)),
+            ("PASSWORD='mixed case value'", ("mixed case value",)),
+            ('{"outer":{"Api_Key":"nested json value"}}', ("nested json value",)),
+            ("authorization: Bearer bearer-value", ("bearer-value",)),
+            ("Bearer standalone-value", ("standalone-value",)),
+            (
+                "token=first-value; client_secret: second value",
+                ("first-value", "second value"),
+            ),
+        )
+        for raw, secrets in cases:
+            with self.subTest(raw=raw):
+                converted = str(mcp_server._tool_error(RuntimeError(raw)))
+                self.assertEqual("internal-error: tool operation failed", converted)
+                for secret in secrets:
+                    self.assertNotIn(secret, converted)
+
+        raw_path = str(self.root / "private payload.json")
+        converted = str(mcp_server._tool_error(FileNotFoundError(raw_path)))
+        self.assertEqual("not-found: required project data was not found", converted)
+        self.assertNotIn(raw_path, converted)
+
+    def test_init_uses_only_allowlisted_request_error_messages(self):
         before = list(self.root.iterdir())
-        with self.assertRaisesRegex(ToolError, "keys must be strings"):
+        with self.assertRaisesRegex(
+            ToolError,
+            "^invalid-request: sensitive request setting is not allowed$",
+        ) as context:
+            mcp_server.comic_init("Story", "source", {"api_key": "do-not-leak"})
+        self.assertNotIn("api_key", str(context.exception))
+        self.assertNotIn("do-not-leak", str(context.exception))
+
+        with self.assertRaisesRegex(
+            ToolError,
+            "^invalid-request: request setting keys must be strings$",
+        ):
             mcp_server.comic_init("Story", "source", {1: "short_prompt"})
         self.assertEqual(before, list(self.root.iterdir()))
 
