@@ -643,6 +643,21 @@ def _project_files(project_dir: Path, relatives: list[str]) -> list[Path]:
     ]
 
 
+def _panel_clean_relative_path(project_dir: Path, panel_id: object) -> str:
+    """Return the clean-artifact path for either supported panel schema."""
+    if not isinstance(panel_id, str):
+        raise ValueError("panel ID must be a string")
+    record = read_json(project_dir / f"qa/panels/{panel_id}.json")
+    if record.get("schema_version") == "2.0":
+        bindings = record.get("bindings")
+        clean_path = bindings.get("clean_path") if isinstance(bindings, dict) else None
+        expected = f"panels/{panel_id}/clean.png"
+        if not isinstance(clean_path, str) or clean_path != expected:
+            raise ValueError(f"panel QA clean path is not canonical: {panel_id}")
+        return clean_path
+    return f"panels/clean/{panel_id}.png"
+
+
 def _resume_stage_material(
     project_dir: Path,
     stage: str,
@@ -728,7 +743,7 @@ def _resume_stage_material(
     if stage == "lettering":
         text = [panel.get("text", []) for panel in panels]
         return [text] if text else [[]], _project_files(
-            project_dir, [f"panels/clean/{panel_id}.png" for panel_id in panel_ids]
+            project_dir, [_panel_clean_relative_path(project_dir, panel_id) for panel_id in panel_ids]
         )
     if stage == "composition":
         geometry = []
@@ -806,7 +821,10 @@ def _stage_output_files(
         raise ValueError("storyboard has no panels")
     if stage == "generation":
         relatives = [f"panels/raw/{panel_id}.png" for panel_id in panel_ids]
-        relatives += [f"panels/clean/{panel_id}.png" for panel_id in panel_ids]
+        relatives += [
+            _panel_clean_relative_path(project_dir, panel_id)
+            for panel_id in panel_ids
+        ]
         return _project_files(project_dir, relatives)
     if stage == "lettering":
         return _project_files(

@@ -169,7 +169,13 @@ class ResumeTests(unittest.TestCase):
             files = [self.project / relative for relative in dict.fromkeys(relatives)]
             return [visual_panels, characters, manifest["capability"], dependencies], files
         if stage == "lettering":
-            return [[panel["text"] for panel in panels]], [self.project / "panels/clean/p01-01.png"]
+            record = read_json(self.project / "qa/panels/p01-01.json")
+            clean_relative = (
+                "panels/p01-01/clean.png"
+                if record.get("schema_version") == "2.0"
+                else "panels/clean/p01-01.png"
+            )
+            return [[panel["text"] for panel in panels]], [self.project / clean_relative]
         if stage == "composition":
             geometry = [{"number": page["number"], "layout": page["layout"], "panels": [p["rect"] for p in page["panels"]]} for page in storyboard["pages"]]
             return [geometry], [self.project / "panels/p01-01/lettered.png"]
@@ -177,10 +183,16 @@ class ResumeTests(unittest.TestCase):
 
     def _write_cache_snapshot(self):
         manifest = read_json(self.project / "project.json")
+        panel_record = read_json(self.project / "qa/panels/p01-01.json")
+        clean_relative = (
+            "panels/p01-01/clean.png"
+            if panel_record.get("schema_version") == "2.0"
+            else "panels/clean/p01-01.png"
+        )
         outputs = {
             "planning": ["plan/story-plan.json", "plan/character-bible.json"],
             "storyboard": ["plan/storyboard.json"],
-            "generation": ["panels/raw/p01-01.png", "panels/clean/p01-01.png"],
+            "generation": ["panels/raw/p01-01.png", clean_relative],
             "lettering": ["panels/p01-01/lettered.png"],
             "composition": ["pages/page-001.png"],
             "export": ["qa/report.md", "exports/sunlight-courier.pdf"],
@@ -302,6 +314,10 @@ class ResumeTests(unittest.TestCase):
             self.project / "qa/panels/p01-01.json", self._panel_record_v2()
         )
         self._write_cache_snapshot()
+        cache = read_json(self.project / "logs/stage-cache.json")
+        generation_artifacts = cache["stages"]["generation"]["artifacts"]
+        self.assertIn("panels/p01-01/clean.png", generation_artifacts)
+        self.assertTrue((self.project / "panels/clean/p01-01.png").is_file())
 
         actions = build_resume_plan(self.project)
 
@@ -313,6 +329,90 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(
             ("reuse", "cache key and artifacts match"),
             by_stage["generation"],
+        )
+
+        Image.new("RGB", (512, 512), "purple").save(
+            self.project / "panels/p01-01/clean.png"
+        )
+        generation = next(
+            action for action in build_resume_plan(self.project)
+            if action.stage == "generation" and action.artifact == "stage"
+        )
+        self.assertEqual("regenerate", generation.action, generation.reason)
+
+    def test_v2_canonical_and_legacy_clean_artifacts_do_not_cross_fingerprint(self):
+        atomic_write_json(
+            self.project / "qa/panels/p01-01.json", self._panel_record_v2()
+        )
+        self._write_cache_snapshot()
+
+        Image.new("RGB", (512, 512), "purple").save(
+            self.project / "panels/clean/p01-01.png"
+        )
+        generation = next(
+            action for action in build_resume_plan(self.project)
+            if action.stage == "generation" and action.artifact == "stage"
+        )
+        self.assertEqual("reuse", generation.action, generation.reason)
+
+        Image.new("RGB", (512, 512), "green").save(
+            self.project / "panels/p01-01/clean.png"
+        )
+        generation = next(
+            action for action in build_resume_plan(self.project)
+            if action.stage == "generation" and action.artifact == "stage"
+        )
+        self.assertEqual("regenerate", generation.action, generation.reason)
+
+    def test_v2_canonical_clean_artifact_is_fingerprinted(self):
+        atomic_write_json(
+            self.project / "qa/panels/p01-01.json", self._panel_record_v2()
+        )
+        (self.project / "panels/clean/p01-01.png").unlink()
+        self._write_cache_snapshot()
+        baseline = build_resume_plan(self.project)
+        baseline_generation = next(
+            action for action in baseline
+            if action.stage == "generation" and action.artifact == "stage"
+        )
+        self.assertEqual("reuse", baseline_generation.action, baseline_generation.reason)
+
+        Image.new("RGB", (512, 512), "purple").save(
+            self.project / "panels/p01-01/clean.png"
+        )
+
+        actions = build_resume_plan(self.project)
+        by_stage = {
+            action.stage: action.action
+            for action in actions
+            if action.artifact == "stage"
+        }
+        self.assertEqual("regenerate", by_stage["generation"])
+        self.assertTrue(
+            all(by_stage[stage] == "rerun" for stage in ("lettering", "composition", "export"))
+        )
+
+    def test_v1_legacy_clean_artifact_remains_fingerprinted(self):
+        baseline = build_resume_plan(self.project)
+        baseline_generation = next(
+            action for action in baseline
+            if action.stage == "generation" and action.artifact == "stage"
+        )
+        self.assertEqual("reuse", baseline_generation.action, baseline_generation.reason)
+
+        Image.new("RGB", (512, 512), "purple").save(
+            self.project / "panels/clean/p01-01.png"
+        )
+
+        actions = build_resume_plan(self.project)
+        by_stage = {
+            action.stage: action.action
+            for action in actions
+            if action.artifact == "stage"
+        }
+        self.assertEqual("regenerate", by_stage["generation"])
+        self.assertTrue(
+            all(by_stage[stage] == "rerun" for stage in ("lettering", "composition", "export"))
         )
 
     def test_noop_resume_does_not_write_any_file(self):
