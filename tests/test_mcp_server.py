@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -264,8 +265,30 @@ class McpServerUnitTests(unittest.TestCase):
         self.assertIsNotNone(cached)
         mcp_server._resolve_project("cached-project")
         self.assertIs(cached, mcp_server._SYMLINK_SCAN_CACHE.get("cached-project"))
+        cached_root_identity = cached[1]["."][:6]
+        real_lstat = Path.lstat
         (project / "arbitrary.txt").write_text("changed")
-        mcp_server._resolve_project("cached-project")
+        changed_project_metadata = SimpleNamespace(
+            st_mode=project.lstat().st_mode,
+            st_dev=cached_root_identity[0],
+            st_ino=cached_root_identity[1],
+            st_mtime_ns=cached_root_identity[2] + 1_000_000_000,
+            st_ctime_ns=cached_root_identity[3],
+            st_size=cached_root_identity[4],
+            st_nlink=cached_root_identity[5],
+        )
+        changed_root_identity = (
+            *cached_root_identity[:2],
+            cached_root_identity[2] + 1_000_000_000,
+            *cached_root_identity[3:],
+        )
+        self.assertEqual(mcp_server._directory_identity(changed_project_metadata), changed_root_identity)
+
+        def deterministic_lstat(path):
+            return changed_project_metadata if path == project else real_lstat(path)
+
+        with mock.patch.object(Path, "lstat", new=deterministic_lstat):
+            mcp_server._resolve_project("cached-project")
         self.assertIsNot(cached, mcp_server._SYMLINK_SCAN_CACHE.get("cached-project"))
 
     def test_symlink_cache_hit_avoids_directory_rescan(self):
@@ -292,6 +315,22 @@ class McpServerUnitTests(unittest.TestCase):
         outside = Path(self.temporary_directory.name) / "secret.txt"
         outside.write_text("secret", encoding="utf-8")
         real_scandir = mcp_server.os.scandir
+        real_lstat = Path.lstat
+        stable_nested_metadata = nested.lstat()
+        changed_nested_metadata = SimpleNamespace(
+            st_mode=stable_nested_metadata.st_mode,
+            st_dev=stable_nested_metadata.st_dev,
+            st_ino=stable_nested_metadata.st_ino,
+            st_mtime_ns=stable_nested_metadata.st_mtime_ns + 1_000_000_000,
+            st_ctime_ns=stable_nested_metadata.st_ctime_ns,
+            st_size=stable_nested_metadata.st_size,
+            st_nlink=stable_nested_metadata.st_nlink,
+        )
+        stable_identity = mcp_server._directory_identity(stable_nested_metadata)
+        changed_identity = mcp_server._directory_identity(changed_nested_metadata)
+        self.assertEqual(changed_identity[2], stable_identity[2] + 1_000_000_000)
+        self.assertEqual(changed_identity[:2], stable_identity[:2])
+        self.assertEqual(changed_identity[3:], stable_identity[3:])
         injected = False
 
         class InjectOnExhaustion:
@@ -326,7 +365,15 @@ class McpServerUnitTests(unittest.TestCase):
                 return InjectOnExhaustion(iterator)
             return iterator
 
-        with mock.patch.object(mcp_server.os, "scandir", side_effect=injecting_scandir):
+        def deterministic_lstat(path):
+            if path == nested:
+                return changed_nested_metadata if injected else stable_nested_metadata
+            return real_lstat(path)
+
+        with (
+            mock.patch.object(Path, "lstat", new=deterministic_lstat),
+            mock.patch.object(mcp_server.os, "scandir", side_effect=injecting_scandir),
+        ):
             with self.assertRaisesRegex(ToolError, "symlink|changed during validation"):
                 mcp_server._resolve_project("racing-project")
 
