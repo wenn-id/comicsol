@@ -80,7 +80,7 @@ Windows:
 .\installers\install.ps1 -Uninstall
 ```
 
-Uninstall removes only the user-local runtime installation. Comic projects are preserved because output roots live outside the installation directory. MCP client integration is managed separately with `comic-sol setup`, `comic-sol repair`, and `comic-sol uninstall`.
+Uninstall validates the installation sentinel and active version, rejects filesystem roots, home/current directories, repositories, and Comic Sol project roots, then removes only installer-managed children. Unknown files left in the installation directory are preserved. Installations created before the sentinel was introduced fail closed; reinstall or upgrade the same installation root once before uninstalling it. Comic projects are preserved because output roots live outside the installation directory. MCP client integration is managed separately with `comic-sol setup`, `comic-sol repair`, and `comic-sol uninstall`.
 
 ## OCI image
 

@@ -8,6 +8,8 @@ URL=""
 UNINSTALL=0
 INSTALL_LOCK_DIR=""
 LOCK_HELD=0
+INSTALL_MARKER_NAME=".comic-sol-install"
+INSTALL_MARKER_MAGIC="comic-sol-install-v1"
 
 acquire_install_lock() {
   lock_parent=$(dirname "$INSTALL_LOCK_DIR")
@@ -88,7 +90,59 @@ if [ "$UNINSTALL" -eq 1 ]; then
   acquire_install_lock
   trap 'release_install_lock' EXIT
   trap 'abort_uninstall' INT TERM
-  rm -rf -- "$INSTALL_ROOT"
+
+  if [ ! -e "$INSTALL_ROOT" ]; then
+    release_install_lock
+    echo "Comic Sol runtime is already removed. User projects were preserved."
+    exit 0
+  fi
+  if [ ! -d "$INSTALL_ROOT" ]; then
+    echo "refusing to uninstall: install root is not a directory" >&2
+    exit 1
+  fi
+
+  INSTALL_ROOT=$(cd -P -- "$INSTALL_ROOT" && pwd -P)
+  CURRENT_ROOT=$(pwd -P)
+  HOME_ROOT=$(cd -P -- "$HOME" && pwd -P)
+  case "$INSTALL_ROOT" in
+    /) echo "refusing to uninstall from a filesystem root" >&2; exit 1 ;;
+  esac
+  if [ "$INSTALL_ROOT" = "$HOME_ROOT" ] || [ "$INSTALL_ROOT" = "$CURRENT_ROOT" ]; then
+    echo "refusing to uninstall from a sensitive directory" >&2
+    exit 1
+  fi
+  if [ -e "$INSTALL_ROOT/.git" ] || [ -e "$INSTALL_ROOT/project.json" ]; then
+    echo "refusing to uninstall from a repository or Comic Sol project root" >&2
+    exit 1
+  fi
+
+  INSTALL_MARKER="$INSTALL_ROOT/$INSTALL_MARKER_NAME"
+  ACTIVE_VERSION_FILE="$INSTALL_ROOT/active-version"
+  if [ ! -f "$INSTALL_MARKER" ] || [ ! -f "$ACTIVE_VERSION_FILE" ]; then
+    echo "refusing to uninstall: install root is not a registered Comic Sol runtime; reinstall or upgrade this root first" >&2
+    exit 1
+  fi
+  MARKER_LINE_COUNT=$(awk 'END { print NR }' "$INSTALL_MARKER")
+  MARKER_MAGIC=$(sed -n '1p' "$INSTALL_MARKER")
+  MARKER_VERSION=$(sed -n '2p' "$INSTALL_MARKER")
+  MARKER_ROOT=$(sed -n '3p' "$INSTALL_MARKER")
+  ACTIVE_VERSION=$(sed -n '1p' "$ACTIVE_VERSION_FILE")
+  if [ "$MARKER_LINE_COUNT" -ne 3 ] ||
+     [ "$MARKER_MAGIC" != "$INSTALL_MARKER_MAGIC" ] ||
+     [ -z "$MARKER_VERSION" ] ||
+     [ "$MARKER_VERSION" != "$ACTIVE_VERSION" ] ||
+     [ "$MARKER_ROOT" != "$INSTALL_ROOT" ]; then
+    echo "refusing to uninstall: install registration is invalid; reinstall or upgrade this root first" >&2
+    exit 1
+  fi
+
+  for child in bin versions .bin.rollback bin.new; do
+    rm -rf -- "$INSTALL_ROOT/$child"
+  done
+  for child in active-version.new .comic-sol-install.new active-version "$INSTALL_MARKER_NAME"; do
+    rm -f -- "$INSTALL_ROOT/$child"
+  done
+  rmdir -- "$INSTALL_ROOT" 2>/dev/null || true
   release_install_lock
   echo "Comic Sol runtime removed. User projects were preserved."
   exit 0
@@ -130,6 +184,7 @@ rollback() {
     rm -rf -- "$TARGET"
   fi
   rm -rf -- "$TARGET.new" "$INSTALL_ROOT/bin.new"
+  rm -f -- "$INSTALL_ROOT/.comic-sol-install.new"
   if [ "$PREVIOUS_POINTER" -eq 1 ]; then
     printf '%s\n' "$PREVIOUS_VERSION" > "$INSTALL_ROOT/active-version"
   else
@@ -195,12 +250,14 @@ fi
 "$EXE" doctor --output-root "${COMIC_SOL_OUTPUT_ROOT:-$HOME/Comic Sol}"
 
 INSTALL_STARTED=1
+mkdir -p "$INSTALL_ROOT"
+INSTALL_ROOT=$(cd -P -- "$INSTALL_ROOT" && pwd -P)
 VERSIONS="$INSTALL_ROOT/versions"
 TARGET="$VERSIONS/$VERSION"
 TARGET_BACKUP="$VERSIONS/.${VERSION}.rollback"
 STABLE_RUNTIME="$INSTALL_ROOT/bin"
 STABLE_BACKUP="$INSTALL_ROOT/.bin.rollback"
-mkdir -p "$VERSIONS" "$INSTALL_ROOT"
+mkdir -p "$VERSIONS"
 rm -rf -- "$TARGET_BACKUP" "$STABLE_BACKUP"
 if [ -f "$INSTALL_ROOT/active-version" ]; then
   PREVIOUS_POINTER=1
@@ -216,6 +273,8 @@ mv -- "$INSTALL_ROOT/bin.new" "$STABLE_RUNTIME"
 STABLE_PUBLISHED=1
 printf '%s\n' "$VERSION" > "$INSTALL_ROOT/active-version.new"
 mv -- "$INSTALL_ROOT/active-version.new" "$INSTALL_ROOT/active-version"
+printf '%s\n%s\n%s\n' "$INSTALL_MARKER_MAGIC" "$VERSION" "$INSTALL_ROOT" > "$INSTALL_ROOT/.comic-sol-install.new"
+mv -- "$INSTALL_ROOT/.comic-sol-install.new" "$INSTALL_ROOT/$INSTALL_MARKER_NAME"
 rm -rf -- "$STABLE_BACKUP" "$TARGET_BACKUP"
 COMMITTED=1
 
