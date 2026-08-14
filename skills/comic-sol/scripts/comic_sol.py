@@ -1795,11 +1795,11 @@ def doctor(output_root: Path) -> tuple[bool, list[str]]:
     healthy = True
     messages: list[str] = []
 
-    if sys.version_info[:2] == (3, 11):
-        messages.append(f"PASS Python 3.11 ({sys.version.split()[0]})")
+    if sys.version_info[:2] >= (3, 11):
+        messages.append(f"PASS Python 3.11+ ({sys.version.split()[0]})")
     else:
         healthy = False
-        messages.append(f"FAIL Python 3.11 required; found {sys.version.split()[0]}")
+        messages.append(f"FAIL Python 3.11+ required; found {sys.version.split()[0]}")
 
     try:
         import PIL

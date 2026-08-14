@@ -1109,12 +1109,31 @@ class PackagingTests(unittest.TestCase):
         readme = self.readme()
         for required in (
             "Pillow==12.3.0",
-            "python3.11 -m unittest discover -s tests -v",
-            "python3.11 scripts/comic_sol.py doctor",
+            "python -m unittest discover -s tests -v",
+            "python scripts/comic_sol.py doctor",
             "One natural-language",
         ):
             self.assertIn(required, readme)
         self.assertNotRegex(readme.lower(), r"npm run|start the server|docker compose")
+
+    def test_runtime_instructions_use_active_python_not_a_fixed_minor_version(self):
+        skill_documents = (
+            ROOT / "SKILL.md",
+            ROOT / "skills/comic-sol/SKILL.md",
+            ROOT / "references/workflow.md",
+            ROOT / "skills/comic-sol/references/workflow.md",
+            ROOT / "SUPPORT.md",
+        )
+        for path in skill_documents:
+            text = path.read_text("utf-8")
+            self.assertIn("python", text, path)
+            self.assertNotIn("python3.11 scripts/", text, path)
+
+        readme = self.readme()
+        self.assertIn("active Python interpreter", readme)
+        self.assertNotIn("python3.11", readme.lower())
+        self.assertIn("Python 3.11+", readme)
+        self.assertIn("Python 3.11+", (ROOT / "SKILL.md").read_text("utf-8"))
 
     def test_public_surface_uses_the_canonical_independent_repository(self):
         readme = self.readme()
@@ -1147,7 +1166,7 @@ class PackagingTests(unittest.TestCase):
             ("License", "https://img.shields.io/github/license/wenn-id/comicsol", "LICENSE"),
             (
                 "Python",
-                "https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white",
+                "https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white",
                 "https://www.python.org/",
             ),
             ("MCP tools", "https://img.shields.io/badge/MCP_tools-17-brightgreen", "#mcp-server-optional"),

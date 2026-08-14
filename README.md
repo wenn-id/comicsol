@@ -3,7 +3,7 @@
 [![Tests](https://github.com/wenn-id/comicsol/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/wenn-id/comicsol/actions/workflows/tests.yml)
 [![Release](https://img.shields.io/github/v/release/wenn-id/comicsol?include_prereleases&label=release)](https://github.com/wenn-id/comicsol/releases)
 [![License](https://img.shields.io/github/license/wenn-id/comicsol)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![MCP tools](https://img.shields.io/badge/MCP_tools-17-brightgreen)](#mcp-server-optional)
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-blue)](docs/install.md)
 
@@ -19,7 +19,7 @@ requests, documentation, and releases happen here.
 
 ## Install
 
-Requirements are Python 3.11 and `Pillow==12.3.0`. Image creation additionally
+Requirements are Python 3.11+ and `Pillow==12.3.0`. Use the active Python interpreter (`python` or `python3` on POSIX; `py -3` on Windows) consistently for each run. Image creation additionally
 requires an image-generation capability exposed to the active agent session; Comic
 Sol never embeds provider credentials. Comic Sol requires no Comic Sol account or
 demo credentials, although a Codex session and the selected image provider may
@@ -32,7 +32,7 @@ the one pinned dependency:
 git clone https://github.com/wenn-id/comicsol.git \
   "${CODEX_HOME:-$HOME/.codex}/skills/comic-sol"
 cd "${CODEX_HOME:-$HOME/.codex}/skills/comic-sol"
-python3.11 -m pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
+python -m pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
 ```
 
 The host-agnostic rule is: clone or copy this repository as one `comic-sol` folder
@@ -64,10 +64,10 @@ Windows PowerShell:
 git clone https://github.com/wenn-id/comicsol.git `
   "$env:USERPROFILE\.codex\skills\comic-sol"
 Set-Location "$env:USERPROFILE\.codex\skills\comic-sol"
-py -3.11 -m pip install --require-hashes -r requirements/locks/base-windows-x86_64.txt
+py -3 -m pip install --require-hashes -r requirements/locks/base-windows-x86_64.txt
 ```
 
-Supported environments are Linux, macOS, Windows, and WSL with Python 3.11 and
+Supported environments are Linux, macOS, Windows, and WSL with Python 3.11+ and
 Pillow 12.3.0. On WSL, follow the Linux instructions above; the PowerShell
 steps apply only when running Comic Sol directly on native Windows. The
 deterministic test suite does not need an image provider.
@@ -76,7 +76,7 @@ Install the portable CLI from a checkout and verify the bundled deterministic
 engine, fonts, and templates:
 
 ```bash
-python3.11 -m pip install .
+python -m pip install .
 comic-sol --json doctor
 ```
 
@@ -136,19 +136,19 @@ and lockfile for host platform:
 
 ```bash
 # Linux
-python3.11 -m venv ~/.venvs/comic-sol-mcp
+python -m venv ~/.venvs/comic-sol-mcp
 ~/.venvs/comic-sol-mcp/bin/pip install --require-hashes -r requirements/locks/runtime-linux-x86_64.txt
 ```
 
 ```bash
 # macOS
-python3.11 -m venv ~/.venvs/comic-sol-mcp
+python -m venv ~/.venvs/comic-sol-mcp
 ~/.venvs/comic-sol-mcp/bin/pip install --require-hashes -r requirements/locks/runtime-macos-x86_64.txt
 ```
 
 ```powershell
 # Windows
-py -3.11 -m venv $HOME\.venvs\comic-sol-mcp
+py -3 -m venv $HOME\.venvs\comic-sol-mcp
 & $HOME\.venvs\comic-sol-mcp\Scripts\pip.exe install --require-hashes -r requirements/locks/runtime-windows-x86_64.txt
 ```
 
@@ -157,7 +157,7 @@ script path and an absolute selected output root:
 
 ```bash
 OUTPUT_ROOT="$(pwd)/comic-sol-output"
-python3.11 scripts/mcp_server.py --root "$OUTPUT_ROOT"
+python scripts/mcp_server.py --root "$OUTPUT_ROOT"
 ```
 
 For an MCP client configuration, lock the server to one absolute output root and
@@ -190,7 +190,7 @@ preserves comic projects. Codex TOML and detected JSON client configs are mutate
 only at verified locations; clients whose native format or location has not been
 verified are reported as `unsupported` rather than guessed.
 
-During source development, `python3.11 scripts/mcp_server.py --root PATH` remains
+During source development, `python scripts/mcp_server.py --root PATH` remains
 available. Both entry points expose the same protocol-tested deterministic lifecycle
 as exactly 17 `comic_*` tools.
 
@@ -222,7 +222,7 @@ provider-neutral image setup is documented in
 For deterministic diagnostics:
 
 ```bash
-python3.11 scripts/comic_sol.py doctor --output-root /tmp/comic-sol-doctor
+python scripts/comic_sol.py doctor --output-root /tmp/comic-sol-doctor
 # Installed equivalent:
 comic-sol --json doctor --output-root /tmp/comic-sol-doctor
 ```
@@ -285,8 +285,8 @@ Pillow validates and counts SFX but reserves no placement and changes no pixels 
 Run the complete offline suite:
 
 ```bash
-python3.11 -m unittest discover -s tests -v
-python3.11 scripts/comic_sol.py doctor
+python -m unittest discover -s tests -v
+python scripts/comic_sol.py doctor
 ```
 
 ### Base environment (Pillow only, MCP tests skipped)
@@ -294,7 +294,7 @@ python3.11 scripts/comic_sol.py doctor
 Create a clean virtual environment and install only the base dependency:
 
 ```bash
-python3.11 -m venv /tmp/comic-sol-base
+python -m venv /tmp/comic-sol-base
 /tmp/comic-sol-base/bin/pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
 /tmp/comic-sol-base/bin/python -m unittest discover -s tests -v
 ```
@@ -304,7 +304,7 @@ MCP tests (`test_mcp_server.py`) are skipped gracefully when the `mcp` package i
 ### MCP-extra environment (Pillow + MCP, all tests run)
 
 ```bash
-python3.11 -m venv /tmp/comic-sol-mcp-extra
+python -m venv /tmp/comic-sol-mcp-extra
 /tmp/comic-sol-mcp-extra/bin/pip install --require-hashes -r requirements/locks/runtime-linux-x86_64.txt
 /tmp/comic-sol-mcp-extra/bin/python -m unittest discover -s tests -v
 ```
@@ -313,7 +313,7 @@ Clean-room Linux/macOS/WSL check:
 
 ```bash
 tmp_dir=$(mktemp -d)
-python3.11 -m venv "$tmp_dir/venv"
+python -m venv "$tmp_dir/venv"
 "$tmp_dir/venv/bin/python" -m pip install Pillow==12.3.0
 "$tmp_dir/venv/bin/python" scripts/comic_sol.py doctor --output-root "$tmp_dir/output"
 ```
@@ -322,7 +322,7 @@ Windows clean-room equivalent:
 
 ```powershell
 $TempRoot = Join-Path $env:TEMP "comic-sol-clean-room"
-py -3.11 -m venv "$TempRoot\venv"
+py -3 -m venv "$TempRoot\venv"
 & "$TempRoot\venv\Scripts\python.exe" -m pip install Pillow==12.3.0
 & "$TempRoot\venv\Scripts\python.exe" scripts\comic_sol.py doctor --output-root "$TempRoot\output"
 ```
@@ -335,8 +335,8 @@ py -3.11 -m venv "$TempRoot\venv"
 | Output | Panel PNGs, page PNGs, comic PDF, manifest, QA report | Editable intermediate artifacts remain local. |
 | Lettering | Comic Neue Regular/Bold; per-character Noto Sans fallback | Adaptive oval dialogue, actual inline bold emphasis, compact captions, and hybrid authored SFX are supported. Font licenses and digests are in `assets/README.md`. |
 | Image generation | Agent-exposed image model returning a local raster | References and exact dimensions are used when supported; exact authored SFX is checked by visual QA. |
-| Deterministic scripts | Python 3.11 and Pillow 12.3.0 | Offline and provider-neutral. |
-| Native MCP | Python 3.11 and MCP SDK 2.0.0 via `stdio` | Exposes 17 tools covering the full deterministic lifecycle safely locked to one output root. |
+| Deterministic scripts | Python 3.11+ and Pillow 12.3.0 | Offline and provider-neutral. |
+| Native MCP | Python 3.11+ and MCP SDK 2.0.0 via `stdio` | Exposes 17 tools covering the full deterministic lifecycle safely locked to one output root. |
 
 ## Privacy, IP, and Limitations
 

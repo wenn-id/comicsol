@@ -112,7 +112,7 @@ MCP server in `~/.hermes/config.yaml`:
 ```yaml
 mcp_servers:
   comic-sol:
-    command: "/path/to/python3.11"
+    command: "/path/to/selected-python"
     args:
       - "/path/to/comic-sol/scripts/mcp_server.py"
       - "--root"

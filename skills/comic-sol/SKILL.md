@@ -65,13 +65,17 @@ environment change. Obtain explicit user approval, then apply only that document
 fix; do not patch the engine to make the check pass. If a version pin looks wrong,
 report it as a skill upgrade, not an ad-hoc edit.
 
+### Resolve Python once
+
+Resolve active Python (`python`, `python3`, or Windows `py -3`) before deterministic commands; require Python 3.11+. Use same interpreter for whole run; never switch mid-project.
+
 ### Use init, never hand-write setup scripts
 
 Do not write `setup_batch_*.py`, `build_plans.py`, or equivalent helpers. The engine
 owns project structure. Create a project with one command:
 
 ```text
-python3.11 scripts/comic_sol.py init --output-root OUTPUT_ROOT --title TITLE --source SOURCE --request-json REQUEST_JSON
+python scripts/comic_sol.py init --output-root OUTPUT_ROOT --title TITLE --source SOURCE --request-json REQUEST_JSON
 ```
 
 For setup, edit only the semantic artifacts the engine expects (`plan/*.json`) through
@@ -146,7 +150,7 @@ After the last panel passes QA and is promoted, run the full deterministic pipel
 with one combined command instead of per-stage turns:
 
 ```text
-python3.11 scripts/comic_sol.py finalize PROJECT_DIR
+python scripts/comic_sol.py finalize PROJECT_DIR
 ```
 
 When `finalize` is available, prefer it over stacking the deterministic stages
@@ -183,29 +187,29 @@ When installed as a package, use the stable `comic-sol` executable for `doctor`,
 `status`, `validate`, `resume`, `finalize`, and `mcp`. Source checkouts retain the
 script routes below for compatibility.
 
-Use Python 3.11 from the skill root. Replace uppercase placeholders with resolved paths
+Use resolved Python 3.11+ interpreter from the skill root. Replace uppercase placeholders with resolved paths
 or values; quote shell arguments safely.
 
 ```text
-python3.11 scripts/comic_sol.py doctor --output-root OUTPUT_ROOT
-python3.11 scripts/comic_sol.py init --output-root OUTPUT_ROOT --title TITLE --source SOURCE --request-json REQUEST_JSON
-python3.11 scripts/comic_sol.py status PROJECT_DIR --json
-python3.11 scripts/comic_sol.py transition PROJECT_DIR TARGET [--warning TEXT]
-python3.11 scripts/validate_project.py PROJECT_DIR --stage plan|storyboard|panels|final [--json]
+python scripts/comic_sol.py doctor --output-root OUTPUT_ROOT
+python scripts/comic_sol.py init --output-root OUTPUT_ROOT --title TITLE --source SOURCE --request-json REQUEST_JSON
+python scripts/comic_sol.py status PROJECT_DIR --json
+python scripts/comic_sol.py transition PROJECT_DIR TARGET [--warning TEXT]
+python scripts/validate_project.py PROJECT_DIR --stage plan|storyboard|panels|final [--json]
 
-python3.11 scripts/comic_sol.py resume-plan PROJECT_DIR --json
-python3.11 scripts/comic_sol.py resume PROJECT_DIR --json
-python3.11 scripts/comic_sol.py invalidate PROJECT_DIR STAGE
-python3.11 scripts/comic_sol.py record-stage PROJECT_DIR STAGE
-python3.11 scripts/comic_sol.py record-attempt PROJECT_DIR PANEL_ID initial|visual_retry|transient_repeat PATH
-python3.11 scripts/comic_sol.py promote-attempt PROJECT_DIR PANEL_ID PATH
-python3.11 scripts/comic_sol.py override-panel PROJECT_DIR PANEL_ID --reason TEXT
+python scripts/comic_sol.py resume-plan PROJECT_DIR --json
+python scripts/comic_sol.py resume PROJECT_DIR --json
+python scripts/comic_sol.py invalidate PROJECT_DIR STAGE
+python scripts/comic_sol.py record-stage PROJECT_DIR STAGE
+python scripts/comic_sol.py record-attempt PROJECT_DIR PANEL_ID initial|visual_retry|transient_repeat PATH
+python scripts/comic_sol.py promote-attempt PROJECT_DIR PANEL_ID PATH
+python scripts/comic_sol.py override-panel PROJECT_DIR PANEL_ID --reason TEXT
 
-python3.11 scripts/letter_panels.py PROJECT_DIR [--font PATH]
-python3.11 scripts/compose_pages.py PROJECT_DIR --all
-python3.11 scripts/compose_pages.py PROJECT_DIR --page N
-python3.11 scripts/export_pdf.py PROJECT_DIR [--output PATH]
-python3.11 scripts/render_report.py PROJECT_DIR [--output PATH]
+python scripts/letter_panels.py PROJECT_DIR [--font PATH]
+python scripts/compose_pages.py PROJECT_DIR --all
+python scripts/compose_pages.py PROJECT_DIR --page N
+python scripts/export_pdf.py PROJECT_DIR [--output PATH]
+python scripts/render_report.py PROJECT_DIR [--output PATH]
 ```
 
 Never fabricate successful artifacts, provider capability, visual evidence, or a terminal

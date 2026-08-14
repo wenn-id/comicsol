@@ -290,6 +290,26 @@ class ManifestTests(unittest.TestCase):
             self.assertTrue(any(message.startswith("PASS") and label in message for message in messages), label)
         self.assertIn("INFO image capability: inspect in agent session", messages)
 
+    def test_doctor_accepts_newer_supported_python(self):
+        with (
+            mock.patch.object(comic_sol.sys, "version_info", (3, 12, 13)),
+            mock.patch.object(comic_sol.sys, "version", "3.12.13 (main, test)"),
+        ):
+            healthy, messages = doctor(self.root / "doctor-output")
+
+        self.assertTrue(healthy, messages)
+        self.assertIn("PASS Python 3.11+ (3.12.13)", messages)
+
+    def test_doctor_rejects_python_before_supported_minimum(self):
+        with (
+            mock.patch.object(comic_sol.sys, "version_info", (3, 10, 14)),
+            mock.patch.object(comic_sol.sys, "version", "3.10.14 (main, test)"),
+        ):
+            healthy, messages = doctor(self.root / "doctor-output")
+
+        self.assertFalse(healthy)
+        self.assertIn("FAIL Python 3.11+ required; found 3.10.14", messages)
+
     def test_doctor_reports_each_font_when_one_face_fails(self):
         real_truetype = ImageFont.truetype
 

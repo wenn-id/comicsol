@@ -19,10 +19,11 @@ Before opening an issue:
 
 1. Start a fresh Codex session after installing or updating the plugin.
 2. Confirm the plugin is enabled with `codex plugin list --json`.
-3. Run the deterministic check from the repository root:
+3. Resolve active Python as any available Python 3.11+ interpreter (`python`, `python3`,
+   or Windows `py -3`), then run the deterministic check from repository root:
 
    ```bash
-   python3.11 scripts/comic_sol.py doctor --output-root ./comic-sol-output
+   python scripts/comic_sol.py doctor --output-root ./comic-sol-output
    ```
 
 4. Attach only sanitized output.
