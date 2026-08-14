@@ -50,7 +50,7 @@ _SENSITIVE_NAME = r"api[_-]?key|access[_-]?token|client[_-]?secret|authorization
 _VALIDATION_STAGES = frozenset({"all", "plan", "storyboard", "panels", "final", "export-ready"})
 _PANEL_ID = re.compile(r"^p[0-9]{2}-[0-9]{2}$")
 _ATTEMPT_KINDS = frozenset({"initial", "visual_retry", "transient_repeat"})
-_RELATIVE_PATH = re.compile(r"^(?:[A-Za-z0-9._/-]+/)*[A-Za-z0-9._-]+$")
+_RELATIVE_PATH = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$")
 
 
 def _reject(message: str) -> None:

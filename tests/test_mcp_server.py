@@ -172,6 +172,10 @@ class McpServerUnitTests(unittest.TestCase):
                 with self.assertRaisesRegex(ToolError, "relative project path"):
                     tool(*arguments)
 
+    def test_relative_path_validation_rejects_repetition_without_backtracking(self):
+        with self.assertRaisesRegex(ToolError, "relative project path"):
+            mcp_server._validate_relative_path("-/" * 30 + "!")
+
     def test_tool_errors_never_leak_local_paths_or_sensitive_values(self):
         project = self.root / "project"
         project.mkdir()
