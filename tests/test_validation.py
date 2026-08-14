@@ -529,6 +529,26 @@ class StrictSchemaValidationTests(unittest.TestCase):
         })
         self.assertEqual([], validate_panel_record(record))
 
+    def test_v2_override_reason_requires_a_recorded_failed_warning(self):
+        reason = "minor prop drift is acceptable"
+        valid = valid_panel_record_v2()
+        valid["checks"][0].update({"result": "fail", "severity": "warning"})
+        valid.update({
+            "decision": "accept-warning",
+            "override_reason": reason,
+            "unresolved_warnings": [reason],
+        })
+        self.assertEqual([], validate_panel_record(valid))
+
+        cases = []
+        data = deepcopy(valid); data["decision"] = "accept"; cases.append(data)
+        data = deepcopy(valid); data["unresolved_warnings"] = ["different warning"]; cases.append(data)
+        data = deepcopy(valid); data["checks"][0].update({"result": "pass", "severity": "error"}); cases.append(data)
+        data = deepcopy(valid); data["override_reason"] = " "; cases.append(data)
+        for data in cases:
+            with self.subTest(data=data):
+                self.assert_issue(validate_panel_record(data), "override_reason")
+
     def test_panel_override_fields_require_a_recorded_visual_warning(self):
         reason = "minor prop drift is acceptable"
         valid = valid_panel_record()

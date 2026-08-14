@@ -25,7 +25,7 @@ declared invariants. Record non-empty evidence for exactly seven ordered checks:
 Results are `pass`, `warning`, or `fail`; severity is `warning` or `error`. Decisions are:
 
 - `accept`: all required checks pass.
-- `accept_with_warnings`: readable warning-level impact remains and is named for the user.
+- `accept-warning`: readable warning-level impact remains and is named for the user.
 - `regenerate`: an error-level failure needs a new attempt.
 
 ## Selective repair budgets
@@ -39,12 +39,17 @@ Results are `pass`, `warning`, or `fail`; severity is `warning` or `error`. Deci
   per-panel visual retry budget.
 - After exhaustion, an error-level panel is `BLOCKED` and cannot reach lettering/export.
 
-An explicit user may override an error categorized `visual_qa` with a recorded reason
-only when the image is readable and an error-level check has failed. The
-override downgrades the failed error-level checks to warning severity, records
-`override_reason`, and appends the reason to the panel and manifest warnings; the run
-then continues and the final transition selects `COMPLETE_WITH_WARNINGS`. Never
-override an unreadable/corrupt image, safety refusal, or non-visual failure.
+An explicit user may override a schema-2.0 panel only from `regenerate` with an
+error-level failed visual check and current canonical `bindings`. The operation
+revalidates all bound hashes and raster dimensions, downgrades the failed checks to
+warning severity while retaining `result: fail`, selects `accept-warning`, records the
+non-empty reason as `override_reason` and an `unresolved_warnings` entry, appends it to
+manifest warnings, and appends a `panel.overridden` audit event. The run then continues
+and the final transition selects `COMPLETE_WITH_WARNINGS`. Missing, stale, unreadable,
+or corrupt artifacts cannot be overridden. Schema-1.0 compatibility additionally
+requires `failure_category: visual_qa` and retains its legacy
+`accept_with_warnings` spelling; safety refusal and non-visual categories remain
+non-overridable.
 
 ## Composed-page QA
 

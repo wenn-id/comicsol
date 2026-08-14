@@ -668,11 +668,12 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
     panel_name = data.get("subject_id") if isinstance(data, dict) else "unknown"
     path = f"qa/panels/{panel_name}.json"
     issues: list[ValidationIssue] = []
-    fields = {
+    required_fields = {
         "schema_version", "kind", "subject_id", "bindings", "checks",
         "review", "decision", "unresolved_warnings",
     }
-    root = _object(data, fields, fields, issues, path, "")
+    fields = required_fields | {"override_reason"}
+    root = _object(data, fields, required_fields, issues, path, "")
     if root is None:
         return _sorted(issues)
     if root.get("schema_version") != "2.0":
@@ -744,6 +745,31 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
         _add(issues, path, "unresolved_warnings", "accepted warnings must be recorded")
     if decision == "accept" and unresolved:
         _add(issues, path, "unresolved_warnings", "accepted record cannot have warnings")
+    override_reason = root.get("override_reason")
+    if override_reason is not None:
+        _nonempty_string(override_reason, issues, path, "override_reason")
+        if decision != "accept-warning":
+            _add(issues, path, "override_reason", "is allowed only for accept-warning")
+        has_failed_warning = isinstance(checks, list) and any(
+            isinstance(check, dict)
+            and check.get("result") == "fail"
+            and check.get("severity") == "warning"
+            for check in checks
+        )
+        if not has_failed_warning:
+            _add(
+                issues,
+                path,
+                "override_reason",
+                "requires a failed check downgraded to warning severity",
+            )
+        if unresolved is not None and override_reason not in unresolved:
+            _add(
+                issues,
+                path,
+                "override_reason",
+                "must also appear in unresolved_warnings",
+            )
     return _sorted(issues)
 
 

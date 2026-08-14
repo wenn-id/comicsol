@@ -846,6 +846,71 @@ class ResumeTests(unittest.TestCase):
         action = next(item for item in actions if item.artifact == "p01-01")
         self.assertEqual("reuse", action.action, action.reason)
 
+    def test_override_accepts_valid_v2_visual_failure(self):
+        reason = "minor prop drift is acceptable"
+        record_path = self.project / "qa/panels/p01-01.json"
+        record = self._panel_record_v2()
+        record["checks"][0].update({"result": "fail", "severity": "error"})
+        record["decision"] = "regenerate"
+        atomic_write_json(record_path, record)
+        self._write_cache_snapshot()
+
+        record_override(self.project, "p01-01", reason)
+
+        updated = read_json(record_path)
+        self.assertEqual("accept-warning", updated["decision"])
+        self.assertEqual(reason, updated["override_reason"])
+        self.assertEqual("warning", updated["checks"][0]["severity"])
+        self.assertIn(reason, updated["unresolved_warnings"])
+        self.assertEqual([], validate_panel_record(updated))
+        event = json.loads(
+            (self.project / "logs/events.jsonl").read_text("utf-8").splitlines()[-1]
+        )
+        self.assertEqual("panel.overridden", event["event"])
+        self.assertEqual(
+            {"action": "accepted", "panel_id": "p01-01"}, event["details"]
+        )
+        action = next(
+            item for item in build_resume_plan(self.project)
+            if item.artifact == "p01-01"
+        )
+        self.assertEqual("reuse", action.action, action.reason)
+
+    def test_override_rejects_stale_v2_binding_atomically(self):
+        reason = "minor prop drift is acceptable"
+        record_path = self.project / "qa/panels/p01-01.json"
+        manifest_path = self.project / "project.json"
+        record = self._panel_record_v2()
+        record["checks"][0].update({"result": "fail", "severity": "error"})
+        record["decision"] = "regenerate"
+        record["bindings"]["raw_sha256"] = "0" * 64
+        atomic_write_json(record_path, record)
+        original_record = record_path.read_bytes()
+        original_manifest = manifest_path.read_bytes()
+
+        with self.assertRaisesRegex(ValueError, "cannot be overridden"):
+            record_override(self.project, "p01-01", reason)
+
+        self.assertEqual(original_record, record_path.read_bytes())
+        self.assertEqual(original_manifest, manifest_path.read_bytes())
+
+    def test_override_panel_cli_accepts_valid_v2_visual_failure(self):
+        reason = "minor prop drift is acceptable"
+        record_path = self.project / "qa/panels/p01-01.json"
+        record = self._panel_record_v2()
+        record["checks"][0].update({"result": "fail", "severity": "error"})
+        record["decision"] = "regenerate"
+        atomic_write_json(record_path, record)
+
+        result = main([
+            "override-panel", str(self.project), "p01-01", "--reason", reason,
+        ])
+
+        self.assertEqual(0, result)
+        updated = read_json(record_path)
+        self.assertEqual("accept-warning", updated["decision"])
+        self.assertEqual(reason, updated["override_reason"])
+
     def test_corrupt_and_safety_failures_cannot_be_overridden(self):
         record_path = self.project / "qa/panels/p01-01.json"
         for category in ("corrupt_image", "safety_refusal"):

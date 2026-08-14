@@ -206,10 +206,11 @@ dialogue/caption items and `sfx_count` for authored SFX items.
 
 ## Panel QA record: `qa/panels/{panel-id}.json`
 
-Schema 2.0 is the canonical record. Its exact top-level fields are `schema_version`,
-`kind`, `subject_id`, `bindings`, `checks`, `review`, `decision`, and
-`unresolved_warnings`. `kind` is `panel-qa`; `subject_id` is the storyboard panel
-ID; a record may not also contain the legacy `panel_id` field.
+Schema 2.0 is the canonical record. Its required top-level fields are
+`schema_version`, `kind`, `subject_id`, `bindings`, `checks`, `review`, `decision`,
+and `unresolved_warnings`; the only optional top-level field is `override_reason`.
+`kind` is `panel-qa`; `subject_id` is the storyboard panel ID; a record may not also
+contain the legacy `panel_id` field.
 
 `bindings` contains exactly `raw_path`, `raw_sha256`, `raw_width`, `raw_height`,
 `clean_path`, `clean_sha256`, `clean_width`, `clean_height`,
@@ -233,12 +234,24 @@ check requires `regenerate`; a warning result or warning severity requires
 reused after structural validation and all bound files, hashes, and dimensions are
 rechecked.
 
+`override_reason` is a non-empty user-provided reason that distinguishes an explicit
+override from an ordinary warning. When present, the decision is `accept-warning`,
+the same reason appears in `unresolved_warnings`, and at least one check retains
+`result: fail` with severity downgraded to `warning`. The override operation starts
+only from `regenerate` plus an error-level failed check, revalidates every current
+binding before mutation, appends the reason to manifest warnings, and records a
+`panel.overridden` event with the panel ID and accepted action. Missing, stale,
+non-canonical, unreadable, or corrupt bindings cannot be overridden.
+
 ### Legacy schema 1.0 migration
 
-Schema-1.0 records with `panel_id`, generation metadata, and
-`accept_with_warnings` remain readable for compatibility. They are not canonical:
-migrate their identity to `subject_id`, move artifact provenance into the schema-2.0
-`bindings` object, provide rich checks and review data, and use `accept-warning`.
+Schema-1.0 records with `panel_id`, generation metadata, `failure_category`, and
+`accept_with_warnings` remain readable and retain their existing override path for
+compatibility. That path only accepts `failure_category: visual_qa`; corrupt-image,
+safety, and non-visual categories remain non-overridable. Schema 1.0 is not
+canonical: migrate identity to `subject_id`, move artifact provenance into the
+schema-2.0 `bindings` object, provide rich checks and review data, and use
+`accept-warning`.
 
 ## Human-readable QA report: `qa/report.md`
 

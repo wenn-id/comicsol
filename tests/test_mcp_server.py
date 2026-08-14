@@ -242,6 +242,29 @@ class McpServerUnitTests(unittest.TestCase):
         mcp_server._resolve_project("cached-project")
         self.assertIsNot(cached, mcp_server._SYMLINK_SCAN_CACHE.get("cached-project"))
 
+    def test_override_tool_accepts_valid_v2_visual_failure(self):
+        project = self.root / "sunlight-courier"
+        shutil.copytree(ROOT / "samples/sunlight-courier", project)
+        record_path = project / "qa/panels/p01-01.json"
+        record = json.loads(record_path.read_text("utf-8"))
+        record["checks"][0].update({"result": "fail", "severity": "error"})
+        record["decision"] = "regenerate"
+        record_path.write_text(
+            json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+        result = mcp_server.comic_override_panel(
+            "sunlight-courier", "p01-01", "minor prop drift is acceptable"
+        )
+
+        self.assertEqual("p01-01: accepted with warnings", result)
+        updated = json.loads(record_path.read_text("utf-8"))
+        self.assertEqual("accept-warning", updated["decision"])
+        self.assertEqual(
+            "minor prop drift is acceptable", updated["override_reason"]
+        )
+
 
 @unittest.skipUnless(MCP_AVAILABLE, "MCP extra is not installed")
 class InstalledMcpProtocolTests(unittest.IsolatedAsyncioTestCase):
