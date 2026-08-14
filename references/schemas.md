@@ -1,13 +1,18 @@
 # Comic Sol artifact schemas
 
-This document is the normative schema contract for Comic Sol schema version `1.0`. The JSON templates in `templates/` are starting shapes for the agent and deterministic scripts. A template may be structurally incomplete for a later pipeline stage; stage validation applies the cross-field rules in this document before allowing a transition.
+This document is the normative schema contract for Comic Sol. Most project artifacts
+remain schema version `1.0`; panel and page QA records use their documented schema
+version `2.0`. The JSON templates in `templates/` are starting shapes for the agent
+and deterministic scripts. A template may be structurally incomplete for a later
+pipeline stage; stage validation applies the cross-field rules in this document
+before allowing a transition.
 
 ## Common JSON rules
 
 - Encoding is UTF-8 without a byte-order mark.
 - Writers use two-space indentation, lexicographically sorted object keys, and one newline at end of file.
-- `schema_version` is the string `"1.0"` in every JSON artifact.
-- Version 1.0 validators reject unknown fields.
+- Each artifact's `schema_version` is the exact version stated in its section.
+- Validators reject unknown fields for their declared schema version.
 - IDs match `^[a-z][a-z0-9-]{0,47}$`.
 - Timestamps are strings in ISO 8601 UTC form `YYYY-MM-DDTHH:MM:SSZ`.
 - SHA-256 values are 64-character lowercase hexadecimal strings once their referenced artifact exists. A template may use `null` before the artifact exists; persisted stage output may not use an empty string or sentinel hash.
@@ -201,29 +206,39 @@ dialogue/caption items and `sfx_count` for authored SFX items.
 
 ## Panel QA record: `qa/panels/{panel-id}.json`
 
-| Field | Type | Rules |
-|---|---|---|
-| `schema_version` | string | Exactly `"1.0"` |
-| `panel_id` | ID | Matches storyboard panel/file ID |
-| `source_prompt_path` | relative path or null | Required after prompt creation |
-| `raw_path` | relative path or null | Required after generation |
-| `clean_path` | relative path or null | Required after normalization |
-| `raw_sha256` | SHA-256 or null | Required for an accepted readable raw image |
-| `dimensions` | object | Integer `width` and `height`; positive after generation |
-| `attempts` | integer | 0 in template; initial generation is 1; maximum accepted visual value is 3 |
-| `generation` | object | Capability name, reference paths, and completion timestamp |
-| `checks` | array[check] | Exactly seven checks in normative order |
-| `decision` | enum | `accept`, `regenerate`, or `accept_with_warnings` |
-| `retry_reason` | string or null | Required when decision is regenerate |
-| `unresolved_warnings` | array[string] | User-visible impact descriptions |
-| `failure_category` | string or null | Optional sanitized category such as `visual_qa`, `corrupt_image`, or `safety_refusal`; only `visual_qa` is overridable |
-| `override_reason` | string or null | Optional; set only by an explicit recorded override and repeated in `unresolved_warnings` |
+Schema 2.0 is the canonical record. Its exact top-level fields are `schema_version`,
+`kind`, `subject_id`, `bindings`, `checks`, `review`, `decision`, and
+`unresolved_warnings`. `kind` is `panel-qa`; `subject_id` is the storyboard panel
+ID; a record may not also contain the legacy `panel_id` field.
 
-`generation` contains exactly `capability_name` (string or null), `reference_paths` (array of relative paths), and `completed_at` (timestamp or null). Nulls are permitted only before generation.
+`bindings` contains exactly `raw_path`, `raw_sha256`, `raw_width`, `raw_height`,
+`clean_path`, `clean_sha256`, `clean_width`, `clean_height`,
+`normalization_path`, and `normalization_sha256`. They bind the reviewed artifacts
+to `panels/raw/{panel-id}.png`, `panels/{panel-id}/clean.png`, and
+`panels/{panel-id}/normalization.json`, including current hashes and raster
+dimensions. Resume and validation reject missing, non-canonical, stale, or
+unreadable bindings.
 
-Each check contains exactly `id`, `result`, `severity`, and `evidence`. The seven required IDs, in order, are `character-identity`, `anatomy`, `action`, `composition`, `continuity`, `text-free`, and `technical`. Results are `pass`, `fail`, or `warning`; severities are `error` or `warning`; evidence is a non-empty observation after inspection. `character-identity` passes when no recurring character is present. `text-free` means no generated dialogue, captions, speech bubbles, logos, signatures, or watermarks; exact storyboard-authored SFX is allowed and required when authored, while missing, misspelled, duplicated, unauthorized, or un-authored SFX fails. `technical` verifies readable raster data, minimum 512 px dimensions, aspect-ratio tolerance ±2%, and no unintended transparency.
+`checks` contains exactly seven rich records in this order: `character-identity`,
+`anatomy`, `action`, `composition`, `continuity`, `text-free`, and `technical`.
+Every check has `id`, `result`, `severity`, `evidence`, `method`, `reviewer`, and
+`regions`; results are `pass`, `fail`, or `warning`, and severities are `error` or
+`warning`. `review` contains a non-empty `method` and `reviewer` plus UTC
+`reviewed_at`.
 
-Error-level failure selects `regenerate`. Warnings select `accept_with_warnings` unless readability is impaired. At most two visual regenerations are allowed per panel, and visual retries plus transient repeats share the project-wide cap of eight extra calls. A failure categorized `visual_qa` may be explicitly overridden only while it has an error-level failed check and a readable image; corrupt images, safety refusals, and non-visual failures cannot be overridden. An override downgrades the failed error-level checks to warning severity, sets `decision` to `accept_with_warnings`, records `override_reason`, and appends the reason to `unresolved_warnings` and the manifest warnings. The manifest status keeps advancing through the linear stages; when unresolved warnings exist, the final transition selects `COMPLETE_WITH_WARNINGS` even if `COMPLETE` was requested.
+Decisions are `accept`, `accept-warning`, or `regenerate`. An error-level failed
+check requires `regenerate`; a warning result or warning severity requires
+`accept-warning` or `regenerate`. `accept-warning` records a non-empty
+`unresolved_warnings` list, while `accept` records none. Accepted records are only
+reused after structural validation and all bound files, hashes, and dimensions are
+rechecked.
+
+### Legacy schema 1.0 migration
+
+Schema-1.0 records with `panel_id`, generation metadata, and
+`accept_with_warnings` remain readable for compatibility. They are not canonical:
+migrate their identity to `subject_id`, move artifact provenance into the schema-2.0
+`bindings` object, provide rich checks and review data, and use `accept-warning`.
 
 ## Human-readable QA report: `qa/report.md`
 
@@ -259,13 +274,22 @@ Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-nu
 
 ## Page QA record: `qa/pages/page-{NNN}.json`
 
-One record per composed page, created from `templates/page-qa.json` after the agent visually inspects that page. It contains exactly `page`, `page_path`, `page_sha256`, `schema_version`, and `status`:
+One schema-2.0 `page-qa` record per composed page is created from `templates/page-qa.json`
+after bounded visual inspection. It contains `schema_version: "2.0"`, `kind: "page-qa"`,
+and `subject_id: "page-{NNN}"`; seven checks in the normative page order; a review object
+with the fixed method `deterministic-plus-bounded-visual-review`, a non-empty reviewer, and
+an ISO-8601 UTC `reviewed_at`; `decision`; and `unresolved_warnings`.
 
-- `page`: the page number, matching the file's zero-padded `NNN`.
-- `page_path`: exactly `pages/page-{NNN}.png`.
-- `page_sha256`: the SHA-256 of that composed page PNG as it exists on disk.
-- `status`: exactly `"reviewed"`.
+`bindings` contains exactly `composition_cache_path`, `composition_cache_sha256`,
+`layout_name`, `layout_version`, ordered `lettering_sha256s` values (`panel-id:sha256`),
+`page_height`, `page_path`, `page_sha256`, `page_width`, `storyboard_path`, and
+`storyboard_sha256`. Every value is bound to the artifacts inspected by the record.
 
+An error-level failed check selects `regenerate`; otherwise any check whose result or severity
+is `warning` selects `accept-warning` and places its evidence, in check order, in
+`unresolved_warnings`; all passing checks select `accept`. A legacy five-field record
+(`page`, `page_path`, `page_sha256`, `schema_version`, `status`) is schema-1.0 input only:
+it remains readable for reporting but requires migration and cannot satisfy final validation.
 These records are the integrity gate on finalization. `comic_sol.py finalize` and `validate_project.py --stage final|export-ready` fail closed when a record is missing or when `page_sha256` no longer matches the page, because a terminal status must not claim visual review that did not happen. Recompose a page and its record goes stale; write it again after re-inspecting.
 
 ## Composition cache: `cache/composition.json`

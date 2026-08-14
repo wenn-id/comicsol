@@ -44,7 +44,8 @@ beneath the Codex skills directory configured by your Codex installation. Keep
 
 This repository is also a skills-only Codex Plugin. The plugin manifest lives at
 `.codex-plugin/plugin.json`; its self-contained upload bundle lives under
-`skills/comic-sol/`. No second repository is required.
+`skills/comic-sol/`. The root skill files are canonical; the bundle is synchronized
+with `scripts/sync_plugin_bundle.py`. No second repository is required.
 
 Test the same repository through Codex's repo marketplace:
 

@@ -47,6 +47,18 @@ Run checks through same `.venv` interpreter used for dependency installation. Be
 
 Changes to packaging, runtime freezing, MCP, release automation, or distribution must also pass clean-install and portable-runtime smoke tests. Visual output changes require an actual before/after render and visual inspection; green geometry tests alone are insufficient.
 
+The root `SKILL.md`, deterministic scripts, templates, fonts, and non-host-specific
+references are canonical. Synchronize and verify the self-contained plugin bundle with:
+
+```bash
+.venv/bin/python scripts/sync_plugin_bundle.py
+.venv/bin/python scripts/sync_plugin_bundle.py --check
+```
+
+On Windows, use `.venv\Scripts\python.exe` for the same commands. The capability
+detection and image-provider setup references are intentionally host-specific; other
+bundle differences fail validation.
+
 ## Pull requests
 
 - Target `main`.

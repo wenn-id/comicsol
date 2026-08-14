@@ -56,4 +56,7 @@ and result; generic `all-bubbles` evidence is rejected. Verify the tail points t
 voice source, stops before it, and has a continuous join, durable white core, consistent
 outline, and clean tip. Any error-level panel or page keeps export blocked. Deterministic
 hash/dimension/PDF checks bind evidence to current artifacts; they do not replace visual
-inspection.
+inspection. A warning-level tail check must have at least one owned dialogue region marked
+`fail`; a warning cannot hide all-passing regions. A page warning selects `accept-warning`
+and records the check evidence in `unresolved_warnings`; an error-level failure selects
+`regenerate`.
