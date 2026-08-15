@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import comic_sol_product.setup as client_setup
 from comic_sol_product import cli
 from comic_sol_product.clients import CodexAdapter, JsonClientAdapter
 from comic_sol_product.setup import repair_clients, setup_clients, uninstall_clients
@@ -26,6 +27,43 @@ class ClientSetupTests(unittest.TestCase):
         self.launcher.write_bytes(b"launcher")
         if os.name != "nt":
             self.launcher.chmod(0o755)
+
+    def adapter_paths(self, platform: str) -> dict[str, Path]:
+        with mock.patch.object(client_setup.sys, "platform", platform):
+            return {
+                adapter.name: adapter.config_path
+                for adapter in client_setup.default_adapters(self.home)
+            }
+
+    def test_default_adapter_paths_are_platform_native(self):
+        with mock.patch.dict(
+            os.environ, {"APPDATA": str(self.home / "Roaming")}
+        ):
+            windows = self.adapter_paths("win32")
+        macos = self.adapter_paths("darwin")
+        linux = self.adapter_paths("linux")
+
+        self.assertEqual(
+            self.home / "Roaming/Claude/claude_desktop_config.json",
+            windows["claude-desktop"],
+        )
+        self.assertEqual(
+            self.home
+            / "Library/Application Support/Claude/claude_desktop_config.json",
+            macos["claude-desktop"],
+        )
+        self.assertEqual(
+            self.home / ".config/Claude/claude_desktop_config.json",
+            linux["claude-desktop"],
+        )
+        shared = {
+            "codex": self.home / ".codex/config.toml",
+            "cursor": self.home / ".cursor/mcp.json",
+            "windsurf": self.home / ".codeium/windsurf/mcp_config.json",
+        }
+        for paths in (windows, macos, linux):
+            for name, expected in shared.items():
+                self.assertEqual(expected, paths[name])
 
     def test_json_setup_creates_backup_and_exact_entry(self):
         config = self.home / ".cursor" / "mcp.json"

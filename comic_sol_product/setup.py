@@ -86,21 +86,27 @@ def default_adapters(home: Path | None = None) -> list[ClientAdapter]:
 
     if sys.platform == "win32":
         roaming = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
-        adapters.extend(
-            [
-                JsonClientAdapter("claude-desktop", roaming / "Claude" / "claude_desktop_config.json"),
-                JsonClientAdapter("cursor", home / ".cursor" / "mcp.json"),
-                JsonClientAdapter("windsurf", home / ".codeium" / "windsurf" / "mcp_config.json"),
-            ]
+        claude = roaming / "Claude" / "claude_desktop_config.json"
+    elif sys.platform == "darwin":
+        claude = (
+            home
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
         )
     else:
-        adapters.extend(
-            [
-                JsonClientAdapter("claude-desktop", home / ".config" / "Claude" / "claude_desktop_config.json"),
-                JsonClientAdapter("cursor", home / ".cursor" / "mcp.json"),
-                JsonClientAdapter("windsurf", home / ".codeium" / "windsurf" / "mcp_config.json"),
-            ]
-        )
+        claude = home / ".config" / "Claude" / "claude_desktop_config.json"
+
+    adapters.extend(
+        [
+            JsonClientAdapter("claude-desktop", claude),
+            JsonClientAdapter("cursor", home / ".cursor" / "mcp.json"),
+            JsonClientAdapter(
+                "windsurf", home / ".codeium" / "windsurf" / "mcp_config.json"
+            ),
+        ]
+    )
     return adapters
 
 
