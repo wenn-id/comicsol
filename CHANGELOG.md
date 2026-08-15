@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- Removed the unwired `comic_sol_product.providers` Python API. Integrations must
+  keep image generation in the agent capability plane and use the documented
+  project CLI/MCP lifecycle for retained raster artifacts.
+
 ## 2.0.0rc4 — 2026-07-30
 
 Speaker-aware balloon-tail prerelease.
