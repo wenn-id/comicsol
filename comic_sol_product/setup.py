@@ -46,7 +46,15 @@ def _resolve_executable(executable: str | os.PathLike[str] | None) -> str:
         if executable is not None
         else (sys.executable if getattr(sys, "frozen", False) else sys.argv[0])
     )
-    located = launcher if Path(launcher).is_absolute() else shutil.which(launcher)
+    candidate = Path(launcher).expanduser()
+    if candidate.is_absolute():
+        located = (
+            str(candidate)
+            if candidate.is_file()
+            else shutil.which(candidate.name, path=str(candidate.parent))
+        )
+    else:
+        located = shutil.which(launcher)
     if located is None:
         raise FileNotFoundError("Comic Sol executable could not be resolved")
     resolved = Path(located).expanduser().resolve(strict=True)

@@ -393,6 +393,37 @@ class ClientSetupTests(unittest.TestCase):
         self.assertEqual(original, config.read_bytes())
         self.assertEqual([], list(config.parent.glob("*.bak-*")))
 
+    def test_absolute_console_stub_resolves_only_from_its_parent(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.write_text("{}\n", encoding="utf-8")
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+        console_path = self.home / "console stub" / "comic-sol"
+        console_path.parent.mkdir()
+        native_launcher = console_path.with_suffix(".exe")
+        native_launcher.write_bytes(b"native launcher")
+        if os.name != "nt":
+            native_launcher.chmod(0o755)
+
+        with mock.patch(
+            "comic_sol_product.setup.shutil.which",
+            return_value=str(native_launcher),
+        ) as which:
+            result = setup_clients(
+                self.output,
+                adapters=[adapter],
+                executable=console_path,
+            )[0]
+
+        which.assert_called_once_with(
+            console_path.name, path=str(console_path.parent)
+        )
+        entry = json.loads(config.read_text(encoding="utf-8"))["mcpServers"][
+            "comic-sol"
+        ]
+        self.assertEqual("configured", result.status)
+        self.assertEqual(str(native_launcher.resolve()), entry["command"])
+
     def test_cli_exposes_transaction_commands(self):
         parser = cli.build_parser()
         for command in ("setup", "repair", "uninstall"):

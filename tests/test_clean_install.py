@@ -87,7 +87,9 @@ class CleanInstallSmokeTests(unittest.TestCase):
         expected_arguments = ["mcp", "--root", str(self.output.resolve())]
         self.write_codex_entry(str(self.launcher.resolve()), expected_arguments)
 
-        entry = clean_install_smoke.read_codex_entry(self.config, self.output)
+        entry = clean_install_smoke.read_codex_entry(
+            self.config, self.output, self.launcher
+        )
 
         self.assertEqual(
             {"command": str(self.launcher.resolve()), "args": expected_arguments},
@@ -100,7 +102,23 @@ class CleanInstallSmokeTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "non-absolute"):
-            clean_install_smoke.read_codex_entry(self.config, self.output)
+            clean_install_smoke.read_codex_entry(
+                self.config, self.output, self.launcher
+            )
+
+    def test_rejects_absolute_command_other_than_installed_launcher(self):
+        other = self.root / "other" / self.launcher.name
+        other.parent.mkdir()
+        other.write_bytes(b"unrelated launcher")
+        self.write_codex_entry(
+            str(other.resolve()),
+            ["mcp", "--root", str(self.output.resolve())],
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "unexpected MCP command"):
+            clean_install_smoke.read_codex_entry(
+                self.config, self.output, self.launcher
+            )
 
     def test_minimal_environment_excludes_the_installation_path(self):
         source = {

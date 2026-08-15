@@ -40,7 +40,9 @@ def venv_paths(root: Path) -> tuple[Path, Path]:
     return root / "bin" / "python", root / "bin" / "comic-sol"
 
 
-def read_codex_entry(config: Path, output_root: Path) -> dict[str, object]:
+def read_codex_entry(
+    config: Path, output_root: Path, executable: Path
+) -> dict[str, object]:
     """Read and validate the exact MCP entry produced for Codex."""
     record = tomllib.loads(config.read_text(encoding="utf-8"))
     try:
@@ -51,6 +53,8 @@ def read_codex_entry(config: Path, output_root: Path) -> dict[str, object]:
         raise RuntimeError("installed setup did not persist the Codex MCP entry") from error
     if not isinstance(command, str) or not Path(command).is_absolute():
         raise RuntimeError("installed setup persisted a non-absolute MCP command")
+    if Path(command).resolve(strict=True) != executable.resolve(strict=True):
+        raise RuntimeError("installed setup persisted an unexpected MCP command")
     expected = ["mcp", "--root", str(output_root.resolve())]
     if arguments != expected:
         raise RuntimeError("installed setup persisted unexpected MCP arguments")
@@ -169,7 +173,7 @@ def main() -> int:
         setup_results = {result["client"]: result for result in setup["data"]}
         if any(setup_results[client]["status"] != "configured" for client in clients):
             raise RuntimeError("installed client setup did not configure selected clients")
-        entry = read_codex_entry(codex, output_root)
+        entry = read_codex_entry(codex, output_root, executable)
         if sys.platform == "darwin":
             claude_record = json.loads(claude.read_text(encoding="utf-8"))
             if claude_record["mcpServers"].get("other") != {"command": "other"}:
