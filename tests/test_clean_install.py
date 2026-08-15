@@ -1,5 +1,7 @@
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,7 +14,7 @@ from comic_sol_product.release import (
     validate_sdist_members,
     validate_wheel_members,
 )
-from scripts import clean_install_smoke, installed_mcp_smoke
+from scripts import clean_install_smoke
 
 
 class DistributionContractTests(unittest.TestCase):
@@ -151,6 +153,8 @@ class CleanInstallSmokeTests(unittest.TestCase):
         self.assertEqual({"command": "other"}, record["mcpServers"]["other"])
 
     def test_installed_smoke_parses_exact_command_and_arguments(self):
+        from scripts import installed_mcp_smoke
+
         command = str(self.launcher.resolve())
         arguments = ["mcp", "--root", str(self.output.resolve())]
 
@@ -161,6 +165,32 @@ class CleanInstallSmokeTests(unittest.TestCase):
         self.assertEqual((command, arguments), parsed)
         with self.assertRaisesRegex(ValueError, "JSON string array"):
             installed_mcp_smoke.parse_server_entry(command, '{"bad": true}')
+
+    def test_argument_parser_imports_without_mcp_extra(self):
+        root = Path(__file__).resolve().parents[1]
+        program = (
+            "import importlib.abc\n"
+            "import sys\n"
+            "class BlockMcp(importlib.abc.MetaPathFinder):\n"
+            "    def find_spec(self, fullname, path=None, target=None):\n"
+            "        if fullname == 'mcp' or fullname.startswith('mcp.'):\n"
+            "            raise ModuleNotFoundError('mcp extra is unavailable')\n"
+            "        return None\n"
+            "sys.meta_path.insert(0, BlockMcp())\n"
+            "from scripts.installed_mcp_smoke import parse_server_entry\n"
+            "assert parse_server_entry('comic-sol', '[]') == ('comic-sol', [])\n"
+        )
+
+        completed = subprocess.run(
+            [sys.executable, "-c", program],
+            cwd=root,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
 
 
 if __name__ == "__main__":

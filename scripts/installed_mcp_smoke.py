@@ -6,10 +6,6 @@ import argparse
 import asyncio
 import json
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-
-
 EXPECTED_TOOLS = {
     "comic_init",
     "comic_status",
@@ -33,6 +29,9 @@ EXPECTED_TOOLS = {
 
 async def smoke(command: str, arguments: list[str]) -> None:
     """Run the installed MCP server smoke test."""
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
     server = StdioServerParameters(command=command, args=arguments)
     async with stdio_client(server) as (reader, writer):
         async with ClientSession(reader, writer) as session:
