@@ -95,23 +95,27 @@ class ProductCliTests(unittest.TestCase):
             self.assertNotIn(str(root), payload["error"]["message"])
             self.assertFalse(output.exists())
 
-    def test_setup_passes_the_current_console_launcher(self):
-        arguments = cli.build_parser().parse_args(
-            ["setup", "--output-root", "/tmp/projects", "--client", "codex"]
-        )
-        with (
-            mock.patch.object(cli.sys, "argv", ["/opt/Comic Sol/bin/comic-sol"]),
-            mock.patch(
-                "comic_sol_product.setup.setup_clients", return_value=[]
-            ) as setup,
-        ):
-            self.assertEqual([], cli._run(arguments))
+    def test_setup_and_repair_pass_the_current_console_launcher(self):
+        for command in ("setup", "repair"):
+            with self.subTest(command=command):
+                arguments = cli.build_parser().parse_args(
+                    [command, "--output-root", "/tmp/projects", "--client", "codex"]
+                )
+                with (
+                    mock.patch.object(
+                        cli.sys, "argv", ["/opt/Comic Sol/bin/comic-sol"]
+                    ),
+                    mock.patch(
+                        "comic_sol_product.setup.setup_clients", return_value=[]
+                    ) as setup,
+                ):
+                    self.assertEqual([], cli._run(arguments))
 
-        setup.assert_called_once_with(
-            arguments.output_root,
-            selected=["codex"],
-            executable="/opt/Comic Sol/bin/comic-sol",
-        )
+                setup.assert_called_once_with(
+                    arguments.output_root,
+                    selected=["codex"],
+                    executable="/opt/Comic Sol/bin/comic-sol",
+                )
 
     def test_setup_passes_the_frozen_executable(self):
         arguments = cli.build_parser().parse_args(

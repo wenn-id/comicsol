@@ -136,11 +136,11 @@ def _run(arguments: argparse.Namespace) -> Any:
     if arguments.command == "finalize":
         return engine.finalize_project(arguments.project_dir)
     if arguments.command in {"setup", "repair", "uninstall"}:
-        from .setup import repair_clients, setup_clients, uninstall_clients
+        from .setup import setup_clients, uninstall_clients
 
         operation = {
             "setup": setup_clients,
-            "repair": repair_clients,
+            "repair": setup_clients,
             "uninstall": uninstall_clients,
         }[arguments.command]
         operation_arguments: dict[str, Any] = {"selected": arguments.clients}

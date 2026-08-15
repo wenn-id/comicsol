@@ -195,12 +195,6 @@ def setup_clients(
                     SetupResult(name, "unsupported", None, None, "native config format or location is not verified")
                 )
     return results
-
-
-def repair_clients(*args: object, **kwargs: object) -> list[SetupResult]:
-    return setup_clients(*args, **kwargs)  # type: ignore[arg-type]
-
-
 def uninstall_clients(
     output_root: Path,
     selected: Iterable[str] | None = None,
