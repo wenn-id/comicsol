@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import venv
 from pathlib import Path
 
@@ -39,6 +40,69 @@ def venv_paths(root: Path) -> tuple[Path, Path]:
     return root / "bin" / "python", root / "bin" / "comic-sol"
 
 
+def read_codex_entry(config: Path, output_root: Path) -> dict[str, object]:
+    """Read and validate the exact MCP entry produced for Codex."""
+    record = tomllib.loads(config.read_text(encoding="utf-8"))
+    try:
+        entry = record["mcp_servers"]["comic-sol"]
+        command = entry["command"]
+        arguments = entry["args"]
+    except (KeyError, TypeError) as error:
+        raise RuntimeError("installed setup did not persist the Codex MCP entry") from error
+    if not isinstance(command, str) or not Path(command).is_absolute():
+        raise RuntimeError("installed setup persisted a non-absolute MCP command")
+    expected = ["mcp", "--root", str(output_root.resolve())]
+    if arguments != expected:
+        raise RuntimeError("installed setup persisted unexpected MCP arguments")
+    return {"command": command, "args": arguments}
+
+
+def minimal_environment(environment: dict[str, str]) -> dict[str, str]:
+    """Keep platform essentials while excluding installation search paths."""
+    minimal = {
+        key: environment[key]
+        for key in (
+            "HOME",
+            "USERPROFILE",
+            "SYSTEMROOT",
+            "WINDIR",
+            "TMP",
+            "TEMP",
+            "TMPDIR",
+            "LANG",
+        )
+        if key in environment
+    }
+    if os.name == "nt":
+        system_root = environment.get("SYSTEMROOT") or environment.get("WINDIR")
+        if system_root is None:
+            raise RuntimeError("Windows system root is unavailable")
+        minimal["PATH"] = str(Path(system_root) / "System32")
+    else:
+        minimal["PATH"] = "/usr/bin:/bin"
+    return minimal
+
+
+def prepare_client_configs(home: Path) -> tuple[list[str], Path]:
+    """Create the existing native Claude fixture needed by the macOS smoke."""
+    clients = ["codex"]
+    claude = (
+        home
+        / "Library"
+        / "Application Support"
+        / "Claude"
+        / "claude_desktop_config.json"
+    )
+    if sys.platform == "darwin":
+        claude.parent.mkdir(parents=True)
+        claude.write_text(
+            '{"mcpServers":{"other":{"command":"other"}}}\n',
+            encoding="utf-8",
+        )
+        clients.append("claude-desktop")
+    return clients, claude
+
+
 def main() -> int:
     """Verify a clean installation in a temporary environment."""
     parser = argparse.ArgumentParser()
@@ -50,7 +114,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="comic-sol-clean-") as temporary:
         root = Path(temporary)
-        environment_root = root / "venv"
+        environment_root = root / "venv with spaces"
         venv.EnvBuilder(with_pip=True, clear=True).create(environment_root)
         python, executable = venv_paths(environment_root)
         requirement = f"{wheel}[mcp]" if arguments.mcp else str(wheel)
@@ -89,32 +153,57 @@ def main() -> int:
         env["HOME"] = str(home)
         if os.name == "nt":
             env["USERPROFILE"] = str(home)
+        clients, claude = prepare_client_configs(home)
+        setup_command = [
+            str(executable),
+            "--json",
+            "setup",
+            "--output-root",
+            str(output_root),
+        ]
+        for client in clients:
+            setup_command.extend(["--client", client])
         setup = json.loads(
-            run(
-                [str(executable), "--json", "setup", "--output-root", str(output_root), "--client", "codex"],
-                cwd=root,
-                env=env,
-            )
+            run(setup_command, cwd=root, env=env)
         )
-        if setup["data"][0]["status"] != "configured":
-            raise RuntimeError("installed client setup did not configure Codex")
+        setup_results = {result["client"]: result for result in setup["data"]}
+        if any(setup_results[client]["status"] != "configured" for client in clients):
+            raise RuntimeError("installed client setup did not configure selected clients")
+        entry = read_codex_entry(codex, output_root)
+        if sys.platform == "darwin":
+            claude_record = json.loads(claude.read_text(encoding="utf-8"))
+            if claude_record["mcpServers"].get("other") != {"command": "other"}:
+                raise RuntimeError("Claude setup did not preserve the existing entry")
+            if claude_record["mcpServers"].get("comic-sol") != entry:
+                raise RuntimeError("Claude and Codex MCP entries differ")
+        uninstall_command = [
+            str(executable),
+            "--json",
+            "uninstall",
+            "--output-root",
+            str(output_root),
+        ]
+        for client in clients:
+            uninstall_command.extend(["--client", client])
         uninstall = json.loads(
-            run(
-                [str(executable), "--json", "uninstall", "--output-root", str(output_root), "--client", "codex"],
-                cwd=root,
-                env=env,
-            )
+            run(uninstall_command, cwd=root, env=env)
         )
-        if uninstall["data"][0]["status"] != "removed" or not project.is_dir():
+        uninstall_results = {result["client"]: result for result in uninstall["data"]}
+        if (
+            any(uninstall_results[client]["status"] != "removed" for client in clients)
+            or not project.is_dir()
+        ):
             raise RuntimeError("uninstall removed project data or failed to remove integration")
 
         if arguments.mcp:
             run(
                 [
                     str(python), str(repository / "scripts" / "installed_mcp_smoke.py"),
-                    "--executable", str(executable), "--output-root", str(output_root),
+                    "--command", entry["command"],
+                    "--args-json", json.dumps(entry["args"]),
                 ],
                 cwd=root,
+                env=minimal_environment(env),
             )
 
         shutil.rmtree(project)

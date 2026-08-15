@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from pathlib import Path
+import json
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -31,12 +31,9 @@ EXPECTED_TOOLS = {
 }
 
 
-async def smoke(executable: Path, output_root: Path) -> None:
+async def smoke(command: str, arguments: list[str]) -> None:
     """Run the installed MCP server smoke test."""
-    server = StdioServerParameters(
-        command=str(executable),
-        args=["mcp", "--root", str(output_root.resolve())],
-    )
+    server = StdioServerParameters(command=command, args=arguments)
     async with stdio_client(server) as (reader, writer):
         async with ClientSession(reader, writer) as session:
             await session.initialize()
@@ -51,13 +48,24 @@ async def smoke(executable: Path, output_root: Path) -> None:
     print(f"mcp-smoke-ok: {len(EXPECTED_TOOLS)} tools")
 
 
+def parse_server_entry(command: str, arguments_json: str) -> tuple[str, list[str]]:
+    """Parse one structured MCP command entry without invoking a shell."""
+    arguments = json.loads(arguments_json)
+    if not isinstance(arguments, list) or not all(
+        isinstance(item, str) for item in arguments
+    ):
+        raise ValueError("MCP arguments must be a JSON string array")
+    return command, arguments
+
+
 def main() -> int:
     """Execute the installed MCP smoke-test command."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--executable", required=True, type=Path)
-    parser.add_argument("--output-root", required=True, type=Path)
-    arguments = parser.parse_args()
-    asyncio.run(smoke(arguments.executable, arguments.output_root))
+    parser.add_argument("--command", required=True)
+    parser.add_argument("--args-json", required=True)
+    parsed = parser.parse_args()
+    command, arguments = parse_server_entry(parsed.command, parsed.args_json)
+    asyncio.run(smoke(command, arguments))
     return 0
 
 

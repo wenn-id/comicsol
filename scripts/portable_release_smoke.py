@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import tempfile
@@ -29,7 +30,16 @@ def main() -> int:
         run([str(executable), "doctor", "--output-root", str(temporary / "output")], temporary)
         helper = Path(__file__).resolve().parent / "installed_mcp_smoke.py"
         run(
-            [sys.executable, str(helper), "--executable", str(executable), "--output-root", str(temporary / "mcp")],
+            [
+                sys.executable,
+                str(helper),
+                "--command",
+                str(executable),
+                "--args-json",
+                json.dumps(
+                    ["mcp", "--root", str((temporary / "mcp").resolve())]
+                ),
+            ],
             temporary,
         )
     print("portable-release-smoke-ok")
