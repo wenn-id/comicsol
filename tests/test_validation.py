@@ -1223,8 +1223,6 @@ class PackagingTests(unittest.TestCase):
 
         dependency_and_packaging_inputs = (
             "pyproject.toml",
-            "requirements.txt",
-            "requirements-mcp.txt",
             "setup.py",
             "packaging/comic-sol.spec",
             "scripts/build_portable.py",

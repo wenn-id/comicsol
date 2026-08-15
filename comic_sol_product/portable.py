@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import os
-import shutil
 import tarfile
-import tempfile
 import zipfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Iterable
 
 REQUIRED_RUNTIME_SUFFIXES = frozenset(
@@ -34,40 +32,6 @@ def validate_runtime_members(members: Iterable[str]) -> None:
         missing.append("comic-sol/comic-sol[.exe]")
     if missing:
         raise ValueError("portable runtime is missing required members: " + ", ".join(sorted(set(missing))))
-
-
-def _safe_archive_name(name: str) -> str:
-    normalized = name.replace("\\", "/")
-    path = PurePosixPath(normalized)
-    if not normalized or path.is_absolute() or ".." in path.parts or "." in path.parts:
-        raise ValueError(f"unsafe archive member: {name}")
-    if path.parts and ":" in path.parts[0]:
-        raise ValueError(f"unsafe archive member: {name}")
-    return path.as_posix()
-
-
-def safe_extract_zip(archive: Path, destination: Path) -> None:
-    with zipfile.ZipFile(archive) as reader:
-        members = reader.infolist()
-        for member in members:
-            _safe_archive_name(member.filename)
-            mode = member.external_attr >> 16
-            if mode and (mode & 0o170000) == 0o120000:
-                raise ValueError(f"unsafe archive member: {member.filename}")
-        temporary = Path(tempfile.mkdtemp(prefix=f".{destination.name}.", dir=destination.parent))
-        try:
-            reader.extractall(temporary)
-            if os.name != "nt":
-                for member in members:
-                    if member.is_dir():
-                        continue
-                    mode = (member.external_attr >> 16) & 0o777
-                    if mode:
-                        os.chmod(temporary / _safe_archive_name(member.filename), mode)
-            os.replace(temporary, destination)
-        except Exception:
-            shutil.rmtree(temporary, ignore_errors=True)
-            raise
 
 
 def create_portable_archive(runtime_dir: Path, archive: Path) -> Path:

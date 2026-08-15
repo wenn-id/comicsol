@@ -19,7 +19,6 @@ from comic_sol_product.distribution import (
 )
 from comic_sol_product.portable import (
     REQUIRED_RUNTIME_SUFFIXES,
-    safe_extract_zip,
     validate_runtime_members,
 )
 
@@ -181,7 +180,7 @@ class NativeDistributionContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "portable runtime is missing"):
             validate_runtime_members({"comic-sol/comic-sol"})
 
-    def test_portable_archive_round_trip_preserves_required_runtime(self):
+    def test_portable_archive_contains_required_runtime(self):
         from comic_sol_product.portable import create_portable_archive
 
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -195,28 +194,14 @@ class NativeDistributionContractTests(unittest.TestCase):
                 if relative == "comic-sol":
                     target.chmod(0o755)
             archive = create_portable_archive(runtime, root / "portable.zip")
-            extracted = root / "extracted"
-            safe_extract_zip(archive, extracted)
-            members = {
-                path.relative_to(extracted).as_posix()
-                for path in extracted.rglob("*")
-                if path.is_file()
-            }
+            with zipfile.ZipFile(archive) as reader:
+                members = set(reader.namelist())
+                executable_mode = (
+                    reader.getinfo("comic-sol/comic-sol").external_attr >> 16
+                )
             validate_runtime_members(members)
             if os.name != "nt":
-                self.assertTrue(os.access(extracted / "comic-sol/comic-sol", os.X_OK))
-
-    def test_portable_zip_rejects_traversal_before_extracting(self):
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            archive = root / "unsafe.zip"
-            with zipfile.ZipFile(archive, "w") as writer:
-                writer.writestr("../escape.txt", "escape")
-                writer.writestr("comic-sol/comic-sol", "binary")
-            destination = root / "output"
-            with self.assertRaisesRegex(ValueError, "unsafe archive member"):
-                safe_extract_zip(archive, destination)
-            self.assertFalse(destination.exists())
+                self.assertEqual(0o755, executable_mode & 0o777)
 
     def test_pyinstaller_spec_freezes_console_entrypoint_and_resources(self):
         root = Path(__file__).resolve().parents[1]
