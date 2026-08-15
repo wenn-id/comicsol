@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import re
 import sys
@@ -14,21 +15,24 @@ from . import __version__
 from .config import default_output_root
 
 
+def _engine_package() -> str:
+    """Return the explicit checkout or installed engine package name."""
+    package_root = Path(__file__).resolve().parent
+    if (package_root / "engine" / "comic_sol.py").is_file():
+        return "comic_sol_product.engine"
+    if (package_root.parent / "scripts" / "comic_sol.py").is_file():
+        return "scripts"
+    raise RuntimeError("Comic Sol engine files are missing; reinstall the package")
+
+
+def _load_engine_module(name: str) -> Any:
+    """Load one canonical engine module by package-qualified name."""
+    return importlib.import_module(f"{_engine_package()}.{name}")
+
+
 def _load_engine() -> Any:
     """Load the canonical engine from a checkout or its bundled wheel location."""
-    package_root = Path(__file__).resolve().parent
-    candidates = (
-        package_root / "engine",
-        package_root.parent / "scripts",
-    )
-    engine_dir = next((path for path in candidates if (path / "comic_sol.py").is_file()), None)
-    if engine_dir is None:
-        raise RuntimeError("Comic Sol engine files are missing; reinstall the package")
-    if str(engine_dir) not in sys.path:
-        sys.path.insert(0, str(engine_dir))
-    import comic_sol  # type: ignore[import-not-found]
-
-    return comic_sol
+    return _load_engine_module("comic_sol")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -118,11 +122,13 @@ def _run(arguments: argparse.Namespace) -> Any:
     if arguments.command == "status":
         return engine.read_json(arguments.project_dir / "project.json")
     if arguments.command == "validate":
-        from validate_project import ProjectValidationError, validate_project
+        validation = _load_engine_module("validate_project")
 
         try:
-            issues = validate_project(arguments.project_dir, arguments.stage)
-        except ProjectValidationError as error:
+            issues = validation.validate_project(
+                arguments.project_dir, arguments.stage
+            )
+        except validation.ProjectValidationError as error:
             issues = error.issues
         return [asdict(issue) for issue in issues]
     if arguments.command == "resume":

@@ -16,15 +16,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "scripts"
+
 from PIL import Image, UnidentifiedImageError
 
-from project_io import contained_project_path, open_path_nofollow
-from raster_limits import MAX_DECODED_PIXELS
-from page_quality import validate_page_quality
-from quality_records import PANEL_CHECK_IDS, validate_quality_checks
-from typography import lettering_geometry_hash
+from .project_io import contained_project_path, open_path_nofollow
+from .raster_limits import MAX_DECODED_PIXELS
+from .page_quality import validate_page_quality
+from .quality_records import PANEL_CHECK_IDS, validate_quality_checks
+from .typography import lettering_geometry_hash
 
-from comic_sol import (
+from .comic_sol import (
     ALL_STATUSES,
     CATEGORY,
     LINEAR_STATUSES,

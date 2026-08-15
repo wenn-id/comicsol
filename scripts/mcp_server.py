@@ -2,8 +2,13 @@ import argparse
 import os
 import re
 import stat
+import sys
 from pathlib import Path
 from typing import Any, Literal
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "scripts"
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -13,7 +18,7 @@ except ModuleNotFoundError:
     from mcp.server.mcpserver.exceptions import ToolError
 
 # Import core business logic from scripts/
-from comic_sol import (
+from .comic_sol import (
     ALL_STATUSES,
     RESUME_STAGES,
     doctor,
@@ -30,11 +35,11 @@ from comic_sol import (
     validate_request_settings,
     IDENTIFIER,
 )
-from validate_project import validate_project, ProjectValidationError, STAGES as VALIDATION_STAGES
-from letter_panels import letter_project
-from compose_pages import compose_project
-from export_pdf import guarded_export
-from render_report import render_report
+from .validate_project import validate_project, ProjectValidationError, STAGES as VALIDATION_STAGES
+from .letter_panels import letter_project
+from .compose_pages import compose_project
+from .export_pdf import guarded_export
+from .render_report import render_report
 
 # Root directory allowed for operations. All project IDs resolve relative to this.
 OUTPUT_ROOT: Path
@@ -518,7 +523,7 @@ def comic_finalize(project_id: str) -> dict[str, Any]:
     _validate_project_id(project_id)
     project_dir = _resolve_project(project_id)
     try:
-        from comic_sol import finalize_project
+        from .comic_sol import finalize_project
         return finalize_project(project_dir)
     except Exception as e:
         raise _tool_error(e) from None

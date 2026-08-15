@@ -12,9 +12,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from comic_sol import atomic_write_json
-from font_cmap import font_supports
-from project_io import contained_project_path
+from .comic_sol import atomic_write_json
+from .font_cmap import font_supports
+from .project_io import contained_project_path
 
 
 SUPPORTED_STYLES = ("regular", "bold")

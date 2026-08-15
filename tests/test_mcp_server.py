@@ -12,15 +12,14 @@ from typing import Any
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
 
 from tests.support import bounded_tail_regions, make_symlink  # noqa: E402
-from page_quality import build_page_quality_record, write_page_quality_record  # noqa: E402
+from scripts.page_quality import build_page_quality_record, write_page_quality_record  # noqa: E402
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
 
 if MCP_AVAILABLE:
-    import mcp_server  # noqa: E402
+    from scripts import mcp_server  # noqa: E402
     from mcp import ClientSession, StdioServerParameters  # noqa: E402
     from mcp.client.stdio import stdio_client  # noqa: E402
     try:

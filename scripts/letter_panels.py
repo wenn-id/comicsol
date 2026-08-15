@@ -15,18 +15,22 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "scripts"
+
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
-from comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json, sha256_file
-from project_io import ProjectTransaction, contained_project_path, open_path_nofollow, read_contained_bytes
-from raster_limits import MAX_DECODED_PIXELS
-from typography import (
+from .comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json, sha256_file
+from .project_io import ProjectTransaction, contained_project_path, open_path_nofollow, read_contained_bytes
+from .raster_limits import MAX_DECODED_PIXELS
+from .typography import (
     display_content,
     lettering_geometry_hash,
     normalize_content,
     preflight_text_items,
 )
-from font_cmap import font_supports
+from .font_cmap import font_supports
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -1,5 +1,4 @@
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,13 +6,12 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from compose_pages import compose_project  # noqa: E402
-from export_pdf import export_pdf  # noqa: E402
-from letter_panels import letter_project  # noqa: E402
-from render_report import render_report  # noqa: E402
-from validate_project import validate_project  # noqa: E402
+from scripts.compose_pages import compose_project  # noqa: E402
+from scripts.export_pdf import export_pdf  # noqa: E402
+from scripts.letter_panels import letter_project  # noqa: E402
+from scripts.render_report import render_report  # noqa: E402
+from scripts.validate_project import validate_project  # noqa: E402
 from tests.test_export_pdf import pdf_frames  # noqa: E402
 
 

@@ -2,7 +2,6 @@
 
 import hashlib
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,27 +10,25 @@ from unittest import mock
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-sys.path.insert(0, str(ROOT / "tests"))
 
-from comic_sol import (  # noqa: E402
+from scripts.comic_sol import (  # noqa: E402
     atomic_write_json,
     init_project,
     read_json,
     sha256_file,
 )
-from validate_project import (  # noqa: E402
+from scripts.validate_project import (  # noqa: E402
     ProjectValidationError,
     ValidationIssue,
     require_valid_project,
     validate_project,
 )
-from normalize_panels import normalize_panel  # noqa: E402
-from letter_panels import letter_project  # noqa: E402
-from compose_pages import compose_project  # noqa: E402
-from page_quality import build_page_quality_record, write_page_quality_record  # noqa: E402
+from scripts.normalize_panels import normalize_panel  # noqa: E402
+from scripts.letter_panels import letter_project  # noqa: E402
+from scripts.compose_pages import compose_project  # noqa: E402
+from scripts.page_quality import build_page_quality_record, write_page_quality_record  # noqa: E402
 
-from test_validation import (  # noqa: E402
+from tests.test_validation import (  # noqa: E402
     valid_characters,
     valid_manifest,
     valid_panel_record_v2,
@@ -347,7 +344,7 @@ class GuardedOperationTests(unittest.TestCase):
         record["decision"] = "regenerate"
         record["retry_reason"] = "character identity failure"
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
-        from export_pdf import guarded_export
+        from scripts.export_pdf import guarded_export
         with self.assertRaises(ProjectValidationError):
             guarded_export(self.project)
         # No PDF should be written
@@ -392,7 +389,7 @@ class GuardedOperationTests(unittest.TestCase):
         (self.project / "cache/composition.json").write_text(
             json.dumps({"schema_version": "1.0", "stages": {}})
         )
-        from export_pdf import PdfExportError, guarded_export
+        from scripts.export_pdf import PdfExportError, guarded_export
         with self.assertRaises(PdfExportError):
             guarded_export(self.project)
         self.assertFalse(
@@ -402,7 +399,7 @@ class GuardedOperationTests(unittest.TestCase):
     def test_guarded_export_writes_pdf_and_records_descriptor(self):
         """GREEN: guarded_export with valid export-ready writes PDF and records descriptor."""
         self._make_export_ready()
-        from export_pdf import guarded_export
+        from scripts.export_pdf import guarded_export
         lexical_project = self.project / ".." / self.project.name
         result = guarded_export(lexical_project)
         self.assertEqual(
@@ -449,8 +446,8 @@ class GuardedOperationTests(unittest.TestCase):
             "verification": verification.read_bytes(),
             "manifest": (self.project / "project.json").read_bytes(),
         }
-        import project_io
-        from export_pdf import guarded_export
+        from scripts import project_io
+        from scripts.export_pdf import guarded_export
 
         real_replace = project_io.os.replace
 
@@ -476,7 +473,7 @@ class GuardedOperationTests(unittest.TestCase):
         self._make_export_ready()
         report = self.project / "qa/report.md"
         report.write_text("# QA Report\n", encoding="utf-8")
-        from export_pdf import guarded_export
+        from scripts.export_pdf import guarded_export
 
         guarded_export(self.project)
         manifest = read_json(self.project / "project.json")
@@ -533,7 +530,7 @@ class GuardedOperationTests(unittest.TestCase):
         manifest = read_json(self.project / "project.json")
         manifest["status"] = "EXPORTED"
         atomic_write_json(self.project / "project.json", manifest)
-        from comic_sol import transition
+        from scripts.comic_sol import transition
         with self.assertRaises(ProjectValidationError):
             transition(self.project, "COMPLETE")
         # Manifest unchanged
@@ -545,7 +542,7 @@ class GuardedOperationTests(unittest.TestCase):
         self._make_export_ready()
         # Add report and PDF
         (self.project / "qa/report.md").write_text("# QA Report\n", encoding="utf-8")
-        from export_pdf import guarded_export
+        from scripts.export_pdf import guarded_export
         pdf_path = guarded_export(self.project)
         # Update manifest with report and pdf descriptors, set status to EXPORTED
         manifest = read_json(self.project / "project.json")
@@ -559,7 +556,7 @@ class GuardedOperationTests(unittest.TestCase):
         }
         manifest["status"] = "EXPORTED"
         atomic_write_json(self.project / "project.json", manifest)
-        from comic_sol import transition
+        from scripts.comic_sol import transition
         result = transition(self.project, "COMPLETE")
         self.assertEqual("COMPLETE", result["status"])
 
@@ -567,7 +564,7 @@ class GuardedOperationTests(unittest.TestCase):
         """GREEN: transition to COMPLETE_WITH_WARNINGS succeeds with warnings."""
         self._make_export_ready()
         (self.project / "qa/report.md").write_text("# QA Report\n", encoding="utf-8")
-        from export_pdf import guarded_export
+        from scripts.export_pdf import guarded_export
         pdf_path = guarded_export(self.project)
         manifest = read_json(self.project / "project.json")
         manifest["artifacts"]["qa_report"] = {
@@ -581,7 +578,7 @@ class GuardedOperationTests(unittest.TestCase):
         manifest["warnings"] = ["minor prop drift"]
         manifest["status"] = "EXPORTED"
         atomic_write_json(self.project / "project.json", manifest)
-        from comic_sol import transition
+        from scripts.comic_sol import transition
         result = transition(self.project, "COMPLETE_WITH_WARNINGS")
         self.assertEqual("COMPLETE_WITH_WARNINGS", result["status"])
 

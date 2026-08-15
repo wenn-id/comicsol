@@ -3,7 +3,6 @@ import io
 import json
 import re
 import shutil
-import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -14,9 +13,8 @@ from unittest.mock import patch
 from PIL import Image, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from comic_sol import (  # noqa: E402
+from scripts.comic_sol import (  # noqa: E402
     atomic_write_json,
     init_project,
     layout_rects,
@@ -24,7 +22,7 @@ from comic_sol import (  # noqa: E402
     rectangles_overlap,
     sha256_file,
 )
-from validate_project import (  # noqa: E402
+from scripts.validate_project import (  # noqa: E402
     ProjectValidationError,
     ValidationIssue,
     main as validation_main,
@@ -35,8 +33,8 @@ from validate_project import (  # noqa: E402
     validate_story_plan,
     validate_storyboard,
 )
-from quality_records import PANEL_CHECK_IDS, PAGE_CHECK_IDS  # noqa: E402
-from normalize_panels import normalize_panel  # noqa: E402
+from scripts.quality_records import PANEL_CHECK_IDS, PAGE_CHECK_IDS  # noqa: E402
+from scripts.normalize_panels import normalize_panel  # noqa: E402
 
 
 def valid_manifest():
@@ -232,7 +230,7 @@ class TemplateContractTests(unittest.TestCase):
 
 class LayoutTextStepFieldTests(unittest.TestCase):
     def test_normalization_preserves_semantics_and_counts_limits(self):
-        from letter_panels import normalize_content, normalized_word_count
+        from scripts.letter_panels import normalize_content, normalized_word_count
 
         self.assertEqual("Already normalized.", normalize_content("Already normalized."))
         self.assertEqual("Café", normalize_content("Cafe\u0301"))
@@ -670,7 +668,7 @@ class ProjectValidationTests(unittest.TestCase):
     def test_panel_stage_normalizes_pillow_safety_error_as_validation_issue(self):
         self.add_panel_files()
         with patch(
-            "validate_project.Image.open",
+            "scripts.validate_project.Image.open",
             side_effect=Image.DecompressionBombError("unsafe dimensions"),
         ):
             issues = validate_project(self.project, "panels")
@@ -678,7 +676,7 @@ class ProjectValidationTests(unittest.TestCase):
 
     def test_panel_stage_rejects_raster_over_decode_limit(self):
         self.add_panel_files()
-        with patch("validate_project.MAX_DECODED_PIXELS", 1):
+        with patch("scripts.validate_project.MAX_DECODED_PIXELS", 1):
             issues = validate_project(self.project, "panels")
         self.assertTrue(any(
             issue.field == "raw_path" and "unreadable" in issue.message
@@ -721,7 +719,7 @@ class ProjectValidationTests(unittest.TestCase):
         }
         atomic_write_json(manifest_path, manifest)
         with patch(
-            "validate_project.validate_pdf_verification",
+            "scripts.validate_project.validate_pdf_verification",
             side_effect=AssertionError("invalid project ID must not drive PDF validation"),
         ):
             issues = validate_project(self.project, "final")
@@ -744,7 +742,9 @@ class ProjectValidationTests(unittest.TestCase):
                 raise AssertionError("validator hashed an escaped artifact")
             return sha256_file(path)
 
-        with patch("validate_project.sha256_file", side_effect=guarded_hash):
+        with patch(
+            "scripts.validate_project.sha256_file", side_effect=guarded_hash
+        ):
             issues = validate_project(self.project, "final")
         self.assertTrue(any(
             issue.field == "artifacts.story_plan.path"
@@ -872,12 +872,14 @@ class ProjectValidationTests(unittest.TestCase):
                 raise AssertionError("validator followed an escaping image symlink")
             return sha256_file(path)
 
-        with patch("validate_project.sha256_file", side_effect=guarded_hash):
+        with patch(
+            "scripts.validate_project.sha256_file", side_effect=guarded_hash
+        ):
             issues = validate_project(self.project, "panels")
         self.assertTrue(any("escapes the project" in issue.message for issue in issues), issues)
 
     def test_hash_reads_repeat_shared_resolution_for_original_relative_paths(self):
-        import validate_project as validation_module
+        from scripts import validate_project as validation_module
 
         self.add_panel_files()
         manifest_path = self.project / "project.json"
@@ -903,7 +905,10 @@ class ProjectValidationTests(unittest.TestCase):
                         calls.append((candidate, kwargs.get("must_exist", False)))
                     return real_resolver(project_dir, candidate, **kwargs)
 
-                with patch("validate_project.contained_project_path", side_effect=recording_resolver):
+                with patch(
+                    "scripts.validate_project.contained_project_path",
+                    side_effect=recording_resolver,
+                ):
                     validate_project(self.project, stage)
                 self.assertGreaterEqual(len(calls), minimum_calls, calls)
                 self.assertTrue(calls[-1][1], calls)

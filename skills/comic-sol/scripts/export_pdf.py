@@ -13,23 +13,27 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "scripts"
+
 from PIL import Image
 
-from comic_sol import (
+from .comic_sol import (
     PAGE_HEIGHT,
     PAGE_WIDTH,
     canonical_artifact_bytes,
     read_json,
     sha256_file,
 )
-from pdf_quality import PdfQualityError, verify_pdf_payload
-from project_io import (
+from .pdf_quality import PdfQualityError, verify_pdf_payload
+from .project_io import (
     ProjectTransaction,
     contained_project_path,
     durable_atomic_write,
     open_path_nofollow,
 )
-from validate_project import validate_manifest, require_valid_project
+from .validate_project import validate_manifest, require_valid_project
 
 
 PAGE_PATTERN = re.compile(r"^page-([0-9]{3})\.png$")

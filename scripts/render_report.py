@@ -10,11 +10,15 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "scripts"
+
 from PIL import Image
 
-from comic_sol import atomic_write_bytes, atomic_write_json, read_json, sha256_file
-from project_io import contained_project_path, open_path_nofollow
-from quality_records import PANEL_CHECK_IDS
+from .comic_sol import atomic_write_bytes, atomic_write_json, read_json, sha256_file
+from .project_io import contained_project_path, open_path_nofollow
+from .quality_records import PANEL_CHECK_IDS
 
 
 ROOT = Path(__file__).resolve().parents[1]

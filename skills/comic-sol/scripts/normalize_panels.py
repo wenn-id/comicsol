@@ -14,8 +14,8 @@ from typing import Iterable
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from project_io import ProjectTransaction, contained_project_path
-from raster_limits import MAX_DECODED_PIXELS
+from .project_io import ProjectTransaction, contained_project_path
+from .raster_limits import MAX_DECODED_PIXELS
 
 
 IMPLEMENTATION_VERSION = "1"

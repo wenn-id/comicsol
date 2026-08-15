@@ -3,7 +3,6 @@ import io
 import json
 import os
 import shutil
-import sys
 import tempfile
 import unittest
 from copy import deepcopy
@@ -13,9 +12,8 @@ from unittest.mock import patch
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from comic_sol import (  # noqa: E402
+from scripts.comic_sol import (  # noqa: E402
     ResumeAction,
     atomic_write_json,
     block_project,
@@ -35,8 +33,8 @@ from comic_sol import (  # noqa: E402
     stage_cache_key,
     transition,
 )
-from normalize_panels import normalize_panel  # noqa: E402
-from validate_project import validate_panel_record  # noqa: E402
+from scripts.normalize_panels import normalize_panel  # noqa: E402
+from scripts.validate_project import validate_panel_record  # noqa: E402
 
 
 STAGES = ("planning", "storyboard", "generation", "lettering", "composition", "export")
@@ -211,12 +209,12 @@ class ResumeTests(unittest.TestCase):
         (self.project / "qa/pages").mkdir(parents=True, exist_ok=True)
         (self.project / "qa/pages/page-001.json").write_text("{}\n", "utf-8")
         with (
-            patch("compose_pages.compose_project"),
-            patch("page_quality.validate_page_quality", return_value=[]),
-            patch("export_pdf.guarded_export"),
-            patch("render_report.render_report"),
-            patch("comic_sol.record_stage"),
-            patch("comic_sol.transition"),
+            patch("scripts.compose_pages.compose_project"),
+            patch("scripts.page_quality.validate_page_quality", return_value=[]),
+            patch("scripts.export_pdf.guarded_export"),
+            patch("scripts.render_report.render_report"),
+            patch("scripts.comic_sol.record_stage"),
+            patch("scripts.comic_sol.transition"),
         ):
             return finalize_project(self.project if project_dir is None else project_dir)
 
@@ -231,8 +229,8 @@ class ResumeTests(unittest.TestCase):
             with self.subTest(action=action):
                 plan = [ResumeAction("lettering", action, "stage", "stale")]
                 with (
-                    patch("comic_sol.build_resume_plan", return_value=plan),
-                    patch("letter_panels.letter_project") as letter,
+                    patch("scripts.comic_sol.build_resume_plan", return_value=plan),
+                    patch("scripts.letter_panels.letter_project") as letter,
                 ):
                     self._run_finalize()
                 letter.assert_called_once_with(self.project)
@@ -242,8 +240,8 @@ class ResumeTests(unittest.TestCase):
         lexical_project = self.project / ".." / self.project.name
         plan = [ResumeAction("lettering", "rerun", "stage", "stale")]
         with (
-            patch("comic_sol.build_resume_plan", return_value=plan),
-            patch("letter_panels.letter_project") as letter,
+            patch("scripts.comic_sol.build_resume_plan", return_value=plan),
+            patch("scripts.letter_panels.letter_project") as letter,
         ):
             self._run_finalize(lexical_project)
         letter.assert_called_once_with(lexical_project)
@@ -254,8 +252,8 @@ class ResumeTests(unittest.TestCase):
         atomic_write_json(self.project / "project.json", manifest)
         (self.project / "panels/p01-01/lettered.png").unlink(missing_ok=True)
         with (
-            patch("comic_sol.build_resume_plan", return_value=[]),
-            patch("letter_panels.letter_project") as letter,
+            patch("scripts.comic_sol.build_resume_plan", return_value=[]),
+            patch("scripts.letter_panels.letter_project") as letter,
         ):
             self._run_finalize()
         letter.assert_called_once_with(self.project)
@@ -268,8 +266,8 @@ class ResumeTests(unittest.TestCase):
         (self.project / "panels/p01-01/lettered.png").unlink(missing_ok=True)
         lexical_project = self.project / ".." / self.project.name
         with (
-            patch("comic_sol.build_resume_plan", return_value=[]),
-            patch("letter_panels.letter_project") as letter,
+            patch("scripts.comic_sol.build_resume_plan", return_value=[]),
+            patch("scripts.letter_panels.letter_project") as letter,
         ):
             self._run_finalize(lexical_project)
         letter.assert_called_once_with(lexical_project)
@@ -547,7 +545,9 @@ class ResumeTests(unittest.TestCase):
         outside = self.root / "outside-valid.png"
         Image.new("RGB", (640, 960), "green").save(attempt)
         Image.new("RGB", (640, 960), "red").save(outside)
-        real_resolver = __import__("comic_sol")._contained_project_path
+        from scripts import comic_sol as comic_sol_module
+
+        real_resolver = comic_sol_module._contained_project_path
         calls = 0
 
         def swap_after_preflight(project_dir, path):
@@ -565,7 +565,10 @@ class ResumeTests(unittest.TestCase):
             probe.unlink()
         except OSError as error:
             self.skipTest(f"symlink unavailable: {error}")
-        with patch("comic_sol._contained_project_path", side_effect=swap_after_preflight):
+        with patch(
+            "scripts.comic_sol._contained_project_path",
+            side_effect=swap_after_preflight,
+        ):
             with self.assertRaisesRegex(ValueError, "escapes|symlinks"):
                 promote_attempt(self.project, "p01-01", attempt)
 
@@ -574,7 +577,7 @@ class ResumeTests(unittest.TestCase):
         outside = self.root / "outside-valid.png"
         Image.new("RGB", (640, 960), "green").save(attempt)
         Image.new("RGB", (640, 960), "red").save(outside)
-        from comic_sol import _verify_raster
+        from scripts.comic_sol import _verify_raster
 
         def verify_then_swap(path):
             result = _verify_raster(path)
@@ -588,7 +591,7 @@ class ResumeTests(unittest.TestCase):
             probe.unlink()
         except OSError as error:
             self.skipTest(f"symlink unavailable: {error}")
-        with patch("comic_sol._verify_raster", side_effect=verify_then_swap):
+        with patch("scripts.comic_sol._verify_raster", side_effect=verify_then_swap):
             with self.assertRaisesRegex(ValueError, "escapes|symlinks"):
                 promote_attempt(self.project, "p01-01", attempt)
 
@@ -981,7 +984,7 @@ class ResumeTests(unittest.TestCase):
 
         with (
             patch(
-                "comic_sol.Image.open",
+                "scripts.comic_sol.Image.open",
                 side_effect=Image.DecompressionBombError("unsafe dimensions"),
             ),
             self.assertRaisesRegex(ValueError, "corrupt images cannot be overridden"),
@@ -1031,7 +1034,7 @@ class ResumeTests(unittest.TestCase):
 
         # This test isolates warning-target selection; final artifact gating is
         # covered by GuardedOperationTests.
-        with patch("validate_project.require_valid_project"):
+        with patch("scripts.validate_project.require_valid_project"):
             completed = transition(self.project, "COMPLETE")
         self.assertEqual("COMPLETE_WITH_WARNINGS", completed["status"])
 
@@ -1388,7 +1391,7 @@ class BlockedRecoveryTests(unittest.TestCase):
         atomic_write_json(self.project / "project.json", manifest)
 
         cache = {"schema_version": "1.0", "stages": {}}
-        from comic_sol import _resume_stage_material
+        from scripts.comic_sol import _resume_stage_material
         for stage in ("planning", "storyboard"):
             canonical_inputs, files = _resume_stage_material(self.project, stage, manifest)
             outputs = {"planning": ["plan/story-plan.json", "plan/character-bible.json"],

@@ -14,8 +14,12 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-from project_io import ProjectTransaction, contained_project_path
-from comic_sol import sha256_file
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "scripts"
+
+from .project_io import ProjectTransaction, contained_project_path
+from .comic_sol import sha256_file
 
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 

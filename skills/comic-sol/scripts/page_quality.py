@@ -12,10 +12,10 @@ from typing import Mapping, Sequence
 
 from PIL import Image
 
-from comic_sol import atomic_write_json, read_json, sha256_file
-from layouts import LAYOUT_VERSION, match_layout, validate_custom_layout
-from project_io import contained_project_path, open_path_nofollow
-from quality_records import PAGE_CHECK_IDS, validate_quality_checks
+from .comic_sol import atomic_write_json, read_json, sha256_file
+from .layouts import LAYOUT_VERSION, match_layout, validate_custom_layout
+from .project_io import contained_project_path, open_path_nofollow
+from .quality_records import PAGE_CHECK_IDS, validate_quality_checks
 
 DETERMINISTIC_PAGE_CHECK_IDS = frozenset({
     "clipped-text",

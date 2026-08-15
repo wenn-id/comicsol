@@ -248,7 +248,7 @@ class ProviderContractTests(unittest.TestCase):
             shutil.copytree(ROOT / "tests/fixtures/valid-one-page", project)
             before = self._generation_state(project)
             engine = _load_engine()
-            import project_io
+            from scripts import project_io
 
             original_commit = engine.ProjectTransaction.commit
             original_replace = project_io.os.replace

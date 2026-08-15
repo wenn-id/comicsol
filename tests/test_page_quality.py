@@ -1,24 +1,22 @@
 import hashlib
 import json
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from compose_pages import compose_all_pages  # noqa: E402
-from letter_panels import letter_project  # noqa: E402
-from page_quality import (  # noqa: E402
+from scripts.compose_pages import compose_all_pages  # noqa: E402
+from scripts.letter_panels import letter_project  # noqa: E402
+from scripts.page_quality import (  # noqa: E402
     DETERMINISTIC_PAGE_CHECK_IDS,
     PAGE_CHECK_IDS,
     build_page_quality_record,
     validate_page_quality,
     write_page_quality_record,
 )
-from validate_project import validate_project  # noqa: E402
+from scripts.validate_project import validate_project  # noqa: E402
 
 
 FIXTURE = ROOT / "tests/fixtures/valid-one-page"

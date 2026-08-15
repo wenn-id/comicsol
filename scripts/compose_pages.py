@@ -10,17 +10,21 @@ import json
 import sys
 from pathlib import Path
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "scripts"
+
 from PIL import Image, ImageDraw, ImageOps
 
-from comic_sol import (
+from .comic_sol import (
     PAGE_HEIGHT,
     PAGE_WIDTH,
     atomic_write_bytes,
     canonical_artifact_bytes,
     read_json,
 )
-from layouts import LAYOUT_VERSION, get_layout, match_layout, validate_custom_layout
-from project_io import ProjectTransaction, contained_project_path, read_contained_bytes
+from .layouts import LAYOUT_VERSION, get_layout, match_layout, validate_custom_layout
+from .project_io import ProjectTransaction, contained_project_path, read_contained_bytes
 
 COMPOSITION_CACHE_PATH = "cache/composition.json"
 

@@ -2,7 +2,6 @@ import hashlib
 import io
 import json
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,11 +10,10 @@ from unittest import mock
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from comic_sol import atomic_write_json, canonical_json_bytes, read_json  # noqa: E402
-from quality_records import PANEL_CHECK_IDS  # noqa: E402
-from render_report import QaSummary, main, render_report, summarize_qa  # noqa: E402
+from scripts.comic_sol import atomic_write_json, canonical_json_bytes, read_json  # noqa: E402
+from scripts.quality_records import PANEL_CHECK_IDS  # noqa: E402
+from scripts.render_report import QaSummary, main, render_report, summarize_qa  # noqa: E402
 
 
 def panel_record(panel_id, *, attempts=1, decision="accept", warning=None,
@@ -125,7 +123,10 @@ class ReportTests(unittest.TestCase):
         ), summary)
 
     def test_integrity_handles_pillow_decompression_bomb(self):
-        with mock.patch("render_report.Image.open", side_effect=Image.DecompressionBombError("unsafe")):
+        with mock.patch(
+            "scripts.render_report.Image.open",
+            side_effect=Image.DecompressionBombError("unsafe"),
+        ):
             report = render_report(self.project).read_text("utf-8")
         self.assertIn("valid page: no", report)
 
@@ -361,7 +362,7 @@ class ReportTests(unittest.TestCase):
         broken_template = self.project / "broken.tmpl"
         broken_template.write_text((ROOT / "templates/qa-report.md.tmpl").read_text("utf-8") + "\n{{UNKNOWN}}\n", "utf-8")
         before = custom.read_bytes()
-        with mock.patch("render_report.TEMPLATE_PATH", broken_template):
+        with mock.patch("scripts.render_report.TEMPLATE_PATH", broken_template):
             with self.assertRaisesRegex(ValueError, "template token"):
                 render_report(self.project, custom)
         self.assertEqual(before, custom.read_bytes())

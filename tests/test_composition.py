@@ -1,7 +1,6 @@
 import hashlib
 import io
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,11 +9,10 @@ from unittest.mock import patch
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from comic_sol import atomic_write_json  # noqa: E402
-from compose_pages import compose_all_pages, compose_page, main as compose_main  # noqa: E402
-from layouts import FOUR_GRID_RECTS  # noqa: E402
+from scripts.comic_sol import atomic_write_json  # noqa: E402
+from scripts.compose_pages import compose_all_pages, compose_page, main as compose_main  # noqa: E402
+from scripts.layouts import FOUR_GRID_RECTS  # noqa: E402
 from tests.support import make_symlink  # noqa: E402
 
 
@@ -58,7 +56,7 @@ class CompositionTests(unittest.TestCase):
             self.assertEqual("PNG", page.format)
 
     def test_compose_main_honors_explicit_all_flag(self):
-        with patch("compose_pages.compose_all_pages", return_value=[]) as compose_all:
+        with patch("scripts.compose_pages.compose_all_pages", return_value=[]) as compose_all:
             self.assertEqual(0, compose_main([str(self.project), "--all"]))
         compose_all.assert_called_once_with(self.project)
 
@@ -134,7 +132,7 @@ class CompositionTests(unittest.TestCase):
         self.addCleanup(outside.unlink, missing_ok=True)
         source = self.project / "panels/p01-01/lettered.png"
 
-        from compose_pages import _page_sources
+        from scripts.compose_pages import _page_sources
 
         def swap_after_preflight(*args, **kwargs):
             sources = _page_sources(*args, **kwargs)
@@ -146,7 +144,7 @@ class CompositionTests(unittest.TestCase):
         make_symlink(self, probe, outside)
         probe.unlink()
 
-        with patch("compose_pages._page_sources", side_effect=swap_after_preflight):
+        with patch("scripts.compose_pages._page_sources", side_effect=swap_after_preflight):
             with self.assertRaisesRegex(ValueError, "escapes|symlinks"):
                 compose_page(self.project, 1, self.storyboard, self.settings, {})
 
@@ -240,7 +238,7 @@ class CompositionTests(unittest.TestCase):
         atomic_write_json(self.project / "plan/storyboard.json", self.storyboard)
 
         with patch(
-            "compose_pages.read_contained_bytes",
+            "scripts.compose_pages.read_contained_bytes",
             side_effect=(original, replacement.getvalue()),
         ) as read:
             compose_all_pages(self.project)

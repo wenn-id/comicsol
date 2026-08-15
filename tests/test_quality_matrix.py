@@ -1,7 +1,6 @@
 import hashlib
 import json
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,19 +9,18 @@ from unittest import mock
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from comic_sol import (
+from scripts.comic_sol import (
     atomic_write_json,
     finalize_project,
     init_project,
     read_json,
     sha256_file,
 )
-from normalize_panels import normalize_panel
-from page_quality import build_page_quality_record, write_page_quality_record
-from quality_sample import EvidenceModeError, build_evidence_record, main
-from validate_project import validate_project
+from scripts.normalize_panels import normalize_panel
+from scripts.page_quality import build_page_quality_record, write_page_quality_record
+from scripts.quality_sample import EvidenceModeError, build_evidence_record, main
+from scripts.validate_project import validate_project
 
 from tests.support import (
     QUALITY_SCENARIOS,
@@ -267,7 +265,7 @@ class EvidenceModeContractTests(unittest.TestCase):
             lexical_project = project / ".." / project.name
 
             with mock.patch(
-                "quality_sample.sha256_file", wraps=sha256_file, create=True
+                "scripts.quality_sample.sha256_file", wraps=sha256_file, create=True
             ) as hashed:
                 self.assertEqual(
                     0,

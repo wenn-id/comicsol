@@ -1,7 +1,6 @@
 import json
 import math
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,9 +9,8 @@ from unittest import mock
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from letter_panels import (  # noqa: E402
+from scripts.letter_panels import (  # noqa: E402
     letter_project,
     letter_panel,
     normalize_content,
@@ -94,7 +92,7 @@ class LetteringTests(unittest.TestCase):
             letter_panel(str(self.panel), 800, 1000, [item], self.characters)
 
     def test_emphasis_parsing(self):
-        from letter_panels import _parse_emphasis
+        from scripts.letter_panels import _parse_emphasis
 
         self.assertEqual(
             [("Hello ", False), ("world", True), ("!", False)],
@@ -119,7 +117,7 @@ class LetteringTests(unittest.TestCase):
         )
 
     def test_font_runs_use_exact_fallback_and_preserve_notdef(self):
-        from letter_panels import _font_runs, _font_supports, _load_font
+        from scripts.letter_panels import _font_runs, _font_supports, _load_font
 
         fallback = ROOT / "assets/fonts/NotoSans-Regular.ttf"
         unsupported = "\u0378"
@@ -151,11 +149,13 @@ class LetteringTests(unittest.TestCase):
         self.assertEqual(missing_mask.size, comparison_mask.size)
         self.assertEqual(bytes(missing_mask), bytes(comparison_mask))
 
-        with mock.patch("letter_panels.FONT_PATH", self.root / "missing.ttf"):
+        with mock.patch(
+            "scripts.letter_panels.FONT_PATH", self.root / "missing.ttf"
+        ):
             self.assertEqual(fallback, Path(_load_font(32).path))
 
     def test_dialogue_renders_complete_emphasis_with_prominent_bold_pixels(self):
-        from letter_panels import _styled_font_runs
+        from scripts.letter_panels import _styled_font_runs
 
         regular = ImageFont.truetype(str(FONT), 48)
         bold_path = ROOT / "assets/fonts/ComicNeue-Bold.ttf"
@@ -190,7 +190,7 @@ class LetteringTests(unittest.TestCase):
         self.assertGreater(bold_ink, regular_ink * 1.10)
 
     def test_styled_layout_wraps_visible_runs_and_centers_each_line(self):
-        from letter_panels import _layout_styled_text
+        from scripts.letter_panels import _layout_styled_text
 
         image = Image.new("RGB", (600, 300), "white")
         draw = ImageDraw.Draw(image)
@@ -323,7 +323,10 @@ class LetteringTests(unittest.TestCase):
         def capture_line_start(_draw, _runs, position, _fill):
             starts.append(position)
 
-        with mock.patch("letter_panels._draw_font_runs", side_effect=capture_line_start):
+        with mock.patch(
+            "scripts.letter_panels._draw_font_runs",
+            side_effect=capture_line_start,
+        ):
             render_text_item(
                 centered_draw,
                 centered_item,
@@ -408,7 +411,9 @@ class LetteringTests(unittest.TestCase):
         def observe(draw, item, rect, font, character_bible, *, canvas):
             seen.append(item["content"])
 
-        with mock.patch("letter_panels.render_text_item", side_effect=observe):
+        with mock.patch(
+            "scripts.letter_panels.render_text_item", side_effect=observe
+        ):
             letter_panel(str(self.panel), 800, 1000, items, self.characters)
         self.assertEqual(["FIRST", "SECOND"], seen)
 
@@ -425,7 +430,7 @@ class LetteringTests(unittest.TestCase):
         self.assertTrue(any(max(image.getpixel((x, 40))) < 80 for x in range(32, 370)))
 
     def test_dialogue_tail_attachment_has_no_internal_seam(self):
-        from letter_panels import _organic_tail_geometry
+        from scripts.letter_panels import _organic_tail_geometry
 
         image = Image.new("RGB", (240, 240), (96, 96, 96))
         draw = ImageDraw.Draw(image)
@@ -462,7 +467,9 @@ class LetteringTests(unittest.TestCase):
         def capture_runs(_draw, runs, _position, _fill):
             captured_runs.extend(runs)
 
-        with mock.patch("letter_panels._draw_font_runs", side_effect=capture_runs):
+        with mock.patch(
+            "scripts.letter_panels._draw_font_runs", side_effect=capture_runs
+        ):
             render_text_item(
                 draw,
                 item,
@@ -479,7 +486,7 @@ class LetteringTests(unittest.TestCase):
         )
 
     def test_organic_tail_geometry_is_semantic_tapered_and_deterministic(self):
-        from letter_panels import _organic_tail_geometry
+        from scripts.letter_panels import _organic_tail_geometry
 
         rect = {"x": 40, "y": 30, "width": 240, "height": 160}
         first = _organic_tail_geometry(rect, [0.36, 0.24], 800, 1000, "human")
@@ -516,7 +523,7 @@ class LetteringTests(unittest.TestCase):
             self.assertLess(point[1], 1000)
 
     def test_organic_tail_rejects_anchor_inside_balloon_and_unknown_source(self):
-        from letter_panels import _organic_tail_geometry
+        from scripts.letter_panels import _organic_tail_geometry
 
         rect = {"x": 100, "y": 100, "width": 240, "height": 160}
         with self.assertRaisesRegex(ValueError, "outside the balloon"):
@@ -525,7 +532,7 @@ class LetteringTests(unittest.TestCase):
             _organic_tail_geometry(rect, [0.6, 0.6], 800, 1000, "system")
 
     def test_single_line_dialogue_balloon_is_compact_but_contains_text(self):
-        from letter_panels import _balloon_box, _layout_styled_text
+        from scripts.letter_panels import _balloon_box, _layout_styled_text
 
         image = Image.new("RGB", (800, 1000), (28, 32, 40))
         draw = ImageDraw.Draw(image)
@@ -543,7 +550,7 @@ class LetteringTests(unittest.TestCase):
         )
 
     def test_dialogue_uses_adaptive_oval_and_boundary_tail_geometry(self):
-        from letter_panels import (
+        from scripts.letter_panels import (
             _fitted_item_rect,
             _item_font,
             _layout_styled_text,
@@ -597,9 +604,11 @@ class LetteringTests(unittest.TestCase):
         self.assertAlmostEqual(expected_attachment[1], attachment[1], delta=1.0)
         self.assertNotIn(center, (*map(tuple, geometry["base"]), target))
 
+        from scripts import letter_panels as letter_panels_module
+
         with mock.patch(
-            "letter_panels._draw_antialiased_balloon",
-            wraps=__import__("letter_panels")._draw_antialiased_balloon,
+            "scripts.letter_panels._draw_antialiased_balloon",
+            wraps=letter_panels_module._draw_antialiased_balloon,
         ) as balloon_draw:
             render_text_item(
                 draw, short, short_rect, short_font, self.characters, canvas=image
@@ -612,7 +621,7 @@ class LetteringTests(unittest.TestCase):
         self.assertGreater(min(image.getpixel((short_rect["x"] + short_rect["width"] // 2, short_rect["y"] + 6))), 220)
 
     def test_balloon_circumscribes_a_maximum_length_dialogue_block(self):
-        from letter_panels import (
+        from scripts.letter_panels import (
             _anchor_rect,
             _fitted_item_rect,
             _item_font,
@@ -643,7 +652,7 @@ class LetteringTests(unittest.TestCase):
         )
 
         balloon = image.copy()
-        with mock.patch("letter_panels._draw_font_runs"):
+        with mock.patch("scripts.letter_panels._draw_font_runs"):
             render_text_item(
                 ImageDraw.Draw(balloon, "RGBA"), item, rect, font, self.characters,
                 canvas=balloon,
@@ -687,7 +696,7 @@ class LetteringTests(unittest.TestCase):
         self.assertAlmostEqual(400, (box[0] + box[2]) / 2, delta=2)
 
     def test_non_finite_speaker_anchor_is_rejected_as_value_error(self):
-        from letter_panels import _organic_tail_geometry
+        from scripts.letter_panels import _organic_tail_geometry
 
         before = self.panel.read_bytes()
         for value in (float("inf"), float("-inf"), float("nan")):
@@ -706,11 +715,13 @@ class LetteringTests(unittest.TestCase):
                 )
 
     def test_oversized_panel_image_is_rejected_as_value_error(self):
-        from letter_panels import MAX_DECODED_PIXELS
+        from scripts.letter_panels import MAX_DECODED_PIXELS
 
         self.assertGreaterEqual(MAX_DECODED_PIXELS, 1600 * 2400)
         before = self.panel.read_bytes()
-        with mock.patch("letter_panels.MAX_DECODED_PIXELS", 800 * 1000 - 1):
+        with mock.patch(
+            "scripts.letter_panels.MAX_DECODED_PIXELS", 800 * 1000 - 1
+        ):
             with self.assertRaisesRegex(ValueError, "pixel decode limit"):
                 letter_panel(str(self.panel), 800, 1000, [dialogue()], self.characters)
         self.assertEqual(before, self.panel.read_bytes())
@@ -737,8 +748,11 @@ class LetteringTests(unittest.TestCase):
 
     def test_sfx_never_reaches_placement_or_render(self):
         with (
-            mock.patch("letter_panels._anchor_rect", side_effect=AssertionError("SFX placement attempted")) as placement,
-            mock.patch("letter_panels.render_text_item") as render,
+            mock.patch(
+                "scripts.letter_panels._anchor_rect",
+                side_effect=AssertionError("SFX placement attempted"),
+            ) as placement,
+            mock.patch("scripts.letter_panels.render_text_item") as render,
         ):
             result = letter_panel(str(self.panel), 800, 1000, [sfx()], self.characters)
 
@@ -799,7 +813,7 @@ class LetteringTests(unittest.TestCase):
         self.assertIsNone(bottom.getbbox())
 
     def test_caption_is_compact_light_strip_fitted_at_top(self):
-        from letter_panels import _fitted_item_rect, _item_font
+        from scripts.letter_panels import _fitted_item_rect, _item_font
 
         image = Image.new("RGB", (800, 1000), (28, 32, 40))
         draw = ImageDraw.Draw(image)
@@ -836,7 +850,7 @@ class LetteringTests(unittest.TestCase):
         )
 
     def test_caption_uses_per_character_noto_fallback(self):
-        from letter_panels import _fitted_item_rect, _item_font
+        from scripts.letter_panels import _fitted_item_rect, _item_font
 
         image = Image.new("RGB", (800, 1000), (28, 32, 40))
         draw = ImageDraw.Draw(image)
@@ -850,7 +864,9 @@ class LetteringTests(unittest.TestCase):
         def capture_runs(_draw, runs, _position, _fill):
             captured_runs.extend(runs)
 
-        with mock.patch("letter_panels._draw_font_runs", side_effect=capture_runs):
+        with mock.patch(
+            "scripts.letter_panels._draw_font_runs", side_effect=capture_runs
+        ):
             render_text_item(draw, item, fitted, font, self.characters, canvas=image)
 
         self.assertEqual(item["content"], "".join(text for text, _ in captured_runs))
@@ -889,7 +905,7 @@ class LetteringTests(unittest.TestCase):
         import contextlib
         import io
 
-        from letter_panels import main as letter_main
+        from scripts.letter_panels import main as letter_main
 
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "project"
@@ -909,7 +925,7 @@ class LetteringTests(unittest.TestCase):
         import contextlib
         import io
 
-        from letter_panels import main as letter_main
+        from scripts.letter_panels import main as letter_main
 
         override = ROOT / "assets/fonts/NotoSans-Regular.ttf"
         with tempfile.TemporaryDirectory() as temporary:
@@ -942,7 +958,7 @@ class LetteringTests(unittest.TestCase):
         import contextlib
         import io
 
-        from letter_panels import main as letter_main
+        from scripts.letter_panels import main as letter_main
 
         errors = io.StringIO()
         with contextlib.redirect_stderr(errors):
@@ -954,8 +970,8 @@ class LetteringTests(unittest.TestCase):
         import contextlib
         import io
 
-        from comic_sol import atomic_write_json
-        from letter_panels import main as letter_main
+        from scripts.comic_sol import atomic_write_json
+        from scripts.letter_panels import main as letter_main
 
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "project"
@@ -971,8 +987,8 @@ class LetteringTests(unittest.TestCase):
         import contextlib
         import io
 
-        from comic_sol import atomic_write_json
-        from letter_panels import main as letter_main
+        from scripts.comic_sol import atomic_write_json
+        from scripts.letter_panels import main as letter_main
 
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "project"
@@ -996,7 +1012,7 @@ class LetteringTests(unittest.TestCase):
         import contextlib
         import io
 
-        from letter_panels import main as letter_main
+        from scripts.letter_panels import main as letter_main
 
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "project"
@@ -1014,7 +1030,7 @@ class LetteringTests(unittest.TestCase):
         import contextlib
         import io
 
-        from letter_panels import main as letter_main
+        from scripts.letter_panels import main as letter_main
 
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "project"
@@ -1037,14 +1053,14 @@ class LetteringTests(unittest.TestCase):
         import contextlib
         import io
 
-        from letter_panels import main as letter_main
+        from scripts.letter_panels import main as letter_main
 
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "project"
             shutil.copytree(FIXTURES / "valid-one-page", project)
             errors = io.StringIO()
             with (
-                mock.patch("letter_panels.MAX_DECODED_PIXELS", 1024),
+                mock.patch("scripts.letter_panels.MAX_DECODED_PIXELS", 1024),
                 contextlib.redirect_stderr(errors),
             ):
                 self.assertEqual(1, letter_main([str(project)]))
@@ -1056,7 +1072,7 @@ class LetteringTests(unittest.TestCase):
         import contextlib
         import io
 
-        from letter_panels import main as letter_main
+        from scripts.letter_panels import main as letter_main
 
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "project"
@@ -1064,7 +1080,7 @@ class LetteringTests(unittest.TestCase):
             errors = io.StringIO()
             with (
                 mock.patch(
-                    "letter_panels.Image.open",
+                    "scripts.letter_panels.Image.open",
                     side_effect=Image.DecompressionBombError("unsafe dimensions"),
                 ),
                 contextlib.redirect_stderr(errors),

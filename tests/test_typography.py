@@ -1,24 +1,22 @@
 import json
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-import typography  # noqa: E402
+from scripts import typography  # noqa: E402
 
-from typography import (  # noqa: E402
+from scripts.typography import (  # noqa: E402
     TypographyPreflightError,
     lettering_geometry_hash,
     preflight_text_items,
     write_typography_preflight,
 )
-from letter_panels import letter_project  # noqa: E402
-from validate_project import validate_lettering_provenance, validate_project  # noqa: E402
+from scripts.letter_panels import letter_project  # noqa: E402
+from scripts.validate_project import validate_lettering_provenance, validate_project  # noqa: E402
 
 
 FIXTURES = ROOT / "tests/fixtures"
@@ -53,7 +51,7 @@ class TypographyPreflightTests(unittest.TestCase):
         typography._hash_font_file.cache_clear()
         typography._font_policy_hashes.cache_clear()
         with mock.patch(
-            "typography._hash_font_file", wraps=typography._hash_font_file
+            "scripts.typography._hash_font_file", wraps=typography._hash_font_file
         ) as hashed:
             preflight_text_items([item("First")], FONT_POLICY)
             preflight_text_items([item("Second")], FONT_POLICY)
@@ -288,7 +286,7 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
             "utf-8",
         )
 
-        import project_io
+        from scripts import project_io
 
         real_replace = project_io.os.replace
 

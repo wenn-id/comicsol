@@ -3,7 +3,6 @@ import io
 import random
 import re
 import shutil
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,18 +11,17 @@ from unittest import mock
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from comic_sol import atomic_write_json, read_json  # noqa: E402
-from export_pdf import (  # noqa: E402
+from scripts.comic_sol import atomic_write_json, read_json  # noqa: E402
+from scripts.export_pdf import (  # noqa: E402
     PdfExportError,
     discover_pages,
     export_pdf,
     guarded_export,
     main,
 )
-from compose_pages import compose_project  # noqa: E402
-from letter_panels import letter_project  # noqa: E402
+from scripts.compose_pages import compose_project  # noqa: E402
+from scripts.letter_panels import letter_project  # noqa: E402
 
 
 def pdf_frames(path):
@@ -144,8 +142,12 @@ class PdfExportTests(unittest.TestCase):
 
     def test_final_pdf_publication_uses_durable_atomic_writer(self):
         destination = self.project / "exports/durable.pdf"
-        real_writer = __import__("export_pdf").durable_atomic_write
-        with mock.patch("export_pdf.durable_atomic_write", wraps=real_writer) as writer:
+        from scripts import export_pdf as export_pdf_module
+
+        real_writer = export_pdf_module.durable_atomic_write
+        with mock.patch(
+            "scripts.export_pdf.durable_atomic_write", wraps=real_writer
+        ) as writer:
             self.assertEqual(destination, export_pdf(self.project, destination))
         writer.assert_called_once()
         self.assertEqual(destination, writer.call_args.args[0])

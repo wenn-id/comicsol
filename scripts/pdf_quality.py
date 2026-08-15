@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from typing import Sequence
 
 from PIL import Image, ImageChops
-from raster_limits import MAX_DECODED_PIXELS
+from .raster_limits import MAX_DECODED_PIXELS
 
 PDF_TOLERANCE_VERSION = "1"
 PDF_EXPORTER_VERSION = "comic-sol-pillow-raster-v1"

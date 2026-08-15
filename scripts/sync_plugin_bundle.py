@@ -32,6 +32,7 @@ BUNDLED_FONTS = (
     "OFL-NotoSans.txt",
 )
 BUNDLED_SCRIPTS = (
+    "__init__.py",
     "comic_sol.py",
     "compose_pages.py",
     "export_pdf.py",
@@ -73,7 +74,13 @@ def actual_bundle_paths() -> set[Path]:
     for directory in MANAGED_DIRECTORIES:
         root = BUNDLE / directory
         if root.is_dir():
-            paths.update(path.relative_to(BUNDLE) for path in root.rglob("*") if path.is_file())
+            paths.update(
+                path.relative_to(BUNDLE)
+                for path in root.rglob("*")
+                if path.is_file()
+                and "__pycache__" not in path.parts
+                and path.suffix != ".pyc"
+            )
     return paths
 
 

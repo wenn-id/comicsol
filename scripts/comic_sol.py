@@ -18,9 +18,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "scripts"
+
 from PIL import Image, ImageFont
 
-from project_io import (
+from .project_io import (
     ProjectLock,
     ProjectTransaction,
     contained_project_path,
@@ -29,7 +33,7 @@ from project_io import (
     read_contained_bytes,
     validate_source_bytes,
 )
-from raster_limits import MAX_DECODED_PIXELS
+from .raster_limits import MAX_DECODED_PIXELS
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -572,7 +576,7 @@ def transition(
         if not isinstance(current, str) or not _allowed_transition(current, target):
             raise ValueError(f"invalid Comic Sol transition: {current} -> {target}")
         if target in TERMINAL_STATUSES:
-            from validate_project import require_valid_project
+            from .validate_project import require_valid_project
             require_valid_project(project_dir, "final")
         if target == "COMPLETE_WITH_WARNINGS" and not (warnings or warning):
             raise ValueError("COMPLETE_WITH_WARNINGS requires an unresolved warning")
@@ -936,7 +940,7 @@ def _accepted_panel_problem(
 ) -> str | None:
     # Import lazily because the standalone validator imports this lifecycle module.
     # Reuse must nevertheless honor the exact public panel-record schema.
-    from validate_project import validate_panel_provenance, validate_panel_record
+    from .validate_project import validate_panel_provenance, validate_panel_record
 
     schema_issues = validate_panel_record(record)
     if schema_issues:
@@ -1923,7 +1927,7 @@ def _finalize_project_locked(
         for pid in panel_ids
     )
     if need_lettering:
-        from letter_panels import letter_project
+        from .letter_panels import letter_project
         letter_project(caller_project_dir)
         record_stage(caller_project_dir, "lettering")
     manifest = read_json(manifest_path)
@@ -1934,7 +1938,7 @@ def _finalize_project_locked(
     #    cache/composition.json and its manifest descriptor.
     need_composition = "composition" in stale or not (project_dir / "cache/composition.json").is_file()
     if need_composition:
-        from compose_pages import compose_project
+        from .compose_pages import compose_project
         compose_project(caller_project_dir)
         record_stage(caller_project_dir, "composition")
     manifest = read_json(manifest_path)
@@ -1942,7 +1946,7 @@ def _finalize_project_locked(
         transition(caller_project_dir, "COMPOSED")
 
     # 4. Fail closed on agent-produced page-QA integrity records.
-    from page_quality import validate_page_quality
+    from .page_quality import validate_page_quality
 
     manifest = read_json(manifest_path)
     settings = manifest.get("settings")
@@ -1969,7 +1973,7 @@ def _finalize_project_locked(
             raise ValueError(f"page_qa_required: {qa_rel} is stale: {detail}")
 
     # 5. Guarded export (validates export-ready, writes PDF, records descriptor).
-    from export_pdf import guarded_export
+    from .export_pdf import guarded_export
     guarded_export(caller_project_dir)
     manifest = read_json(manifest_path)
     if _allowed_transition(str(manifest.get("status")), "EXPORTED"):
@@ -1985,7 +1989,7 @@ def _finalize_project_locked(
         if isinstance(warnings, list) and warnings
         else "COMPLETE"
     )
-    from render_report import render_report
+    from .render_report import render_report
     render_report(caller_project_dir)
 
     # 7. render_report and compose_project record their own descriptors.

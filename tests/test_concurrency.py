@@ -8,11 +8,10 @@ from pathlib import Path
 from unittest import mock
 
 from scripts import project_io
+from scripts.comic_sol import atomic_write_json, read_json, record_generation_attempt
+from scripts.export_pdf import guarded_export
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-from comic_sol import atomic_write_json, read_json, record_generation_attempt  # noqa: E402
-from export_pdf import guarded_export  # noqa: E402
 
 
 CHILD_LOCK_SCRIPT = r"""
@@ -209,8 +208,8 @@ class ProjectLockTests(unittest.TestCase):
 _BUDGET_RACE_CHILD = r"""
 import json, os, sys
 from pathlib import Path
-sys.path.insert(0, os.fspath(Path(sys.argv[2]) / "scripts"))
-from comic_sol import record_generation_attempt
+sys.path.insert(0, os.fspath(Path(sys.argv[2])))
+from scripts.comic_sol import record_generation_attempt
 project_dir = Path(sys.argv[1])
 record_generation_attempt(project_dir, sys.argv[3], sys.argv[4], project_dir / sys.argv[5])
 """.strip()
@@ -279,8 +278,8 @@ class RetryCounterProcessTests(unittest.TestCase):
                 f"import json, os, sys, time\n"
                 f"from pathlib import Path\n"
                 f"_sr={scripts_root!r}\n"
-                f"sys.path.insert(0, os.path.join(_sr, 'scripts'))\n"
-                f"from comic_sol import record_generation_attempt\n"
+                f"sys.path.insert(0, _sr)\n"
+                f"from scripts.comic_sol import record_generation_attempt\n"
                 f"project = Path(sys.argv[1])\n"
                 f"barrier = project / 'budget-barrier'\n"
                 f"for _ in range(500):\n"
@@ -324,8 +323,8 @@ class RetryCounterProcessTests(unittest.TestCase):
 _PROMOTION_RACE_CHILD = r"""
 import os, sys, time
 from pathlib import Path
-sys.path.insert(0, os.fspath(Path(sys.argv[2]) / "scripts"))
-from comic_sol import promote_attempt
+sys.path.insert(0, os.fspath(Path(sys.argv[2])))
+from scripts.comic_sol import promote_attempt
 project = Path(sys.argv[1])
 barrier = project / "promotion-barrier"
 for _ in range(500):
@@ -433,8 +432,11 @@ class PdfExportTransactionTests(unittest.TestCase):
             return b"%PDF-1.4\n%%EOF\n", {"page_count": 1}
 
         with (
-            mock.patch("export_pdf.require_valid_project"),
-            mock.patch("export_pdf._render_verified_payload", side_effect=mutate_manifest),
+            mock.patch("scripts.export_pdf.require_valid_project"),
+            mock.patch(
+                "scripts.export_pdf._render_verified_payload",
+                side_effect=mutate_manifest,
+            ),
         ):
             guarded_export(self.project)
 

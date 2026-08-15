@@ -3,7 +3,6 @@ import hashlib
 import io
 import json
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,9 +11,8 @@ from unittest import mock
 from PIL import ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-from comic_sol import (  # noqa: E402
+from scripts.comic_sol import (  # noqa: E402
     append_event,
     atomic_write_bytes,
     atomic_write_json,
@@ -29,9 +27,8 @@ from comic_sol import (  # noqa: E402
     slugify,
     transition,
 )
-from project_io import ProjectTransaction
-import comic_sol  # noqa: E402
-import letter_panels  # noqa: E402
+from scripts.project_io import ProjectTransaction
+from scripts import comic_sol, letter_panels  # noqa: E402
 
 
 class ManifestTests(unittest.TestCase):
@@ -166,7 +163,7 @@ class ManifestTests(unittest.TestCase):
             transition(export_project, state)
         # This test isolates transition-graph behavior; final artifact gating is
         # covered by GuardedOperationTests.
-        with mock.patch("validate_project.require_valid_project"):
+        with mock.patch("scripts.validate_project.require_valid_project"):
             terminal = transition(
                 export_project, "COMPLETE_WITH_WARNINGS", "minor prop drift"
             )
