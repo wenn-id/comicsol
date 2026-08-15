@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import stat
@@ -393,7 +394,8 @@ class ClientSetupTests(unittest.TestCase):
         self.assertEqual(original, config.read_bytes())
         self.assertEqual([], list(config.parent.glob("*.bak-*")))
 
-    def test_absolute_console_stub_resolves_only_from_its_parent(self):
+    @unittest.skipUnless(os.name == "nt", "Windows launcher semantics")
+    def test_absolute_console_stub_ignores_a_cwd_decoy(self):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)
         config.write_text("{}\n", encoding="utf-8")
@@ -402,22 +404,17 @@ class ClientSetupTests(unittest.TestCase):
         console_path.parent.mkdir()
         native_launcher = console_path.with_suffix(".exe")
         native_launcher.write_bytes(b"native launcher")
-        if os.name != "nt":
-            native_launcher.chmod(0o755)
+        decoy_directory = self.home / "decoy"
+        decoy_directory.mkdir()
+        (decoy_directory / "comic-sol.exe").write_bytes(b"decoy launcher")
 
-        with mock.patch(
-            "comic_sol_product.setup.shutil.which",
-            return_value=str(native_launcher),
-        ) as which:
+        with contextlib.chdir(decoy_directory):
             result = setup_clients(
                 self.output,
                 adapters=[adapter],
                 executable=console_path,
             )[0]
 
-        which.assert_called_once_with(
-            console_path.name, path=str(console_path.parent)
-        )
         entry = json.loads(config.read_text(encoding="utf-8"))["mcpServers"][
             "comic-sol"
         ]

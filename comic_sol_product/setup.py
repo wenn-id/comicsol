@@ -48,11 +48,14 @@ def _resolve_executable(executable: str | os.PathLike[str] | None) -> str:
     )
     candidate = Path(launcher).expanduser()
     if candidate.is_absolute():
-        located = (
-            str(candidate)
-            if candidate.is_file()
-            else shutil.which(candidate.name, path=str(candidate.parent))
-        )
+        located = str(candidate) if candidate.is_file() else None
+        if located is None and os.name == "nt":
+            pathext = os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD"
+            for extension in filter(None, pathext.split(os.pathsep)):
+                extended = candidate.with_name(candidate.name + extension)
+                if extended.is_file():
+                    located = str(extended)
+                    break
     else:
         located = shutil.which(launcher)
     if located is None:
