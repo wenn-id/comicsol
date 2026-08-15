@@ -14,6 +14,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 
 from tests.support import bounded_tail_regions, make_symlink  # noqa: E402
+from scripts.materialize_sample import materialize_sample  # noqa: E402
 from scripts.page_quality import build_page_quality_record, write_page_quality_record  # noqa: E402
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
@@ -47,6 +48,11 @@ TOOL_NAMES = {
     "comic_export",
     "comic_finalize",
 }
+
+
+def copy_sample(destination: Path) -> None:
+    shutil.copytree(ROOT / "samples/sunlight-courier", destination)
+    materialize_sample(destination)
 
 
 def result_is_error(result: Any) -> bool:
@@ -409,7 +415,7 @@ class McpServerUnitTests(unittest.TestCase):
 
     def test_override_tool_accepts_valid_v2_visual_failure(self):
         project = self.root / "sunlight-courier"
-        shutil.copytree(ROOT / "samples/sunlight-courier", project)
+        copy_sample(project)
         record_path = project / "qa/panels/p01-01.json"
         record = json.loads(record_path.read_text("utf-8"))
         record["checks"][0].update({"result": "fail", "severity": "error"})
@@ -472,9 +478,8 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_root = Path(temporary_directory) / "output"
             output_root.mkdir()
-            sample = ROOT / "samples/sunlight-courier"
             project = output_root / "sunlight-courier"
-            shutil.copytree(sample, project)
+            copy_sample(project)
             attempt = project / "panels/raw/p01-01-attempt.png"
             shutil.copy2(project / "panels/raw/p01-01.png", attempt)
 
@@ -576,9 +581,8 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_root = Path(temporary_directory) / "output"
             output_root.mkdir()
-            sample = ROOT / "samples/sunlight-courier"
             project = output_root / "sunlight-courier"
-            shutil.copytree(sample, project)
+            copy_sample(project)
 
             # Downgrade to pre-lettering state and remove terminal artifacts.
             manifest_path = project / "project.json"

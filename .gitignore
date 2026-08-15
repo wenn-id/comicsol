@@ -33,3 +33,7 @@ comic-sol-output/
 
 # AI session working logs (machine-specific paths, superseded by git history)
 .superpowers/
+
+# Materialized sample compatibility copies
+/samples/sunlight-courier/panels/raw/*.png
+/samples/sunlight-courier/panels/clean/*.png
