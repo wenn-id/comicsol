@@ -168,12 +168,24 @@ def setup_clients(
     chosen = set(selected or ())
     using_defaults = adapters is None
     candidates = list(adapters if adapters is not None else default_adapters(home))
-    entry = mcp_entry(_resolve_executable(executable), output_root)
+    entry: dict[str, object] | None = None
     results: list[SetupResult] = []
     for adapter in candidates:
         if chosen and adapter.name not in chosen:
             results.append(SetupResult(adapter.name, "skipped", str(adapter.config_path), None, "not selected"))
+        elif not adapter.detect():
+            results.append(
+                SetupResult(
+                    adapter.name,
+                    "skipped",
+                    str(adapter.config_path),
+                    None,
+                    "client config not found",
+                )
+            )
         else:
+            if entry is None:
+                entry = mcp_entry(_resolve_executable(executable), output_root)
             results.append(_configure_one(adapter, entry, remove=False))
     if using_defaults:
         present = {adapter.name for adapter in candidates}

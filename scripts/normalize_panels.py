@@ -7,10 +7,15 @@ import hashlib
 import io
 import json
 import re
+import sys
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "scripts"
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 

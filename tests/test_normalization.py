@@ -1,5 +1,7 @@
 import hashlib
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,6 +31,18 @@ def sha256(path: Path) -> str:
 
 
 class NormalizationGeometryTests(unittest.TestCase):
+    def test_direct_script_bootstraps_package_context(self):
+        completed = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "normalize_panels.py")],
+            cwd=ROOT,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
     def test_raster_modules_share_one_decode_ceiling(self):
         self.assertEqual(raster_limits.MAX_DECODED_PIXELS, normalize_panels_module.MAX_DECODED_PIXELS)
         self.assertEqual(raster_limits.MAX_DECODED_PIXELS, letter_panels.MAX_DECODED_PIXELS)

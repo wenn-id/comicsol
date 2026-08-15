@@ -336,6 +336,22 @@ class ClientSetupTests(unittest.TestCase):
         self.assertEqual(result.status, "skipped")
         self.assertFalse(config.exists())
 
+    def test_missing_config_skips_before_launcher_resolution(self):
+        config = self.home / ".cursor" / "mcp.json"
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        with mock.patch(
+            "comic_sol_product.setup.shutil.which", return_value=None
+        ) as which:
+            result = setup_clients(
+                self.output,
+                adapters=[adapter],
+                executable="missing-comic-sol",
+            )[0]
+
+        self.assertEqual("skipped", result.status)
+        which.assert_not_called()
+
     def test_setup_resolves_bare_launcher_and_repair_is_idempotent(self):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)
