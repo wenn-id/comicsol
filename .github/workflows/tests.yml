@@ -40,6 +40,8 @@ jobs:
         fi
         "${audit_python}" -m pip install --require-hashes -r requirements/locks/audit-python311.txt
         "${audit_python}" -m pip_audit -r requirements/locks/runtime-${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'macos-26-intel' && 'macos' || 'windows' }}-x86_64.txt
+    - name: Verify isolated test discovery
+      run: python -m unittest tests.test_isolated_discovery -v
     - name: Test with unittest
       # Unprivileged Windows cannot create file symlinks, so the path-containment
       # tests may only skip there; everywhere else a skip is a coverage loss.
