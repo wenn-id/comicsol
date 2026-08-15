@@ -13,7 +13,7 @@ Execution target: meticulous, quiet, premium. No decorative clutter, no fabricat
 ## Canvas contract
 
 - Output: 1600 × 1600 PNG, RGB/RGBA-safe
-- Source: real Comic Sol sample artwork from `samples/sunlight-courier`
+- Canonical thumbnail: `assets/comic-sol-thumbnail.png`, composed from real Comic Sol sample artwork
 - Title: `COMIC SOL`
 - Descriptor: `AI-DRIVEN COMIC PRODUCTION`
 - Pipeline cue: `PLAN · GENERATE · QA · LETTER · EXPORT`
