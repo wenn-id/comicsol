@@ -1,4 +1,4 @@
-"""Portable-runtime archive contracts and safe extraction."""
+"""Portable-runtime archive creation and validation contracts."""
 
 from __future__ import annotations
 

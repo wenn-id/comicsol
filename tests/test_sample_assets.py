@@ -11,12 +11,15 @@ ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "samples/sunlight-courier"
 MATERIALIZER = ROOT / "scripts/materialize_sample.py"
 
+from tests.support import make_symlink  # noqa: E402
+
 
 class SampleAssetTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
-        self.project = Path(self.temporary_directory.name) / "sunlight-courier"
+        self.root = Path(self.temporary_directory.name)
+        self.project = self.root / "sunlight-courier"
         shutil.copytree(SAMPLE, self.project)
         for relative in ("panels/raw", "panels/clean"):
             shutil.rmtree(self.project / relative, ignore_errors=True)
@@ -79,6 +82,55 @@ class SampleAssetTests(unittest.TestCase):
             result.stderr,
         )
         self.assertFalse((self.project / "panels/raw").exists())
+        self.assertFalse((self.project / "panels/clean").exists())
+
+    def test_linked_canonical_source_is_rejected_before_copying(self):
+        outside = self.root / "outside-source"
+        shutil.copytree(self.project / "panels/p01-01", outside)
+        shutil.rmtree(self.project / "panels/p01-01")
+        make_symlink(
+            self,
+            self.project / "panels/p01-01",
+            outside,
+            directory=True,
+        )
+
+        result = self.run_materializer()
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("symlinks or reparse points", result.stderr)
+        self.assertFalse((self.project / "panels/raw").exists())
+        self.assertFalse((self.project / "panels/clean").exists())
+
+    def test_linked_output_directory_is_rejected_without_external_write(self):
+        outside = self.root / "outside-output"
+        outside.mkdir()
+        make_symlink(
+            self,
+            self.project / "panels/raw",
+            outside,
+            directory=True,
+        )
+
+        result = self.run_materializer()
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("symlinks or reparse points", result.stderr)
+        self.assertEqual([], list(outside.iterdir()))
+        self.assertFalse((self.project / "panels/clean").exists())
+
+    def test_linked_output_file_is_rejected_without_external_write(self):
+        outside = self.root / "outside.png"
+        outside.write_bytes(b"sentinel")
+        raw = self.project / "panels/raw"
+        raw.mkdir()
+        make_symlink(self, raw / "p01-01.png", outside)
+
+        result = self.run_materializer()
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("symlinks or reparse points", result.stderr)
+        self.assertEqual(b"sentinel", outside.read_bytes())
         self.assertFalse((self.project / "panels/clean").exists())
 
 

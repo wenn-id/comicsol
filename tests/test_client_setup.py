@@ -93,14 +93,21 @@ class ClientSetupTests(unittest.TestCase):
             },
         )
 
-    def test_repeated_setup_is_unchanged_and_does_not_duplicate(self):
+    def test_bare_launcher_is_resolved_and_repeated_setup_is_unchanged(self):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)
         config.write_text("{}\n", encoding="utf-8")
         adapter = JsonClientAdapter("cursor", config, "mcpServers")
-        first = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
-        first_bytes = config.read_bytes()
-        second = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+        with mock.patch(
+            "comic_sol_product.setup.shutil.which", return_value=str(self.launcher)
+        ):
+            first = setup_clients(
+                self.output, adapters=[adapter], executable="comic-sol"
+            )[0]
+            first_bytes = config.read_bytes()
+            second = setup_clients(
+                self.output, adapters=[adapter], executable="comic-sol"
+            )[0]
 
         self.assertEqual(first.status, "configured")
         self.assertEqual(second.status, "unchanged")
@@ -108,6 +115,10 @@ class ClientSetupTests(unittest.TestCase):
         self.assertEqual(config.read_bytes(), first_bytes)
         saved = json.loads(config.read_text(encoding="utf-8"))
         self.assertEqual(list(saved["mcpServers"]), ["comic-sol"])
+        self.assertEqual(
+            saved["mcpServers"]["comic-sol"]["command"],
+            str(self.launcher.resolve()),
+        )
 
     def test_malformed_config_is_refused_without_backup_or_write(self):
         config = self.home / ".cursor" / "mcp.json"
