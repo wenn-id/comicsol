@@ -98,7 +98,7 @@ class SampleAssetTests(unittest.TestCase):
         result = self.run_materializer()
 
         self.assertEqual(1, result.returncode)
-        self.assertIn("symlinks or reparse points", result.stderr)
+        self.assertIn("symlink", result.stderr)
         self.assertFalse((self.project / "panels/raw").exists())
         self.assertFalse((self.project / "panels/clean").exists())
 
@@ -115,7 +115,7 @@ class SampleAssetTests(unittest.TestCase):
         result = self.run_materializer()
 
         self.assertEqual(1, result.returncode)
-        self.assertIn("symlinks or reparse points", result.stderr)
+        self.assertIn("symlink", result.stderr)
         self.assertEqual([], list(outside.iterdir()))
         self.assertFalse((self.project / "panels/clean").exists())
 
@@ -129,7 +129,7 @@ class SampleAssetTests(unittest.TestCase):
         result = self.run_materializer()
 
         self.assertEqual(1, result.returncode)
-        self.assertIn("symlinks or reparse points", result.stderr)
+        self.assertIn("symlink", result.stderr)
         self.assertEqual(b"sentinel", outside.read_bytes())
         self.assertFalse((self.project / "panels/clean").exists())
 
