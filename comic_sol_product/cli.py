@@ -137,7 +137,15 @@ def _run(arguments: argparse.Namespace) -> Any:
             "repair": repair_clients,
             "uninstall": uninstall_clients,
         }[arguments.command]
-        return [asdict(result) for result in operation(arguments.output_root, selected=arguments.clients)]
+        operation_arguments: dict[str, Any] = {"selected": arguments.clients}
+        if arguments.command != "uninstall":
+            operation_arguments["executable"] = (
+                sys.executable if getattr(sys, "frozen", False) else sys.argv[0]
+            )
+        return [
+            asdict(result)
+            for result in operation(arguments.output_root, **operation_arguments)
+        ]
     raise ValueError(f"unsupported command: {arguments.command}")
 
 

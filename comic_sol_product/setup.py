@@ -40,6 +40,23 @@ def _backup_path(path: Path) -> Path:
     return path.with_name(f"{path.name}.bak-{stamp}")
 
 
+def _resolve_executable(executable: str | os.PathLike[str] | None) -> str:
+    launcher = os.fspath(
+        executable
+        if executable is not None
+        else (sys.executable if getattr(sys, "frozen", False) else sys.argv[0])
+    )
+    located = launcher if Path(launcher).is_absolute() else shutil.which(launcher)
+    if located is None:
+        raise FileNotFoundError("Comic Sol executable could not be resolved")
+    resolved = Path(located).expanduser().resolve(strict=True)
+    if not resolved.is_file() or (
+        os.name != "nt" and not os.access(resolved, os.X_OK)
+    ):
+        raise FileNotFoundError("Comic Sol executable is not runnable")
+    return str(resolved)
+
+
 def _atomic_write(path: Path, data: bytes, mode: int | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
@@ -128,13 +145,13 @@ def setup_clients(
     home: Path | None = None,
     *,
     adapters: Iterable[ClientAdapter] | None = None,
-    executable: str = "comic-sol",
+    executable: str | os.PathLike[str] | None = None,
 ) -> list[SetupResult]:
     output_root = Path(output_root).expanduser().resolve()
     chosen = set(selected or ())
     using_defaults = adapters is None
     candidates = list(adapters if adapters is not None else default_adapters(home))
-    entry = mcp_entry(executable, output_root)
+    entry = mcp_entry(_resolve_executable(executable), output_root)
     results: list[SetupResult] = []
     for adapter in candidates:
         if chosen and adapter.name not in chosen:
