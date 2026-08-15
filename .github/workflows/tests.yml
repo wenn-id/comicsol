@@ -55,8 +55,16 @@ jobs:
         python -m pip install --require-hashes -r requirements/locks/release-${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'macos-26-intel' && 'macos' || 'windows' }}-x86_64.txt
         python -m build --no-isolation
     - name: Validate wheel and source distribution contents
+      if: runner.os != 'Windows'
       shell: bash
       run: python -m comic_sol_product.release dist/*.whl dist/*.tar.gz
+    - name: Validate wheel and source distribution contents in PowerShell
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $artifacts = Get-ChildItem -Path dist\*.whl, dist\*.tar.gz |
+          Select-Object -ExpandProperty FullName
+        python -m comic_sol_product.release @artifacts
     - name: Smoke test clean wheel installation outside checkout
       shell: bash
       run: |

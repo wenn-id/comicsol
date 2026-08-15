@@ -37,12 +37,16 @@ Run checks through same `.venv` interpreter used for dependency installation. Be
 .venv/bin/python scripts/comic_sol.py doctor --output-root /tmp/comic-sol-doctor
 .venv/bin/python -m build --no-isolation
 .venv/bin/python -m comic_sol_product.release dist/*.whl dist/*.tar.gz
+```
 
-# Windows PowerShell equivalents:
-# & .venv\Scripts\python.exe -m unittest discover -s tests -v
-# & .venv\Scripts\python.exe scripts\comic_sol.py doctor --output-root "$env:TEMP\comic-sol-doctor"
-# & .venv\Scripts\python.exe -m build --no-isolation
-# & .venv\Scripts\python.exe -m comic_sol_product.release dist\*.whl dist\*.tar.gz
+```powershell
+# Windows PowerShell
+& .venv\Scripts\python.exe -m unittest discover -s tests -v
+& .venv\Scripts\python.exe scripts\comic_sol.py doctor --output-root "$env:TEMP\comic-sol-doctor"
+& .venv\Scripts\python.exe -m build --no-isolation
+$artifacts = Get-ChildItem -Path dist\*.whl, dist\*.tar.gz |
+  Select-Object -ExpandProperty FullName
+& .venv\Scripts\python.exe -m comic_sol_product.release @artifacts
 ```
 
 Changes to packaging, runtime freezing, MCP, release automation, or distribution must also pass clean-install and portable-runtime smoke tests. Visual output changes require an actual before/after render and visual inspection; green geometry tests alone are insufficient.
