@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import importlib.util
 import json
 import shutil
@@ -15,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from tests.support import bounded_tail_regions, make_symlink  # noqa: E402
 from scripts.materialize_sample import materialize_sample  # noqa: E402
+from scripts.comic_sol import atomic_write_json, read_json  # noqa: E402
 from scripts.page_quality import build_page_quality_record, write_page_quality_record  # noqa: E402
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
@@ -249,7 +249,27 @@ class McpServerUnitTests(unittest.TestCase):
             mcp_server.comic_init("Story", "source", {1: "short_prompt"})
         self.assertEqual(before, list(self.root.iterdir()))
 
-    def test_symlink_scan_rechecks_nested_directory_changes(self):
+    def test_invalidate_rejects_blocked_project_without_mutating_manifest(self):
+        project_id = mcp_server.comic_init(
+            "Blocked project", "A story", {"mode": "short_prompt", "language": "en"}
+        )
+        project = self.root / project_id
+        manifest = read_json(project / "project.json")
+        manifest.update({
+            "status": "BLOCKED",
+            "blocked_from": "STORYBOARDED",
+            "blocked_reason": "image-capability-unavailable",
+        })
+        atomic_write_json(project / "project.json", manifest)
+
+        with self.assertRaisesRegex(ToolError, "invalid-data: tool request or project data is invalid"):
+            mcp_server.comic_invalidate(project_id, "generation")
+
+        persisted = read_json(project / "project.json")
+        self.assertEqual("BLOCKED", persisted["status"])
+        self.assertEqual("STORYBOARDED", persisted["blocked_from"])
+        self.assertEqual("image-capability-unavailable", persisted["blocked_reason"])
+
         project = self.root / "nested-project"
         nested = project / "existing-child"
         nested.mkdir(parents=True)

@@ -1413,6 +1413,17 @@ class BlockedRecoveryTests(unittest.TestCase):
         return path
 
 
+    def test_blocked_project_cannot_be_invalidated_directly(self):
+        block_project(
+            self.project,
+            "image-capability-unavailable",
+            "image capability unavailable",
+        )
+        before = read_json(self.project / "project.json")
+        with self.assertRaisesRegex(ValueError, "BLOCKED"):
+            invalidate_from(self.project, "generation")
+        self.assertEqual(before, read_json(self.project / "project.json"))
+
     def test_blocked_project_resumes_without_losing_valid_artifacts(self):
         warning = "image capability unavailable"
         before = {
@@ -1450,6 +1461,52 @@ class BlockedRecoveryTests(unittest.TestCase):
         self.assertEqual(["unrelated continuity warning"], resumed["warnings"])
         for relative, payload in before.items():
             self.assertEqual(payload, (self.project / relative).read_bytes())
+
+    def test_resume_recovers_under_project_lock(self):
+        block_project(
+            self.project,
+            "image-capability-unavailable",
+            "image capability unavailable",
+        )
+        manifest = read_json(self.project / "project.json")
+        manifest["capability"].update({
+            "detected_at": "2026-07-23T00:01:00Z",
+            "name": "restored-image-tool",
+            "status": "available",
+        })
+        atomic_write_json(self.project / "project.json", manifest)
+        entered = threading.Event()
+        release = threading.Event()
+        contender_errors = []
+        recover = project_io.ProjectTransaction.recover
+
+        def pause_recovery(project_dir):
+            entered.set()
+            if not release.wait(timeout=5):
+                raise AssertionError("resume recovery synchronization timed out")
+            return recover(project_dir)
+
+        def contender():
+            try:
+                with project_io.ProjectLock(self.project, timeout=0.1):
+                    pass
+            except BaseException as error:
+                contender_errors.append(error)
+
+        with patch("scripts.comic_sol.ProjectTransaction.recover", side_effect=pause_recovery):
+            worker = threading.Thread(target=lambda: resume_project(self.project))
+            worker.start()
+            self.assertTrue(entered.wait(timeout=5), "resume did not reach recovery")
+            contender_thread = threading.Thread(target=contender)
+            contender_thread.start()
+            contender_thread.join(timeout=2)
+            release.set()
+            worker.join(timeout=5)
+
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(contender_thread.is_alive())
+        self.assertEqual(1, len(contender_errors))
+        self.assertIsInstance(contender_errors[0], TimeoutError)
 
     def test_resume_holds_project_lock_through_invalidation(self):
         block_project(

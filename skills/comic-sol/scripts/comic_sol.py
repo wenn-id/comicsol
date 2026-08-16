@@ -1279,8 +1279,8 @@ def resume_project(project_dir: Path) -> dict[str, object]:
     """Recover transactions and move a blocked project to its last valid state."""
     project_dir = Path(project_dir).resolve(strict=True)
     manifest_path = contained_project_path(project_dir, "project.json", must_exist=True)
-    ProjectTransaction.recover(project_dir)
     with ProjectLock(project_dir):
+        ProjectTransaction.recover(project_dir)
         return _resume_project_locked(project_dir, manifest_path)
 
 
@@ -1453,6 +1453,9 @@ def invalidate_from(project_dir: Path, stage: str) -> list[str]:
     """Forget manifest/cache descriptors from a stage onward without deleting artifacts."""
     project_dir = Path(project_dir).resolve()
     with ProjectTransaction(project_dir, "invalidate") as tx:
+        manifest = read_json(project_dir / "project.json")
+        if manifest.get("status") == "BLOCKED":
+            raise ValueError("cannot invalidate a BLOCKED project; resume it first")
         return _invalidate_from_locked(project_dir, stage, tx)
 
 
