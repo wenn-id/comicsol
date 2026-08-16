@@ -326,6 +326,29 @@ class ClientSetupTests(unittest.TestCase):
         self.assertEqual(text.count("[mcp_servers.comic-sol]"), 1)
         self.assertIn('args = ["mcp", "--root",', text)
 
+    def test_codex_setup_replaces_quoted_key_without_duplicate_table(self):
+        config = self.home / ".codex" / "config.toml"
+        config.parent.mkdir(parents=True)
+        config.write_text(
+            'model = "gpt-test"\n\n'
+            '[mcp_servers."comic-sol"]\n'
+            'command = "old-comic-sol"\n'
+            'args = ["old"]\n',
+            encoding="utf-8",
+        )
+        adapter = CodexAdapter(config)
+
+        result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+        saved = config.read_text(encoding="utf-8")
+        parsed = tomllib.loads(saved)
+
+        self.assertEqual(result.status, "configured")
+        self.assertEqual(saved.count("[mcp_servers.comic-sol]"), 1)
+        self.assertNotIn('[mcp_servers."comic-sol"]', saved)
+        self.assertEqual(parsed["mcp_servers"]["comic-sol"]["command"], str(self.launcher))
+        self.assertEqual(parsed["mcp_servers"]["comic-sol"]["args"][:2], ["mcp", "--root"])
+        self.assertEqual(parsed["model"], "gpt-test")
+
     def test_uninstall_removes_only_integration_and_preserves_projects(self):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)
