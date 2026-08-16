@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -13,6 +14,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 
+from scripts import project_io  # noqa: E402
 from scripts.comic_sol import (  # noqa: E402
     ResumeAction,
     atomic_write_json,
@@ -1448,6 +1450,56 @@ class BlockedRecoveryTests(unittest.TestCase):
         self.assertEqual(["unrelated continuity warning"], resumed["warnings"])
         for relative, payload in before.items():
             self.assertEqual(payload, (self.project / relative).read_bytes())
+
+    def test_resume_holds_project_lock_through_invalidation(self):
+        block_project(
+            self.project,
+            "image-capability-unavailable",
+            "image capability unavailable",
+        )
+        manifest = read_json(self.project / "project.json")
+        manifest["capability"].update({
+            "detected_at": "2026-07-23T00:01:00Z",
+            "name": "restored-image-tool",
+            "status": "available",
+        })
+        atomic_write_json(self.project / "project.json", manifest)
+        entered = threading.Event()
+        release = threading.Event()
+        contender_errors = []
+
+        def contender():
+            try:
+                with project_io.ProjectLock(self.project, timeout=0.1):
+                    pass
+            except BaseException as error:
+                contender_errors.append(error)
+
+        def pause_invalidation(project_dir, stage, tx):
+            entered.set()
+            if not release.wait(timeout=5):
+                raise AssertionError("resume synchronization timed out")
+            return invalidate_locked(project_dir, stage, tx)
+
+        from scripts.comic_sol import _invalidate_from_locked as invalidate_locked
+
+        with patch(
+            "scripts.comic_sol._invalidate_from_locked",
+            side_effect=pause_invalidation,
+        ):
+            worker = threading.Thread(target=lambda: resume_project(self.project))
+            worker.start()
+            self.assertTrue(entered.wait(timeout=5), "resume did not reach invalidation")
+            contender_thread = threading.Thread(target=contender)
+            contender_thread.start()
+            contender_thread.join(timeout=2)
+            release.set()
+            worker.join(timeout=5)
+
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(contender_thread.is_alive())
+        self.assertEqual(1, len(contender_errors))
+        self.assertIsInstance(contender_errors[0], TimeoutError)
 
     def test_resume_cli_reports_actionable_json_and_human_output(self):
         block_project(

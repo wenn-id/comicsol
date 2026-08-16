@@ -1281,6 +1281,13 @@ def resume_project(project_dir: Path) -> dict[str, object]:
     manifest_path = contained_project_path(project_dir, "project.json", must_exist=True)
     ProjectTransaction.recover(project_dir)
     with ProjectLock(project_dir):
+        return _resume_project_locked(project_dir, manifest_path)
+
+
+def _resume_project_locked(
+    project_dir: Path, manifest_path: Path
+) -> dict[str, object]:
+    with ProjectLock(project_dir):
         manifest = read_json(manifest_path)
         if manifest.get("status") != "BLOCKED":
             raise ValueError("resume requires a BLOCKED project")
@@ -1318,12 +1325,12 @@ def resume_project(project_dir: Path) -> dict[str, object]:
                 "invalidated": [],
                 "next_action": {"required": "image capability available"},
             }
-        # Drop outer lock so invalidate_from can acquire its own ProjectTransaction lock
-    if stale_stage is not None:
-        invalidate_from(project_dir, stale_stage)
-    # Use the same rule as invalidate_from so a standalone `invalidate` and a
-    # `resume` that invalidates the same stage agree. They differ for the
-    # generation stage, whose invalidation preserves the canonical references.
+        if stale_stage is not None:
+            with ProjectTransaction(project_dir, "invalidate") as tx:
+                _invalidate_from_locked(project_dir, stale_stage, tx)
+        # Use the same rule as invalidate_from so a standalone `invalidate` and a
+        # `resume` that invalidates the same stage agree. They differ for the
+        # generation stage, whose invalidation preserves the canonical references.
     if stale_stage is not None:
         recovery_status = _post_invalidation_status(
             project_dir, stale_stage, str(blocked_from)
@@ -1403,43 +1410,50 @@ def _post_invalidation_status(project_dir: Path, stage: str, reached: str) -> st
     return _earlier_status(status, reached)
 
 
-def invalidate_from(project_dir: Path, stage: str) -> list[str]:
-    """Forget manifest/cache descriptors from a stage onward without deleting artifacts."""
+def _invalidate_from_locked(
+    project_dir: Path, stage: str, tx: ProjectTransaction
+) -> list[str]:
+    """Apply invalidation while the caller owns the project transaction lock."""
     if stage not in RESUME_STAGES:
         raise ValueError(f"unknown resume stage: {stage}")
-    project_dir = Path(project_dir).resolve()
     manifest_path = project_dir / "project.json"
     start = RESUME_STAGES.index(stage)
     removed: list[str] = []
-    with ProjectTransaction(project_dir, "invalidate") as tx:
-        manifest = read_json(manifest_path)
-        artifacts = manifest.get("artifacts")
-        if not isinstance(artifacts, dict):
-            raise ValueError("manifest artifacts must be an object")
-        for name in ARTIFACT_STAGE:
-            if name not in artifacts:
-                continue
-            owner = ARTIFACT_STAGE.get(name)
-            if owner is not None and RESUME_STAGES.index(owner) >= start:
-                removed.append(name)
-                del artifacts[name]
-        manifest["status"] = _post_invalidation_status(
-            project_dir, stage, str(manifest.get("status"))
-        )
-        manifest["updated_at"] = _utc_now()
+    manifest = read_json(manifest_path)
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise ValueError("manifest artifacts must be an object")
+    for name in ARTIFACT_STAGE:
+        if name not in artifacts:
+            continue
+        owner = ARTIFACT_STAGE.get(name)
+        if owner is not None and RESUME_STAGES.index(owner) >= start:
+            removed.append(name)
+            del artifacts[name]
+    manifest["status"] = _post_invalidation_status(
+        project_dir, stage, str(manifest.get("status"))
+    )
+    manifest["updated_at"] = _utc_now()
 
-        cache_path = project_dir / STAGE_CACHE_PATH
-        if cache_path.is_file():
-            cache, _ = _load_stage_cache(cache_path)
-            cached_stages = cache.get("stages")
-            if isinstance(cached_stages, dict):
-                for downstream in RESUME_STAGES[start:]:
-                    cached_stages.pop(downstream, None)
-                tx.stage_bytes(
-                    str(STAGE_CACHE_PATH), canonical_artifact_bytes(cache)
-                )
-        tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
+    cache_path = project_dir / STAGE_CACHE_PATH
+    if cache_path.is_file():
+        cache, _ = _load_stage_cache(cache_path)
+        cached_stages = cache.get("stages")
+        if isinstance(cached_stages, dict):
+            for downstream in RESUME_STAGES[start:]:
+                cached_stages.pop(downstream, None)
+            tx.stage_bytes(
+                str(STAGE_CACHE_PATH), canonical_artifact_bytes(cache)
+            )
+    tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
     return removed
+
+
+def invalidate_from(project_dir: Path, stage: str) -> list[str]:
+    """Forget manifest/cache descriptors from a stage onward without deleting artifacts."""
+    project_dir = Path(project_dir).resolve()
+    with ProjectTransaction(project_dir, "invalidate") as tx:
+        return _invalidate_from_locked(project_dir, stage, tx)
 
 
 def _contained_project_path(project_dir: Path, path: Path) -> Path:
