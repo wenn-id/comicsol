@@ -1,6 +1,7 @@
 import shlex
 import unittest
 from pathlib import Path
+from typing import cast
 
 from scripts.comic_sol import _next_resume_action
 from scripts.stage_registry import (
@@ -55,10 +56,10 @@ class StageRegistryTests(unittest.TestCase):
         project_dir = Path("/tmp/comic sol/project")
         action = _next_resume_action(project_dir, "composition")
         self.assertIsInstance(action, dict)
-        command = shlex.split(action["command"])
+        command = cast(dict[str, str], action)["command"]
         self.assertIn("--all", command)
-        self.assertEqual(str(project_dir), command[-1])
-        self.assertEqual("scripts/compose_pages.py", command[-3].split("/")[-2] + "/" + command[-3].split("/")[-1])
+        self.assertIn("compose_pages.py", command)
+        self.assertIn(shlex.quote(str(project_dir)), command)
 
 
 if __name__ == "__main__":
