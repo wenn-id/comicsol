@@ -69,6 +69,7 @@ STAGE_REGISTRY: tuple[StageDefinition, ...] = (
         runner="scripts/compose_pages.py",
         material_kind="composition",
         output_kind="composition",
+        artifacts=("composition_cache",),
     ),
     StageDefinition(
         name="export",
@@ -78,7 +79,7 @@ STAGE_REGISTRY: tuple[StageDefinition, ...] = (
         runner="scripts/export_pdf.py",
         material_kind="export",
         output_kind="export",
-        artifacts=("qa_report", "pdf"),
+        artifacts=("qa_report", "pdf", "pdf_verification"),
     ),
 )
 

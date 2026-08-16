@@ -9,6 +9,7 @@ import io
 import json
 import os
 import re
+import shlex
 import sys
 import tempfile
 import unicodedata
@@ -1089,7 +1090,11 @@ def _next_resume_action(project_dir: Path, stage: str | None) -> dict[str, str] 
         return {"agent_required": stage}
     if not definition.runner:
         raise ValueError(f"stage runner is not registered: {stage}")
-    return {"command": f"{sys.executable} {ROOT / definition.runner} {project_dir}"}
+    command = [sys.executable, ROOT / definition.runner]
+    if stage == "composition":
+        command.append("--all")
+    command.append(project_dir)
+    return {"command": shlex.join(str(part) for part in command)}
 
 
 def resume_project(project_dir: Path) -> dict[str, object]:
