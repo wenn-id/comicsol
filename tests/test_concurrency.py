@@ -113,6 +113,17 @@ class ProjectLockTests(unittest.TestCase):
         result = self.run_child()
         self.assertEqual(0, result.returncode, result.stderr)
 
+    def test_same_lock_instance_releases_after_outer_exit(self):
+        lock = project_io.ProjectLock(self.project, timeout=1.0)
+        with lock:
+            with lock:
+                result = self.run_child()
+                self.assertEqual(2, result.returncode, result.stderr)
+            result = self.run_child()
+            self.assertEqual(2, result.returncode, result.stderr)
+        result = self.run_child()
+        self.assertEqual(0, result.returncode, result.stderr)
+
     def test_contender_never_mutates_owner_metadata_before_acquiring(self):
         contender = subprocess.Popen(
             [

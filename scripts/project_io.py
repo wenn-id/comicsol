@@ -38,6 +38,7 @@ class ProjectLock:
         self.timeout = timeout
         self._handle: BinaryIO | None = None
         self._lock_key: Path | None = None
+        self._acquisition_depth = 0
 
     @classmethod
     def _held_locks(cls) -> dict[Path, tuple[BinaryIO, int]]:
@@ -55,6 +56,7 @@ class ProjectLock:
         if existing is not None:
             held[key] = (existing[0], existing[1] + 1)
             self._lock_key = key
+            self._acquisition_depth += 1
             return self
         deadline = time.monotonic() + self.timeout
         path = self.project_dir / ".comic-sol.lock"
@@ -111,6 +113,7 @@ class ProjectLock:
             held[key] = (handle, 1)
             self._handle = handle
             self._lock_key = key
+            self._acquisition_depth = 1
             return self
         except BaseException:
             try:
@@ -176,22 +179,27 @@ class ProjectLock:
 
     def __exit__(self, exc_type, exc, traceback) -> None:
         """Release the project lock when leaving its context."""
-        if self._lock_key is None:
+        if self._lock_key is None or self._acquisition_depth == 0:
             return
         held = self._held_locks()
         existing = held.get(self._lock_key)
         if existing is None:
             self._handle = None
             self._lock_key = None
+            self._acquisition_depth = 0
             return
         handle, depth = existing
         key = self._lock_key
-        self._handle = None
-        self._lock_key = None
+        self._acquisition_depth -= 1
         if depth > 1:
             held[key] = (handle, depth - 1)
+            if self._acquisition_depth == 0:
+                self._handle = None
+                self._lock_key = None
             return
         del held[key]
+        self._handle = None
+        self._lock_key = None
         try:
             self._unlock(handle)
         finally:
