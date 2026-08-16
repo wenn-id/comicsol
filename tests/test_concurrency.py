@@ -3,12 +3,18 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from scripts import project_io
-from scripts.comic_sol import atomic_write_json, read_json, record_generation_attempt
+from scripts.comic_sol import (
+    atomic_write_json,
+    finalize_project,
+    read_json,
+    record_generation_attempt,
+)
 from scripts.export_pdf import guarded_export
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +100,16 @@ class ProjectLockTests(unittest.TestCase):
     def test_child_succeeds_after_parent_releases_lock(self):
         with project_io.ProjectLock(self.project, timeout=1.0):
             pass
+        result = self.run_child()
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_nested_lock_keeps_outer_lock_held_until_outer_exit(self):
+        with project_io.ProjectLock(self.project, timeout=1.0):
+            with project_io.ProjectLock(self.project, timeout=0):
+                result = self.run_child()
+                self.assertEqual(2, result.returncode, result.stderr)
+            result = self.run_child()
+            self.assertEqual(2, result.returncode, result.stderr)
         result = self.run_child()
         self.assertEqual(0, result.returncode, result.stderr)
 
@@ -399,6 +415,54 @@ class PromotionArchiveRaceTests(unittest.TestCase):
         self.assertEqual(1, len(promoted))
         self.assertEqual("p01-01", promoted[0]["details"]["panel_id"])
         self.assertEqual("panels/raw/p01-01.new.png", promoted[0]["details"]["attempt_path"])
+
+
+class FinalizeLockRaceTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.project = Path(self.temporary_directory.name) / "project"
+        self.project.mkdir()
+
+    def tearDown(self):
+        self.temporary_directory.cleanup()
+
+    def test_finalize_holds_project_lock_against_mutating_transactions(self):
+        entered = threading.Event()
+        release = threading.Event()
+        errors = []
+
+        def blocked_finalize(*args, **kwargs):
+            entered.set()
+            if not release.wait(timeout=5):
+                raise AssertionError("finalize synchronization timed out")
+            return {"status": "stub"}
+
+        def run_finalize():
+            try:
+                finalize_project(self.project)
+            except BaseException as error:  # surface worker failures in the test thread
+                errors.append(error)
+
+        with mock.patch(
+            "scripts.comic_sol._finalize_project_locked",
+            side_effect=blocked_finalize,
+        ):
+            worker = threading.Thread(target=run_finalize)
+            worker.start()
+            self.assertTrue(entered.wait(timeout=5), "finalize did not acquire its lock")
+            try:
+                with self.assertRaises(TimeoutError):
+                    with project_io.ProjectLock(self.project, timeout=0.1):
+                        pass
+            finally:
+                release.set()
+                worker.join(timeout=5)
+
+        self.assertFalse(worker.is_alive(), "finalize worker did not exit")
+        self.assertEqual([], errors)
+        self.assertFalse(
+            self.project.parent.joinpath(f".{self.project.name}.finalize-lock").exists()
+        )
 
 
 class PdfExportTransactionTests(unittest.TestCase):

@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
@@ -29,14 +30,32 @@ _REPARSE_POINT = 0x400
 class ProjectLock:
     """Cross-process advisory lock retained at ``.comic-sol.lock``."""
 
+    _thread_state = threading.local()
+
     def __init__(self, project_dir: Path, timeout: float = 10.0):
         """Initialize lock state for a project directory."""
         self.project_dir = Path(project_dir)
         self.timeout = timeout
         self._handle: BinaryIO | None = None
+        self._lock_key: Path | None = None
+
+    @classmethod
+    def _held_locks(cls) -> dict[Path, tuple[BinaryIO, int]]:
+        held = getattr(cls._thread_state, "held", None)
+        if held is None:
+            held = {}
+            cls._thread_state.held = held
+        return held
 
     def __enter__(self) -> "ProjectLock":
         """Acquire the project lock and return it."""
+        key = self.project_dir.resolve()
+        held = self._held_locks()
+        existing = held.get(key)
+        if existing is not None:
+            held[key] = (existing[0], existing[1] + 1)
+            self._lock_key = key
+            return self
         deadline = time.monotonic() + self.timeout
         path = self.project_dir / ".comic-sol.lock"
         try:
@@ -89,6 +108,9 @@ class ProjectLock:
             handle.truncate()
             handle.write(f"{os.getpid()}\n".encode("ascii"))
             handle.flush()
+            held[key] = (handle, 1)
+            self._handle = handle
+            self._lock_key = key
             return self
         except BaseException:
             try:
@@ -154,10 +176,22 @@ class ProjectLock:
 
     def __exit__(self, exc_type, exc, traceback) -> None:
         """Release the project lock when leaving its context."""
-        handle = self._handle
-        self._handle = None
-        if handle is None:
+        if self._lock_key is None:
             return
+        held = self._held_locks()
+        existing = held.get(self._lock_key)
+        if existing is None:
+            self._handle = None
+            self._lock_key = None
+            return
+        handle, depth = existing
+        key = self._lock_key
+        self._handle = None
+        self._lock_key = None
+        if depth > 1:
+            held[key] = (handle, depth - 1)
+            return
+        del held[key]
         try:
             self._unlock(handle)
         finally:
