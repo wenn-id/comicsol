@@ -33,6 +33,19 @@ except TimeoutError as error:
     raise SystemExit(2)
 """
 
+BLOCKING_LOCK_SCRIPT = r"""
+import sys
+from pathlib import Path
+from scripts.project_io import ProjectLock
+
+try:
+    with ProjectLock(Path(sys.argv[1]), timeout=None):
+        print("ACQUIRED", flush=True)
+except TimeoutError as error:
+    print(error, file=sys.stderr)
+    raise SystemExit(2)
+"""
+
 CONTENDER_AT_EMPTY_FILE_SCRIPT = r"""
 import sys
 from pathlib import Path
@@ -437,6 +450,66 @@ class FinalizeLockRaceTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
+    def test_finalize_waits_for_existing_project_lock(self):
+        lock = project_io.ProjectLock(self.project, timeout=1.0)
+        lock.__enter__()
+        finished = threading.Event()
+        errors = []
+
+        def run_finalize():
+            try:
+                finalize_project(self.project)
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                finished.set()
+
+        try:
+            with mock.patch(
+                "scripts.comic_sol._finalize_project_locked",
+                return_value={"status": "stub"},
+            ):
+                worker = threading.Thread(target=run_finalize)
+                worker.start()
+                self.assertFalse(finished.wait(timeout=0.2))
+                lock.__exit__(None, None, None)
+                self.assertTrue(finished.wait(timeout=5))
+                worker.join(timeout=1)
+        finally:
+            if lock._lock_key is not None:
+                lock.__exit__(None, None, None)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual([], errors)
+
+    def test_project_transaction_waits_for_existing_project_lock(self):
+        lock = project_io.ProjectLock(self.project, timeout=1.0)
+        lock.__enter__()
+        finished = threading.Event()
+        errors = []
+
+        def run_transaction():
+            try:
+                with project_io.ProjectTransaction(self.project, "wait-test"):
+                    pass
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                finished.set()
+
+        try:
+            worker = threading.Thread(target=run_transaction)
+            worker.start()
+            self.assertFalse(finished.wait(timeout=0.2))
+            lock.__exit__(None, None, None)
+            self.assertTrue(finished.wait(timeout=5))
+            worker.join(timeout=1)
+        finally:
+            if lock._lock_key is not None:
+                lock.__exit__(None, None, None)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual([], errors)
     def test_finalize_holds_project_lock_against_mutating_transactions(self):
         entered = threading.Event()
         release = threading.Event()
@@ -451,7 +524,7 @@ class FinalizeLockRaceTests(unittest.TestCase):
         def run_finalize():
             try:
                 finalize_project(self.project)
-            except BaseException as error:  # surface worker failures in the test thread
+            except BaseException as error:
                 errors.append(error)
 
         with mock.patch(

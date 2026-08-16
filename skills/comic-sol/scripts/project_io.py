@@ -32,7 +32,7 @@ class ProjectLock:
 
     _thread_state = threading.local()
 
-    def __init__(self, project_dir: Path, timeout: float = 10.0):
+    def __init__(self, project_dir: Path, timeout: float | None = 10.0):
         """Initialize lock state for a project directory."""
         self.project_dir = Path(project_dir)
         self.timeout = timeout
@@ -58,7 +58,7 @@ class ProjectLock:
             self._lock_key = key
             self._acquisition_depth += 1
             return self
-        deadline = time.monotonic() + self.timeout
+        deadline = None if self.timeout is None else time.monotonic() + self.timeout
         path = self.project_dir / ".comic-sol.lock"
         try:
             descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
@@ -88,7 +88,7 @@ class ProjectLock:
                     except OSError as error:
                         if not self._retryable(error):
                             raise
-                    if time.monotonic() >= deadline:
+                    if deadline is not None and time.monotonic() >= deadline:
                         raise TimeoutError(
                             "project is locked by another process"
                         )
@@ -100,11 +100,14 @@ class ProjectLock:
                     except OSError as error:
                         if not self._retryable(error):
                             raise
-                        if time.monotonic() >= deadline:
+                        if deadline is not None and time.monotonic() >= deadline:
                             raise TimeoutError(
                                 "project is locked by another process"
                             ) from error
-                remaining = max(0.0, deadline - time.monotonic())
+                if deadline is None:
+                    remaining = _LOCK_RETRY_SECONDS
+                else:
+                    remaining = max(0.0, deadline - time.monotonic())
                 time.sleep(min(_LOCK_RETRY_SECONDS, remaining))
             handle.seek(0)
             handle.truncate()
@@ -486,7 +489,7 @@ class ProjectTransaction:
 
     def __enter__(self) -> "ProjectTransaction":
         """Start a transaction while holding the project lock."""
-        self._lock = ProjectLock(self.project_dir).__enter__()
+        self._lock = ProjectLock(self.project_dir, timeout=None).__enter__()
         try:
             base = contained_project_path(self.project_dir, "logs/transactions")
             base.mkdir(parents=True, exist_ok=True)

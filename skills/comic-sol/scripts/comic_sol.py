@@ -1884,7 +1884,7 @@ def finalize_project(project_dir: Path) -> dict[str, object]:
     """Serialize one complete deterministic finalization workflow."""
     caller_project_dir = Path(project_dir)
     project_dir = caller_project_dir.resolve(strict=True)
-    with ProjectLock(project_dir):
+    with ProjectLock(project_dir, timeout=None):
         return _finalize_project_locked(project_dir, caller_project_dir)
 
 
