@@ -345,7 +345,10 @@ class ClientSetupTests(unittest.TestCase):
         self.assertEqual(result.status, "configured")
         self.assertEqual(saved.count("[mcp_servers.comic-sol]"), 1)
         self.assertNotIn('[mcp_servers."comic-sol"]', saved)
-        self.assertEqual(parsed["mcp_servers"]["comic-sol"]["command"], str(self.launcher))
+        self.assertEqual(
+            Path(parsed["mcp_servers"]["comic-sol"]["command"]).resolve(),
+            self.launcher.resolve(),
+        )
         self.assertEqual(parsed["mcp_servers"]["comic-sol"]["args"][:2], ["mcp", "--root"])
         self.assertEqual(parsed["model"], "gpt-test")
 
