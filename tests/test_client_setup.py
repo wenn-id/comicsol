@@ -486,7 +486,7 @@ class ClientSetupTests(unittest.TestCase):
                 return True
 
         config = self.home / "custom.conf"
-        config.write_text("existing\ncomic-sol\n", encoding="utf-8")
+        config.write_bytes(b"existing\ncomic-sol\n")
 
         result = uninstall_clients(self.output, adapters=[CustomAdapter(config)])[0]
 
