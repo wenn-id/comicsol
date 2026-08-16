@@ -22,6 +22,7 @@ if __package__ in {None, ""}:
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from .comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json, sha256_file
+from .core_primitives import rectangles_overlap
 from .project_io import ProjectTransaction, contained_project_path, open_path_nofollow, read_contained_bytes
 from .raster_limits import MAX_DECODED_PIXELS
 from .typography import (
@@ -332,13 +333,7 @@ def _anchor_rect(anchor: str, width: int, height: int) -> dict[str, int]:
     }
 
 
-def _overlap(first: dict[str, int], second: dict[str, int]) -> bool:
-    return not (
-        first["x"] + first["width"] <= second["x"]
-        or second["x"] + second["width"] <= first["x"]
-        or first["y"] + first["height"] <= second["y"]
-        or second["y"] + second["height"] <= first["y"]
-    )
+_overlap = rectangles_overlap
 
 
 def _text_padding(kind: object) -> int:

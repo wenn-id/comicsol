@@ -22,6 +22,7 @@ if __package__ in {None, ""}:
 
 from PIL import Image, UnidentifiedImageError
 
+from .core_primitives import PANEL_ID_PATTERN as CORE_PANEL_ID_PATTERN
 from .project_io import contained_project_path, open_path_nofollow
 from .raster_limits import MAX_DECODED_PIXELS
 from .page_quality import validate_page_quality
@@ -43,7 +44,7 @@ from .comic_sol import (
 
 
 ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
-PANEL_ID_PATTERN = re.compile(r"^p[0-9]{2}-[0-9]{2}$")
+PANEL_ID_PATTERN = CORE_PANEL_ID_PATTERN
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 TIMESTAMP_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 STAGES = ("all", "plan", "storyboard", "panels", "final", "export-ready")

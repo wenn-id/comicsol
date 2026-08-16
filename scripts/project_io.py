@@ -14,6 +14,8 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Iterator
 
+from .core_primitives import canonical_json_bytes
+
 
 MAX_SOURCE_BYTES = 200 * 1024
 SOURCE_SUFFIXES = {".txt", ".md"}
@@ -463,11 +465,6 @@ def _find_transaction_dir(transaction_dir: Path) -> int:
     return biggest + 1
 
 
-def _canonical_json_bytes(value: object) -> bytes:
-    """Serialize a value as canonical JSON bytes."""
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-
-
 class ProjectTransaction:
     """Durable journal-backed all-or-nothing batch of file replacements.
 
@@ -602,7 +599,7 @@ class ProjectTransaction:
             "phase": self._phase,
             "targets": self._journal,
         }
-        durable_atomic_write(self._dir / "journal.json", _canonical_json_bytes(journal))
+        durable_atomic_write(self._dir / "journal.json", canonical_json_bytes(journal))
 
     def _cleanup(self) -> None:
         """Remove completed transaction staging artifacts."""

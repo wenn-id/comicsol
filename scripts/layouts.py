@@ -6,6 +6,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
+from .core_primitives import rectangles_overlap
+
 PAGE_WIDTH = 1600
 PAGE_HEIGHT = 2400
 MARGIN = 64
@@ -80,13 +82,7 @@ def _rectangle(value: object) -> Rectangle:
     return values  # type: ignore[return-value]
 
 
-def _overlap(first: Rectangle, second: Rectangle) -> bool:
-    """Report whether two rectangles overlap."""
-    ax, ay, aw, ah = first
-    bx, by, bw, bh = second
-    return not (
-        ax + aw <= bx or bx + bw <= ax or ay + ah <= by or by + bh <= ay
-    )
+_overlap = rectangles_overlap
 
 
 def validate_custom_layout(

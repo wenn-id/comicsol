@@ -18,6 +18,7 @@ except ModuleNotFoundError:
     from mcp.server.mcpserver.exceptions import ToolError
 
 # Import core business logic from scripts/
+from .core_primitives import PANEL_ID_PATTERN
 from .comic_sol import (
     ALL_STATUSES,
     RESUME_STAGES,
@@ -53,7 +54,7 @@ _SYMLINK_SCAN_CACHE: dict[
 ] = {}
 
 _VALIDATION_STAGES = frozenset({"all", "plan", "storyboard", "panels", "final", "export-ready"})
-_PANEL_ID = re.compile(r"^p[0-9]{2}-[0-9]{2}$")
+_PANEL_ID = PANEL_ID_PATTERN
 _ATTEMPT_KINDS = frozenset({"initial", "visual_retry", "transient_repeat"})
 _RELATIVE_PATH = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$")
 _REQUEST_ERROR_PREFIXES = (

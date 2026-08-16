@@ -35,6 +35,21 @@ from .project_io import (
     validate_source_bytes,
 )
 from .raster_limits import MAX_DECODED_PIXELS
+from .stage_registry import (
+    ARTIFACT_STAGE,
+    RESUME_STAGES,
+    STAGE_COMPLETION_STATUS,
+    STAGE_INVALIDATION_STATUS,
+    get_stage,
+)
+from .core_primitives import (
+    PANEL_ID_PATTERN,
+    canonical_artifact_bytes,
+    canonical_json_bytes,
+    rectangles_overlap as _rectangles_overlap,
+)
+
+rectangles_overlap = _rectangles_overlap
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,37 +79,6 @@ LINEAR_STATUSES = (
 TERMINAL_STATUSES = {"COMPLETE", "COMPLETE_WITH_WARNINGS"}
 ALL_STATUSES = set(LINEAR_STATUSES) | {"BLOCKED", "COMPLETE_WITH_WARNINGS"}
 
-RESUME_STAGES = (
-    "planning",
-    "storyboard",
-    "generation",
-    "lettering",
-    "composition",
-    "export",
-)
-STAGE_INVALIDATION_STATUS = {
-    "planning": "INIT",
-    "storyboard": "SCRIPTED",
-    "generation": "REFERENCES_READY",
-    "lettering": "QA_READY",
-    "composition": "LETTERED",
-    "export": "COMPOSED",
-}
-STAGE_COMPLETION_STATUS = {
-    "planning": "SCRIPTED",
-    "storyboard": "STORYBOARDED",
-    "generation": "QA_READY",
-    "lettering": "LETTERED",
-    "composition": "COMPOSED",
-    "export": "EXPORTED",
-}
-ARTIFACT_STAGE = {
-    "story_plan": "planning",
-    "character_bible": "planning",
-    "storyboard": "storyboard",
-    "qa_report": "export",
-    "pdf": "export",
-}
 TIMESTAMP_KEYS = {"created_at", "updated_at", "detected_at", "completed_at", "timestamp"}
 STAGE_CACHE_PATH = Path("logs/stage-cache.json")
 GENERATION_COUNTERS_PATH = Path("logs/generation-counters.json")
@@ -109,12 +93,6 @@ GENERATION_LIMIT_MESSAGES = {
     "transient_repeat": "at most one transient repeat is allowed per panel",
     "visual_retry": "at most two visual retries are allowed per panel",
 }
-PANEL_CHECK_IDS = (
-    "character-identity", "anatomy", "action", "composition", "continuity",
-    "text-free", "technical",
-)
-
-
 @dataclass(frozen=True)
 class ResumeAction:
     stage: str
@@ -178,27 +156,6 @@ def _utc_now() -> str:
     )
 
 
-def canonical_json_bytes(value: object) -> bytes:
-    """Return compact, sorted UTF-8 JSON bytes without a trailing newline.
-
-    Use for single-line JSONL records and for stable hash inputs. Document
-    artifacts must use ``canonical_artifact_bytes`` instead.
-    """
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-
-
-def canonical_artifact_bytes(value: object) -> bytes:
-    """Return the two-space sorted UTF-8 JSON bytes the validator requires."""
-    return (
-        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
-
-
 def read_json(path: Path) -> dict[str, object]:
     """Read a UTF-8 JSON object without following path symlinks."""
     with open_path_nofollow(Path(path)) as stream:
@@ -238,102 +195,16 @@ def slugify(title: str) -> str:
 
 
 def layout_rects(name: str) -> list[dict[str, int]]:
-    """Return fresh rectangles for one fixed version-1.0 page layout."""
-    inner_width = PAGE_WIDTH - (2 * MARGIN)
-    inner_height = PAGE_HEIGHT - (2 * MARGIN)
-    half_width = (inner_width - GUTTER) // 2
-    half_height = (inner_height - GUTTER) // 2
-    third_height = (inner_height - (2 * GUTTER)) // 3
-    hero_height = 1176
-    support_height = inner_height - GUTTER - hero_height
-    layouts = {
-        "full-page": [
-            {"x": MARGIN, "y": MARGIN, "width": inner_width, "height": inner_height},
-        ],
-        "two-horizontal": [
-            {"x": MARGIN, "y": MARGIN, "width": inner_width, "height": half_height},
-            {
-                "x": MARGIN,
-                "y": MARGIN + half_height + GUTTER,
-                "width": inner_width,
-                "height": half_height,
-            },
-        ],
-        "three-horizontal": [
-            {
-                "x": MARGIN,
-                "y": MARGIN + (index * (third_height + GUTTER)),
-                "width": inner_width,
-                "height": third_height,
-            }
-            for index in range(3)
-        ],
-        "hero-top-two-bottom": [
-            {"x": MARGIN, "y": MARGIN, "width": inner_width, "height": hero_height},
-            {
-                "x": MARGIN,
-                "y": MARGIN + hero_height + GUTTER,
-                "width": half_width,
-                "height": support_height,
-            },
-            {
-                "x": MARGIN + half_width + GUTTER,
-                "y": MARGIN + hero_height + GUTTER,
-                "width": half_width,
-                "height": support_height,
-            },
-        ],
-        "two-top-hero-bottom": [
-            {"x": MARGIN, "y": MARGIN, "width": half_width, "height": support_height},
-            {
-                "x": MARGIN + half_width + GUTTER,
-                "y": MARGIN,
-                "width": half_width,
-                "height": support_height,
-            },
-            {
-                "x": MARGIN,
-                "y": MARGIN + support_height + GUTTER,
-                "width": inner_width,
-                "height": hero_height,
-            },
-        ],
-        "four-grid": [
-            {"x": MARGIN, "y": MARGIN, "width": half_width, "height": half_height},
-            {
-                "x": MARGIN + half_width + GUTTER,
-                "y": MARGIN,
-                "width": half_width,
-                "height": half_height,
-            },
-            {
-                "x": MARGIN,
-                "y": MARGIN + half_height + GUTTER,
-                "width": half_width,
-                "height": half_height,
-            },
-            {
-                "x": MARGIN + half_width + GUTTER,
-                "y": MARGIN + half_height + GUTTER,
-                "width": half_width,
-                "height": half_height,
-            },
-        ],
-    }
-    try:
-        return [rectangle.copy() for rectangle in layouts[name]]
-    except KeyError as error:
-        raise ValueError(f"unknown layout: {name}") from error
+    """Return fresh rectangle mappings from the shared layout registry."""
+    from .layouts import get_layout
+
+    return [
+        {"x": x, "y": y, "width": width, "height": height}
+        for x, y, width, height in get_layout(name).rectangles
+    ]
 
 
-def rectangles_overlap(a: dict[str, int], b: dict[str, int]) -> bool:
-    """Return whether two positive-area rectangles overlap."""
-    return not (
-        a["x"] + a["width"] <= b["x"]
-        or b["x"] + b["width"] <= a["x"]
-        or a["y"] + a["height"] <= b["y"]
-        or b["y"] + b["height"] <= a["y"]
-    )
+
 
 
 def _allocate_project_directory(output_root: Path, base_slug: str) -> Path:
@@ -668,11 +539,12 @@ def _resume_stage_material(
     stage: str,
     manifest: dict[str, object],
 ) -> tuple[list[object], list[Path]]:
-    if stage == "planning":
+    material_kind = get_stage(stage).material_kind
+    if material_kind == "planning":
         return [read_json(project_dir / "source/request.json")], [project_dir / "source/input.txt"]
     story = read_json(project_dir / "plan/story-plan.json")
     characters = read_json(project_dir / "plan/character-bible.json")
-    if stage == "storyboard":
+    if material_kind == "storyboard":
         character_items = characters.get("characters", [])
         identities = [
             {"id": item.get("id")}
@@ -685,7 +557,7 @@ def _resume_stage_material(
     panel_ids = [panel.get("id") for panel in panels if isinstance(panel.get("id"), str)]
     if not panel_ids:
         raise ValueError("storyboard has no panels")
-    if stage == "generation":
+    if material_kind == "generation":
         visual_panels = []
         for panel in panels:
             visual_panel = dict(panel)
@@ -745,12 +617,12 @@ def _resume_stage_material(
                 list(dict.fromkeys(prompt_paths + reference_paths + actual_reference_paths)),
             ),
         )
-    if stage == "lettering":
+    if material_kind == "lettering":
         text = [panel.get("text", []) for panel in panels]
         return [text] if text else [[]], _project_files(
             project_dir, [_panel_clean_relative_path(project_dir, panel_id) for panel_id in panel_ids]
         )
-    if stage == "composition":
+    if material_kind == "composition":
         geometry = []
         pages = storyboard.get("pages", [])
         if isinstance(pages, list):
@@ -815,27 +687,28 @@ def _stage_output_files(
     manifest: dict[str, object],
 ) -> list[Path]:
     """Return every required output path one resume stage is accountable for."""
-    if stage == "planning":
+    output_kind = get_stage(stage).output_kind
+    if output_kind == "planning":
         return _project_files(project_dir, ["plan/story-plan.json", "plan/character-bible.json"])
-    if stage == "storyboard":
+    if output_kind == "storyboard":
         return _project_files(project_dir, ["plan/storyboard.json"])
     storyboard = read_json(project_dir / "plan/storyboard.json")
     panels = _storyboard_panels(storyboard)
     panel_ids = [panel.get("id") for panel in panels if isinstance(panel.get("id"), str)]
     if not panel_ids:
         raise ValueError("storyboard has no panels")
-    if stage == "generation":
+    if output_kind == "generation":
         relatives = [f"panels/raw/{panel_id}.png" for panel_id in panel_ids]
         relatives += [
             _panel_clean_relative_path(project_dir, panel_id)
             for panel_id in panel_ids
         ]
         return _project_files(project_dir, relatives)
-    if stage == "lettering":
+    if output_kind == "lettering":
         return _project_files(
             project_dir, [f"panels/{panel_id}/lettered.png" for panel_id in panel_ids]
         )
-    if stage == "composition":
+    if output_kind == "composition":
         page_numbers = []
         for page in storyboard.get("pages", []):
             if isinstance(page, dict) and isinstance(page.get("number"), int):
@@ -939,15 +812,22 @@ def _accepted_panel_problem(
     project_dir: Path,
     record: dict[str, object],
 ) -> str | None:
+    """Validate schema once, then verify artifacts needed for safe reuse."""
     # Import lazily because the standalone validator imports this lifecycle module.
-    # Reuse must nevertheless honor the exact public panel-record schema.
     from .validate_project import validate_panel_provenance, validate_panel_record
 
     schema_issues = validate_panel_record(record)
     if schema_issues:
         first = schema_issues[0]
         return f"accepted panel QA record is invalid: {first.field}: {first.message}"
-    if record.get("schema_version") == "2.0":
+
+    is_v2 = record.get("schema_version") == "2.0"
+    if not is_v2 and record.get("failure_category") in {
+        "corrupt", "corrupt_image", "safety", "safety_refusal",
+    }:
+        return "non-overridable panel failure cannot be reused"
+
+    if is_v2:
         provenance_issues = validate_panel_provenance(project_dir, record)
         if provenance_issues:
             first = provenance_issues[0]
@@ -956,136 +836,74 @@ def _accepted_panel_problem(
         bindings = record.get("bindings")
         if not isinstance(panel_id, str) or not isinstance(bindings, dict):
             return "accepted panel QA record is invalid"
-        expected = {
+        expected_paths = {
             "raw_path": f"panels/raw/{panel_id}.png",
             "clean_path": f"panels/{panel_id}/clean.png",
             "normalization_path": f"panels/{panel_id}/normalization.json",
         }
-        if any(bindings.get(field) != value for field, value in expected.items()):
+        if any(bindings.get(field) != value for field, value in expected_paths.items()):
             return "accepted panel paths do not match the canonical project layout"
+        artifact_specs = (
+            ("raw", expected_paths["raw_path"], bindings.get("raw_sha256"),
+             (bindings.get("raw_width"), bindings.get("raw_height"))),
+            ("clean", expected_paths["clean_path"], bindings.get("clean_sha256"),
+             (bindings.get("clean_width"), bindings.get("clean_height"))),
+            ("normalization", expected_paths["normalization_path"],
+             bindings.get("normalization_sha256"), None),
+        )
+    else:
+        panel_id = record.get("panel_id")
+        raw_path = record.get("raw_path")
+        clean_path = record.get("clean_path")
+        if not isinstance(panel_id, str) or not isinstance(raw_path, str) or not isinstance(clean_path, str):
+            return "accepted panel QA record is invalid"
+        expected_paths = {
+            "source_prompt_path": f"prompts/panels/{panel_id}.txt",
+            "raw_path": f"panels/raw/{panel_id}.png",
+            "clean_path": f"panels/clean/{panel_id}.png",
+        }
+        if any(record.get(field) != value for field, value in expected_paths.items()):
+            return "accepted panel paths do not match the canonical project layout"
+        dimensions = record.get("dimensions")
+        recorded_size = (
+            dimensions.get("width"), dimensions.get("height")
+        ) if isinstance(dimensions, dict) else None
+        artifact_specs = (
+            ("raw", raw_path, record.get("raw_sha256"), recorded_size),
+            ("clean", clean_path, None, recorded_size),
+        )
+
+    resolved: dict[str, Path] = {}
+    for name, relative, expected_hash, expected_size in artifact_specs:
         try:
-            raw = _contained_project_path(project_dir, Path(expected["raw_path"]))
-            clean = _contained_project_path(project_dir, Path(expected["clean_path"]))
-            normalization = _contained_project_path(
-                project_dir, Path(expected["normalization_path"])
-            )
-        except ValueError:
+            path = _contained_project_path(project_dir, Path(relative))
+        except (TypeError, ValueError):
             return "accepted panel path escapes the project directory"
-        for name, path in (("raw", raw), ("clean", clean), ("normalization", normalization)):
-            if not path.is_file():
-                return f"artifact is missing: {expected[f'{name}_path']}"
-            if sha256_file(path) != bindings.get(f"{name}_sha256"):
-                return f"artifact hash mismatch: {expected[f'{name}_path']}"
+        resolved[name] = path
+        if not path.is_file():
+            return f"artifact is missing: {relative}"
+        if expected_hash is not None and sha256_file(path) != expected_hash:
+            return f"artifact hash mismatch: {relative}"
+        if name in {"raw", "clean"}:
+            try:
+                size = _verify_raster(path)
+            except ValueError:
+                return "accepted panel image is corrupt"
+            if expected_size is not None and size != expected_size:
+                return "accepted panel dimensions do not match recorded artifacts"
+
+    if not is_v2:
         try:
-            raw_size = _verify_raster(raw)
-            clean_size = _verify_raster(clean)
+            clean_size = _verify_raster(resolved["clean"])
+            raw_size = _verify_raster(resolved["raw"])
         except ValueError:
             return "accepted panel image is corrupt"
-        if (
-            raw_size != (bindings.get("raw_width"), bindings.get("raw_height"))
-            or clean_size != (bindings.get("clean_width"), bindings.get("clean_height"))
-        ):
+        if clean_size != raw_size:
             return "accepted panel dimensions do not match recorded artifacts"
-        return None
-    required_fields = {
-        "schema_version", "panel_id", "source_prompt_path", "raw_path", "clean_path",
-        "raw_sha256", "dimensions", "attempts", "generation", "checks", "decision",
-        "retry_reason", "unresolved_warnings",
-    }
-    if not required_fields <= set(record) or set(record) - required_fields - {
-        "failure_category", "override_reason",
-    }:
-        return "accepted panel QA record is invalid"
-    if record.get("schema_version") != "1.0":
-        return "accepted panel QA record is invalid"
-    if record.get("failure_category") in {
-        "corrupt", "corrupt_image", "safety", "safety_refusal",
-    }:
-        return "non-overridable panel failure cannot be reused"
-    panel_id = record.get("panel_id")
-    if not isinstance(panel_id, str) or not IDENTIFIER.fullmatch(panel_id):
-        return "accepted panel QA record is invalid"
-    attempts = record.get("attempts")
-    if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 1:
-        return "accepted panel QA record is invalid"
-    dimensions = record.get("dimensions")
-    if not isinstance(dimensions, dict) or set(dimensions) != {"width", "height"}:
-        return "accepted panel QA record is invalid"
-    generation = record.get("generation")
-    if not isinstance(generation, dict) or set(generation) != {
-        "capability_name", "completed_at", "reference_paths",
-    }:
-        return "accepted panel QA record is invalid"
-    references = generation.get("reference_paths")
-    if not isinstance(references, list) or not all(isinstance(item, str) for item in references):
-        return "accepted panel QA record is invalid"
-    checks = record.get("checks")
-    if not isinstance(checks, list) or tuple(
-        check.get("id") if isinstance(check, dict) else None for check in checks
-    ) != PANEL_CHECK_IDS:
-        return "accepted panel QA record is invalid"
-    for check in checks:
-        if (
-            not isinstance(check, dict)
-            or set(check) != {"id", "result", "severity", "evidence"}
-            or check.get("result") not in {"pass", "fail", "warning"}
-            or check.get("severity") not in {"error", "warning"}
-            or not isinstance(check.get("evidence"), str)
-            or not check["evidence"].strip()
-        ):
-            return "accepted panel QA record is invalid"
-    if any(
-        check.get("result") == "fail" and check.get("severity") == "error"
-        for check in checks
-    ):
-        return "error-level panel failure cannot be reused"
-    has_warning = any(
-        check.get("result") == "warning"
-        or (check.get("result") == "fail" and check.get("severity") == "warning")
-        for check in checks
-    )
-    unresolved = record.get("unresolved_warnings")
-    if not isinstance(unresolved, list) or not all(
-        isinstance(item, str) and item.strip() for item in unresolved
-    ):
-        return "accepted panel QA record is invalid"
-    if record.get("decision") == "accept" and (has_warning or unresolved):
-        return "accepted panel QA record is invalid"
-    if record.get("decision") == "accept_with_warnings" and (not has_warning or not unresolved):
-        return "accepted panel QA record is invalid"
-    raw_path = record.get("raw_path")
-    clean_path = record.get("clean_path")
-    raw_hash = record.get("raw_sha256")
-    if not isinstance(raw_path, str) or not isinstance(clean_path, str):
-        return "accepted panel paths are invalid"
-    if (
-        record.get("source_prompt_path") != f"prompts/panels/{panel_id}.txt"
-        or raw_path != f"panels/raw/{panel_id}.png"
-        or clean_path != f"panels/clean/{panel_id}.png"
-    ):
-        return "accepted panel paths do not match the canonical project layout"
-    if not isinstance(raw_hash, str) or SHA256.fullmatch(raw_hash) is None:
-        return "accepted panel hash is invalid"
-    try:
-        raw = _contained_project_path(project_dir, Path(raw_path))
-        clean = _contained_project_path(project_dir, Path(clean_path))
-    except ValueError:
-        return "accepted panel path escapes the project directory"
-    if not raw.is_file():
-        return f"artifact is missing: {raw_path}"
-    if sha256_file(raw) != raw_hash:
-        return f"artifact hash mismatch: {raw_path}"
-    if not clean.is_file():
-        return f"artifact is missing: {clean_path}"
-    try:
-        raw_size = _verify_raster(raw)
-        clean_size = _verify_raster(clean)
-    except ValueError:
-        return "accepted panel image is corrupt"
-    recorded_size = (dimensions.get("width"), dimensions.get("height"))
-    if raw_size != recorded_size or clean_size != raw_size:
-        return "accepted panel dimensions do not match recorded artifacts"
     return None
+
+
+
 
 
 def build_resume_plan(project_dir: Path) -> list[ResumeAction]:
@@ -1159,7 +977,7 @@ def build_resume_plan(project_dir: Path) -> list[ResumeAction]:
         if stale_from is None:
             actions.append(ResumeAction(stage, "reuse", "stage", "cache key and artifacts match"))
         else:
-            action = "regenerate" if stage == "generation" else "rerun"
+            action = get_stage(stage).stale_action
             reason = stale_reason if index == stale_from else f"depends on stale {RESUME_STAGES[stale_from]} stage"
             actions.append(ResumeAction(stage, action, "stage", reason))
 
@@ -1266,14 +1084,12 @@ def _resolved_block(manifest: dict[str, object], reason: str) -> bool:
 def _next_resume_action(project_dir: Path, stage: str | None) -> dict[str, str] | None:
     if stage is None:
         return None
-    if stage in {"planning", "storyboard", "generation"}:
+    definition = get_stage(stage)
+    if definition.next_action == "agent":
         return {"agent_required": stage}
-    commands = {
-        "lettering": "scripts/letter_panels.py",
-        "composition": "scripts/compose_pages.py",
-        "export": "scripts/export_pdf.py",
-    }
-    return {"command": f"{sys.executable} {ROOT / commands[stage]} {project_dir}"}
+    if not definition.runner:
+        raise ValueError(f"stage runner is not registered: {stage}")
+    return {"command": f"{sys.executable} {ROOT / definition.runner} {project_dir}"}
 
 
 def resume_project(project_dir: Path) -> dict[str, object]:
@@ -1481,7 +1297,7 @@ def _read_generation_counters(project_dir: Path) -> dict[str, object]:
 
 
 def _generation_counter_name(panel_id: str, kind: str) -> str:
-    if not IDENTIFIER.fullmatch(panel_id):
+    if PANEL_ID_PATTERN.fullmatch(panel_id) is None:
         raise ValueError("invalid panel ID")
     try:
         return GENERATION_COUNTER_NAMES[kind]
@@ -1673,7 +1489,7 @@ def _verify_raster(path: Path) -> tuple[int, int]:
 
 def promote_attempt(project_dir: Path, panel_id: str, attempt_path: Path) -> Path:
     """Verify and atomically copy one retained attempt into the accepted raw slot."""
-    if not IDENTIFIER.fullmatch(panel_id):
+    if PANEL_ID_PATTERN.fullmatch(panel_id) is None:
         raise ValueError("invalid panel ID")
     project_dir = Path(project_dir)
     attempt_relative = Path(attempt_path)
@@ -1727,7 +1543,7 @@ def promote_attempt(project_dir: Path, panel_id: str, attempt_path: Path) -> Pat
 
 def record_override(project_dir: Path, panel_id: str, reason: str) -> None:
     """Downgrade an overridable visual QA failure to a recorded warning."""
-    if not IDENTIFIER.fullmatch(panel_id):
+    if PANEL_ID_PATTERN.fullmatch(panel_id) is None:
         raise ValueError("invalid panel ID")
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError("override reason must not be empty")

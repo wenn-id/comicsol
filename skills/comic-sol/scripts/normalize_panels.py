@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
-import re
 import sys
 import warnings
 from dataclasses import dataclass
@@ -19,12 +17,13 @@ if __package__ in {None, ""}:
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from .core_primitives import PANEL_ID_PATTERN, canonical_artifact_bytes
 from .project_io import ProjectTransaction, contained_project_path
 from .raster_limits import MAX_DECODED_PIXELS
 
 
 IMPLEMENTATION_VERSION = "1"
-PANEL_ID = re.compile(r"^p[0-9]{2}-[0-9]{2}$")
+PANEL_ID = PANEL_ID_PATTERN
 MODES = frozenset({"crop", "fit", "exact"})
 
 
@@ -114,13 +113,6 @@ def normalization_geometry(
     return NormalizationGeometry(
         source_size, target_size, mode, crop_box, target_size, (0, 0)
     )
-
-
-def _canonical_json(value: object) -> bytes:
-    """Serialize a value as canonical JSON bytes."""
-    return (
-        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
 
 
 def _sha256(payload: bytes) -> str:
@@ -220,7 +212,7 @@ def _prepare(project_dir: Path, spec: NormalizationSpec) -> _PreparedNormalizati
         },
         "target_size": list(target_size),
     }
-    return _PreparedNormalization(spec, clean_bytes, _canonical_json(record))
+    return _PreparedNormalization(spec, clean_bytes, canonical_artifact_bytes(record))
 
 
 def normalize_panels(

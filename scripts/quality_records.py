@@ -6,25 +6,7 @@ from __future__ import annotations
 import unicodedata
 from typing import Iterable
 
-
-PANEL_CHECK_IDS = (
-    "character-identity",
-    "anatomy",
-    "action",
-    "composition",
-    "continuity",
-    "text-free",
-    "technical",
-)
-PAGE_CHECK_IDS = (
-    "clipped-text",
-    "text-overlap",
-    "face-action-obstruction",
-    "bubble-tail-direction",
-    "reading-order",
-    "accidental-text-watermark",
-    "layout-border-integrity",
-)
+from .core_primitives import PAGE_CHECK_IDS, PANEL_CHECK_IDS
 CHECK_IDS_BY_KIND = {
     "panel-qa": PANEL_CHECK_IDS,
     "page-qa": PAGE_CHECK_IDS,

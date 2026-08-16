@@ -35,6 +35,7 @@ BUNDLED_SCRIPTS = (
     "__init__.py",
     "comic_sol.py",
     "compose_pages.py",
+    "core_primitives.py",
     "export_pdf.py",
     "font_cmap.py",
     "layouts.py",
@@ -47,6 +48,7 @@ BUNDLED_SCRIPTS = (
     "quality_sample.py",
     "raster_limits.py",
     "render_report.py",
+    "stage_registry.py",
     "typography.py",
     "validate_project.py",
 )

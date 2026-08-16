@@ -4,15 +4,15 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import unicodedata
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Mapping, Sequence
 
 from .comic_sol import atomic_write_json
+from .core_primitives import canonical_json_bytes
 from .font_cmap import font_supports
 from .project_io import contained_project_path
 
@@ -51,11 +51,8 @@ class TypographyPreflightError(ValueError):
 
 
 def _canonical_bytes(value: object) -> bytes:
-    """Serialize a value as canonical JSON bytes."""
-    return (
-        json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-        + "\n"
-    ).encode("utf-8")
+    """Serialize canonical JSON bytes with typography's historical newline."""
+    return canonical_json_bytes(value) + b"\n"
 
 
 def _sha256_bytes(payload: bytes) -> str:

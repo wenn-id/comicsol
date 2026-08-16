@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -11,12 +10,13 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     __package__ = "scripts"
 
+from .core_primitives import PANEL_ID_PATTERN
 from .project_io import contained_project_path, open_contained, read_contained_bytes
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SAMPLE = ROOT / "samples/sunlight-courier"
-PANEL_ID = re.compile(r"p\d{2}-\d{2}")
+PANEL_ID = PANEL_ID_PATTERN
 
 
 def materialize_sample(project: Path = DEFAULT_SAMPLE) -> tuple[Path, ...]:
