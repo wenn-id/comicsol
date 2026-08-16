@@ -1,6 +1,8 @@
 import unittest
 from pathlib import Path
 
+from comic_sol_product import __version__
+
 
 class ReleaseDocumentationTests(unittest.TestCase):
     @classmethod
@@ -9,7 +11,23 @@ class ReleaseDocumentationTests(unittest.TestCase):
         cls.readme = (cls.root / "README.md").read_text(encoding="utf-8")
         cls.install = (cls.root / "docs/install.md").read_text(encoding="utf-8")
         cls.changelog = (cls.root / "CHANGELOG.md").read_text(encoding="utf-8")
-        cls.notes = (cls.root / "docs/releases/v2.0.0rc4.md").read_text(encoding="utf-8")
+        cls.notes = (
+            cls.root / f"docs/releases/v{__version__}.md"
+        ).read_text(encoding="utf-8")
+        cls.release_workflow = (
+            cls.root / ".github/workflows/release.yml"
+        ).read_text(encoding="utf-8")
+
+    def test_release_workflow_resolves_tag_prefixed_notes_in_prepare(self):
+        expected_notes = self.root / f"docs/releases/v{__version__}.md"
+        self.assertTrue(expected_notes.is_file(), expected_notes)
+        prepare_job = self.release_workflow.split("\n  native:\n", 1)[0]
+        self.assertIn('NOTES="docs/releases/${RELEASE_TAG}.md"', prepare_job)
+        self.assertIn('test -f "$NOTES"', prepare_job)
+        self.assertNotIn(
+            'NOTES="docs/releases/${RELEASE_VERSION}.md"',
+            self.release_workflow,
+        )
 
     def test_readme_links_native_install_and_release_security(self):
         self.assertIn("docs/install.md", self.readme)
