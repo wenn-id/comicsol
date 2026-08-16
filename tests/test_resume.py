@@ -523,6 +523,55 @@ class ResumeTests(unittest.TestCase):
         transactions = self.project / "logs/transactions"
         self.assertEqual([], list(transactions.iterdir()) if transactions.exists() else [])
 
+    def test_block_project_rolls_back_event_when_manifest_write_fails(self):
+        project = init_project(
+            self.root,
+            "Atomic block",
+            b"A story",
+            {"mode": "short_prompt", "language": "en"},
+        )
+        manifest_before = (project / "project.json").read_bytes()
+        events_before = (project / "logs/events.jsonl").read_bytes()
+        real_stage_bytes = project_io.ProjectTransaction.stage_bytes
+
+        def fail_manifest_stage(transaction, relative, payload):
+            if relative == "project.json":
+                raise OSError("injected manifest write failure")
+            return real_stage_bytes(transaction, relative, payload)
+
+        with patch(
+            "scripts.comic_sol.ProjectTransaction.stage_bytes",
+            side_effect=fail_manifest_stage,
+            autospec=True,
+        ):
+            with self.assertRaisesRegex(OSError, "injected manifest write failure"):
+                block_project(project, "project-blocked", "temporary warning")
+
+        self.assertEqual(manifest_before, (project / "project.json").read_bytes())
+        self.assertEqual(events_before, (project / "logs/events.jsonl").read_bytes())
+
+    def test_promote_attempt_rolls_back_raster_when_event_write_fails(self):
+        attempt = self.project / "panels/raw/p01-01.atomic-promote.png"
+        Image.new("RGB", (640, 960), "green").save(attempt)
+        record_generation_attempt(self.project, "p01-01", "visual_retry", attempt)
+        destination = self.project / "panels/raw/p01-01.png"
+        destination.unlink()
+        events_before = (self.project / "logs/events.jsonl").read_bytes()
+
+        def fail_commit(transaction):
+            raise OSError("injected event write failure")
+
+        with patch(
+            "scripts.comic_sol.ProjectTransaction.commit",
+            side_effect=fail_commit,
+            autospec=True,
+        ):
+            with self.assertRaisesRegex(OSError, "injected event write failure"):
+                promote_attempt(self.project, "p01-01", attempt)
+
+        self.assertFalse(destination.exists())
+        self.assertEqual(events_before, (self.project / "logs/events.jsonl").read_bytes())
+
     def test_attempt_is_retained_until_verified_promotion(self):
         attempt = self.project / "panels/raw/p01-01.attempt-2.png"
         Image.new("RGB", (640, 960), "green").save(attempt)

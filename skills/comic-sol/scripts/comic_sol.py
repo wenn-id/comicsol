@@ -1229,7 +1229,7 @@ def block_project(project_dir: Path, reason: str, warning: str) -> dict[str, obj
         raise ValueError("blocked warning must not be empty")
     project_dir = Path(project_dir).resolve(strict=True)
     manifest_path = contained_project_path(project_dir, "project.json", must_exist=True)
-    with ProjectLock(project_dir):
+    with ProjectTransaction(project_dir, "block-project") as transaction:
         manifest = read_json(manifest_path)
         current = manifest.get("status")
         if not isinstance(current, str) or not _allowed_transition(current, "BLOCKED"):
@@ -1246,12 +1246,13 @@ def block_project(project_dir: Path, reason: str, warning: str) -> dict[str, obj
             "status": "BLOCKED",
             "updated_at": _utc_now(),
         })
-        append_event(
+        events = _event_log_with(
             project_dir,
             "project.transitioned",
             {"from": current, "to": "BLOCKED", "warning_present": True},
         )
-        atomic_write_json(manifest_path, manifest)
+        transaction.stage_bytes("logs/events.jsonl", events)
+        transaction.stage_bytes("project.json", canonical_artifact_bytes(manifest))
         return manifest
 
 
@@ -1709,17 +1710,18 @@ def promote_attempt(project_dir: Path, panel_id: str, attempt_path: Path) -> Pat
                     break
                 number += 1
         transaction.stage_bytes(destination_relative.as_posix(), new_bytes)
-    with ProjectLock(project_dir):
-        append_event(project_dir, "generation.attempt-promoted", event_details)
+        events = _event_log_with(
+            project_dir, "generation.attempt-promoted", event_details
+        )
         if replaced:
-            append_event(
-                project_dir,
+            events += canonical_event_record(
                 "artifact.regenerated",
                 {
                     "artifact_path": destination_relative.as_posix(),
                     "reused": False,
                 },
             )
+        transaction.stage_bytes("logs/events.jsonl", events)
     return destination
 
 
