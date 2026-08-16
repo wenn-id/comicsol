@@ -19,6 +19,21 @@ mcp = ["mcp==2.0.0"]
 [project.scripts]
 comic-sol = "comic_sol_product.cli:main"
 
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+exclude = [".native-dist", ".worktrees", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+files = ["scripts/project_io.py"]
+python_version = "3.11"
+
 [tool.setuptools.dynamic]
 version = {attr = "comic_sol_product.__version__"}
 

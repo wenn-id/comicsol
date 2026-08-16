@@ -28,6 +28,11 @@ Thumbs.db
 # Build Week generated outputs (not part of the skill package)
 comic-sol-output/
 
+# Coverage reports from the local quality baseline
+.coverage
+coverage.xml
+coverage-html/
+
 # Isolated development worktrees
 .worktrees/
 

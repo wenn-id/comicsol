@@ -74,6 +74,45 @@ jobs:
           python scripts/clean_install_smoke.py --wheel dist/*.whl
         fi
 
+  quality:
+    name: Quality baseline
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+    - name: Set up Python 3.11
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      with:
+        python-version: "3.11"
+    - name: Install runtime dependencies
+      run: python -m pip install --require-hashes -r requirements/locks/runtime-linux-x86_64.txt
+    - name: Install quality tools
+      run: python -m pip install --require-hashes -r requirements/locks/quality-linux-x86_64.txt
+    - name: Ruff lint
+      continue-on-error: true
+      run: ruff check scripts comic_sol_product tests
+    - name: Ruff format check
+      continue-on-error: true
+      run: ruff format --check scripts comic_sol_product tests
+    - name: Mypy baseline
+      continue-on-error: true
+      run: mypy
+    - name: Coverage baseline
+      continue-on-error: true
+      run: |
+        python -m coverage run --branch -m unittest discover -s tests
+        python -m coverage report
+        python -m coverage xml -o coverage.xml
+        python -m coverage html -d coverage-html
+    - name: Upload coverage artifact
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: coverage-baseline
+        path: |
+          coverage.xml
+          coverage-html/
+
   native-distribution:
     runs-on: ubuntu-latest
     steps:
