@@ -141,7 +141,8 @@ class JsonClientAdapter:
 
 
 _SECTION_RE = re.compile(
-    r"^[ \t]*\[mcp_servers\.(?:comic-sol|\"comic-sol\"|'comic-sol')\][ \t]*(?:#.*)?(?:\r?\n)?$"
+    r"^[ \t]*\[\s*(?:mcp_servers|\"mcp_servers\"|'mcp_servers')\s*\.\s*"
+    r"(?:comic-sol|\"comic-sol\"|'comic-sol')\s*\][ \t]*(?:#.*)?(?:\r?\n)?$"
 )
 _ANY_SECTION_RE = re.compile(r"^[ \t]*\[{1,2}[^\r\n]+\]{1,2}[ \t]*(?:#.*)?(?:\r?\n)?$")
 

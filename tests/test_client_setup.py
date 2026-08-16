@@ -422,6 +422,29 @@ class ClientSetupTests(unittest.TestCase):
             {"model": "gpt-test"},
         )
 
+    def test_codex_uninstall_removes_whitespace_and_quoted_dotted_key_sections(self):
+        for header in (
+            '[mcp_servers . "comic-sol"]',
+            '["mcp_servers"."comic-sol"]',
+        ):
+            with self.subTest(header=header):
+                config = self.home / ".codex" / "config.toml"
+                config.parent.mkdir(parents=True, exist_ok=True)
+                config.write_text(
+                    'model = "gpt-test"\n\n'
+                    f"{header}\n"
+                    'command = "comic-sol"\n'
+                    'args = ["mcp", "--root", "/tmp/comic-sol"]\n',
+                    encoding="utf-8",
+                )
+                result = uninstall_clients(self.output, adapters=[CodexAdapter(config)])[0]
+
+                self.assertEqual(result.status, "removed")
+                self.assertEqual(
+                    tomllib.loads(config.read_text(encoding="utf-8")),
+                    {"model": "gpt-test"},
+                )
+
     def test_uninstall_verification_failure_rolls_back_byte_for_byte(self):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)
