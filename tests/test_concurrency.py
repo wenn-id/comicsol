@@ -33,19 +33,6 @@ except TimeoutError as error:
     raise SystemExit(2)
 """
 
-BLOCKING_LOCK_SCRIPT = r"""
-import sys
-from pathlib import Path
-from scripts.project_io import ProjectLock
-
-try:
-    with ProjectLock(Path(sys.argv[1]), timeout=None):
-        print("ACQUIRED", flush=True)
-except TimeoutError as error:
-    print(error, file=sys.stderr)
-    raise SystemExit(2)
-"""
-
 CONTENDER_AT_EMPTY_FILE_SCRIPT = r"""
 import sys
 from pathlib import Path
@@ -510,6 +497,33 @@ class FinalizeLockRaceTests(unittest.TestCase):
 
         self.assertFalse(worker.is_alive())
         self.assertEqual([], errors)
+    def test_project_transaction_honors_custom_finite_lock_timeout(self):
+        lock = project_io.ProjectLock(self.project, timeout=1.0)
+        lock.__enter__()
+        errors = []
+
+        def run_transaction():
+            try:
+                with project_io.ProjectTransaction(
+                    self.project,
+                    "bounded-test",
+                    lock_timeout=0.1,
+                ):
+                    pass
+            except BaseException as error:
+                errors.append(error)
+
+        try:
+            worker = threading.Thread(target=run_transaction)
+            worker.start()
+            worker.join(timeout=2)
+        finally:
+            lock.__exit__(None, None, None)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(1, len(errors))
+        self.assertIsInstance(errors[0], TimeoutError)
+
     def test_finalize_holds_project_lock_against_mutating_transactions(self):
         entered = threading.Event()
         release = threading.Event()

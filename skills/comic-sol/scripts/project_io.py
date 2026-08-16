@@ -19,6 +19,7 @@ MAX_SOURCE_BYTES = 200 * 1024
 SOURCE_SUFFIXES = {".txt", ".md"}
 _DRIVE = re.compile(r"^[A-Za-z]:")
 _LOCK_RETRY_SECONDS = 0.05
+PROJECT_OPERATION_LOCK_TIMEOUT = 300.0
 # Windows byte-range locks are mandatory, so the locked byte must sit past any
 # region readers touch. The PID metadata occupies the first bytes of the file.
 _LOCK_BYTE_OFFSET = 4096
@@ -477,10 +478,17 @@ class ProjectTransaction:
 
     JOURNAL_SCHEMA_VERSION = "1.0"
 
-    def __init__(self, project_dir: Path, operation: str) -> None:
+    def __init__(
+        self,
+        project_dir: Path,
+        operation: str,
+        *,
+        lock_timeout: float | None = PROJECT_OPERATION_LOCK_TIMEOUT,
+    ) -> None:
         """Initialize an unpublished project transaction."""
         self.project_dir = Path(project_dir)
         self.operation = operation
+        self.lock_timeout = lock_timeout
         self._lock: ProjectLock | None = None
         self._dir: Path | None = None
         self._journal: list[dict] = []
@@ -489,7 +497,9 @@ class ProjectTransaction:
 
     def __enter__(self) -> "ProjectTransaction":
         """Start a transaction while holding the project lock."""
-        self._lock = ProjectLock(self.project_dir, timeout=None).__enter__()
+        self._lock = ProjectLock(
+            self.project_dir, timeout=self.lock_timeout
+        ).__enter__()
         try:
             base = contained_project_path(self.project_dir, "logs/transactions")
             base.mkdir(parents=True, exist_ok=True)
