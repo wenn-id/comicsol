@@ -71,6 +71,8 @@ class ClientAdapter(Protocol):
     def dump(self, config: Any) -> bytes: ...
     def verify(self, expected: dict[str, Any] | None = None) -> bool: ...
 
+    def verify_removed(self) -> bool: ...
+
 
 class JsonClientAdapter:
     """Adapter for clients with a verified JSON MCP server mapping."""
@@ -131,9 +133,91 @@ class JsonClientAdapter:
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
             return False
 
+    def verify_removed(self) -> bool:
+        if self._verify_hook is not None:
+            return _call_verify_hook(self._verify_hook, None)
+        try:
+            value = self.load(self.config_path.read_bytes())
+            return MCP_SERVER_NAME not in value.get(self.servers_key, {})
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+            return False
 
-_SECTION_RE = re.compile(r"(?m)^\[mcp_servers\.comic-sol\]\s*$")
-_ANY_SECTION_RE = re.compile(r"(?m)^\[[^\n]+\]\s*$")
+
+_SECTION_RE = re.compile(
+    r"^[ \t]*\[mcp_servers\.comic-sol\][ \t]*(?:#.*)?(?:\r?\n)?$"
+)
+_ANY_SECTION_RE = re.compile(r"^[ \t]*\[{1,2}[^\r\n]+\]{1,2}[ \t]*(?:#.*)?(?:\r?\n)?$")
+
+
+def _is_escaped(text: str, index: int) -> bool:
+    backslashes = 0
+    index -= 1
+    while index >= 0 and text[index] == "\\":
+        backslashes += 1
+        index -= 1
+    return backslashes % 2 == 1
+
+
+def _scan_toml_line(line: str, state: str | None) -> str | None:
+    index = 0
+    while index < len(line):
+        if state == "basic":
+            if line[index] == "\\":
+                index += 2
+            elif line[index] == '"':
+                state = None
+                index += 1
+            else:
+                index += 1
+            continue
+        if state == "literal":
+            if line[index] == "'":
+                state = None
+            index += 1
+            continue
+        if state == "multiline-basic":
+            if line.startswith('"""', index) and not _is_escaped(line, index):
+                state = None
+                index += 3
+            else:
+                index += 1
+            continue
+        if state == "multiline-literal":
+            if line.startswith("'''", index):
+                state = None
+                index += 3
+            else:
+                index += 1
+            continue
+
+        if line[index] == "#":
+            break
+        if line.startswith('"""', index):
+            state = "multiline-basic"
+            index += 3
+        elif line.startswith("'''", index):
+            state = "multiline-literal"
+            index += 3
+        elif line[index] == '"':
+            state = "basic"
+            index += 1
+        elif line[index] == "'":
+            state = "literal"
+            index += 1
+        else:
+            index += 1
+    return state
+
+
+def _section_spans(text: str, pattern: re.Pattern[str]):
+    state: str | None = None
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        end = offset + len(line)
+        if state is None and pattern.fullmatch(line):
+            yield offset, end
+        state = _scan_toml_line(line, state)
+        offset = end
 
 
 class CodexAdapter:
@@ -164,19 +248,20 @@ class CodexAdapter:
 
     @staticmethod
     def _replace_or_remove(text: str, replacement: str) -> tuple[str, bool]:
-        match = _SECTION_RE.search(text)
-        if not match:
+        matches = list(_section_spans(text, _SECTION_RE))
+        if not matches:
             if not replacement:
                 return text, False
             separator = "" if not text or text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
             return text + separator + replacement, True
-        next_section = _ANY_SECTION_RE.search(text, match.end())
-        end = next_section.start() if next_section else len(text)
-        old = text[match.start():end]
+        start, _ = matches[0]
+        next_sections = [span for span in _section_spans(text, _ANY_SECTION_RE) if span[0] > start]
+        end = next_sections[0][0] if next_sections else len(text)
+        old = text[start:end]
         if replacement and old.strip() == replacement.strip():
             return text, False
-        result = text[:match.start()] + replacement
-        if replacement and next_section and not replacement.endswith("\n\n"):
+        result = text[:start] + replacement
+        if replacement and next_sections and not replacement.endswith("\n\n"):
             result += "\n"
         result += text[end:]
         return result, True
@@ -197,5 +282,14 @@ class CodexAdapter:
             parsed = tomllib.loads(self.config_path.read_text(encoding="utf-8"))
             entry = parsed["mcp_servers"][MCP_SERVER_NAME]
             return _valid_mcp_entry(entry, expected)
+        except (OSError, UnicodeError, ValueError, KeyError, TypeError, tomllib.TOMLDecodeError):
+            return False
+
+    def verify_removed(self) -> bool:
+        if self._verify_hook is not None:
+            return _call_verify_hook(self._verify_hook, None)
+        try:
+            parsed = tomllib.loads(self.config_path.read_text(encoding="utf-8"))
+            return MCP_SERVER_NAME not in parsed.get("mcp_servers", {})
         except (OSError, UnicodeError, ValueError, KeyError, TypeError, tomllib.TOMLDecodeError):
             return False

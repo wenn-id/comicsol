@@ -141,7 +141,13 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
     try:
         shutil.copy2(path, backup)
         _atomic_write(path, adapter.dump(updated), original_mode)
-        if not remove and not adapter.verify(entry):
+        try:
+            adapter.load(path.read_bytes())
+        except (UnicodeError, ValueError):
+            _atomic_write(path, original, original_mode)
+            return SetupResult(adapter.name, "rolled-back", str(path), str(backup), "verification failed; original restored")
+        verified = adapter.verify_removed() if remove else adapter.verify(entry)
+        if not verified:
             _atomic_write(path, original, original_mode)
             return SetupResult(adapter.name, "rolled-back", str(path), str(backup), "verification failed; original restored")
     except (OSError, UnicodeError, ValueError) as error:
