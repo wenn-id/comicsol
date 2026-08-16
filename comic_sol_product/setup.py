@@ -90,6 +90,27 @@ def _atomic_write(path: Path, data: bytes, mode: int | None = None) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _verify_persisted(
+    adapter: ClientAdapter,
+    path: Path,
+    entry: dict[str, object],
+    *,
+    remove: bool,
+) -> bool:
+    """Validate bytes on disk without letting adapter errors escape."""
+    try:
+        persisted = adapter.load(path.read_bytes())
+        if remove:
+            verifier = getattr(adapter, "verify_removed", None)
+            if callable(verifier):
+                return bool(verifier())
+            _, changed = adapter.remove(persisted)
+            return not changed
+        return bool(adapter.verify(entry))
+    except Exception:
+        return False
+
+
 def default_adapters(home: Path | None = None) -> list[ClientAdapter]:
     """Return only adapters whose native formats and locations are verified."""
     home = (home or Path.home()).expanduser()
@@ -141,13 +162,7 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
     try:
         shutil.copy2(path, backup)
         _atomic_write(path, adapter.dump(updated), original_mode)
-        try:
-            adapter.load(path.read_bytes())
-        except (UnicodeError, ValueError):
-            _atomic_write(path, original, original_mode)
-            return SetupResult(adapter.name, "rolled-back", str(path), str(backup), "verification failed; original restored")
-        verified = adapter.verify_removed() if remove else adapter.verify(entry)
-        if not verified:
+        if not _verify_persisted(adapter, path, entry, remove=remove):
             _atomic_write(path, original, original_mode)
             return SetupResult(adapter.name, "rolled-back", str(path), str(backup), "verification failed; original restored")
     except (OSError, UnicodeError, ValueError) as error:

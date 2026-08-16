@@ -71,9 +71,6 @@ class ClientAdapter(Protocol):
     def dump(self, config: Any) -> bytes: ...
     def verify(self, expected: dict[str, Any] | None = None) -> bool: ...
 
-    def verify_removed(self) -> bool: ...
-
-
 class JsonClientAdapter:
     """Adapter for clients with a verified JSON MCP server mapping."""
 
@@ -144,7 +141,7 @@ class JsonClientAdapter:
 
 
 _SECTION_RE = re.compile(
-    r"^[ \t]*\[mcp_servers\.comic-sol\][ \t]*(?:#.*)?(?:\r?\n)?$"
+    r"^[ \t]*\[mcp_servers\.(?:comic-sol|\"comic-sol\"|'comic-sol')\][ \t]*(?:#.*)?(?:\r?\n)?$"
 )
 _ANY_SECTION_RE = re.compile(r"^[ \t]*\[{1,2}[^\r\n]+\]{1,2}[ \t]*(?:#.*)?(?:\r?\n)?$")
 
@@ -220,6 +217,21 @@ def _section_spans(text: str, pattern: re.Pattern[str]):
         offset = end
 
 
+def _table_end(text: str, start: int, end: int) -> int:
+    """Keep trailing TOML comments and whitespace outside a final table."""
+    state: str | None = None
+    content_end = start
+    offset = start
+    for line in text[start:end].splitlines(keepends=True):
+        line_end = offset + len(line)
+        stripped = line.strip()
+        if state is not None or (stripped and not stripped.startswith("#")):
+            content_end = line_end
+        state = _scan_toml_line(line, state)
+        offset = line_end
+    return content_end
+
+
 class CodexAdapter:
     """Preserving adapter for Codex ``~/.codex/config.toml``."""
 
@@ -256,7 +268,7 @@ class CodexAdapter:
             return text + separator + replacement, True
         start, _ = matches[0]
         next_sections = [span for span in _section_spans(text, _ANY_SECTION_RE) if span[0] > start]
-        end = next_sections[0][0] if next_sections else len(text)
+        end = next_sections[0][0] if next_sections else _table_end(text, start, len(text))
         old = text[start:end]
         if replacement and old.strip() == replacement.strip():
             return text, False
