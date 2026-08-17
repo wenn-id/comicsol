@@ -281,6 +281,7 @@ class McpServerUnitTests(unittest.TestCase):
         with self.assertRaisesRegex(ToolError, "symlink"):
             mcp_server._resolve_project("nested-project")
 
+    @unittest.skipIf(sys.platform == "win32", "Windows requires a fresh symlink scan")
     def test_symlink_scan_is_cached_per_project_and_invalidated_on_change(self):
         project = self.root / "cached-project"
         project.mkdir()
@@ -317,6 +318,7 @@ class McpServerUnitTests(unittest.TestCase):
             mcp_server._resolve_project("cached-project")
         self.assertIsNot(cached, mcp_server._SYMLINK_SCAN_CACHE.get("cached-project"))
 
+    @unittest.skipIf(sys.platform == "win32", "Windows requires a fresh symlink scan")
     def test_symlink_cache_hit_avoids_directory_rescan(self):
         project = self.root / "unchanged-project"
         (project / "nested").mkdir(parents=True)
