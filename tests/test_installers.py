@@ -73,6 +73,13 @@ class PublicInstallerContractTests(unittest.TestCase):
         self.assertIn("-Uninstall", self.powershell)
         self.assertIn("--uninstall", self.posix)
 
+    def test_installers_enforce_https_redirects_and_normalize_digests(self):
+        self.assertIn("curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2", self.posix)
+        self.assertIn("tr '[:upper:]' '[:lower:]'", self.posix)
+        self.assertIn("MaximumRedirection 1", self.powershell)
+        self.assertIn("Scheme", self.powershell)
+        self.assertIn("https", self.powershell.lower())
+
     def test_installers_serialize_install_root_mutations(self):
         self.assertIn("INSTALL_LOCK_DIR", self.posix)
         self.assertIn("mkdir --", self.posix)

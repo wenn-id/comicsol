@@ -149,8 +149,12 @@ function Restore-Install {
 try {
     New-Item -ItemType Directory -Path $Temp | Out-Null
     if ($Url) {
+        $parsedUrl = [System.Uri]$Url
+        if (-not $parsedUrl.IsAbsoluteUri -or $parsedUrl.Scheme -ne "https") {
+            throw "-Url must be an absolute HTTPS URL"
+        }
         $Archive = Join-Path $Temp "comic-sol.zip"
-        Invoke-WebRequest -Uri $Url -OutFile $Archive -UseBasicParsing
+        Invoke-WebRequest -Uri $parsedUrl -OutFile $Archive -UseBasicParsing -MaximumRedirection 1
     }
     if (-not $Archive -or -not (Test-Path -LiteralPath $Archive)) { throw "Provide -Archive PATH or -Url HTTPS_URL" }
     $Actual = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()

@@ -202,15 +202,16 @@ trap 'abort_install' INT TERM
 
 if [ -n "$URL" ]; then
   ARCHIVE="$TMP/comic-sol.zip"
-  curl -fL --proto '=https' --tlsv1.2 "$URL" -o "$ARCHIVE"
+  curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 "$URL" -o "$ARCHIVE"
 fi
 if [ -z "$ARCHIVE" ] || [ ! -f "$ARCHIVE" ]; then
   echo "Provide --archive PATH or --url HTTPS_URL" >&2
   exit 2
 fi
 
-ACTUAL=$(sha256sum "$ARCHIVE" | cut -d ' ' -f 1)
-if [ "$ACTUAL" != "$SHA256" ]; then
+ACTUAL=$(sha256sum "$ARCHIVE" | cut -d ' ' -f 1 | tr '[:upper:]' '[:lower:]')
+EXPECTED=$(printf '%s' "$SHA256" | tr '[:upper:]' '[:lower:]')
+if [ "$ACTUAL" != "$EXPECTED" ]; then
   echo "SHA256 mismatch" >&2
   exit 1
 fi
