@@ -153,7 +153,10 @@ def make_symlink(test_case, link: Path, target: Path, *, directory: bool = False
     """
     try:
         link.symlink_to(target, target_is_directory=directory)
-        return
+        if link.is_symlink():
+            return
+        link.unlink(missing_ok=True)
+        first_error = OSError("created path is not recognized as a symlink")
     except OSError as error:
         first_error = error
 
