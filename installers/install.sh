@@ -8,22 +8,47 @@ URL=""
 UNINSTALL=0
 INSTALL_LOCK_DIR=""
 LOCK_HELD=0
+SECURE_HANDOFF=0
+SECURE_HANDOFF_SHIFT=0
+SECURE_PARENT_FD=""
 INSTALL_MARKER_NAME=".comic-sol-install"
 INSTALL_MARKER_MAGIC="comic-sol-install-v1"
 
 secure_root_handoff() {
-  [ "${COMIC_SOL_SECURE_ROOT:-0}" -eq 1 ] && return 0
+  if [ "${1:-}" = "--secure-handoff" ] && [ "$#" -ge 4 ]; then
+    case "$2$3$4" in
+      ''|*[!0-9]*) ;;
+      *)
+        handoff_root=$(cd -P -- "/dev/fd/$2" 2>/dev/null && pwd -P) || handoff_root=""
+        handoff_parent=$(test -d "/dev/fd/$3" && printf '%s\n' ok || true)
+        handoff_caller=$(cd -P -- "/dev/fd/$4" 2>/dev/null && pwd -P) || handoff_caller=""
+        if [ -n "$handoff_root" ] &&
+           [ "$handoff_root" = "$(pwd -P)" ] &&
+           [ -n "$handoff_parent" ] &&
+           [ -n "$handoff_caller" ]; then
+          SECURE_HANDOFF=1
+          SECURE_HANDOFF_SHIFT=4
+          SECURE_PARENT_FD=$3
+          INSTALL_ROOT_DISPLAY=$handoff_root
+          CALLER_ROOT=$handoff_caller
+          return 0
+        fi
+        ;;
+    esac
+  fi
   command -v perl >/dev/null 2>&1 || {
     echo "secure install root traversal requires perl" >&2
     exit 1
   }
   script_path=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")
   exec perl -MFcntl -MFile::Spec -MCwd -MErrno -e '
-    use Fcntl qw(O_DIRECTORY O_NOFOLLOW O_RDONLY);
+    use Fcntl qw(F_SETFD O_DIRECTORY O_NOFOLLOW O_RDONLY);
     my $script = shift @ARGV;
     my $root = $ENV{COMIC_SOL_INSTALL_ROOT};
     my $uninstall = grep { $_ eq "--uninstall" } @ARGV;
     my $caller = Cwd::getcwd();
+    sysopen(my $caller_dir, $caller, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+      or die "refusing install root: cannot open caller directory: $!\n";
     for (my $i = 0; $i + 1 < @ARGV; $i++) {
       $root = $ARGV[$i + 1] if $ARGV[$i] eq "--install-root";
       if ($ARGV[$i] eq "--archive" && defined $ARGV[$i + 1]) {
@@ -44,6 +69,7 @@ secure_root_handoff() {
       or die "refusing install root: cannot open filesystem root: $!\n";
     chdir($dir) or die "refusing install root: cannot enter filesystem root: $!\n";
     shift @parts;
+    my $parent;
     for (my $i = 0; $i < @parts; $i++) {
       my $part = $parts[$i];
       next if $part eq "" || $part eq ".";
@@ -60,17 +86,23 @@ secure_root_handoff() {
           die "refusing install root: path contains a symlink or is not a directory: $!\n";
         }
       }
+      $parent = $dir;
       chdir($next) or die "refusing install root: cannot securely enter directory: $!\n";
       $dir = $next;
     }
-    $ENV{COMIC_SOL_SECURE_ROOT}=1;
-    $ENV{COMIC_SOL_INSTALL_ROOT_DISPLAY}=Cwd::getcwd();
-    $ENV{COMIC_SOL_CALLER_ROOT}=$caller;
-    exec "/bin/sh", $script, @ARGV or die "cannot relaunch installer: $!\n";
+    my $parent_handle = $parent || $dir;
+    fcntl($dir, F_SETFD, 0) or die "cannot establish secure installer handoff: $!\n";
+    fcntl($parent_handle, F_SETFD, 0) or die "cannot establish secure installer handoff: $!\n";
+    fcntl($caller_dir, F_SETFD, 0) or die "cannot establish secure installer handoff: $!\n";
+    exec "/bin/sh", $script, "--secure-handoff", fileno($dir), fileno($parent_handle), fileno($caller_dir), @ARGV
+      or die "cannot relaunch installer: $!\n";
   ' "$script_path" "$@"
 }
 
 secure_root_handoff "$@"
+if [ "$SECURE_HANDOFF" -eq 1 ]; then
+  shift "$SECURE_HANDOFF_SHIFT"
+fi
 
 acquire_install_lock() {
   lock_parent=$(dirname "$INSTALL_LOCK_DIR")
@@ -182,9 +214,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ "${COMIC_SOL_SECURE_ROOT:-0}" -eq 1 ]; then
-  CALLER_ROOT=${COMIC_SOL_CALLER_ROOT:-$(pwd -P)}
-  INSTALL_ROOT_DISPLAY=${COMIC_SOL_INSTALL_ROOT_DISPLAY:?}
+if [ "$SECURE_HANDOFF" -eq 1 ]; then
   INSTALL_ROOT="."
 else
   if [ "$UNINSTALL" -eq 1 ]; then
@@ -203,7 +233,11 @@ else
   INSTALL_ROOT="."
 fi
 
-INSTALL_LOCK_DIR="$INSTALL_ROOT/.comic-sol-install.lock"
+if [ "$SECURE_HANDOFF" -eq 1 ]; then
+  INSTALL_LOCK_DIR="/dev/fd/$SECURE_PARENT_FD/.comic-sol-install.lock"
+else
+  INSTALL_LOCK_DIR="$INSTALL_ROOT/.comic-sol-install.lock"
+fi
 if [ "$UNINSTALL" -eq 1 ]; then
   acquire_install_lock
   trap 'release_install_lock' EXIT
@@ -249,10 +283,10 @@ if [ "$UNINSTALL" -eq 1 ]; then
   for child in active-version.new .comic-sol-install.new active-version "$INSTALL_MARKER_NAME"; do
     rm -f -- "$INSTALL_ROOT/$child"
   done
-  release_install_lock
   install_root_name=$(basename -- "$INSTALL_ROOT_DISPLAY")
   cd ..
   rmdir -- "$install_root_name" 2>/dev/null || true
+  release_install_lock
   echo "Comic Sol runtime removed. User projects were preserved."
   exit 0
 fi

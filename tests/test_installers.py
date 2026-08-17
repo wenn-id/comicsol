@@ -409,8 +409,8 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.posix.index('INSTALL_LOCK_DIR="$INSTALL_ROOT/.comic-sol-install.lock"'),
         )
         self.assertLess(
-            self.posix.index("release_install_lock\n  install_root_name=$(basename"),
             self.posix.index('rmdir -- "$install_root_name"'),
+            self.posix.index('release_install_lock\n  echo "Comic Sol runtime removed'),
         )
         self.assertLess(
             self.powershell.index("$InstallRoot = Resolve-CanonicalInstallRoot -Path $InstallRoot"),
@@ -581,7 +581,8 @@ class PublicInstallerContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             install_root = Path(raw) / "locked-install"
             install_root.mkdir()
-            lock = install_root / ".comic-sol-install.lock"
+            self.write_marker(install_root)
+            lock = install_root.parent / ".comic-sol-install.lock"
             lock.mkdir(parents=True)
             (lock / "pid").write_text(f"{os.getpid()}\n", encoding="ascii")
             result = subprocess.run(
