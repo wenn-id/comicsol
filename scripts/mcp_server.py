@@ -255,6 +255,44 @@ def _refresh_project_snapshot(
     return snapshots, changed
 
 
+def _refresh_windows_snapshot(
+    project_dir: Path,
+    cached: dict[str, _DirectorySnapshot],
+) -> tuple[dict[str, _DirectorySnapshot], bool]:
+    """Refresh Windows snapshots without recursively rescanning unchanged subtrees.
+
+    Windows directory timestamps do not reliably change for new reparse points,
+    so each cached directory is inspected directly.  A recursive scan is only
+    needed when that directory's child-directory set changes.
+    """
+    snapshots = dict(cached)
+    changed = False
+    for relative in sorted(tuple(snapshots), key=lambda item: (item.count("/"), item)):
+        if relative not in snapshots:
+            continue
+        directory = _directory_path(project_dir, relative)
+        metadata = directory.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            _reject("security-error: project directory structure is invalid")
+        children: list[str] = []
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.is_symlink():
+                    _reject("security-error: project contains a symlink")
+                if entry.is_dir(follow_symlinks=False):
+                    children.append(entry.name if relative == "." else f"{relative}/{entry.name}")
+        current_children = tuple(sorted(children))
+        previous = snapshots[relative]
+        if current_children != previous[6]:
+            for removed in set(previous[6]) - set(current_children):
+                _discard_snapshot_subtree(snapshots, removed)
+            _scan_subtree(project_dir, relative, snapshots)
+            changed = True
+        else:
+            snapshots[relative] = (*_directory_identity(metadata), current_children)
+    return snapshots, changed
+
+
 def _resolve_project(project_id: str) -> Path:
     """Resolve a project ID safely within OUTPUT_ROOT."""
     try:
@@ -271,16 +309,14 @@ def _resolve_project(project_id: str) -> Path:
         if not resolved.is_dir():
             _reject("security-error: project directory is not an initialized Comic Sol project")
         cached = _SYMLINK_SCAN_CACHE.get(project_id)
-        # Windows directory timestamps are not a reliable signal that a child
-        # reparse point was added.  Never trust a cached scan there: a fresh
-        # walk is required to preserve the symlink-containment invariant.
-        if os.name == "nt" or cached is None or cached[0] != resolved or "." not in cached[1]:
+        if cached is None or cached[0] != resolved or "." not in cached[1]:
             snapshots: dict[str, _DirectorySnapshot] = {}
             _scan_subtree(resolved, ".", snapshots)
             _SYMLINK_SCAN_CACHE[project_id] = (resolved, snapshots)
         else:
             try:
-                snapshots, changed = _refresh_project_snapshot(resolved, cached[1])
+                refresh = _refresh_windows_snapshot if os.name == "nt" else _refresh_project_snapshot
+                snapshots, changed = refresh(resolved, cached[1])
             except Exception:
                 _SYMLINK_SCAN_CACHE.pop(project_id, None)
                 raise

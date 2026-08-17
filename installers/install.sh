@@ -10,8 +10,14 @@ INSTALL_LOCK_DIR=""
 LOCK_HELD=0
 SECURE_HANDOFF=0
 SECURE_HANDOFF_SHIFT=0
+SECURE_ROOT_FD=""
+SECURE_PARENT_FD=""
 INSTALL_MARKER_NAME=".comic-sol-install"
 INSTALL_MARKER_MAGIC="comic-sol-install-v1"
+
+marker_encode() {
+  perl -e 'print unpack("H*", shift)' -- "$1"
+}
 
 secure_root_handoff() {
   if [ "${1:-}" = "--secure-handoff" ] && [ "$#" -ge 6 ]; then
@@ -35,6 +41,8 @@ secure_root_handoff() {
         ' "$2" "$3" "$4"; then
           SECURE_HANDOFF=1
           SECURE_HANDOFF_SHIFT=6
+          SECURE_ROOT_FD=$2
+          SECURE_PARENT_FD=$3
           INSTALL_ROOT_DISPLAY=$(pwd -P)
           CALLER_ROOT=$6
           return 0
@@ -244,7 +252,7 @@ fi
 if [ "$SECURE_HANDOFF" -eq 1 ]; then
   INSTALL_LOCK_DIR="../.comic-sol-install.lock"
 else
-  INSTALL_LOCK_DIR="$INSTALL_ROOT/.comic-sol-install.lock"
+  INSTALL_LOCK_DIR="$(dirname -- "$INSTALL_ROOT_DISPLAY")/.comic-sol-install.lock"
 fi
 if [ "$UNINSTALL" -eq 1 ]; then
   acquire_install_lock
@@ -275,12 +283,14 @@ if [ "$UNINSTALL" -eq 1 ]; then
   MARKER_MAGIC=$(sed -n '1p' "$INSTALL_MARKER")
   MARKER_VERSION=$(sed -n '2p' "$INSTALL_MARKER")
   MARKER_ROOT=$(sed -n '3p' "$INSTALL_MARKER")
+  EXPECTED_MARKER_ROOT=$(marker_encode "$INSTALL_ROOT_DISPLAY")
   ACTIVE_VERSION=$(sed -n '1p' "$ACTIVE_VERSION_FILE")
   if [ "$MARKER_LINE_COUNT" -ne 3 ] ||
      [ "$MARKER_MAGIC" != "$INSTALL_MARKER_MAGIC" ] ||
      [ -z "$MARKER_VERSION" ] ||
      [ "$MARKER_VERSION" != "$ACTIVE_VERSION" ] ||
-     [ "$MARKER_ROOT" != "$INSTALL_ROOT_DISPLAY" ]; then
+     { [ "$MARKER_ROOT" != "$EXPECTED_MARKER_ROOT" ] &&
+       [ "$MARKER_ROOT" != "$INSTALL_ROOT_DISPLAY" ]; }; then
     echo "refusing to uninstall: install registration is invalid; reinstall or upgrade this root first" >&2
     exit 1
   fi
@@ -293,10 +303,29 @@ if [ "$UNINSTALL" -eq 1 ]; then
   done
   install_root_name=$(basename -- "$INSTALL_ROOT_DISPLAY")
   cd ..
-  rmdir -- "$install_root_name" 2>/dev/null || true
   if [ "$SECURE_HANDOFF" -eq 1 ]; then
-    INSTALL_LOCK_DIR=".comic-sol-install.lock"
+    if perl -MFcntl -e '
+      my ($root_fd, $name) = @ARGV;
+      open(my $parent, "<&=3") or exit 1;
+      chdir($parent) or exit 1;
+      open(my $root, "<&=$root_fd") or exit 1;
+      my @expected = stat($root);
+      my @actual = lstat($name);
+      exit 2 unless @expected && @actual && $expected[0] == $actual[0] && $expected[1] == $actual[1];
+      exit(rmdir($name) ? 0 : 1);
+    ' 3<&"$SECURE_PARENT_FD" "$SECURE_ROOT_FD" "$install_root_name" 2>/dev/null; then
+      cleanup_status=0
+    else
+      cleanup_status=$?
+    fi
+    case "$cleanup_status" in
+      0|1) ;;
+      *) echo "refusing to uninstall: install root changed during cleanup" >&2; exit 1 ;;
+    esac
+  else
+    rmdir -- "$install_root_name" 2>/dev/null || true
   fi
+  INSTALL_LOCK_DIR=".comic-sol-install.lock"
   release_install_lock
   echo "Comic Sol runtime removed. User projects were preserved."
   exit 0
@@ -427,7 +456,8 @@ mv -- "$INSTALL_ROOT/bin.new" "$STABLE_RUNTIME"
 STABLE_PUBLISHED=1
 printf '%s\n' "$VERSION" > "$INSTALL_ROOT/active-version.new"
 mv -- "$INSTALL_ROOT/active-version.new" "$INSTALL_ROOT/active-version"
-printf '%s\n%s\n%s\n' "$INSTALL_MARKER_MAGIC" "$VERSION" "$INSTALL_ROOT_DISPLAY" > "$INSTALL_ROOT/.comic-sol-install.new"
+MARKER_ROOT=$(marker_encode "$INSTALL_ROOT_DISPLAY")
+printf '%s\n%s\n%s\n' "$INSTALL_MARKER_MAGIC" "$VERSION" "$MARKER_ROOT" > "$INSTALL_ROOT/.comic-sol-install.new"
 mv -- "$INSTALL_ROOT/.comic-sol-install.new" "$INSTALL_ROOT/$INSTALL_MARKER_NAME"
 COMMITTED=1
 for backup in "$STABLE_BACKUP" "$TARGET_BACKUP"; do

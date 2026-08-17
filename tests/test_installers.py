@@ -78,9 +78,10 @@ class PublicInstallerContractTests(unittest.TestCase):
     @staticmethod
     def write_marker(install_root, marker_root=None):
         version = "2.0.0rc4"
+        encoded_root = (marker_root or install_root.resolve()).as_posix().encode().hex()
         (install_root / "active-version").write_text(f"{version}\n", encoding="utf-8")
         (install_root / ".comic-sol-install").write_text(
-            f"comic-sol-install-v1\n{version}\n{marker_root or install_root.resolve()}\n",
+            f"comic-sol-install-v1\n{version}\n{encoded_root}\n",
             encoding="utf-8",
         )
 
@@ -406,7 +407,7 @@ class PublicInstallerContractTests(unittest.TestCase):
     def test_installers_canonicalize_or_reject_aliases_before_locking(self):
         self.assertLess(
             self.posix.index('INSTALL_ROOT=$(canonical_install_root "$INSTALL_ROOT")'),
-            self.posix.index('INSTALL_LOCK_DIR="$INSTALL_ROOT/.comic-sol-install.lock"'),
+            self.posix.index('INSTALL_LOCK_DIR="$(dirname -- "$INSTALL_ROOT_DISPLAY")/.comic-sol-install.lock"'),
         )
         self.assertLess(
             self.posix.index('rmdir -- "$install_root_name"'),
@@ -511,7 +512,7 @@ class PublicInstallerContractTests(unittest.TestCase):
 
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
             marker_lines = (install_root / ".comic-sol-install").read_text("utf-8").splitlines()
-            self.assertEqual(str(install_root.resolve()), marker_lines[2])
+            self.assertEqual(str(install_root.resolve()).encode().hex(), marker_lines[2])
 
             uninstall = self.run_uninstall(install_root)
             self.assertEqual(0, uninstall.returncode, uninstall.stdout + uninstall.stderr)
@@ -698,6 +699,25 @@ class PublicInstallerContractTests(unittest.TestCase):
             marker_lines = (install_root / ".comic-sol-install").read_text("utf-8").splitlines()
             self.assertEqual("2.0.0rc5", marker_lines[1])
             self.assertIn("Could not remove rollback backup", result.stderr)
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_newline_install_root_round_trips_marker_and_uninstall(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            archive = self.write_runtime_archive(root)
+            install_root = root / "runtime\nname"
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            result = subprocess.run(
+                [
+                    "sh", str(self.root / "installers/install.sh"),
+                    "--archive", archive.name, "--sha256", digest,
+                    "--install-root", install_root.name,
+                ], cwd=root, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            uninstall = self.run_uninstall(install_root)
+            self.assertEqual(0, uninstall.returncode, uninstall.stdout + uninstall.stderr)
+            self.assertFalse(install_root.exists())
 
 
 if __name__ == "__main__":
