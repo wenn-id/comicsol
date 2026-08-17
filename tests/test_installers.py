@@ -143,6 +143,7 @@ class PublicInstallerContractTests(unittest.TestCase):
                 server.server_close()
                 self.skipTest(f"openssl cannot create test certificate: {result.stderr}")
             tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
             tls_context.load_cert_chain(certificate, key)
             server.socket = tls_context.wrap_socket(server.socket, server_side=True)
             server.certificate_path = certificate
