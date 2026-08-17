@@ -23,11 +23,14 @@ secure_root_handoff() {
     my $script = shift @ARGV;
     my $root = $ENV{COMIC_SOL_INSTALL_ROOT};
     my $uninstall = grep { $_ eq "--uninstall" } @ARGV;
+    my $caller = Cwd::getcwd();
     for (my $i = 0; $i + 1 < @ARGV; $i++) {
       $root = $ARGV[$i + 1] if $ARGV[$i] eq "--install-root";
+      if ($ARGV[$i] eq "--archive" && defined $ARGV[$i + 1]) {
+        $ARGV[$i + 1] = File::Spec->rel2abs($ARGV[$i + 1], $caller);
+      }
     }
     $root = "$ENV{HOME}/.local/share/comic-sol" unless defined $root && length $root;
-    my $caller = Cwd::getcwd();
     my $absolute = File::Spec->canonpath(File::Spec->rel2abs($root, $caller));
     if ($^O eq "darwin") {
       for my $system_alias ("/var", "/tmp") {
@@ -246,10 +249,10 @@ if [ "$UNINSTALL" -eq 1 ]; then
   for child in active-version.new .comic-sol-install.new active-version "$INSTALL_MARKER_NAME"; do
     rm -f -- "$INSTALL_ROOT/$child"
   done
+  release_install_lock
   install_root_name=$(basename -- "$INSTALL_ROOT_DISPLAY")
   cd ..
   rmdir -- "$install_root_name" 2>/dev/null || true
-  release_install_lock
   echo "Comic Sol runtime removed. User projects were preserved."
   exit 0
 fi
@@ -379,7 +382,7 @@ mv -- "$INSTALL_ROOT/bin.new" "$STABLE_RUNTIME"
 STABLE_PUBLISHED=1
 printf '%s\n' "$VERSION" > "$INSTALL_ROOT/active-version.new"
 mv -- "$INSTALL_ROOT/active-version.new" "$INSTALL_ROOT/active-version"
-printf '%s\n%s\n%s\n' "$INSTALL_MARKER_MAGIC" "$VERSION" "$INSTALL_ROOT" > "$INSTALL_ROOT/.comic-sol-install.new"
+printf '%s\n%s\n%s\n' "$INSTALL_MARKER_MAGIC" "$VERSION" "$INSTALL_ROOT_DISPLAY" > "$INSTALL_ROOT/.comic-sol-install.new"
 mv -- "$INSTALL_ROOT/.comic-sol-install.new" "$INSTALL_ROOT/$INSTALL_MARKER_NAME"
 COMMITTED=1
 for backup in "$STABLE_BACKUP" "$TARGET_BACKUP"; do

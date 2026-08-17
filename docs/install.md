@@ -30,7 +30,7 @@ $HOME/.local/share/comic-sol/bin/comic-sol doctor
 
 For macOS, use `comic-sol-2.0.0rc4-macos-x86_64.zip`. The default installation root is `$HOME/.local/share/comic-sol`. Override it with `--install-root PATH` or `COMIC_SOL_INSTALL_ROOT`.
 
-The POSIX installer requires `sha256sum`, `unzip`, and standard POSIX utilities. Native binaries are unsigned, so macOS Gatekeeper may require an explicit local approval for this prerelease.
+The POSIX installer requires `perl`, `sha256sum`, `unzip`, and standard POSIX utilities. Perl is used for race-free no-follow install-root traversal. Native binaries are unsigned, so macOS Gatekeeper may require an explicit local approval for this prerelease.
 
 ## Windows PowerShell
 
