@@ -35,6 +35,8 @@ secure_root_handoff() {
         fi
         ;;
     esac
+    echo "refusing secure install handoff: directory capabilities could not be verified" >&2
+    exit 1
   fi
   command -v perl >/dev/null 2>&1 || {
     echo "secure install root traversal requires perl" >&2
