@@ -70,11 +70,15 @@ class StageRegistryTests(unittest.TestCase):
                         action = _next_resume_action(project_dir, stage)
 
                     command = cast(dict[str, str], action)["command"]
-                    self.assertIn(shlex.quote(str(engine_script)), command)
-                    self.assertIn(shlex.quote(str(project_dir)), command)
+                    command_parts = shlex.split(command)
+                    self.assertEqual(Path(command_parts[1]).resolve(), engine_script.resolve())
+                    self.assertEqual(Path(command_parts[-1]).resolve(), project_dir.resolve())
                     if stage == "composition":
-                        self.assertIn("--all", command)
-                    self.assertNotIn(str(comic_sol.ROOT / "scripts" / runner_name), command)
+                        self.assertIn("--all", command_parts)
+                    self.assertNotEqual(
+                        Path(command_parts[1]).resolve(),
+                        (comic_sol.ROOT / "scripts" / runner_name).resolve(),
+                    )
 
 
 if __name__ == "__main__":
