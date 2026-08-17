@@ -1,12 +1,48 @@
 import hashlib
+import http.server
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import tempfile
+import threading
 import unittest
 import zipfile
 from pathlib import Path
+from typing import cast
+
+
+class _InstallerHTTPServer(http.server.ThreadingHTTPServer):
+    allow_reuse_address = True
+
+    def __init__(self, server_address, handler):
+        super().__init__(server_address, handler)
+        self.payload: bytes = b""
+        self.redirect_to: str | None = None
+        self.request_count: int = 0
+        self.certificate_path: Path | None = None
+        self.certificate_directory: tempfile.TemporaryDirectory[str] | None = None
+        self._certificate_context: ssl.SSLContext | None = None
+
+
+class _InstallerRequestHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        server = cast(_InstallerHTTPServer, self.server)
+        server.request_count += 1
+        redirect_to = server.redirect_to
+        if redirect_to is not None:
+            self.send_response(302)
+            self.send_header("Location", redirect_to)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(server.payload)))
+        self.end_headers()
+        self.wfile.write(server.payload)
+
+    def log_message(self, format, *args):
+        return
 
 
 class PublicInstallerContractTests(unittest.TestCase):
@@ -48,6 +84,103 @@ class PublicInstallerContractTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    @staticmethod
+    def write_runtime_archive(root, version="2.0.0rc5"):
+        archive = root / "comic-sol.zip"
+        executable = (
+            "#!/bin/sh\n"
+            'case "$1" in\n'
+            f"  --version) printf 'comic-sol {version}\\n' ;;\n"
+            "  doctor) exit 0 ;;\n"
+            "  *) exit 0 ;;\n"
+            "esac\n"
+        ).encode("utf-8")
+        member = zipfile.ZipInfo("comic-sol/comic-sol")
+        member.create_system = 3
+        member.external_attr = 0o100755 << 16
+        with zipfile.ZipFile(archive, "w") as package:
+            package.writestr(member, executable)
+        return archive
+
+    def start_installer_server(self, *, tls=False, payload=b""):
+        server = _InstallerHTTPServer(("127.0.0.1", 0), _InstallerRequestHandler)
+        server.payload = payload
+        if tls:
+            openssl = shutil.which("openssl")
+            if openssl is None:
+                server.server_close()
+                self.skipTest("openssl is required for HTTPS installer behavior tests")
+            certificate_directory = tempfile.TemporaryDirectory()
+            certificate_root = Path(certificate_directory.name)
+            certificate = certificate_root / "server.crt"
+            key = certificate_root / "server.key"
+            result = subprocess.run(
+                [
+                    openssl,
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:2048",
+                    "-keyout",
+                    str(key),
+                    "-out",
+                    str(certificate),
+                    "-sha256",
+                    "-days",
+                    "1",
+                    "-nodes",
+                    "-subj",
+                    "/CN=127.0.0.1",
+                    "-addext",
+                    "subjectAltName=IP:127.0.0.1",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                certificate_directory.cleanup()
+                server.server_close()
+                self.skipTest(f"openssl cannot create test certificate: {result.stderr}")
+            tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            tls_context.load_cert_chain(certificate, key)
+            server.socket = tls_context.wrap_socket(server.socket, server_side=True)
+            server.certificate_path = certificate
+            server.certificate_directory = certificate_directory
+            server._certificate_context = tls_context
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, thread
+
+    def run_posix_url_install(self, install_root, url, sha256, env=None):
+        environment = os.environ.copy()
+        if env:
+            environment.update(env)
+        return subprocess.run(
+            [
+                "sh",
+                str(self.root / "installers/install.sh"),
+                "--url",
+                url,
+                "--sha256",
+                sha256,
+                "--install-root",
+                str(install_root),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+
+    @staticmethod
+    def stop_installer_server(server, thread):
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        if server.certificate_directory is not None:
+            server.certificate_directory.cleanup()
+
     def test_installers_discover_runtime_version_and_roll_back(self):
         for script in (self.posix, self.powershell):
             self.assertIsNone(re.search(r"\b\d+\.\d+\.\d+(?:rc\d+)?\b", script))
@@ -81,6 +214,73 @@ class PublicInstallerContractTests(unittest.TestCase):
         self.assertIn("Scheme", self.powershell)
         self.assertIn("https", self.powershell.lower())
 
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_rejects_http_url_before_request(self):
+        server, thread = self.start_installer_server()
+        try:
+            with tempfile.TemporaryDirectory() as raw:
+                install_root = Path(raw) / "runtime"
+                url = f"http://127.0.0.1:{server.server_address[1]}/comic-sol.zip"
+                result = self.run_posix_url_install(install_root, url, "0" * 64)
+
+                self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertEqual(0, server.request_count)
+                self.assertFalse((install_root / ".comic-sol-install").exists())
+        finally:
+            self.stop_installer_server(server, thread)
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_rejects_https_to_http_redirect(self):
+        http_server, http_thread = self.start_installer_server()
+        https_server = https_thread = None
+        try:
+            https_server, https_thread = self.start_installer_server(tls=True)
+            https_server.redirect_to = (
+                f"http://127.0.0.1:{http_server.server_address[1]}/comic-sol.zip"
+            )
+            with tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                install_root = root / "runtime"
+                url = f"https://127.0.0.1:{https_server.server_address[1]}/comic-sol.zip"
+                result = self.run_posix_url_install(
+                    install_root,
+                    url,
+                    "0" * 64,
+                    {"CURL_CA_BUNDLE": str(cast(Path, https_server.certificate_path))},
+                )
+
+                self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertEqual(1, https_server.request_count)
+                self.assertEqual(0, http_server.request_count)
+                self.assertFalse((install_root / ".comic-sol-install").exists())
+        finally:
+            if https_server is not None:
+                self.stop_installer_server(https_server, https_thread)
+            self.stop_installer_server(http_server, http_thread)
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_accepts_uppercase_digest_for_real_archive_download(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            archive = self.write_runtime_archive(root)
+            server, thread = self.start_installer_server(tls=True, payload=archive.read_bytes())
+            try:
+                install_root = root / "runtime"
+                url = f"https://127.0.0.1:{server.server_address[1]}/comic-sol.zip"
+                result = self.run_posix_url_install(
+                    install_root,
+                    url,
+                    hashlib.sha256(archive.read_bytes()).hexdigest().upper(),
+                    {"CURL_CA_BUNDLE": str(cast(Path, server.certificate_path))},
+                )
+
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertEqual(1, server.request_count)
+                self.assertEqual("2.0.0rc5", (install_root / "active-version").read_text().strip())
+                self.assertTrue((install_root / ".comic-sol-install").is_file())
+            finally:
+                self.stop_installer_server(server, thread)
+
     def test_installers_serialize_install_root_mutations(self):
         self.assertIn("INSTALL_LOCK_DIR", self.posix)
         self.assertIn("mkdir --", self.posix)
@@ -96,17 +296,14 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.posix.index('INSTALL_LOCK_DIR="${INSTALL_ROOT}.lock"'),
         )
         self.assertLess(
-            self.powershell.index(
-                '$InstallRoot = Resolve-CanonicalInstallRoot -Path $InstallRoot'
-            ),
+            self.powershell.index("$InstallRoot = Resolve-CanonicalInstallRoot -Path $InstallRoot"),
             self.powershell.index("Acquire-InstallMutex", self.powershell.index("if ($Uninstall)")),
         )
         self.assertIn("ReparsePoint", self.powershell)
 
     def test_posix_sentinel_publication_is_the_commit_point(self):
         marker = self.posix.index(
-            'mv -- "$INSTALL_ROOT/.comic-sol-install.new" '
-            '"$INSTALL_ROOT/$INSTALL_MARKER_NAME"'
+            'mv -- "$INSTALL_ROOT/.comic-sol-install.new" "$INSTALL_ROOT/$INSTALL_MARKER_NAME"'
         )
         committed = self.posix.index("COMMITTED=1", marker)
         cleanup = self.posix.index('for backup in "$STABLE_BACKUP" "$TARGET_BACKUP"', marker)
@@ -210,9 +407,14 @@ class PublicInstallerContractTests(unittest.TestCase):
 
             result = subprocess.run(
                 [
-                    shell, "-NoProfile", "-File", str(runner),
-                    "-Installer", str(self.root / "installers/install.ps1"),
-                    "-Location", str(powershell_location),
+                    shell,
+                    "-NoProfile",
+                    "-File",
+                    str(runner),
+                    "-Installer",
+                    str(self.root / "installers/install.ps1"),
+                    "-Location",
+                    str(powershell_location),
                 ],
                 cwd=process_directory,
                 capture_output=True,
@@ -234,8 +436,11 @@ class PublicInstallerContractTests(unittest.TestCase):
             (lock / "pid").write_text(f"{os.getpid()}\n", encoding="ascii")
             result = subprocess.run(
                 [
-                    "sh", str(self.root / "installers/install.sh"),
-                    "--install-root", str(install_root), "--uninstall",
+                    "sh",
+                    str(self.root / "installers/install.sh"),
+                    "--install-root",
+                    str(install_root),
+                    "--uninstall",
                 ],
                 capture_output=True,
                 text=True,
@@ -261,9 +466,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             result = self.run_uninstall(alias)
 
             self.assertNotEqual(0, result.returncode)
-            self.assertIn(
-                "another Comic Sol installer is using this install root", result.stderr
-            )
+            self.assertIn("another Comic Sol installer is using this install root", result.stderr)
             self.assertTrue((install_root / ".comic-sol-install").is_file())
 
     @unittest.skipUnless(os.name != "nt", "POSIX installer test")
@@ -280,7 +483,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             archive = root / "comic-sol.zip"
             executable = (
                 "#!/bin/sh\n"
-                "case \"$1\" in\n"
+                'case "$1" in\n'
                 "  --version) echo 'comic-sol 2.0.0rc5' ;;\n"
                 "  doctor) exit 0 ;;\n"
                 "esac\n"
@@ -299,29 +502,36 @@ class PublicInstallerContractTests(unittest.TestCase):
             rm_shim = shim / "rm"
             rm_shim.write_text(
                 "#!/bin/sh\n"
-                "case \"$*\" in\n"
+                'case "$*" in\n'
                 "  *rollback*)\n"
                 "    if grep -q '2.0.0rc5' \"$TEST_INSTALL_ROOT/.comic-sol-install\" 2>/dev/null; then\n"
                 "      exit 1\n"
                 "    fi\n"
                 "    ;;\n"
                 "esac\n"
-                "exec \"$REAL_RM\" \"$@\"\n",
+                'exec "$REAL_RM" "$@"\n',
                 encoding="utf-8",
             )
             rm_shim.chmod(0o755)
             environment = os.environ.copy()
-            environment.update({
-                "PATH": f"{shim}{os.pathsep}{environment['PATH']}",
-                "REAL_RM": real_rm,
-                "TEST_INSTALL_ROOT": str(install_root),
-            })
+            environment.update(
+                {
+                    "PATH": f"{shim}{os.pathsep}{environment['PATH']}",
+                    "REAL_RM": real_rm,
+                    "TEST_INSTALL_ROOT": str(install_root),
+                }
+            )
 
             result = subprocess.run(
                 [
-                    "sh", str(self.root / "installers/install.sh"),
-                    "--archive", str(archive), "--sha256", digest,
-                    "--install-root", str(install_root),
+                    "sh",
+                    str(self.root / "installers/install.sh"),
+                    "--archive",
+                    str(archive),
+                    "--sha256",
+                    digest,
+                    "--install-root",
+                    str(install_root),
                 ],
                 capture_output=True,
                 text=True,
