@@ -29,6 +29,13 @@ secure_root_handoff() {
     $root = "$ENV{HOME}/.local/share/comic-sol" unless defined $root && length $root;
     my $caller = Cwd::getcwd();
     my $absolute = File::Spec->canonpath(File::Spec->rel2abs($root, $caller));
+    if ($^O eq "darwin") {
+      for my $system_alias ("/var", "/tmp") {
+        my $physical_alias = Cwd::abs_path($system_alias);
+        $absolute =~ s/^\Q$system_alias\E(?=\/|$)/$physical_alias/
+          if defined $physical_alias;
+      }
+    }
     my @parts = split m{/}, $absolute;
     sysopen(my $dir, "/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
       or die "refusing install root: cannot open filesystem root: $!\n";
