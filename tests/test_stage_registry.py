@@ -1,8 +1,11 @@
 import shlex
+import tempfile
 import unittest
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
+import scripts.comic_sol as comic_sol
 from scripts.comic_sol import _next_resume_action
 from scripts.stage_registry import (
     ARTIFACT_STAGE,
@@ -45,21 +48,33 @@ class StageRegistryTests(unittest.TestCase):
         )
         self.assertEqual(
             len(ARTIFACT_STAGE),
-            len({
-                artifact
-                for definition in STAGE_REGISTRY
-                for artifact in definition.artifacts
-            }),
+            len({artifact for definition in STAGE_REGISTRY for artifact in definition.artifacts}),
         )
 
-    def test_composition_resume_command_is_executable_and_shell_safe(self):
-        project_dir = Path("/tmp/comic sol/project")
-        action = _next_resume_action(project_dir, "composition")
-        self.assertIsInstance(action, dict)
-        command = cast(dict[str, str], action)["command"]
-        self.assertIn("--all", command)
-        self.assertIn("compose_pages.py", command)
-        self.assertIn(shlex.quote(str(project_dir)), command)
+    def test_resume_commands_use_installed_engine_directory(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            engine = Path(temporary_directory) / "Comic Sol" / "comic_sol_product" / "engine"
+            engine.mkdir(parents=True)
+            project_dir = Path(temporary_directory) / "project"
+
+            runners = {
+                "lettering": "letter_panels.py",
+                "composition": "compose_pages.py",
+                "export": "export_pdf.py",
+            }
+            for stage, runner_name in runners.items():
+                with self.subTest(stage=stage):
+                    engine_script = engine / runner_name
+                    engine_script.write_text("# installed engine\n", encoding="utf-8")
+                    with patch.object(comic_sol, "__file__", str(engine / "comic_sol.py")):
+                        action = _next_resume_action(project_dir, stage)
+
+                    command = cast(dict[str, str], action)["command"]
+                    self.assertIn(shlex.quote(str(engine_script)), command)
+                    self.assertIn(shlex.quote(str(project_dir)), command)
+                    if stage == "composition":
+                        self.assertIn("--all", command)
+                    self.assertNotIn(str(comic_sol.ROOT / "scripts" / runner_name), command)
 
 
 if __name__ == "__main__":

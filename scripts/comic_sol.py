@@ -1090,7 +1090,8 @@ def _next_resume_action(project_dir: Path, stage: str | None) -> dict[str, str] 
         return {"agent_required": stage}
     if not definition.runner:
         raise ValueError(f"stage runner is not registered: {stage}")
-    command = [sys.executable, ROOT / definition.runner]
+    runner = Path(__file__).resolve().parent / Path(definition.runner).name
+    command = [sys.executable, runner]
     if stage == "composition":
         command.append("--all")
     command.append(project_dir)
