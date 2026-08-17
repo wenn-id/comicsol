@@ -58,6 +58,38 @@ release_install_lock() {
   LOCK_HELD=0
 }
 
+reject_symlink_path() {
+  path=$1
+  case "$path" in
+    /*) current="/"; remainder=${path#/} ;;
+    *) current=$(pwd -P); remainder=$path ;;
+  esac
+  while [ -n "$remainder" ]; do
+    component=${remainder%%/*}
+    if [ "$remainder" = "$component" ]; then
+      remainder=""
+    else
+      remainder=${remainder#*/}
+    fi
+    case "$component" in
+      ''|.) continue ;;
+      ..)
+        current=$(dirname "$current")
+        continue
+        ;;
+    esac
+    if [ "$current" = "/" ]; then
+      current="/$component"
+    else
+      current="$current/$component"
+    fi
+    if [ -L "$current" ]; then
+      echo "refusing install root path containing symlink: $current" >&2
+      return 1
+    fi
+  done
+}
+
 canonical_install_root() {
   (cd -P -- "$1" && pwd -P)
 }
@@ -88,6 +120,8 @@ while [ "$#" -gt 0 ]; do
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+reject_symlink_path "$INSTALL_ROOT"
 
 if [ "$UNINSTALL" -eq 1 ]; then
   if [ ! -e "$INSTALL_ROOT" ]; then

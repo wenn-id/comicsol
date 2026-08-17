@@ -332,6 +332,67 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertFalse((install_root / ".comic-sol-install").exists())
             self.assertFalse((install_root / "bin").exists())
 
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_rejects_symlinked_install_root(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            archive = self.write_runtime_archive(root)
+            target = root / "target"
+            target.mkdir()
+            install_root = root / "install-root"
+            install_root.symlink_to(target, target_is_directory=True)
+            result = subprocess.run(
+                [
+                    "sh",
+                    str(self.root / "installers/install.sh"),
+                    "--archive",
+                    str(archive),
+                    "--sha256",
+                    hashlib.sha256(archive.read_bytes()).hexdigest(),
+                    "--install-root",
+                    str(install_root),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertIn("symlink", result.stderr.lower())
+            self.assertFalse((target / ".comic-sol-install").exists())
+            self.assertFalse((target / "bin").exists())
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_rejects_symlinked_install_ancestor(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            archive = self.write_runtime_archive(root)
+            target_parent = root / "target-parent"
+            target_parent.mkdir()
+            symlink_parent = root / "symlink-parent"
+            symlink_parent.symlink_to(target_parent, target_is_directory=True)
+            install_root = symlink_parent / "runtime"
+            result = subprocess.run(
+                [
+                    "sh",
+                    str(self.root / "installers/install.sh"),
+                    "--archive",
+                    str(archive),
+                    "--sha256",
+                    hashlib.sha256(archive.read_bytes()).hexdigest(),
+                    "--install-root",
+                    str(install_root),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertIn("symlink", result.stderr.lower())
+            self.assertFalse((target_parent / "runtime" / ".comic-sol-install").exists())
+            self.assertFalse((target_parent / "runtime" / "bin").exists())
+
     def test_installers_serialize_install_root_mutations(self):
         self.assertIn("INSTALL_LOCK_DIR", self.posix)
         self.assertIn("mkdir --", self.posix)
@@ -502,7 +563,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertTrue(lock.is_dir())
 
     @unittest.skipUnless(os.name != "nt", "POSIX installer test")
-    def test_posix_alias_uses_the_canonical_install_lock(self):
+    def test_posix_alias_rejects_symlinked_install_root_before_locking(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             install_root = root / "runtime"
@@ -517,8 +578,9 @@ class PublicInstallerContractTests(unittest.TestCase):
             result = self.run_uninstall(alias)
 
             self.assertNotEqual(0, result.returncode)
-            self.assertIn("another Comic Sol installer is using this install root", result.stderr)
+            self.assertIn("symlink", result.stderr.lower())
             self.assertTrue((install_root / ".comic-sol-install").is_file())
+            self.assertTrue(lock.is_dir())
 
     @unittest.skipUnless(os.name != "nt", "POSIX installer test")
     def test_posix_cleanup_failure_does_not_roll_back_published_sentinel(self):
