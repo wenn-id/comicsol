@@ -271,7 +271,10 @@ def _resolve_project(project_id: str) -> Path:
         if not resolved.is_dir():
             _reject("security-error: project directory is not an initialized Comic Sol project")
         cached = _SYMLINK_SCAN_CACHE.get(project_id)
-        if cached is None or cached[0] != resolved or "." not in cached[1]:
+        # Windows directory timestamps are not a reliable signal that a child
+        # reparse point was added.  Never trust a cached scan there: a fresh
+        # walk is required to preserve the symlink-containment invariant.
+        if os.name == "nt" or cached is None or cached[0] != resolved or "." not in cached[1]:
             snapshots: dict[str, _DirectorySnapshot] = {}
             _scan_subtree(resolved, ".", snapshots)
             _SYMLINK_SCAN_CACHE[project_id] = (resolved, snapshots)

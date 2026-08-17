@@ -332,6 +332,20 @@ class McpServerUnitTests(unittest.TestCase):
 
         self.assertEqual(expected, actual)
 
+    def test_windows_rescan_catches_child_symlink_when_parent_metadata_is_stale(self):
+        project = self.root / "windows-cache-project"
+        nested = project / "nested"
+        nested.mkdir(parents=True)
+        (project / "project.json").write_text("{}", encoding="utf-8")
+        mcp_server._resolve_project("windows-cache-project")
+        outside = Path(self.temporary_directory.name) / "windows-secret.txt"
+        outside.write_text("secret", encoding="utf-8")
+        make_symlink(self, nested / "late-link", outside)
+
+        with mock.patch.object(mcp_server.os, "name", "nt"):
+            with self.assertRaisesRegex(ToolError, "symlink"):
+                mcp_server._resolve_project("windows-cache-project")
+
     @unittest.skipIf(sys.platform == "win32", "requires POSIX symlink semantics")
     def test_symlink_created_during_scan_is_rejected(self):
         project = self.root / "racing-project"

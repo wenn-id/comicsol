@@ -10,27 +10,33 @@ INSTALL_LOCK_DIR=""
 LOCK_HELD=0
 SECURE_HANDOFF=0
 SECURE_HANDOFF_SHIFT=0
-SECURE_PARENT_FD=""
 INSTALL_MARKER_NAME=".comic-sol-install"
 INSTALL_MARKER_MAGIC="comic-sol-install-v1"
 
 secure_root_handoff() {
-  if [ "${1:-}" = "--secure-handoff" ] && [ "$#" -ge 4 ]; then
+  if [ "${1:-}" = "--secure-handoff" ] && [ "$#" -ge 6 ]; then
     case "$2$3$4" in
       ''|*[!0-9]*) ;;
       *)
-        handoff_root=$(cd -P -- "/dev/fd/$2" 2>/dev/null && pwd -P) || handoff_root=""
-        handoff_parent=$(test -d "/dev/fd/$3" && printf '%s\n' ok || true)
-        handoff_caller=$(cd -P -- "/dev/fd/$4" 2>/dev/null && pwd -P) || handoff_caller=""
-        if [ -n "$handoff_root" ] &&
-           [ "$handoff_root" = "$(pwd -P)" ] &&
-           [ -n "$handoff_parent" ] &&
-           [ -n "$handoff_caller" ]; then
+        if command -v perl >/dev/null 2>&1 && perl -e '
+          sub same_dir {
+            my ($fd, $other) = @_;
+            open(my $handle, "<&=$fd") or return 0;
+            my @left = stat($handle);
+            my @right = stat($other);
+            return @left && @right && $left[0] == $right[0] && $left[1] == $right[1];
+          }
+          my ($root_fd, $parent_fd, $caller_fd) = @ARGV;
+          open(my $parent, "<&=$parent_fd") or exit 1;
+          open(my $caller, "<&=$caller_fd") or exit 1;
+          exit 1 unless -d $parent && -d $caller;
+          exit 1 unless same_dir($root_fd, ".");
+          exit 0;
+        ' "$2" "$3" "$4"; then
           SECURE_HANDOFF=1
-          SECURE_HANDOFF_SHIFT=4
-          SECURE_PARENT_FD=$3
-          INSTALL_ROOT_DISPLAY=$handoff_root
-          CALLER_ROOT=$handoff_caller
+          SECURE_HANDOFF_SHIFT=6
+          INSTALL_ROOT_DISPLAY=$(pwd -P)
+          CALLER_ROOT=$6
           return 0
         fi
         ;;
@@ -96,7 +102,7 @@ secure_root_handoff() {
     fcntl($dir, F_SETFD, 0) or die "cannot establish secure installer handoff: $!\n";
     fcntl($parent_handle, F_SETFD, 0) or die "cannot establish secure installer handoff: $!\n";
     fcntl($caller_dir, F_SETFD, 0) or die "cannot establish secure installer handoff: $!\n";
-    exec "/bin/sh", $script, "--secure-handoff", fileno($dir), fileno($parent_handle), fileno($caller_dir), @ARGV
+    exec "/bin/sh", $script, "--secure-handoff", fileno($dir), fileno($parent_handle), fileno($caller_dir), Cwd::getcwd(), $caller, @ARGV
       or die "cannot relaunch installer: $!\n";
   ' "$script_path" "$@"
 }
@@ -236,7 +242,7 @@ else
 fi
 
 if [ "$SECURE_HANDOFF" -eq 1 ]; then
-  INSTALL_LOCK_DIR="/dev/fd/$SECURE_PARENT_FD/.comic-sol-install.lock"
+  INSTALL_LOCK_DIR="../.comic-sol-install.lock"
 else
   INSTALL_LOCK_DIR="$INSTALL_ROOT/.comic-sol-install.lock"
 fi
@@ -288,6 +294,9 @@ if [ "$UNINSTALL" -eq 1 ]; then
   install_root_name=$(basename -- "$INSTALL_ROOT_DISPLAY")
   cd ..
   rmdir -- "$install_root_name" 2>/dev/null || true
+  if [ "$SECURE_HANDOFF" -eq 1 ]; then
+    INSTALL_LOCK_DIR=".comic-sol-install.lock"
+  fi
   release_install_lock
   echo "Comic Sol runtime removed. User projects were preserved."
   exit 0
