@@ -405,7 +405,7 @@ class PublicInstallerContractTests(unittest.TestCase):
     def test_installers_canonicalize_or_reject_aliases_before_locking(self):
         self.assertLess(
             self.posix.index('INSTALL_ROOT=$(canonical_install_root "$INSTALL_ROOT")'),
-            self.posix.index('INSTALL_LOCK_DIR="${INSTALL_ROOT}.lock"'),
+            self.posix.index('INSTALL_LOCK_DIR="$INSTALL_ROOT/.comic-sol-install.lock"'),
         )
         self.assertLess(
             self.powershell.index("$InstallRoot = Resolve-CanonicalInstallRoot -Path $InstallRoot"),
@@ -543,7 +543,7 @@ class PublicInstallerContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             install_root = Path(raw) / "locked-install"
             install_root.mkdir()
-            lock = Path(f"{install_root}.lock")
+            lock = install_root / ".comic-sol-install.lock"
             lock.mkdir(parents=True)
             (lock / "pid").write_text(f"{os.getpid()}\n", encoding="ascii")
             result = subprocess.run(
@@ -571,7 +571,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.write_marker(install_root)
             alias = root / "runtime-alias"
             alias.symlink_to(install_root, target_is_directory=True)
-            lock = Path(f"{install_root}.lock")
+            lock = install_root / ".comic-sol-install.lock"
             lock.mkdir()
             (lock / "pid").write_text(f"{os.getpid()}\n", encoding="ascii")
 

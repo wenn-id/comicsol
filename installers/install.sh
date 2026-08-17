@@ -11,6 +11,57 @@ LOCK_HELD=0
 INSTALL_MARKER_NAME=".comic-sol-install"
 INSTALL_MARKER_MAGIC="comic-sol-install-v1"
 
+secure_root_handoff() {
+  [ "${COMIC_SOL_SECURE_ROOT:-0}" -eq 1 ] && return 0
+  command -v perl >/dev/null 2>&1 || {
+    echo "secure install root traversal requires perl" >&2
+    exit 1
+  }
+  script_path=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")
+  exec perl -MFcntl -MFile::Spec -MCwd -MErrno -e '
+    use Fcntl qw(O_DIRECTORY O_NOFOLLOW O_RDONLY);
+    my $script = shift @ARGV;
+    my $root = $ENV{COMIC_SOL_INSTALL_ROOT};
+    my $uninstall = grep { $_ eq "--uninstall" } @ARGV;
+    for (my $i = 0; $i + 1 < @ARGV; $i++) {
+      $root = $ARGV[$i + 1] if $ARGV[$i] eq "--install-root";
+    }
+    $root = "$ENV{HOME}/.local/share/comic-sol" unless defined $root && length $root;
+    my $caller = Cwd::getcwd();
+    my $absolute = File::Spec->canonpath(File::Spec->rel2abs($root, $caller));
+    my @parts = split m{/}, $absolute;
+    sysopen(my $dir, "/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+      or die "refusing install root: cannot open filesystem root: $!\n";
+    chdir($dir) or die "refusing install root: cannot enter filesystem root: $!\n";
+    shift @parts;
+    for (my $i = 0; $i < @parts; $i++) {
+      my $part = $parts[$i];
+      next if $part eq "" || $part eq ".";
+      my $next;
+      if (!sysopen($next, $part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)) {
+        if (!$uninstall && $! == Errno::ENOENT) {
+          mkdir($part, 0777) or die "refusing install root: cannot create directory: $!\n";
+          sysopen($next, $part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            or die "refusing install root: cannot securely enter directory: $!\n";
+        } elsif ($uninstall && $! == Errno::ENOENT && $i == $#parts) {
+          print "Comic Sol runtime is already removed. User projects were preserved.\n";
+          exit 0;
+        } else {
+          die "refusing install root: path contains a symlink or is not a directory: $!\n";
+        }
+      }
+      chdir($next) or die "refusing install root: cannot securely enter directory: $!\n";
+      $dir = $next;
+    }
+    $ENV{COMIC_SOL_SECURE_ROOT}=1;
+    $ENV{COMIC_SOL_INSTALL_ROOT_DISPLAY}=Cwd::getcwd();
+    $ENV{COMIC_SOL_CALLER_ROOT}=$caller;
+    exec "/bin/sh", $script, @ARGV or die "cannot relaunch installer: $!\n";
+  ' "$script_path" "$@"
+}
+
+secure_root_handoff "$@"
+
 acquire_install_lock() {
   lock_parent=$(dirname "$INSTALL_LOCK_DIR")
   mkdir -p -- "$lock_parent"
@@ -121,38 +172,39 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-reject_symlink_path "$INSTALL_ROOT"
-
-if [ "$UNINSTALL" -eq 1 ]; then
-  if [ ! -e "$INSTALL_ROOT" ]; then
-    echo "Comic Sol runtime is already removed. User projects were preserved."
-    exit 0
-  fi
-  if [ ! -d "$INSTALL_ROOT" ]; then
-    echo "refusing to uninstall: install root is not a directory" >&2
-    exit 1
-  fi
+if [ "${COMIC_SOL_SECURE_ROOT:-0}" -eq 1 ]; then
+  CALLER_ROOT=${COMIC_SOL_CALLER_ROOT:-$(pwd -P)}
+  INSTALL_ROOT_DISPLAY=${COMIC_SOL_INSTALL_ROOT_DISPLAY:?}
+  INSTALL_ROOT="."
 else
-  if [ -z "$SHA256" ]; then
+  if [ "$UNINSTALL" -eq 1 ]; then
+    if [ -z "$INSTALL_ROOT" ]; then
+      echo "refusing to uninstall: install root is not a directory" >&2
+      exit 1
+    fi
+  elif [ -z "$SHA256" ]; then
     echo "--sha256 is required for this unsigned prerelease" >&2
     exit 2
   fi
+  reject_symlink_path "$INSTALL_ROOT"
+  INSTALL_ROOT=$(canonical_install_root "$INSTALL_ROOT")
+  INSTALL_ROOT_DISPLAY="$INSTALL_ROOT"
   mkdir -p "$INSTALL_ROOT"
+  INSTALL_ROOT="."
 fi
 
-INSTALL_ROOT=$(canonical_install_root "$INSTALL_ROOT")
-INSTALL_LOCK_DIR="${INSTALL_ROOT}.lock"
+INSTALL_LOCK_DIR="$INSTALL_ROOT/.comic-sol-install.lock"
 if [ "$UNINSTALL" -eq 1 ]; then
   acquire_install_lock
   trap 'release_install_lock' EXIT
   trap 'abort_uninstall' INT TERM
 
-  CURRENT_ROOT=$(pwd -P)
+  CURRENT_ROOT=$CALLER_ROOT
   HOME_ROOT=$(cd -P -- "$HOME" && pwd -P)
-  case "$INSTALL_ROOT" in
+  case "$INSTALL_ROOT_DISPLAY" in
     /) echo "refusing to uninstall from a filesystem root" >&2; exit 1 ;;
   esac
-  if [ "$INSTALL_ROOT" = "$HOME_ROOT" ] || [ "$INSTALL_ROOT" = "$CURRENT_ROOT" ]; then
+  if [ "$INSTALL_ROOT_DISPLAY" = "$HOME_ROOT" ] || [ "$INSTALL_ROOT_DISPLAY" = "$CURRENT_ROOT" ]; then
     echo "refusing to uninstall from a sensitive directory" >&2
     exit 1
   fi
@@ -176,7 +228,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
      [ "$MARKER_MAGIC" != "$INSTALL_MARKER_MAGIC" ] ||
      [ -z "$MARKER_VERSION" ] ||
      [ "$MARKER_VERSION" != "$ACTIVE_VERSION" ] ||
-     [ "$MARKER_ROOT" != "$INSTALL_ROOT" ]; then
+     [ "$MARKER_ROOT" != "$INSTALL_ROOT_DISPLAY" ]; then
     echo "refusing to uninstall: install registration is invalid; reinstall or upgrade this root first" >&2
     exit 1
   fi
@@ -187,7 +239,9 @@ if [ "$UNINSTALL" -eq 1 ]; then
   for child in active-version.new .comic-sol-install.new active-version "$INSTALL_MARKER_NAME"; do
     rm -f -- "$INSTALL_ROOT/$child"
   done
-  rmdir -- "$INSTALL_ROOT" 2>/dev/null || true
+  install_root_name=$(basename -- "$INSTALL_ROOT_DISPLAY")
+  cd ..
+  rmdir -- "$install_root_name" 2>/dev/null || true
   release_install_lock
   echo "Comic Sol runtime removed. User projects were preserved."
   exit 0
