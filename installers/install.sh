@@ -218,7 +218,16 @@ fi
 
 validate_zip() {
   archive=$1
-  if ! unzip -Z1 "$archive" | while IFS= read -r member; do
+  listing="$TMP/archive-members"
+  if ! unzip -Z1 "$archive" > "$listing"; then
+    echo "archive member validation failed" >&2
+    exit 1
+  fi
+  if [ ! -s "$listing" ]; then
+    echo "archive member validation failed: archive is empty" >&2
+    exit 1
+  fi
+  while IFS= read -r member; do
     case "$member" in
       comic-sol|comic-sol/*) ;;
       *) echo "unsafe archive member: $member" >&2; exit 1 ;;
@@ -227,10 +236,7 @@ validate_zip() {
       ../*|*/../*|./*|*/./*|*//*|/*) echo "unsafe archive member: $member" >&2; exit 1 ;;
       *\\*|[A-Za-z]:/*) echo "unsafe archive member: $member" >&2; exit 1 ;;
     esac
-  done; then
-    echo "archive member validation failed" >&2
-    exit 1
-  fi
+  done < "$listing"
   if ! unzip -Z -l "$archive" | awk 'NR > 3 && $1 ~ /^l/ { found = 1 } END { exit found }'; then
     echo "unsafe archive member: symbolic links are not allowed" >&2
     exit 1

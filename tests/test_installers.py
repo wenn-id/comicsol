@@ -282,6 +282,56 @@ class PublicInstallerContractTests(unittest.TestCase):
             finally:
                 self.stop_installer_server(server, thread)
 
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_rejects_archive_when_member_listing_fails(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            archive = self.write_runtime_archive(root)
+            install_root = root / "runtime"
+            shim = root / "shim"
+            shim.mkdir()
+            real_unzip = shutil.which("unzip")
+            self.assertIsNotNone(real_unzip)
+            unzip_shim = shim / "unzip"
+            unzip_shim.write_text(
+                "#!/bin/sh\n"
+                'if [ "$1" = "-Z1" ]; then\n'
+                '  printf "%s\\n" "simulated listing failure" >&2\n'
+                "  exit 1\n"
+                "fi\n"
+                'exec "$REAL_UNZIP" "$@"\n',
+                encoding="utf-8",
+            )
+            unzip_shim.chmod(0o755)
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": f"{shim}{os.pathsep}{environment['PATH']}",
+                    "REAL_UNZIP": cast(str, real_unzip),
+                }
+            )
+            result = subprocess.run(
+                [
+                    "sh",
+                    str(self.root / "installers/install.sh"),
+                    "--archive",
+                    str(archive),
+                    "--sha256",
+                    hashlib.sha256(archive.read_bytes()).hexdigest(),
+                    "--install-root",
+                    str(install_root),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=environment,
+            )
+
+            self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertIn("archive member validation failed", result.stderr)
+            self.assertFalse((install_root / ".comic-sol-install").exists())
+            self.assertFalse((install_root / "bin").exists())
+
     def test_installers_serialize_install_root_mutations(self):
         self.assertIn("INSTALL_LOCK_DIR", self.posix)
         self.assertIn("mkdir --", self.posix)
