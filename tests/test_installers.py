@@ -76,7 +76,8 @@ class PublicInstallerContractTests(unittest.TestCase):
     def test_installers_enforce_https_redirects_and_normalize_digests(self):
         self.assertIn("curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2", self.posix)
         self.assertIn("tr '[:upper:]' '[:lower:]'", self.posix)
-        self.assertIn("MaximumRedirection 1", self.powershell)
+        self.assertIn("MaximumRedirection 0", self.powershell)
+        self.assertNotIn("MaximumRedirection 1", self.powershell)
         self.assertIn("Scheme", self.powershell)
         self.assertIn("https", self.powershell.lower())
 

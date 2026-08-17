@@ -154,7 +154,7 @@ try {
             throw "-Url must be an absolute HTTPS URL"
         }
         $Archive = Join-Path $Temp "comic-sol.zip"
-        Invoke-WebRequest -Uri $parsedUrl -OutFile $Archive -UseBasicParsing -MaximumRedirection 1
+        Invoke-WebRequest -Uri $parsedUrl -OutFile $Archive -UseBasicParsing -MaximumRedirection 0
     }
     if (-not $Archive -or -not (Test-Path -LiteralPath $Archive)) { throw "Provide -Archive PATH or -Url HTTPS_URL" }
     $Actual = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
