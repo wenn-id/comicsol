@@ -69,7 +69,7 @@ def ensure_supported_project_schema(version: object) -> None:
 
 def read_project_manifest(path: Path) -> Manifest:
     """Read a project manifest after applying the non-mutating legacy gate."""
-    manifest = _read_manifest(Path(path))
+    manifest = _read_manifest(Path(path).resolve(strict=True))
     # Pre-schema manifests are the legacy 1.0 representation. Normalize only
     # in memory so every downstream validator/consumer sees one contract.
     version = manifest.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
