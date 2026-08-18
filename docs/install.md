@@ -49,6 +49,17 @@ Download `comic-sol-2.0.0rc4-windows-x86_64.zip` and copy `installers/install.ps
 
 The default root is `$HOME\AppData\Local\ComicSol`. Override it with `-InstallRoot PATH`. The executable is unsigned, so Windows SmartScreen may warn during this prerelease.
 
+## Release qualification
+
+The release qualification workflow validates the *intended release artifact*: the published native archive, not a package rebuilt from the checkout. A maintainer dispatches `.github/workflows/release-qualification.yml` with an existing release tag. The workflow downloads the matching Linux, macOS, and Windows ZIP, `SHA256SUMS`, and installer directly from that GitHub Release, then runs on native runners:
+
+- `comic-sol --version` and `comic-sol doctor` from the installed runtime;
+- `init`, `status`, and `validate` on an offline fixture project;
+- checksum verification, installer install, uninstall, and preservation of the fixture project, user projects, unrelated files, and client configuration;
+- one separate summary artifact for Linux, macOS, Windows, and WSL2.
+
+WSL2 uses the Linux x86_64 release archive and `install.sh`; it is a separate qualification from native Windows PowerShell. If WSL2 is unavailable on the runner, the workflow records an explicit `exception` summary instead of silently treating the target as passed. To reproduce WSL qualification locally, run the Linux commands above inside WSL2 and retain the generated platform summary.
+
 ## Portable use without installation
 
 Extract the archive into a dedicated directory. Keep the executable beside its `_internal` directory; this is a PyInstaller one-directory runtime.

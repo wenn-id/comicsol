@@ -1,0 +1,129 @@
+name: Release Qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag whose published assets must be qualified (for example v2.0.0rc4)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: qualify (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+            installer: install.sh
+          - platform: macos
+            runner: macos-26-intel
+            installer: install.sh
+          - platform: windows
+            runner: windows-latest
+            installer: install.ps1
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Download published release asset and qualification harness
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          PLATFORM: ${{ matrix.platform }}
+          INSTALLER: ${{ matrix.installer }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          archive="comic-sol-${version}-${PLATFORM}-x86_64.zip"
+          mkdir -p qualification
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$archive" \
+            --pattern SHA256SUMS \
+            --pattern "$INSTALLER" \
+            --dir qualification
+          gh api "repos/$GITHUB_REPOSITORY/contents/scripts/release_qualification.py?ref=$RELEASE_TAG" \
+            --jq .content | base64 --decode > qualification/release_qualification.py
+          test -s "qualification/$archive"
+          test -s qualification/SHA256SUMS
+          test -s "qualification/$INSTALLER"
+          test -s qualification/release_qualification.py
+      - name: Qualify published release artifact
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          PLATFORM: ${{ matrix.platform }}
+          INSTALLER: ${{ matrix.installer }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          archive="qualification/comic-sol-${version}-${PLATFORM}-x86_64.zip"
+          python qualification/release_qualification.py \
+            --archive "$archive" \
+            --installer "qualification/$INSTALLER" \
+            --sha256 qualification/SHA256SUMS \
+            --platform "$PLATFORM" \
+            --summary "qualification/summary-$PLATFORM.json"
+      - name: Upload qualification summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: qualification-summary-${{ matrix.platform }}
+          path: qualification/summary-${{ matrix.platform }}.json
+          if-no-files-found: error
+
+  # Platform-specific exceptions are written to each summary; an unavailable WSL2 runner is exception, not pass.
+  wsl:
+    name: qualify (wsl)
+    runs-on: windows-latest
+    steps:
+      - name: Download published Linux release asset and qualification harness
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          archive="comic-sol-${version}-linux-x86_64.zip"
+          mkdir -p qualification
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$archive" \
+            --pattern SHA256SUMS \
+            --pattern install.sh \
+            --dir qualification
+          gh api "repos/$GITHUB_REPOSITORY/contents/scripts/release_qualification.py?ref=$RELEASE_TAG" \
+            --jq .content | base64 --decode > qualification/release_qualification.py
+      - name: Qualify Linux artifact in WSL2
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $wslStatus = & wsl.exe --status 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            $reason = "WSL2 not available on this runner: $($wslStatus -join ' ')"
+            '{"platform":"wsl","status":"exception","checks":[],"exceptions":["' + $reason.Replace('"', '\"') + '"]}' | Set-Content -Encoding utf8 qualification/summary-wsl.json
+            Write-Output $reason
+            exit 0
+          }
+          $root = (Resolve-Path qualification).Path
+          $wslRoot = (& wsl.exe wslpath -a $root).Trim()
+          $version = $env:RELEASE_TAG.Substring(1)
+          $qualificationRoot = $wslRoot
+          $archive = "$qualificationRoot/comic-sol-$version-linux-x86_64.zip"
+          & wsl.exe -- bash -lc "python3 '$qualificationRoot/release_qualification.py' --archive '$archive' --installer '$qualificationRoot/install.sh' --sha256 '$qualificationRoot/SHA256SUMS' --platform wsl --summary '$qualificationRoot/summary-wsl.json'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload WSL qualification summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: qualification-summary-wsl
+          path: qualification/summary-wsl.json
+          if-no-files-found: error
