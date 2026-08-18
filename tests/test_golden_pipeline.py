@@ -78,11 +78,10 @@ class GoldenPipelineTests(unittest.TestCase):
             },
         })
         atomic_write_json(self.project / "project.json", manifest)
-        for target in (
-            "PLANNED", "SCRIPTED", "STORYBOARDED", "REFERENCES_READY",
-            "PANELS_READY", "QA_READY", "LETTERED", "COMPOSED",
-        ):
-            transition(self.project, target)
+        transition(self.project, "PLANNED")
+        transition(self.project, "SCRIPTED")
+        transition(self.project, "STORYBOARDED")
+        transition(self.project, "REFERENCES_READY")
 
     def _prepare_panel_artifacts(self):
         raw = self.project / "panels/raw/p01-01.png"
@@ -119,11 +118,15 @@ class GoldenPipelineTests(unittest.TestCase):
                 "regions": [],
             })
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
+        transition(self.project, "PANELS_READY")
+        transition(self.project, "QA_READY")
 
     def _prepare_ready_artifacts(self):
         self._prepare_panel_artifacts()
         letter_project(self.project)
+        transition(self.project, "LETTERED")
         compose_project(self.project)
+        transition(self.project, "COMPOSED")
         self._prepare_page_quality()
 
     def _prepare_page_quality(self):
@@ -134,7 +137,7 @@ class GoldenPipelineTests(unittest.TestCase):
                 "severity": "error",
                 "evidence": {
                     "face-action-obstruction": "Reviewer inspected Mira's face and delivery action; no obstruction is present.",
-                    "bubble-tail-direction": "No dialogue bubbles are authored in this golden page; tail review is not applicable.",
+                    "bubble-tail-direction": "Reviewer verified Mira's dialogue tail terminates at the authored speaker anchor.",
                     "accidental-text-watermark": "Reviewer inspected the complete page; no accidental text or watermark is present.",
                 }[check_id],
                 "method": "golden-fixture",
@@ -205,11 +208,14 @@ class GoldenPipelineTests(unittest.TestCase):
         from scripts.validate_project import ProjectValidationError, require_valid_project
         with self.assertRaises(ProjectValidationError) as context:
             require_valid_project(self.project, "final")
-        details = " ".join(
-            f"{issue.path} {issue.field} {issue.message}"
+        stale_fields = {
+            (issue.path, issue.field)
             for issue in context.exception.issues
+        }
+        self.assertIn(
+            ("exports/pdf-verification.json", "pdf-verification-stale"),
+            stale_fields,
         )
-        self.assertRegex(details, r"pdf-verification|page")
 
 
 if __name__ == "__main__":

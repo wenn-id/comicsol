@@ -34,11 +34,16 @@
           "text": [
             {
               "anchor": "top-left",
-              "content": "One light remained.",
+              "content": "The light is fading. I will carry it.",
               "id": "p01-01-t01",
-              "kind": "caption",
+              "kind": "dialogue",
               "priority": 1,
-              "speaker": null
+              "speaker": "mira",
+              "speaker_anchor": [
+                0.72,
+                0.54
+              ],
+              "voice_source": "human"
             }
           ]
         }
