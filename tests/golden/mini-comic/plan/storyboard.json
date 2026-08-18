@@ -1,0 +1,49 @@
+{
+  "pages": [
+    {
+      "layout": "full-page",
+      "number": 1,
+      "panels": [
+        {
+          "action": "Mira carries the last light through the silent street.",
+          "beat": "The last light is entrusted to Mira.",
+          "characters": [
+            "mira"
+          ],
+          "composition": "Mira on the right third with protected lettering space",
+          "continuity": [
+            "mira:amber scarf"
+          ],
+          "expression": "quiet determination",
+          "id": "p01-01",
+          "lighting": "amber light against cool blue shadows",
+          "negative": [
+            "text",
+            "speech bubbles",
+            "watermark"
+          ],
+          "order": 1,
+          "rect": {
+            "height": 2272,
+            "width": 1472,
+            "x": 64,
+            "y": 64
+          },
+          "scene_id": "quiet-city",
+          "shot": "cinematic full-page manga panel",
+          "text": [
+            {
+              "anchor": "top-left",
+              "content": "One light remained.",
+              "id": "p01-01-t01",
+              "kind": "caption",
+              "priority": 1,
+              "speaker": null
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "schema_version": "1.0"
+}

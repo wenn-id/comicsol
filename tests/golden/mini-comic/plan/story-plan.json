@@ -1,0 +1,38 @@
+{
+  "beginning": "Mira receives the last light.",
+  "climax": "Mira carries it across the silent city.",
+  "ending": "The underground city wakes again.",
+  "logline": "A courier carries one last light through a quiet underground city.",
+  "rating": "teen",
+  "scenes": [
+    {
+      "characters": [
+        "mira"
+      ],
+      "continuity_anchor": "blue shadows and a warm amber light",
+      "id": "quiet-city",
+      "location": "underground city street",
+      "purpose": "begin the delivery",
+      "time": "artificial dusk"
+    },
+    {
+      "characters": [
+        "mira"
+      ],
+      "continuity_anchor": "blue shadows and a warm amber light",
+      "id": "city-awakens",
+      "location": "underground city square",
+      "purpose": "complete the delivery",
+      "time": "artificial dawn"
+    }
+  ],
+  "schema_version": "1.0",
+  "setting": "A small underground city lit by failing blue machinery.",
+  "theme": "Hope can be carried.",
+  "title": "Mini Comic Golden",
+  "tone": [
+    "quiet",
+    "hopeful"
+  ],
+  "turn": "The last light begins to fade."
+}
