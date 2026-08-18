@@ -554,13 +554,32 @@ class PublicInstallerContractTests(unittest.TestCase):
             config.parent.mkdir(parents=True)
             config.write_text("[mcp_servers.other]\ncommand = 'keep'\n", encoding="utf-8")
             archive = self.write_runtime_archive(root, version="2.0.0rc4", filename="old.zip")
+            environment = {
+                "COMIC_SOL_OUTPUT_ROOT": str(project),
+                "HOME": str(root / "home"),
+            }
 
-            first = self.run_posix_archive_install(archive, install_root)
+            first = self.run_posix_archive_install(archive, install_root, env=environment)
             self.assertEqual(0, first.returncode, first.stdout + first.stderr)
-            marker = (install_root / ".comic-sol-install").read_bytes()
-            repeated = self.run_posix_archive_install(archive, install_root)
+            runtime_snapshot = {
+                "marker": (install_root / ".comic-sol-install").read_bytes(),
+                "active_version": (install_root / "active-version").read_bytes(),
+                "bin": (install_root / "bin" / "comic-sol").read_bytes(),
+                "versioned": (install_root / "versions" / "2.0.0rc4" / "comic-sol").read_bytes(),
+            }
+            repeated = self.run_posix_archive_install(archive, install_root, env=environment)
             self.assertEqual(0, repeated.returncode, repeated.stdout + repeated.stderr)
-            self.assertEqual(marker, (install_root / ".comic-sol-install").read_bytes())
+            self.assertEqual(
+                runtime_snapshot,
+                {
+                    "marker": (install_root / ".comic-sol-install").read_bytes(),
+                    "active_version": (install_root / "active-version").read_bytes(),
+                    "bin": (install_root / "bin" / "comic-sol").read_bytes(),
+                    "versioned": (
+                        install_root / "versions" / "2.0.0rc4" / "comic-sol"
+                    ).read_bytes(),
+                },
+            )
 
             uninstall = self.run_uninstall(install_root)
             self.assertEqual(0, uninstall.returncode, uninstall.stdout + uninstall.stderr)
@@ -591,15 +610,27 @@ class PublicInstallerContractTests(unittest.TestCase):
             config.write_text("[mcp_servers.other]\ncommand = 'keep'\n", encoding="utf-8")
             old_archive = self.write_runtime_archive(root, version="2.0.0rc4", filename="old.zip")
             new_archive = self.write_runtime_archive(root, version="2.0.0rc5", filename="new.zip")
+            environment = {
+                "COMIC_SOL_OUTPUT_ROOT": str(project),
+                "HOME": str(root / "home"),
+            }
 
-            first = self.run_posix_archive_install(old_archive, install_root)
+            first = self.run_posix_archive_install(old_archive, install_root, env=environment)
             self.assertEqual(0, first.returncode, first.stdout + first.stderr)
             old_bin = (install_root / "bin" / "comic-sol").read_bytes()
-            upgraded = self.run_posix_archive_install(new_archive, install_root)
+            old_versioned = (install_root / "versions" / "2.0.0rc4" / "comic-sol").read_bytes()
+            upgraded = self.run_posix_archive_install(new_archive, install_root, env=environment)
             self.assertEqual(0, upgraded.returncode, upgraded.stdout + upgraded.stderr)
             self.assertEqual("2.0.0rc5", (install_root / "active-version").read_text().strip())
             self.assertNotEqual(old_bin, (install_root / "bin" / "comic-sol").read_bytes())
+            self.assertEqual(
+                old_bin, (install_root / "versions" / "2.0.0rc4" / "comic-sol").read_bytes()
+            )
+            self.assertEqual(
+                old_versioned, (install_root / "versions" / "2.0.0rc4" / "comic-sol").read_bytes()
+            )
             self.assertFalse((install_root / "versions" / ".2.0.0rc5.rollback").exists())
+            self.assertFalse((install_root / ".bin.rollback").exists())
             self.assertTrue((install_root / "versions" / "2.0.0rc4").exists())
             self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
             self.assertEqual("[mcp_servers.other]\ncommand = 'keep'\n", config.read_text())
@@ -618,7 +649,11 @@ class PublicInstallerContractTests(unittest.TestCase):
             config.write_text("[mcp_servers.other]\ncommand = 'keep'\n", encoding="utf-8")
             old_archive = self.write_runtime_archive(root, version="2.0.0rc4", filename="old.zip")
             new_archive = self.write_runtime_archive(root, version="2.0.0rc5", filename="new.zip")
-            installed = self.run_posix_archive_install(old_archive, install_root)
+            environment = {
+                "COMIC_SOL_OUTPUT_ROOT": str(project),
+                "HOME": str(root / "home"),
+            }
+            installed = self.run_posix_archive_install(old_archive, install_root, env=environment)
             self.assertEqual(0, installed.returncode, installed.stdout + installed.stderr)
             old_bin = (install_root / "bin" / "comic-sol").read_bytes()
             old_marker = (install_root / ".comic-sol-install").read_bytes()
@@ -640,7 +675,8 @@ class PublicInstallerContractTests(unittest.TestCase):
             failed = self.run_posix_archive_install(
                 new_archive,
                 install_root,
-                env={
+                env=environment
+                | {
                     "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
                     "REAL_MV": cast(str, real_mv),
                 },
