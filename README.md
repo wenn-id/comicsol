@@ -90,10 +90,11 @@ we recommend installing [Superpowers](https://github.com/obra/superpowers)
 alongside Comic Sol. Superpowers is optional, installed separately, and is not
 required for Comic Sol to run.
 
-The CLI currently exposes `doctor`, `init`, `status`, `validate`, `resume`,
-`finalize`, `setup`, `repair`, and `uninstall`, plus the optional `mcp` launcher.
-Machine-readable responses use one stable envelope containing `ok`, `command`,
-`data`, and `error`.
+Machine-readable doctor output keeps the stable CLI envelope (`ok`, `command`, `data`, `error`). `data.ready` is the authoritative readiness boolean; the legacy `data.healthy` and `data.messages` fields remain available for existing consumers. `data.checks` contains stable check objects with `id`, `status` (`pass`, `warn`, or `fail`), `message`, and `remediation`. Runtime, Pillow, fonts, templates, references, and the selected output root fail closed when broken. MCP installation and image-generation capability are reported as actionable warnings when unavailable because they are optional for deterministic project editing.
+
+The CLI exposes `doctor`, `init`, `status`, `validate`, `resume`, `finalize`,
+`setup`, `repair`, and `uninstall`, plus the optional `mcp` launcher. Machine-readable
+responses use one stable envelope containing `ok`, `command`, `data`, and `error`.
 
 ## Native Distribution (`v2.0.0rc4`)
 

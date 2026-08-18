@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -15,6 +16,7 @@ import tempfile
 import unicodedata
 import warnings
 from dataclasses import asdict, dataclass
+from typing import cast
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -1676,58 +1678,79 @@ def _stage_override(
     )
 
 
-def doctor(output_root: Path) -> tuple[bool, list[str]]:
-    """Check the deterministic local runtime without probing agent tools."""
-    healthy = True
-    messages: list[str] = []
+def doctor_report(output_root: Path) -> dict[str, object]:
+    """Return authoritative, actionable diagnostics for agents and humans."""
+    checks: list[dict[str, object]] = []
+
+    def add_check(
+        check_id: str,
+        status: str,
+        message: str,
+        remediation: str,
+        **details: object,
+    ) -> None:
+        check: dict[str, object] = {
+            "id": check_id,
+            "status": status,
+            "message": message,
+            "remediation": remediation,
+        }
+        if details:
+            check["details"] = details
+        checks.append(check)
 
     if sys.version_info[:2] >= (3, 11):
-        messages.append(f"PASS Python 3.11+ ({sys.version.split()[0]})")
+        add_check("runtime", "pass", f"Python 3.11+ ({sys.version.split()[0]})", "No action required.")
     else:
-        healthy = False
-        messages.append(f"FAIL Python 3.11+ required; found {sys.version.split()[0]}")
+        add_check("runtime", "fail", f"Python 3.11+ required; found {sys.version.split()[0]}", "Install Python 3.11 or newer and rerun doctor.")
 
     try:
         import PIL
-
         if PIL.__version__ == REQUIRED_PILLOW:
-            messages.append(f"PASS Pillow {REQUIRED_PILLOW}")
+            add_check("pillow", "pass", f"Pillow {REQUIRED_PILLOW}", "No action required.")
         else:
-            healthy = False
-            messages.append(
-                f"FAIL Pillow {REQUIRED_PILLOW} required; found {PIL.__version__}"
-            )
+            add_check("pillow", "fail", f"Pillow {REQUIRED_PILLOW} required; found {PIL.__version__}", f"Install the locked Pillow version: python -m pip install Pillow=={REQUIRED_PILLOW}.")
     except Exception as error:
-        healthy = False
-        messages.append(f"FAIL Pillow check: {type(error).__name__}: {error}")
+        add_check("pillow", "fail", f"Pillow check failed: {type(error).__name__}: {error}", "Install the Comic Sol runtime again so its bundled Pillow dependency is restored.")
 
     font_checks = (
         ("Comic Neue Regular", FONT_PATH_COMIC_REGULAR),
         ("Comic Neue Bold", FONT_PATH_COMIC_BOLD),
         ("Noto Sans fallback", FONT_PATH_FALLBACK),
     )
+    font_failures: list[str] = []
+    font_results: list[tuple[str, bool, str]] = []
     for label, path in font_checks:
         try:
             ImageFont.truetype(str(path), 42)
-            messages.append(f"PASS font {label} loads at 42px")
+            font_results.append((label, True, f"font {label} loads at 42px"))
         except Exception as error:
-            healthy = False
-            messages.append(f"FAIL font {label} at 42px: {type(error).__name__}: {error}")
+            detail = f"font {label} at 42px: {type(error).__name__}: {error}"
+            font_failures.append(detail)
+            font_results.append((label, False, detail))
+    if font_failures:
+        add_check("fonts", "fail", "Required bundled fonts could not be loaded.", "Reinstall Comic Sol or restore the bundled assets/fonts directory.", failures=font_failures)
+    else:
+        add_check("fonts", "pass", "Bundled fonts load at 42px.", "No action required.")
 
     template_names = (
-        "manifest.json",
-        "character-bible.json",
-        "story-plan.json",
-        "storyboard.json",
-        "panel-record.json",
-        "qa-report.md.tmpl",
+        "manifest.json", "character-bible.json", "story-plan.json",
+        "storyboard.json", "panel-record.json", "qa-report.md.tmpl",
     )
     missing_templates = [name for name in template_names if not (TEMPLATES / name).is_file()]
     if missing_templates:
-        healthy = False
-        messages.append(f"FAIL templates missing: {', '.join(missing_templates)}")
+        add_check("templates", "fail", f"Templates missing: {', '.join(missing_templates)}", "Reinstall Comic Sol so its bundled templates are restored.", missing=missing_templates)
     else:
-        messages.append("PASS templates available")
+        add_check("templates", "pass", "Bundled templates available.", "No action required.")
+
+    reference_root = ROOT / "references"
+    if not reference_root.is_dir():
+        reference_root = ROOT / "skill" / "references"
+    missing_references = [name for name in ("workflow.md", "schemas.md", "visual-qa.md") if not (reference_root / name).is_file()]
+    if missing_references:
+        add_check("references", "fail", f"References missing: {', '.join(missing_references)}", "Reinstall Comic Sol or restore its bundled references.", missing=missing_references)
+    else:
+        add_check("references", "pass", "Bundled workflow references available.", "No action required.")
 
     output_root = Path(output_root)
     try:
@@ -1736,13 +1759,52 @@ def doctor(output_root: Path) -> tuple[bool, list[str]]:
             handle.write(b"ok")
             handle.flush()
             os.fsync(handle.fileno())
-        messages.append(f"PASS output root writable: {output_root.resolve()}")
+        add_check("output-root", "pass", f"output root writable: {output_root.resolve()}", "No action required.")
     except OSError as error:
-        healthy = False
-        messages.append(f"FAIL output root not writable: {type(error).__name__}: {error}")
+        add_check("output-root", "fail", f"Output root is not writable: {type(error).__name__}: {error}", "Choose a writable project directory with --output-root or fix its permissions.")
 
+    if importlib.util.find_spec("mcp") is not None:
+        add_check("mcp", "pass", "MCP support is installed.", "No action required.")
+    else:
+        add_check("mcp", "warn", "MCP support is unavailable in this environment.", "Install the optional MCP extra with: python -m pip install 'comic-sol[mcp]'.")
+    add_check("image-capability", "warn", "Image-generation capability must be inspected in the agent session.", "Enable an image-generation skill/tool, then resume the project when panels are needed.")
+
+    ready = not any(check["status"] == "fail" for check in checks)
+    messages = [f"{'READY' if ready else 'NOT READY'} Comic Sol diagnostics"]
+    runtime_check = next(check for check in checks if check["id"] == "runtime")
+    if runtime_check["status"] == "pass":
+        messages.append(f"PASS Python 3.11+ ({sys.version.split()[0]})")
+    else:
+        messages.append(f"FAIL Python 3.11+ required; found {sys.version.split()[0]}")
+    pillow_check = next(check for check in checks if check["id"] == "pillow")
+    messages.append(f"{'PASS' if pillow_check['status'] == 'pass' else 'FAIL'} {pillow_check['message']}")
+    for label, passed, detail in font_results:
+        messages.append(f"{'PASS' if passed else 'FAIL'} {detail}")
+    templates_check = next(check for check in checks if check["id"] == "templates")
+    messages.append(
+        "PASS templates available"
+        if templates_check["status"] == "pass"
+        else f"FAIL {templates_check['message']}"
+    )
+    references_check = next(check for check in checks if check["id"] == "references")
+    messages.append(
+        "PASS references available"
+        if references_check["status"] == "pass"
+        else f"FAIL {references_check['message']}"
+    )
+    output_check = next(check for check in checks if check["id"] == "output-root")
+    messages.append(f"{'PASS' if output_check['status'] == 'pass' else 'FAIL'} {output_check['message']}")
     messages.append("INFO image capability: inspect in agent session")
-    return healthy, messages
+    for check in checks:
+        prefix = {"pass": "PASS", "warn": "WARN", "fail": "FAIL"}[str(check["status"])]
+        messages.append(f"{prefix} {check['id']}: {check['message']} — {check['remediation']}")
+    return {"ready": ready, "healthy": ready, "checks": checks, "messages": messages}
+
+
+def doctor(output_root: Path) -> tuple[bool, list[str]]:
+    """Compatibility adapter for the original tuple-based doctor API."""
+    report = doctor_report(output_root)
+    return bool(report["ready"]), list(cast(list[str], report["messages"]))
 
 
 def finalize_project(project_dir: Path) -> dict[str, object]:

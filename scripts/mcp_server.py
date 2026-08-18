@@ -23,6 +23,7 @@ from .comic_sol import (
     ALL_STATUSES,
     RESUME_STAGES,
     doctor,
+    doctor_report,
     init_project,
     transition,
     build_resume_plan,
@@ -338,8 +339,8 @@ mcp = FastMCP("Comic Sol", instructions="Deterministic Comic Sol project tools")
 def comic_doctor() -> dict[str, object]:
     """Check the local runtime environment (Python, Pillow, fonts, templates)."""
     try:
-        healthy, messages = doctor(OUTPUT_ROOT)
-        return {"healthy": healthy, "messages": messages}
+        report = doctor_report(OUTPUT_ROOT)
+        return report
     except Exception as e:
         raise _tool_error(e) from None
 

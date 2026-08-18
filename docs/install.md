@@ -60,7 +60,10 @@ The release qualification workflow validates the *intended release artifact*: th
 
 WSL2 uses the Linux x86_64 release archive and `install.sh`; it is a separate qualification from native Windows PowerShell. If WSL2 is unavailable on the runner, the workflow records an explicit `exception` summary instead of silently treating the target as passed. To reproduce WSL qualification locally, run the Linux commands above inside WSL2 and retain the generated platform summary.
 
-## Portable use without installation
+## Structured doctor diagnostics
+
+`comic-sol --json doctor --output-root PATH` returns the stable CLI envelope and an authoritative readiness report. `data.ready` and legacy `data.healthy` agree; `data.messages` remains available for older consumers; and `data.checks` contains stable `id`, `status`, `message`, and `remediation` fields. Required runtime, Pillow, fonts, templates, references, and output-root checks fail closed. Optional MCP and image-generation capability checks return actionable warnings when unavailable rather than pretending those capabilities are installed.
+
 
 Extract the archive into a dedicated directory. Keep the executable beside its `_internal` directory; this is a PyInstaller one-directory runtime.
 

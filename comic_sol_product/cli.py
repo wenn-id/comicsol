@@ -111,8 +111,7 @@ def _safe_message(error: Exception) -> str:
 def _run(arguments: argparse.Namespace) -> Any:
     engine = _load_engine()
     if arguments.command == "doctor":
-        healthy, messages = engine.doctor(arguments.output_root)
-        return {"healthy": healthy, "messages": messages}
+        return engine.doctor_report(arguments.output_root)
     if arguments.command == "init":
         source = arguments.source.read_bytes()
         engine.validate_source_bytes(source, arguments.source.suffix)
