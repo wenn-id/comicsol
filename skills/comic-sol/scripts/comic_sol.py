@@ -1113,7 +1113,30 @@ def _resume_project_locked(
     with ProjectLock(project_dir):
         manifest = read_json(manifest_path)
         if manifest.get("status") != "BLOCKED":
-            raise ValueError("resume requires a BLOCKED project")
+            actions = build_resume_plan(project_dir)
+            stage_actions = {
+                action.stage: action
+                for action in actions
+                if action.artifact == "stage"
+            }
+            preserved: list[str] = []
+            stale_stage: str | None = None
+            for stage in RESUME_STAGES:
+                action = stage_actions.get(stage)
+                if stale_stage is None and action is not None and action.action == "reuse":
+                    preserved.append(stage)
+                elif stale_stage is None:
+                    stale_stage = stage
+            invalidated = (
+                list(RESUME_STAGES[RESUME_STAGES.index(stale_stage):])
+                if stale_stage is not None else []
+            )
+            return {
+                "status": manifest.get("status"),
+                "preserved": preserved,
+                "invalidated": invalidated,
+                "next_action": _next_resume_action(project_dir, stale_stage),
+            }
         actions = build_resume_plan(project_dir)
         stage_actions = {
             action.stage: action

@@ -1511,6 +1511,68 @@ class BlockedRecoveryTests(unittest.TestCase):
         for relative, payload in before.items():
             self.assertEqual(payload, (self.project / relative).read_bytes())
 
+    def test_resume_is_idempotent_after_first_recovery(self):
+        block_project(
+            self.project,
+            "image-capability-unavailable",
+            "image capability unavailable",
+        )
+        manifest = read_json(self.project / "project.json")
+        manifest["capability"].update({
+            "detected_at": "2026-07-23T00:01:00Z",
+            "name": "restored-image-tool",
+            "status": "available",
+        })
+        atomic_write_json(self.project / "project.json", manifest)
+
+        first = resume_project(self.project)
+        after_first_manifest = (self.project / "project.json").read_bytes()
+        after_first_events = (self.project / "logs/events.jsonl").read_bytes()
+        second = resume_project(self.project)
+
+        self.assertEqual(first["status"], second["status"])
+        self.assertEqual(first["preserved"], second["preserved"])
+        self.assertEqual(first["invalidated"], second["invalidated"])
+        self.assertEqual(first["next_action"], second["next_action"])
+        self.assertEqual(after_first_manifest, (self.project / "project.json").read_bytes())
+        self.assertEqual(after_first_events, (self.project / "logs/events.jsonl").read_bytes())
+
+    def test_resume_recovery_preserves_hashes_and_writes_valid_provenance(self):
+        before = {
+            relative: sha256_file(self.project / relative)
+            for relative in (
+                "plan/story-plan.json",
+                "plan/character-bible.json",
+                "plan/storyboard.json",
+            )
+        }
+        block_project(
+            self.project,
+            "image-capability-unavailable",
+            "image capability unavailable",
+        )
+        manifest = read_json(self.project / "project.json")
+        manifest["capability"].update({
+            "detected_at": "2026-07-23T00:01:00Z",
+            "name": "restored-image-tool",
+            "status": "available",
+        })
+        atomic_write_json(self.project / "project.json", manifest)
+
+        result = resume_project(self.project)
+        events = [
+            json.loads(line)
+            for line in (self.project / "logs/events.jsonl").read_text("utf-8").splitlines()
+        ]
+
+        self.assertEqual("STORYBOARDED", result["status"])
+        self.assertTrue(any(event["event"] == "artifact.reused" for event in events))
+        self.assertTrue(all(
+            sha256_file(self.project / relative) == digest
+            for relative, digest in before.items()
+        ))
+        self.assertTrue(all(isinstance(event.get("event"), str) for event in events))
+
     def test_resume_recovers_under_project_lock(self):
         block_project(
             self.project,
