@@ -9,8 +9,11 @@ import os
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
+
+from comic_sol_product import __version__
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -260,26 +263,82 @@ def aggregate_summaries(
 def validate_published_metadata(
     metadata: Path, sbom: Path, *, artifact: str, platform: str
 ) -> None:
-    """Validate the published metadata and CycloneDX fields for one artifact."""
+    """Validate published metadata and the full CycloneDX runtime contract."""
     metadata_record = json.loads(metadata.read_text(encoding="utf-8"))
-    if metadata_record.get("product") != "comic-sol":
-        raise RuntimeError("published metadata has an unexpected product")
-    if metadata_record.get("platform") != platform:
-        raise RuntimeError("published metadata platform mismatch")
-    if metadata_record.get("signature_status") != "unsigned":
-        raise RuntimeError("published metadata signature status is not explicit")
-    if artifact not in metadata_record.get("artifacts", []):
+    expected_metadata = {
+        "product": "comic-sol",
+        "platform": platform,
+        "signature_status": "unsigned",
+    }
+    for key, expected in expected_metadata.items():
+        if metadata_record.get(key) != expected:
+            raise RuntimeError(f"published metadata mismatch: {key}")
+    artifacts = metadata_record.get("artifacts")
+    if not isinstance(artifacts, list) or artifact not in artifacts:
         raise RuntimeError("published metadata does not list the qualified archive")
+
     sbom_record = json.loads(sbom.read_text(encoding="utf-8"))
-    component = sbom_record.get("metadata", {}).get("component", {})
+    components = sbom_record.get("components")
+    dependencies = sbom_record.get("dependencies")
+    sbom_metadata = sbom_record.get("metadata")
+    root_component = sbom_metadata.get("component") if isinstance(sbom_metadata, dict) else None
+    serial = sbom_record.get("serialNumber")
+    try:
+        if not isinstance(serial, str) or not serial.startswith("urn:uuid:"):
+            raise ValueError("missing UUID URN")
+        uuid.UUID(serial.removeprefix("urn:uuid:"))
+    except (AttributeError, ValueError):
+        raise RuntimeError("published SBOM serialNumber is not a UUID URN") from None
     if (
         sbom_record.get("bomFormat") != "CycloneDX"
         or sbom_record.get("specVersion") != "1.6"
-        or component.get("name") != "comic-sol"
-        or not sbom_record.get("components")
-        or not sbom_record.get("dependencies")
+        or not isinstance(components, list)
+        or not isinstance(dependencies, list)
+        or not isinstance(root_component, dict)
+        or root_component.get("name") != "comic-sol"
+        or root_component.get("version") != __version__
+        or not root_component.get("bom-ref")
     ):
-        raise RuntimeError("published SBOM schema or metadata is invalid")
+        raise RuntimeError("published SBOM identity or collection types are invalid")
+    properties = {
+        item.get("name"): item.get("value")
+        for item in sbom_metadata.get("properties", [])
+        if isinstance(item, dict)
+    }
+    if (
+        properties.get("comic-sol:release:artifact") != artifact
+        or properties.get("comic-sol:release:platform") != platform
+        or properties.get("comic-sol:release:architecture") != "x86_64"
+    ):
+        raise RuntimeError("published SBOM release properties are invalid")
+
+    expected_components = {"pillow", "mcp", "pyinstaller", "python"}
+    component_names = {
+        item.get("name", "").casefold() for item in components if isinstance(item, dict)
+    }
+    if not expected_components <= component_names:
+        missing = ", ".join(sorted(expected_components - component_names))
+        raise RuntimeError(f"published SBOM missing runtime components: {missing}")
+    if any(
+        not isinstance(item, dict) or not item.get("purl") or not item.get("bom-ref")
+        for item in components
+    ):
+        raise RuntimeError("published SBOM component identity is incomplete")
+
+    references = {item["bom-ref"] for item in components}
+    root_ref = root_component["bom-ref"]
+    references.add(root_ref)
+    for dependency in dependencies:
+        if not isinstance(dependency, dict) or not dependency.get("ref"):
+            raise RuntimeError("published SBOM dependency graph has a missing reference")
+        if dependency["ref"] not in references:
+            raise RuntimeError("published SBOM dependency graph has an unknown reference")
+        depends_on = dependency.get("dependsOn", [])
+        if not isinstance(depends_on, list) or not all(item in references for item in depends_on):
+            raise RuntimeError("published SBOM dependency graph has an unknown dependency")
+    root_dependency = next((item for item in dependencies if item.get("ref") == root_ref), None)
+    if not root_dependency or not root_dependency.get("dependsOn"):
+        raise RuntimeError("published SBOM root dependency graph is incomplete")
 
 
 def write_plan_fixture(project: Path) -> None:

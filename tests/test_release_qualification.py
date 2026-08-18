@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 
 from scripts.release_qualification import aggregate_summaries
+from scripts.release_qualification import validate_published_metadata
 from scripts.release_qualification import verify_payload_checksums
 
 
@@ -72,6 +73,63 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             (root / "runtime.sbom.json").write_bytes(b"tampered\n")
             with self.assertRaisesRegex(RuntimeError, "SHA256 mismatch"):
                 verify_payload_checksums(manifest, payloads)
+
+    def test_validate_published_metadata_rejects_malformed_sbom_types_and_references(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            metadata = root / "runtime.metadata.json"
+            sbom = root / "runtime.sbom.json"
+            metadata.write_text(
+                json.dumps(
+                    {
+                        "product": "comic-sol",
+                        "platform": "linux",
+                        "signature_status": "unsigned",
+                        "artifacts": ["runtime.zip"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            components = [
+                {"name": name, "purl": f"pkg:generic/{name}@1", "bom-ref": name}
+                for name in ("pillow", "mcp", "pyinstaller", "python")
+            ]
+            sbom_record = {
+                "bomFormat": "CycloneDX",
+                "specVersion": "1.6",
+                "serialNumber": "urn:uuid:12345678-1234-5678-1234-567812345678",
+                "metadata": {
+                    "component": {
+                        "name": "comic-sol",
+                        "version": __import__("comic_sol_product").__version__,
+                        "bom-ref": "root",
+                    },
+                    "properties": [
+                        {"name": "comic-sol:release:artifact", "value": "runtime.zip"},
+                        {"name": "comic-sol:release:platform", "value": "linux"},
+                        {"name": "comic-sol:release:architecture", "value": "x86_64"},
+                    ],
+                },
+                "components": components,
+                "dependencies": [
+                    {"ref": "root", "dependsOn": [item["bom-ref"] for item in components]}
+                ],
+            }
+            sbom.write_text(json.dumps(sbom_record), encoding="utf-8")
+            sbom_record["components"] = {"pillow": "invalid"}
+            sbom.write_text(json.dumps(sbom_record), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "collection types"):
+                validate_published_metadata(
+                    metadata, sbom, artifact="runtime.zip", platform="linux"
+                )
+
+            sbom_record["components"] = components
+            sbom_record["dependencies"] = [{"ref": "root", "dependsOn": ["unknown"]}]
+            sbom.write_text(json.dumps(sbom_record), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "unknown dependency"):
+                validate_published_metadata(
+                    metadata, sbom, artifact="runtime.zip", platform="linux"
+                )
 
     def test_release_qualification_workflow_runs_source_p0_gates_and_aggregates(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
