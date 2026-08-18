@@ -262,6 +262,9 @@ def validate_published_metadata(
     expected_metadata = {
         "product": "comic-sol",
         "platform": platform,
+        "architecture": "x86_64",
+        "tag": f"v{version}",
+        "version": version,
         "signature_status": "unsigned",
     }
     for key, expected in expected_metadata.items():

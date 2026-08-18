@@ -123,6 +123,9 @@ class ReleaseQualificationContractTests(unittest.TestCase):
                     {
                         "product": "comic-sol",
                         "platform": "linux",
+                        "architecture": "x86_64",
+                        "tag": "v2.0.0rc4",
+                        "version": "2.0.0rc4",
                         "signature_status": "unsigned",
                         "artifacts": ["runtime.zip"],
                     }
@@ -167,8 +170,34 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             sbom.write_text(json.dumps(sbom_record), encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "unknown dependency"):
                 validate_published_metadata(
-                    metadata, sbom, artifact="runtime.zip", platform="linux", version="2.0.0rc4"
+                    metadata,
+                    sbom,
+                    artifact="runtime.zip",
+                    platform="linux",
+                    version="2.0.0rc4",
                 )
+            for field, value in (
+                ("architecture", "arm64"),
+                ("tag", "v2.0.0rc3"),
+                ("version", "2.0.0rc3"),
+            ):
+                metadata_record = json.loads(metadata.read_text(encoding="utf-8"))
+                metadata_record[field] = value
+                metadata.write_text(json.dumps(metadata_record), encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, f"metadata mismatch: {field}"):
+                    validate_published_metadata(
+                        metadata,
+                        sbom,
+                        artifact="runtime.zip",
+                        platform="linux",
+                        version="2.0.0rc4",
+                    )
+                metadata_record[field] = {
+                    "architecture": "x86_64",
+                    "tag": "v2.0.0rc4",
+                    "version": "2.0.0rc4",
+                }[field]
+                metadata.write_text(json.dumps(metadata_record), encoding="utf-8")
 
     def test_release_qualification_workflow_runs_source_p0_gates_and_aggregates(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
