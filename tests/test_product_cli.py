@@ -91,12 +91,40 @@ class ProductCliTests(unittest.TestCase):
             self.assertFalse(payload["ok"])
             self.assertEqual("init", payload["command"])
             self.assertIsNone(payload["data"])
-            self.assertEqual("invalid-input", payload["error"]["category"])
+            self.assertEqual("invalid-data", payload["error"]["category"])
+            self.assertEqual("invalid-input", payload["error"]["legacy_category"])
             self.assertEqual("CS-PROJ-001", payload["error"]["code"])
             self.assertTrue(payload["error"]["reason"])
             self.assertTrue(payload["error"]["recovery"])
             self.assertNotIn(str(root), payload["error"]["message"])
             self.assertFalse(output.exists())
+
+    def test_human_failure_includes_safe_actionable_detail(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "story.png"
+            source.write_bytes(b"not an image or text source")
+            request = root / "request.json"
+            request.write_text('{"language":"en","mode":"short_prompt"}', encoding="utf-8")
+
+            code, stdout, stderr = self.invoke(
+                [
+                    "init",
+                    "--output-root",
+                    str(root / "output"),
+                    "--title",
+                    "Rejected Source",
+                    "--source",
+                    str(source),
+                    "--request-json",
+                    str(request),
+                ]
+            )
+
+        self.assertEqual(2, code)
+        self.assertEqual("", stdout)
+        self.assertIn("source file must use .txt or .md", stderr)
+        self.assertNotIn(str(source), stderr)
 
     def test_setup_and_repair_pass_the_current_console_launcher(self):
         for command in ("setup", "repair"):

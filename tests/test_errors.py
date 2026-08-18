@@ -49,6 +49,25 @@ class StructuredErrorContractTests(unittest.TestCase):
         self.assertIn("CS-PROJ-001", rendered)
         self.assertIn("Recovery:", rendered)
 
+    def test_human_rendering_preserves_safe_actionable_detail(self):
+        error = ValueError("source file must use .txt or .md: '/tmp/Comic Sol/story.png'")
+        rendered = format_human_error(error, command="init")
+
+        self.assertIn("source file must use .txt or .md", rendered)
+        self.assertIn("<path>", rendered)
+        self.assertNotIn("/tmp/Comic Sol/story.png", rendered)
+
+    def test_generic_runtime_error_is_not_missing_extra(self):
+        classified = classify_exception(RuntimeError("finalize operation failed"), surface="cli")
+        self.assertNotEqual("CS-INSTALL-001", classified.code)
+
+    def test_specific_missing_extra_runtime_error_uses_install_namespace(self):
+        classified = classify_exception(
+            RuntimeError("MCP support is not installed; run: pip install 'comic-sol[mcp]'"),
+            surface="cli",
+        )
+        self.assertEqual("CS-INSTALL-001", classified.code)
+
     def test_mcp_request_errors_use_mcp_namespace(self):
         error = ValueError("invalid project ID")
         classified = classify_exception(error, command="comic_status", surface="mcp", request=True)

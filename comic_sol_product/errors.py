@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
+import re
 from typing import Literal
 
 
@@ -92,6 +93,13 @@ _DEFINITIONS = (
         "Check storage availability and filesystem permissions, then retry.",
     ),
     ErrorDefinition(
+        "CS-PROJ-005",
+        "internal-error",
+        "The Comic Sol operation could not complete.",
+        "The project pipeline encountered an unexpected runtime failure.",
+        "Retry once; if it persists, inspect the diagnostic logs before retrying.",
+    ),
+    ErrorDefinition(
         "CS-INSTALL-001",
         "missing-extra",
         "A required Comic Sol component is unavailable.",
@@ -153,6 +161,28 @@ def _safe_raw_message(error: Exception) -> str:
     return message.lower()[:240]
 
 
+def safe_error_detail(error: Exception) -> str:
+    """Return actionable exception detail with absolute paths redacted."""
+    message = str(error)
+    if not message:
+        return type(error).__name__
+
+    def replace_quoted_path(match: re.Match[str]) -> str:
+        quote, candidate = match.group(1), match.group(2)
+        if PurePosixPath(candidate).is_absolute() or PureWindowsPath(candidate).is_absolute():
+            return f"{quote}<path>{quote}"
+        return match.group(0)
+
+    message = re.sub(r"(['\"])([^'\"]+)\1", replace_quoted_path, message)
+    for token in message.split():
+        candidate = token.strip("'\"(),:;")
+        if candidate and (
+            PurePosixPath(candidate).is_absolute() or PureWindowsPath(candidate).is_absolute()
+        ):
+            message = message.replace(candidate, "<path>")
+    return message
+
+
 def classify_exception(
     error: Exception,
     *,
@@ -179,11 +209,18 @@ def classify_exception(
     elif isinstance(error, OSError):
         definition = ERROR_DEFINITIONS["CS-PROJ-004"]
     elif isinstance(error, RuntimeError):
-        definition = (
-            ERROR_DEFINITIONS["CS-MCP-002"]
-            if surface == "mcp"
-            else ERROR_DEFINITIONS["CS-INSTALL-001"]
-        )
+        if surface == "mcp":
+            definition = ERROR_DEFINITIONS["CS-MCP-002"]
+        elif raw.startswith(
+            (
+                "mcp support is not installed",
+                "comic sol engine files are missing",
+                "install cyclonedx-bom",
+            )
+        ):
+            definition = ERROR_DEFINITIONS["CS-INSTALL-001"]
+        else:
+            definition = ERROR_DEFINITIONS["CS-PROJ-005"]
     else:
         definition = (
             ERROR_DEFINITIONS["CS-MCP-002"]
@@ -221,8 +258,10 @@ def format_human_error(
 ) -> str:
     """Render a readable CLI/MCP diagnostic from the canonical payload."""
     payload = error_payload(error, command=command, surface=surface, request=request)
+    detail = safe_error_detail(error)
     return (
         f"ERROR {payload['code']} [{payload['category']}]: {payload['message']}\n"
+        f"Detail: {detail}\n"
         f"Reason: {payload['reason']}\n"
         f"Recovery: {payload['recovery']}"
     )
