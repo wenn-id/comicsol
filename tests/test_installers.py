@@ -86,8 +86,8 @@ class PublicInstallerContractTests(unittest.TestCase):
         )
 
     @staticmethod
-    def write_runtime_archive(root, version="2.0.0rc5"):
-        archive = root / "comic-sol.zip"
+    def write_runtime_archive(root, version="2.0.0rc5", filename="comic-sol.zip"):
+        archive = root / filename
         executable = (
             "#!/bin/sh\n"
             'case "$1" in\n'
@@ -102,6 +102,27 @@ class PublicInstallerContractTests(unittest.TestCase):
         with zipfile.ZipFile(archive, "w") as package:
             package.writestr(member, executable)
         return archive
+
+    def run_posix_archive_install(self, archive, install_root, *, env=None):
+        environment = os.environ.copy()
+        if env:
+            environment.update(env)
+        return subprocess.run(
+            [
+                "sh",
+                str(self.root / "installers/install.sh"),
+                "--archive",
+                str(archive),
+                "--sha256",
+                hashlib.sha256(archive.read_bytes()).hexdigest(),
+                "--install-root",
+                str(install_root),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
 
     def start_installer_server(self, *, tls=False, payload=b""):
         server = _InstallerHTTPServer(("127.0.0.1", 0), _InstallerRequestHandler)
@@ -407,7 +428,9 @@ class PublicInstallerContractTests(unittest.TestCase):
     def test_installers_canonicalize_or_reject_aliases_before_locking(self):
         self.assertLess(
             self.posix.index('INSTALL_ROOT=$(canonical_install_root "$INSTALL_ROOT")'),
-            self.posix.index('INSTALL_LOCK_DIR="$(dirname -- "$INSTALL_ROOT_DISPLAY")/.comic-sol-install.lock"'),
+            self.posix.index(
+                'INSTALL_LOCK_DIR="$(dirname -- "$INSTALL_ROOT_DISPLAY")/.comic-sol-install.lock"'
+            ),
         )
         self.assertLess(
             self.posix.index('rmdir -- "$install_root_name"'),
@@ -517,6 +540,119 @@ class PublicInstallerContractTests(unittest.TestCase):
             uninstall = self.run_uninstall(install_root)
             self.assertEqual(0, uninstall.returncode, uninstall.stdout + uninstall.stderr)
             self.assertFalse(install_root.exists())
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer lifecycle test")
+    def test_posix_lifecycle_is_idempotent_and_preserves_external_state(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            install_root = root / "runtime"
+            project = root / "user-project"
+            project.mkdir()
+            project_sentinel = project / "do-not-delete.txt"
+            project_sentinel.write_text("user project", encoding="utf-8")
+            config = root / "home" / ".codex" / "config.toml"
+            config.parent.mkdir(parents=True)
+            config.write_text("[mcp_servers.other]\ncommand = 'keep'\n", encoding="utf-8")
+            archive = self.write_runtime_archive(root, version="2.0.0rc4", filename="old.zip")
+
+            first = self.run_posix_archive_install(archive, install_root)
+            self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+            marker = (install_root / ".comic-sol-install").read_bytes()
+            repeated = self.run_posix_archive_install(archive, install_root)
+            self.assertEqual(0, repeated.returncode, repeated.stdout + repeated.stderr)
+            self.assertEqual(marker, (install_root / ".comic-sol-install").read_bytes())
+
+            uninstall = self.run_uninstall(install_root)
+            self.assertEqual(0, uninstall.returncode, uninstall.stdout + uninstall.stderr)
+            self.assertFalse(install_root.exists())
+            repeated_uninstall = self.run_uninstall(install_root)
+            self.assertEqual(
+                0,
+                repeated_uninstall.returncode,
+                repeated_uninstall.stdout + repeated_uninstall.stderr,
+            )
+            reinstall = self.run_posix_archive_install(archive, install_root)
+            self.assertEqual(0, reinstall.returncode, reinstall.stdout + reinstall.stderr)
+            self.assertEqual("2.0.0rc4", (install_root / "active-version").read_text().strip())
+            self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
+            self.assertEqual("[mcp_servers.other]\ncommand = 'keep'\n", config.read_text())
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer lifecycle test")
+    def test_posix_upgrade_publishes_new_version_without_touching_external_state(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            install_root = root / "runtime"
+            project = root / "user-project"
+            project.mkdir()
+            project_sentinel = project / "do-not-delete.txt"
+            project_sentinel.write_text("user project", encoding="utf-8")
+            config = root / "home" / ".codex" / "config.toml"
+            config.parent.mkdir(parents=True)
+            config.write_text("[mcp_servers.other]\ncommand = 'keep'\n", encoding="utf-8")
+            old_archive = self.write_runtime_archive(root, version="2.0.0rc4", filename="old.zip")
+            new_archive = self.write_runtime_archive(root, version="2.0.0rc5", filename="new.zip")
+
+            first = self.run_posix_archive_install(old_archive, install_root)
+            self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+            old_bin = (install_root / "bin" / "comic-sol").read_bytes()
+            upgraded = self.run_posix_archive_install(new_archive, install_root)
+            self.assertEqual(0, upgraded.returncode, upgraded.stdout + upgraded.stderr)
+            self.assertEqual("2.0.0rc5", (install_root / "active-version").read_text().strip())
+            self.assertNotEqual(old_bin, (install_root / "bin" / "comic-sol").read_bytes())
+            self.assertFalse((install_root / "versions" / ".2.0.0rc5.rollback").exists())
+            self.assertTrue((install_root / "versions" / "2.0.0rc4").exists())
+            self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
+            self.assertEqual("[mcp_servers.other]\ncommand = 'keep'\n", config.read_text())
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer lifecycle test")
+    def test_posix_upgrade_failure_restores_runtime_and_preserves_external_state(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            install_root = root / "runtime"
+            project = root / "user-project"
+            project.mkdir()
+            project_sentinel = project / "do-not-delete.txt"
+            project_sentinel.write_text("user project", encoding="utf-8")
+            config = root / "home" / ".codex" / "config.toml"
+            config.parent.mkdir(parents=True)
+            config.write_text("[mcp_servers.other]\ncommand = 'keep'\n", encoding="utf-8")
+            old_archive = self.write_runtime_archive(root, version="2.0.0rc4", filename="old.zip")
+            new_archive = self.write_runtime_archive(root, version="2.0.0rc5", filename="new.zip")
+            installed = self.run_posix_archive_install(old_archive, install_root)
+            self.assertEqual(0, installed.returncode, installed.stdout + installed.stderr)
+            old_bin = (install_root / "bin" / "comic-sol").read_bytes()
+            old_marker = (install_root / ".comic-sol-install").read_bytes()
+
+            shim = root / "shim"
+            shim.mkdir()
+            real_mv = shutil.which("mv")
+            self.assertIsNotNone(real_mv)
+            mv_shim = shim / "mv"
+            mv_shim.write_text(
+                "#!/bin/sh\n"
+                "previous=''\nlast=''\n"
+                'for argument in "$@"; do previous="$last"; last="$argument"; done\n'
+                'if [ "$(basename "$previous")" = bin.new ] && [ "$(basename "$last")" = bin ]; then exit 91; fi\n'
+                'exec "$REAL_MV" "$@"\n',
+                encoding="utf-8",
+            )
+            mv_shim.chmod(0o755)
+            failed = self.run_posix_archive_install(
+                new_archive,
+                install_root,
+                env={
+                    "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+                    "REAL_MV": cast(str, real_mv),
+                },
+            )
+            self.assertNotEqual(0, failed.returncode, failed.stdout + failed.stderr)
+            self.assertEqual("2.0.0rc4", (install_root / "active-version").read_text().strip())
+            self.assertEqual(old_marker, (install_root / ".comic-sol-install").read_bytes())
+            self.assertEqual(old_bin, (install_root / "bin" / "comic-sol").read_bytes())
+            self.assertFalse((install_root / "bin.new").exists())
+            self.assertTrue(project_sentinel.is_file())
+            self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
+            self.assertEqual("[mcp_servers.other]\ncommand = 'keep'\n", config.read_text())
 
     def test_native_uninstall_refuses_sensitive_project_root(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -709,10 +845,19 @@ class PublicInstallerContractTests(unittest.TestCase):
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             result = subprocess.run(
                 [
-                    "sh", str(self.root / "installers/install.sh"),
-                    "--archive", archive.name, "--sha256", digest,
-                    "--install-root", install_root.name,
-                ], cwd=root, capture_output=True, text=True, check=False,
+                    "sh",
+                    str(self.root / "installers/install.sh"),
+                    "--archive",
+                    archive.name,
+                    "--sha256",
+                    digest,
+                    "--install-root",
+                    install_root.name,
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
             )
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
             uninstall = self.run_uninstall(install_root)
