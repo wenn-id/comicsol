@@ -23,7 +23,7 @@ from .comic_sol import (
     read_json,
     sha256_file,
 )
-from .project_io import contained_project_path, open_path_nofollow
+from .project_io import ProjectLock, contained_project_path, open_path_nofollow
 from .quality_records import PANEL_CHECK_IDS
 from .schema import read_project_manifest
 
@@ -542,7 +542,7 @@ def _resume(project_dir: Path) -> str:
     ))
 
 
-def render_report(project_dir: Path, output_path: Path | None = None) -> Path:
+def _render_report_locked(project_dir: Path, output_path: Path | None = None) -> Path:
     """Render structured QA sections and atomically publish UTF-8 Markdown."""
     project_dir = Path(project_dir)
     manifest = read_project_manifest(project_dir / "project.json")
@@ -572,6 +572,12 @@ def render_report(project_dir: Path, output_path: Path | None = None) -> Path:
     if destination == project_dir / "qa/report.md":
         _record_report_descriptor(project_dir, destination)
     return destination
+
+
+def render_report(project_dir: Path, output_path: Path | None = None) -> Path:
+    """Render a report and descriptor from one locked project snapshot."""
+    with ProjectLock(Path(project_dir)):
+        return _render_report_locked(Path(project_dir), output_path)
 
 
 def _record_report_descriptor(project_dir: Path, report_path: Path) -> None:

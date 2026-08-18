@@ -25,7 +25,12 @@ from .comic_sol import (
     read_json,
 )
 from .layouts import LAYOUT_VERSION, get_layout, match_layout, validate_custom_layout
-from .project_io import ProjectTransaction, contained_project_path, read_contained_bytes
+from .project_io import (
+    ProjectLock,
+    ProjectTransaction,
+    contained_project_path,
+    read_contained_bytes,
+)
 
 COMPOSITION_CACHE_PATH = "cache/composition.json"
 
@@ -176,7 +181,7 @@ def _read_source_payloads(
     ]
 
 
-def compose_page(
+def _compose_page_locked(
     project_dir: Path,
     page_number: int,
     storyboard: dict,
@@ -200,7 +205,21 @@ def compose_page(
     return output_path
 
 
-def compose_all_pages(project_dir: Path) -> list[Path]:
+def compose_page(
+    project_dir: Path,
+    page_number: int,
+    storyboard: dict,
+    manifest_settings: dict,
+    source_artifacts: dict,
+) -> Path:
+    """Compose one page while holding the project operation lock."""
+    with ProjectLock(Path(project_dir)):
+        return _compose_page_locked(
+            project_dir, page_number, storyboard, manifest_settings, source_artifacts
+        )
+
+
+def _compose_all_pages_locked(project_dir: Path) -> list[Path]:
     """Compose every storyboard page in numeric order after a complete preflight."""
     project_dir = Path(project_dir)
     storyboard = read_json(contained_project_path(project_dir, "plan/storyboard.json", must_exist=True))
@@ -288,6 +307,12 @@ def compose_all_pages(project_dir: Path) -> list[Path]:
         )
         transaction.commit()
     return output_paths
+
+
+def compose_all_pages(project_dir: Path) -> list[Path]:
+    """Compose every storyboard page under one consistent project snapshot."""
+    with ProjectLock(Path(project_dir)):
+        return _compose_all_pages_locked(Path(project_dir))
 
 
 def compose_project(project_dir: Path) -> list[Path]:

@@ -95,21 +95,21 @@ def migrate_project_manifest(project_dir: Path) -> Manifest:
     """
     project_dir = Path(project_dir)
     manifest_path = project_dir / "project.json"
-    manifest = _read_manifest(manifest_path)
-    source_version = manifest.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
-    if source_version == CURRENT_PROJECT_SCHEMA_VERSION:
-        manifest.setdefault("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
-        return manifest
-    migration = PROJECT_MIGRATIONS.get((str(source_version), CURRENT_PROJECT_SCHEMA_VERSION))
-    if migration is None:
-        ensure_supported_project_schema(source_version)
-        raise UnsupportedSchemaVersionError(
-            source_version, reason="no migration path is registered"
-        )
-    migrated = migration(dict(manifest))
-    if not isinstance(migrated, dict):
-        raise ValueError("project migration must return a JSON object")
-    migrated["schema_version"] = CURRENT_PROJECT_SCHEMA_VERSION
     with ProjectTransaction(project_dir, "schema-migration") as transaction:
+        manifest = _read_manifest(manifest_path.absolute())
+        source_version = manifest.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
+        if source_version == CURRENT_PROJECT_SCHEMA_VERSION:
+            manifest.setdefault("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
+            return manifest
+        migration = PROJECT_MIGRATIONS.get((str(source_version), CURRENT_PROJECT_SCHEMA_VERSION))
+        if migration is None:
+            ensure_supported_project_schema(source_version)
+            raise UnsupportedSchemaVersionError(
+                source_version, reason="no migration path is registered"
+            )
+        migrated = migration(dict(manifest))
+        if not isinstance(migrated, dict):
+            raise ValueError("project migration must return a JSON object")
+        migrated["schema_version"] = CURRENT_PROJECT_SCHEMA_VERSION
         transaction.stage_bytes("project.json", canonical_artifact_bytes(migrated))
-    return migrated
+        return migrated

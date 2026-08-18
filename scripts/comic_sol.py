@@ -443,7 +443,7 @@ def transition(
     # the log is republished wholesale, so a pre-lock snapshot would silently
     # drop events appended by a concurrent command.
     with ProjectTransaction(project_dir, "transition") as tx:
-        manifest = read_project_manifest(manifest_path)
+        manifest = read_project_manifest(manifest_path, normalize_legacy=False)
         current = manifest.get("status")
         warnings = manifest.get("warnings")
         if not isinstance(warnings, list):
@@ -1053,7 +1053,7 @@ def block_project(project_dir: Path, reason: str, warning: str) -> dict[str, obj
     project_dir = Path(project_dir).resolve(strict=True)
     manifest_path = contained_project_path(project_dir, "project.json", must_exist=True)
     with ProjectTransaction(project_dir, "block-project") as transaction:
-        manifest = read_project_manifest(manifest_path)
+        manifest = read_project_manifest(manifest_path, normalize_legacy=False)
         current = manifest.get("status")
         if not isinstance(current, str) or not _allowed_transition(current, "BLOCKED"):
             raise ValueError(f"invalid Comic Sol transition: {current} -> BLOCKED")
@@ -1115,7 +1115,7 @@ def _resume_project_locked(
     project_dir: Path, manifest_path: Path
 ) -> dict[str, object]:
     with ProjectLock(project_dir):
-        manifest = read_project_manifest(manifest_path)
+        manifest = read_project_manifest(manifest_path, normalize_legacy=False)
         if manifest.get("status") != "BLOCKED":
             actions = build_resume_plan(project_dir)
             stage_actions = {
@@ -1188,7 +1188,7 @@ def _resume_project_locked(
     else:
         recovery_status = STAGE_COMPLETION_STATUS[preserved[-1]] if preserved else "INIT"
     with ProjectLock(project_dir):
-        manifest = read_project_manifest(manifest_path)
+        manifest = read_project_manifest(manifest_path, normalize_legacy=False)
         warnings = manifest.get("warnings")
         if not isinstance(warnings, list):
             warnings = []
@@ -1269,7 +1269,7 @@ def _invalidate_from_locked(
     manifest_path = project_dir / "project.json"
     start = RESUME_STAGES.index(stage)
     removed: list[str] = []
-    manifest = read_project_manifest(manifest_path)
+    manifest = read_project_manifest(manifest_path, normalize_legacy=False)
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict):
         raise ValueError("manifest artifacts must be an object")
@@ -1650,7 +1650,7 @@ def _stage_override(
     if not isinstance(warnings, list):
         raise ValueError("panel unresolved_warnings must be an array")
     manifest_path = project_dir / "project.json"
-    manifest = read_project_manifest(manifest_path)
+    manifest = read_project_manifest(manifest_path, normalize_legacy=False)
     manifest_warnings = manifest.get("warnings")
     if not isinstance(manifest_warnings, list):
         raise ValueError("manifest warnings must be an array")
@@ -1860,7 +1860,7 @@ def _finalize_project_locked(
     }
 
     # 2. Lettering (if stale), advance status.
-    manifest = read_project_manifest(manifest_path)
+    manifest = read_project_manifest(manifest_path, normalize_legacy=False)
     panel_ids = manifest.get("panels")
     if not isinstance(panel_ids, list) or not panel_ids:
         storyboard = read_json(project_dir / "plan/storyboard.json")
@@ -1876,7 +1876,7 @@ def _finalize_project_locked(
         from .letter_panels import letter_project
         letter_project(caller_project_dir)
         record_stage(caller_project_dir, "lettering")
-    manifest = read_project_manifest(manifest_path)
+    manifest = read_project_manifest(manifest_path, normalize_legacy=False)
     if _allowed_transition(str(manifest.get("status")), "LETTERED"):
         transition(caller_project_dir, "LETTERED")
 
@@ -1887,14 +1887,14 @@ def _finalize_project_locked(
         from .compose_pages import compose_project
         compose_project(caller_project_dir)
         record_stage(caller_project_dir, "composition")
-    manifest = read_project_manifest(manifest_path)
+    manifest = read_project_manifest(manifest_path, normalize_legacy=False)
     if _allowed_transition(str(manifest.get("status")), "COMPOSED"):
         transition(caller_project_dir, "COMPOSED")
 
     # 4. Fail closed on agent-produced page-QA integrity records.
     from .page_quality import validate_page_quality
 
-    manifest = read_project_manifest(manifest_path)
+    manifest = read_project_manifest(manifest_path, normalize_legacy=False)
     settings = manifest.get("settings")
     page_count = settings.get("page_count", 0) if isinstance(settings, dict) else 0
     if not isinstance(page_count, int) or isinstance(page_count, bool) or page_count < 1:
@@ -1921,14 +1921,14 @@ def _finalize_project_locked(
     # 5. Guarded export (validates export-ready, writes PDF, records descriptor).
     from .export_pdf import guarded_export
     guarded_export(caller_project_dir)
-    manifest = read_project_manifest(manifest_path)
+    manifest = read_project_manifest(manifest_path, normalize_legacy=False)
     if _allowed_transition(str(manifest.get("status")), "EXPORTED"):
         transition(caller_project_dir, "EXPORTED")
 
     # 6. Render the QA report, which projects the terminal status and records
     #    its own descriptor. Final validation requires both before the terminal
     #    transition, so the report cannot honestly be rendered afterwards.
-    manifest = read_project_manifest(manifest_path)
+    manifest = read_project_manifest(manifest_path, normalize_legacy=False)
     warnings = manifest.get("warnings")
     final_status = (
         "COMPLETE_WITH_WARNINGS"
@@ -1944,7 +1944,7 @@ def _finalize_project_locked(
     record_stage(caller_project_dir, "export")
 
     # 9. Confirm the warning state still matches what the report projected.
-    manifest = read_project_manifest(manifest_path)
+    manifest = read_project_manifest(manifest_path, normalize_legacy=False)
     warnings = manifest.get("warnings")
     has_warnings = isinstance(warnings, list) and len(warnings) > 0
     actual_status = "COMPLETE_WITH_WARNINGS" if has_warnings else "COMPLETE"
