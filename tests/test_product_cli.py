@@ -92,6 +92,9 @@ class ProductCliTests(unittest.TestCase):
             self.assertEqual("init", payload["command"])
             self.assertIsNone(payload["data"])
             self.assertEqual("invalid-input", payload["error"]["category"])
+            self.assertEqual("CS-PROJ-001", payload["error"]["code"])
+            self.assertTrue(payload["error"]["reason"])
+            self.assertTrue(payload["error"]["recovery"])
             self.assertNotIn(str(root), payload["error"]["message"])
             self.assertFalse(output.exists())
 

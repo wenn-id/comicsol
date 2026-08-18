@@ -3,6 +3,7 @@ import os
 import re
 import stat
 import sys
+import json
 from pathlib import Path
 from typing import Any, Literal
 
@@ -19,10 +20,10 @@ except ModuleNotFoundError:
 
 # Import core business logic from scripts/
 from .core_primitives import PANEL_ID_PATTERN
+from comic_sol_product.errors import error_payload
 from .comic_sol import (
     ALL_STATUSES,
     RESUME_STAGES,
-    doctor,
     doctor_report,
     init_project,
     transition,
@@ -73,7 +74,18 @@ _REQUEST_ERROR_PREFIXES = (
 
 def _reject(message: str) -> None:
     """Raise a tool error for an invalid request field."""
-    raise ToolError(message)
+    request = message.startswith(
+        (
+            "invalid project ID",
+            "unknown validation stage",
+            "unknown resume stage",
+            "invalid target status",
+            "invalid panel ID",
+            "unknown generation attempt kind",
+            "attempt path must be a relative project path",
+        )
+    )
+    raise _tool_error(ValueError(message), request=request)
 
 
 def _validate_project_id(project_id: str) -> None:
@@ -125,21 +137,28 @@ def _validate_relative_path(relative: str) -> None:
         _reject("attempt path must be a relative project path")
 
 
-def _tool_error(error: Exception) -> ToolError:
-    """Map an internal exception to a stable message without exposing its text."""
-    if isinstance(error, FileNotFoundError):
-        message = "not-found: required project data was not found"
+def _tool_error(error: Exception, *, request: bool = False) -> ToolError:
+    """Map an internal exception to the canonical machine-readable MCP envelope."""
+    payload = error_payload(error, surface="mcp", request=request)
+    raw = str(error)
+    if raw.startswith("security-error"):
+        legacy_message = raw
+    elif request:
+        legacy_message = f"invalid-request: {raw}"
+    elif isinstance(error, FileNotFoundError):
+        legacy_message = "not-found: required project data was not found"
     elif isinstance(error, PermissionError):
-        message = "permission-denied: project data could not be accessed"
+        legacy_message = "permission-denied: project data could not be accessed"
     elif isinstance(error, OSError):
-        message = "io-error: project data operation failed"
+        legacy_message = "io-error: project data operation failed"
     elif isinstance(error, UnicodeError):
-        message = "invalid-data: project data encoding is invalid"
+        legacy_message = "invalid-data: project data encoding is invalid"
     elif isinstance(error, (ValueError, TypeError)):
-        message = "invalid-data: tool request or project data is invalid"
+        legacy_message = "invalid-data: tool request or project data is invalid"
     else:
-        message = "internal-error: tool operation failed"
-    return ToolError(message)
+        legacy_message = "internal-error: tool operation failed"
+    payload["legacy_message"] = legacy_message
+    return ToolError(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
 def _request_error(error: Exception) -> ToolError:
@@ -147,7 +166,7 @@ def _request_error(error: Exception) -> ToolError:
     raw_message = str(error)
     for prefix in _REQUEST_ERROR_PREFIXES:
         if raw_message.startswith(prefix):
-            return ToolError(f"invalid-request: {prefix}")
+            return _tool_error(ValueError(prefix), request=True)
     return _tool_error(error)
 
 
@@ -166,9 +185,7 @@ def _directory_path(project_dir: Path, relative: str) -> Path:
     return project_dir if relative == "." else project_dir / relative
 
 
-def _discard_snapshot_subtree(
-    snapshots: dict[str, _DirectorySnapshot], relative: str
-) -> None:
+def _discard_snapshot_subtree(snapshots: dict[str, _DirectorySnapshot], relative: str) -> None:
     prefix = f"{relative}/"
     for cached in tuple(snapshots):
         if cached == relative or cached.startswith(prefix):
@@ -316,7 +333,9 @@ def _resolve_project(project_id: str) -> Path:
             _SYMLINK_SCAN_CACHE[project_id] = (resolved, snapshots)
         else:
             try:
-                refresh = _refresh_windows_snapshot if os.name == "nt" else _refresh_project_snapshot
+                refresh = (
+                    _refresh_windows_snapshot if os.name == "nt" else _refresh_project_snapshot
+                )
                 snapshots, changed = refresh(resolved, cached[1])
             except Exception:
                 _SYMLINK_SCAN_CACHE.pop(project_id, None)
@@ -357,10 +376,7 @@ def comic_init(title: str, source_text: str, request_settings: dict[str, Any]) -
             raise TypeError("request_settings must be a JSON object")
         validate_request_settings(request_settings)
         project_dir = init_project(
-            OUTPUT_ROOT,
-            title,
-            source_text.encode("utf-8"),
-            request_settings
+            OUTPUT_ROOT, title, source_text.encode("utf-8"), request_settings
         )
         return str(project_dir.name)
     except Exception as e:
@@ -380,9 +396,7 @@ def comic_status(project_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def comic_transition(
-    project_id: str, target: str, warning: str | None = None
-) -> dict[str, Any]:
+def comic_transition(project_id: str, target: str, warning: str | None = None) -> dict[str, Any]:
     """Move the project to the next state."""
     _validate_project_id(project_id)
     _validate_target(target)
@@ -565,6 +579,7 @@ def comic_finalize(project_id: str) -> dict[str, Any]:
     project_dir = _resolve_project(project_id)
     try:
         from .comic_sol import finalize_project
+
         return finalize_project(project_dir)
     except Exception as e:
         raise _tool_error(e) from None
@@ -573,7 +588,9 @@ def comic_finalize(project_id: str) -> dict[str, Any]:
 def main() -> None:
     """Start the Comic Sol MCP server."""
     parser = argparse.ArgumentParser(description="Comic Sol MCP Server")
-    parser.add_argument("--root", type=Path, required=True, help="Absolute path to the output directory")
+    parser.add_argument(
+        "--root", type=Path, required=True, help="Absolute path to the output directory"
+    )
     args = parser.parse_args()
     _configure_root(args.root)
     mcp.run(transport="stdio")

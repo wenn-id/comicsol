@@ -65,6 +65,16 @@ def structured_content(result: Any) -> Any:
     return getattr(result, "structuredContent", getattr(result, "structured_content", None))
 
 
+def tool_error_payload(error: Exception) -> dict[str, Any]:
+    """Decode the canonical JSON error envelope carried by ToolError."""
+    return json.loads(str(error))
+
+
+def tool_error_legacy(error: Exception) -> str:
+    """Read the backward-compatible human/error-category rendering."""
+    return tool_error_payload(error)["legacy_message"]
+
+
 def valid_page_reviewer_checks(project: Path, page_number: int):
     return [
         {
@@ -204,9 +214,13 @@ class McpServerUnitTests(unittest.TestCase):
         )
         for error, expected in cases:
             with self.subTest(error_type=type(error).__name__):
-                converted = str(mcp_server._tool_error(error))
-                self.assertEqual(expected, converted)
-                self.assertNotIn("password=", converted)
+                converted = tool_error_payload(mcp_server._tool_error(error))
+                self.assertEqual(expected.split(":", 1)[0], converted["category"])
+                self.assertRegex(converted["code"], r"^CS-[A-Z]+-[0-9]{3}$")
+                self.assertIn("reason", converted)
+                self.assertIn("recovery", converted)
+                self.assertEqual(expected, converted["legacy_message"])
+                self.assertNotIn("password=", json.dumps(converted))
 
     def test_tool_errors_never_leak_credentials_or_paths(self):
         cases = (
@@ -222,31 +236,36 @@ class McpServerUnitTests(unittest.TestCase):
         )
         for raw, secrets in cases:
             with self.subTest(raw=raw):
-                converted = str(mcp_server._tool_error(RuntimeError(raw)))
-                self.assertEqual("internal-error: tool operation failed", converted)
+                converted = tool_error_payload(mcp_server._tool_error(RuntimeError(raw)))
+                self.assertEqual("internal-error", converted["category"])
                 for secret in secrets:
-                    self.assertNotIn(secret, converted)
+                    self.assertNotIn(secret, json.dumps(converted))
 
         raw_path = str(self.root / "private payload.json")
-        converted = str(mcp_server._tool_error(FileNotFoundError(raw_path)))
-        self.assertEqual("not-found: required project data was not found", converted)
-        self.assertNotIn(raw_path, converted)
+        converted = tool_error_payload(mcp_server._tool_error(FileNotFoundError(raw_path)))
+        self.assertEqual("not-found", converted["category"])
+        self.assertNotIn(raw_path, json.dumps(converted))
 
     def test_init_uses_only_allowlisted_request_error_messages(self):
         before = list(self.root.iterdir())
-        with self.assertRaisesRegex(
-            ToolError,
-            "^invalid-request: sensitive request setting is not allowed$",
-        ) as context:
+        with self.assertRaises(ToolError) as context:
             mcp_server.comic_init("Story", "source", {"api_key": "do-not-leak"})
-        self.assertNotIn("api_key", str(context.exception))
-        self.assertNotIn("do-not-leak", str(context.exception))
+        payload = tool_error_payload(context.exception)
+        self.assertEqual("CS-MCP-001", payload["code"])
+        self.assertEqual("invalid-request", payload["category"])
+        self.assertEqual(
+            "invalid-request: sensitive request setting is not allowed",
+            payload["legacy_message"],
+        )
+        self.assertNotIn("api_key", json.dumps(payload))
+        self.assertNotIn("do-not-leak", json.dumps(payload))
 
-        with self.assertRaisesRegex(
-            ToolError,
-            "^invalid-request: request setting keys must be strings$",
-        ):
+        with self.assertRaises(ToolError) as context:
             mcp_server.comic_init("Story", "source", {1: "short_prompt"})
+        self.assertEqual(
+            "invalid-request: request setting keys must be strings",
+            tool_error_legacy(context.exception),
+        )
         self.assertEqual(before, list(self.root.iterdir()))
 
     def test_invalidate_rejects_blocked_project_without_mutating_manifest(self):
