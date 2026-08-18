@@ -75,6 +75,7 @@ jobs:
             --archive "$archive" \
             --installer "qualification/$INSTALLER" \
             --sha256 qualification/SHA256SUMS \
+            --version "$version" \
             --metadata "$metadata" \
             --sbom "$sbom" \
             --platform "$PLATFORM" \
@@ -134,7 +135,7 @@ jobs:
           $archive = "$qualificationRoot/comic-sol-$version-linux-x86_64.zip"
           $metadata = "$qualificationRoot/comic-sol-$version-linux-x86_64.metadata.json"
           $sbom = "$qualificationRoot/comic-sol-$version-linux-x86_64.sbom.json"
-          & wsl.exe -- bash -lc "python3 '$qualificationRoot/release_qualification.py' --archive '$archive' --installer '$qualificationRoot/install.sh' --sha256 '$qualificationRoot/SHA256SUMS' --metadata '$metadata' --sbom '$sbom' --platform wsl --summary '$qualificationRoot/summary-wsl.json'"
+          & wsl.exe -- bash -lc "python3 '$qualificationRoot/release_qualification.py' --archive '$archive' --installer '$qualificationRoot/install.sh' --sha256 '$qualificationRoot/SHA256SUMS' --version '$version' --metadata '$metadata' --sbom '$sbom' --platform wsl --summary '$qualificationRoot/summary-wsl.json'"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload WSL qualification summary
         if: always()

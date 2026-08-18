@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 import tempfile
@@ -74,6 +77,42 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "SHA256 mismatch"):
                 verify_payload_checksums(manifest, payloads)
 
+    def test_verify_payload_checksums_accepts_duplicate_global_manifest_names(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            payload = root / "install.sh"
+            payload.write_bytes(b"selected installer\n")
+            selected = __import__("hashlib").sha256(payload.read_bytes()).hexdigest()
+            manifest = root / "SHA256SUMS"
+            manifest.write_text(
+                "\n".join(
+                    [
+                        f"{'0' * 64}  install.sh",
+                        f"{selected}  install.sh",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(1, verify_payload_checksums(manifest, [payload]))
+
+    def test_qualification_harness_help_runs_without_source_package(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            harness = root / "release_qualification.py"
+            harness.write_text(SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
+            environment = dict(os.environ)
+            environment.pop("PYTHONPATH", None)
+            result = subprocess.run(
+                [sys.executable, str(harness), "--help"],
+                cwd=root,
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+
     def test_validate_published_metadata_rejects_malformed_sbom_types_and_references(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -120,7 +159,7 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             sbom.write_text(json.dumps(sbom_record), encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "collection types"):
                 validate_published_metadata(
-                    metadata, sbom, artifact="runtime.zip", platform="linux"
+                    metadata, sbom, artifact="runtime.zip", platform="linux", version="2.0.0rc4"
                 )
 
             sbom_record["components"] = components
@@ -128,7 +167,7 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             sbom.write_text(json.dumps(sbom_record), encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "unknown dependency"):
                 validate_published_metadata(
-                    metadata, sbom, artifact="runtime.zip", platform="linux"
+                    metadata, sbom, artifact="runtime.zip", platform="linux", version="2.0.0rc4"
                 )
 
     def test_release_qualification_workflow_runs_source_p0_gates_and_aggregates(self):

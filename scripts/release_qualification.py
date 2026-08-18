@@ -13,8 +13,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from comic_sol_product import __version__
-
 
 ROOT = Path(__file__).resolve().parents[1]
 PLATFORMS = {"linux", "macos", "windows", "wsl"}
@@ -49,41 +47,37 @@ def executable_path(install_root: Path) -> Path:
 
 def checksum_for(checksums: Path, archive: Path) -> str:
     """Read and independently verify one archive's SHA-256 manifest entry."""
-    expected: str | None = None
+    candidates: set[str] = set()
     for line in checksums.read_text(encoding="utf-8").splitlines():
         parts = line.split("  ", 1)
         if len(parts) == 2 and Path(parts[1]).name == archive.name:
-            expected = parts[0].strip().lower()
-            break
-    if expected is None:
+            candidates.add(parts[0].strip().lower())
+    if not candidates:
         raise RuntimeError(f"SHA256SUMS has no entry for {archive.name}")
     actual = hashlib.sha256(archive.read_bytes()).hexdigest()
-    if actual != expected:
+    if actual not in candidates:
         raise RuntimeError(f"SHA256 mismatch for {archive.name}")
-    return expected
+    return actual
 
 
 def verify_payload_checksums(manifest: Path, payloads: list[Path]) -> int:
-    """Verify every downloaded release payload against exactly one manifest entry."""
-    records: dict[str, str] = {}
+    """Verify payloads against a global manifest that may repeat basenames."""
+    records: dict[str, set[str]] = {}
     for line in manifest.read_text(encoding="utf-8").splitlines():
         parts = line.split("  ", 1)
         if len(parts) != 2:
             raise RuntimeError("invalid SHA256SUMS entry")
         digest, name = parts[0].strip().lower(), Path(parts[1]).name
-        if len(digest) != 64 or name in records:
-            raise RuntimeError("invalid or duplicate SHA256SUMS entry")
-        records[name] = digest
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise RuntimeError("invalid SHA256SUMS entry")
+        records.setdefault(name, set()).add(digest)
     required_names = {payload.name for payload in payloads}
     if not required_names <= records.keys():
         missing = ", ".join(sorted(required_names - records.keys()))
         raise RuntimeError(f"SHA256SUMS payload coverage mismatch: missing {missing}")
     for payload in payloads:
-        expected = records.get(payload.name)
-        if expected is None:
-            raise RuntimeError(f"SHA256SUMS has no entry for {payload.name}")
         actual = hashlib.sha256(payload.read_bytes()).hexdigest()
-        if actual != expected:
+        if actual not in records[payload.name]:
             raise RuntimeError(f"SHA256 mismatch for {payload.name}")
     return len(payloads)
 
@@ -261,7 +255,7 @@ def aggregate_summaries(
 
 
 def validate_published_metadata(
-    metadata: Path, sbom: Path, *, artifact: str, platform: str
+    metadata: Path, sbom: Path, *, artifact: str, platform: str, version: str
 ) -> None:
     """Validate published metadata and the full CycloneDX runtime contract."""
     metadata_record = json.loads(metadata.read_text(encoding="utf-8"))
@@ -296,7 +290,7 @@ def validate_published_metadata(
         or not isinstance(dependencies, list)
         or not isinstance(root_component, dict)
         or root_component.get("name") != "comic-sol"
-        or root_component.get("version") != __version__
+        or root_component.get("version") != version
         or not root_component.get("bom-ref")
     ):
         raise RuntimeError("published SBOM identity or collection types are invalid")
@@ -435,6 +429,7 @@ def qualify(
     installer: Path,
     checksums: Path,
     summary: Path,
+    version: str,
     metadata: Path | None = None,
     sbom: Path | None = None,
 ) -> dict[str, Any]:
@@ -470,6 +465,7 @@ def qualify(
             sbom.resolve(strict=True),
             artifact=archive.name,
             platform=artifact_platform,
+            version=version,
         )
         record["checks"].append("metadata-sbom")
     with tempfile.TemporaryDirectory(prefix=f"comic-sol-qualification-{platform_name}-") as raw:
@@ -583,6 +579,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sha256", type=Path)
     parser.add_argument("--platform", choices=sorted(PLATFORMS))
     parser.add_argument("--summary", type=Path)
+    parser.add_argument("--version")
     parser.add_argument("--metadata", type=Path)
     parser.add_argument("--sbom", type=Path)
     parser.add_argument("--aggregate-root", type=Path)
@@ -606,10 +603,11 @@ def main(argv: list[str] | None = None) -> int:
         arguments.sha256,
         arguments.platform,
         arguments.summary,
+        arguments.version,
     )
     if any(value is None for value in required):
         parser.error(
-            "artifact qualification requires --archive, --installer, --sha256, --platform, and --summary"
+            "artifact qualification requires --archive, --installer, --sha256, --platform, --summary, and --version"
         )
     try:
         record = qualify(
@@ -618,6 +616,7 @@ def main(argv: list[str] | None = None) -> int:
             installer=arguments.installer,
             checksums=arguments.sha256,
             summary=arguments.summary,
+            version=arguments.version,
             metadata=arguments.metadata,
             sbom=arguments.sbom,
         )
