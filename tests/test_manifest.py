@@ -27,7 +27,14 @@ from scripts.comic_sol import (  # noqa: E402
     slugify,
     transition,
 )
-from scripts.project_io import ProjectTransaction
+from scripts.project_io import ProjectTransaction  # noqa: E402
+from scripts.schema import (  # noqa: E402
+    CURRENT_PROJECT_SCHEMA_VERSION,
+    MIN_READER_PROJECT_SCHEMA_VERSION,
+    UnsupportedSchemaVersionError,
+    migrate_project_manifest,
+    read_project_manifest,
+)
 from scripts import comic_sol, letter_panels  # noqa: E402
 
 
@@ -54,6 +61,52 @@ class ManifestTests(unittest.TestCase):
             },
             manifest["stage_versions"],
         )
+
+    def test_project_schema_contract_is_explicit_and_readable(self):
+        self.assertEqual("1.0", CURRENT_PROJECT_SCHEMA_VERSION)
+        self.assertEqual("1.0", MIN_READER_PROJECT_SCHEMA_VERSION)
+        project = init_project(
+            self.root,
+            "Schema Contract",
+            b"Schema contract source",
+            {"mode": "short_prompt", "language": "en"},
+        )
+        manifest = read_project_manifest(project / "project.json")
+        self.assertEqual("1.0", manifest["schema_version"])
+
+    def test_unsupported_project_schema_is_rejected_without_mutation(self):
+        project = init_project(
+            self.root,
+            "Unsupported Schema",
+            b"Schema contract source",
+            {"mode": "short_prompt", "language": "en"},
+        )
+        manifest_path = project / "project.json"
+        original = manifest_path.read_bytes()
+        manifest = read_json(manifest_path)
+        manifest["schema_version"] = "9.0"
+        atomic_write_json(manifest_path, manifest)
+        unsupported = manifest_path.read_bytes()
+        with self.assertRaisesRegex(UnsupportedSchemaVersionError, "project schema 9.0"):
+            read_project_manifest(manifest_path)
+        self.assertEqual(unsupported, manifest_path.read_bytes())
+        self.assertNotEqual(original, manifest_path.read_bytes())
+
+    def test_migration_failure_preserves_project_bytes(self):
+        project = init_project(
+            self.root,
+            "Migration Failure",
+            b"Schema contract source",
+            {"mode": "short_prompt", "language": "en"},
+        )
+        manifest_path = project / "project.json"
+        manifest = read_json(manifest_path)
+        manifest["schema_version"] = "0.9"
+        atomic_write_json(manifest_path, manifest)
+        before = manifest_path.read_bytes()
+        with self.assertRaisesRegex(UnsupportedSchemaVersionError, "no migration path"):
+            migrate_project_manifest(project)
+        self.assertEqual(before, manifest_path.read_bytes())
 
     def test_init_preserves_source_and_creates_complete_skeleton(self):
         request = {"mode": "short_prompt", "language": "en"}

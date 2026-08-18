@@ -39,6 +39,7 @@ from .project_io import (
     validate_source_bytes,
 )
 from .raster_limits import MAX_DECODED_PIXELS
+from .schema import read_project_manifest
 from .stage_registry import (
     ARTIFACT_STAGE,
     RESUME_STAGES,
@@ -442,7 +443,7 @@ def transition(
     # the log is republished wholesale, so a pre-lock snapshot would silently
     # drop events appended by a concurrent command.
     with ProjectTransaction(project_dir, "transition") as tx:
-        manifest = read_json(manifest_path)
+        manifest = read_project_manifest(manifest_path)
         current = manifest.get("status")
         warnings = manifest.get("warnings")
         if not isinstance(warnings, list):

@@ -289,6 +289,17 @@ class StrictSchemaValidationTests(unittest.TestCase):
         )
 
     def test_manifest_rejects_unknown_fields_ids_limits_paths_and_hashes(self):
+        future = valid_manifest()
+        future["schema_version"] = "9.0"
+        issues = validate_manifest(future)
+        self.assertTrue(
+            any(
+                issue.field == "schema_version"
+                and "unsupported project schema version" in issue.message
+                for issue in issues
+            )
+        )
+
         cases = []
         data = valid_manifest(); data["surprise"] = True; cases.append((data, "surprise"))
         data = valid_manifest(); data["project_id"] = "Bad ID"; cases.append((data, "project_id"))

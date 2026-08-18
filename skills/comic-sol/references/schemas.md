@@ -7,6 +7,27 @@ and deterministic scripts. A template may be structurally incomplete for a later
 pipeline stage; stage validation applies the cross-field rules in this document
 before allowing a transition.
 
+## Project-schema compatibility and migration policy
+
+The current project manifest schema is `1.0`. The minimum reader and writer version is
+`1.0`; the current reader accepts only explicitly supported versions from
+`SUPPORTED_PROJECT_SCHEMA_VERSIONS` in `scripts/schema.py`.
+
+- Writers emit the current `1.0` manifest and update tests when the version changes.
+- Readers reject unsupported or future versions with `UnsupportedSchemaVersionError`; they
+  never guess, downgrade, or rewrite a project.
+- A migration is allowed only through an explicit `(source_version, target_version)` hook
+  in `PROJECT_MIGRATIONS`. Adding a version requires a hook where applicable, a fixture,
+  and compatibility tests in the same change.
+- Migration stages the complete replacement through the journal-backed project transaction.
+  If validation or migration fails, `project.json`, source files, logs, and user artifacts
+  remain byte-for-byte unchanged.
+- This release has no older manifest representation registered for automatic migration;
+  an older artifact is rejected until a reviewed migration is added.
+
+The project manifest version is independent from artifact-level versions such as panel/page
+QA `2.0` and stage cache versions. Those artifacts retain their own validators.
+
 ## Common JSON rules
 
 - Encoding is UTF-8 without a byte-order mark.
