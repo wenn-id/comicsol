@@ -300,6 +300,13 @@ class StrictSchemaValidationTests(unittest.TestCase):
             )
         )
 
+        malformed = valid_manifest()
+        malformed["schema_version"] = ["1.0"]
+        malformed_issues = validate_manifest(malformed)
+        self.assertTrue(
+            any(issue.field == "schema_version" for issue in malformed_issues)
+        )
+
         cases = []
         data = valid_manifest(); data["surprise"] = True; cases.append((data, "surprise"))
         data = valid_manifest(); data["project_id"] = "Bad ID"; cases.append((data, "project_id"))

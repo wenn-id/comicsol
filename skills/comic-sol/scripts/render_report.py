@@ -19,6 +19,7 @@ from PIL import Image
 from .comic_sol import atomic_write_bytes, atomic_write_json, read_json, sha256_file
 from .project_io import contained_project_path, open_path_nofollow
 from .quality_records import PANEL_CHECK_IDS
+from .schema import read_project_manifest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -538,7 +539,7 @@ def _resume(project_dir: Path) -> str:
 def render_report(project_dir: Path, output_path: Path | None = None) -> Path:
     """Render structured QA sections and atomically publish UTF-8 Markdown."""
     project_dir = Path(project_dir)
-    manifest = read_json(project_dir / "project.json")
+    manifest = read_project_manifest(project_dir / "project.json")
     records = _load_records(project_dir)
     page_records = _load_page_records(project_dir)
     summary = summarize_qa(manifest, records)
@@ -574,7 +575,7 @@ def _record_report_descriptor(project_dir: Path, report_path: Path) -> None:
     stage-by-stage route reaches a valid terminal state without a manual edit.
     """
     manifest_path = project_dir / "project.json"
-    manifest = read_json(manifest_path)
+    manifest = read_project_manifest(manifest_path)
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict):
         artifacts = {}

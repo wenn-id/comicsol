@@ -41,7 +41,7 @@ def _read_manifest(path: Path) -> Manifest:
 
 def schema_version_error(version: object) -> UnsupportedSchemaVersionError | None:
     """Return the explicit compatibility error for a manifest version."""
-    if version in SUPPORTED_PROJECT_SCHEMA_VERSIONS:
+    if isinstance(version, str) and version in SUPPORTED_PROJECT_SCHEMA_VERSIONS:
         return None
     if isinstance(version, str) and version > CURRENT_PROJECT_SCHEMA_VERSION:
         return UnsupportedSchemaVersionError(
@@ -68,9 +68,12 @@ def ensure_supported_project_schema(version: object) -> None:
 
 
 def read_project_manifest(path: Path) -> Manifest:
-    """Read a project manifest only after its schema version passes the gate."""
+    """Read a project manifest after applying the non-mutating legacy gate."""
     manifest = _read_manifest(Path(path))
-    ensure_supported_project_schema(manifest.get("schema_version"))
+    # Pre-schema manifests are the legacy 1.0 representation. Accept them
+    # without rewriting bytes; explicit malformed values remain rejected.
+    version = manifest.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
+    ensure_supported_project_schema(version)
     return manifest
 
 

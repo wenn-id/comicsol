@@ -239,7 +239,10 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
     if root is None:
         return _sorted(issues)
     schema_version = root.get("schema_version")
-    if schema_version not in SUPPORTED_PROJECT_SCHEMA_VERSIONS:
+    if (
+        not isinstance(schema_version, str)
+        or schema_version not in SUPPORTED_PROJECT_SCHEMA_VERSIONS
+    ):
         _add(
             issues,
             path,

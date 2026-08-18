@@ -108,6 +108,24 @@ class ManifestTests(unittest.TestCase):
             migrate_project_manifest(project)
         self.assertEqual(before, manifest_path.read_bytes())
 
+    def test_project_schema_rejects_non_string_versions_consistently(self):
+        project = init_project(
+            self.root,
+            "Malformed Schema",
+            b"Schema contract source",
+            {"mode": "short_prompt", "language": "en"},
+        )
+        manifest_path = project / "project.json"
+        manifest = read_json(manifest_path)
+        manifest["schema_version"] = ["1.0"]
+        atomic_write_json(manifest_path, manifest)
+        with self.assertRaisesRegex(UnsupportedSchemaVersionError, "project schema"):
+            read_project_manifest(manifest_path)
+        before = manifest_path.read_bytes()
+        with self.assertRaisesRegex(UnsupportedSchemaVersionError, "project schema"):
+            transition(project, "BLOCKED", "unsupported schema")
+        self.assertEqual(before, manifest_path.read_bytes())
+
     def test_init_preserves_source_and_creates_complete_skeleton(self):
         request = {"mode": "short_prompt", "language": "en"}
         project = init_project(

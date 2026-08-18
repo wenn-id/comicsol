@@ -23,7 +23,7 @@ from .comic_sol import (
     PAGE_HEIGHT,
     PAGE_WIDTH,
     canonical_artifact_bytes,
-    read_json,
+    read_project_manifest,
     sha256_file,
 )
 from .pdf_quality import PdfQualityError, verify_pdf_payload
@@ -47,7 +47,7 @@ def _validated_manifest(project_dir: Path) -> dict[str, object]:
     """Load and validate the project manifest for PDF export."""
     manifest_path = project_dir / "project.json"
     try:
-        manifest = read_json(manifest_path)
+        manifest = read_project_manifest(manifest_path)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         raise PdfExportError(f"invalid project manifest: {error}") from error
     issues = validate_manifest(manifest)
@@ -219,7 +219,7 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
     try:
         caller_project_dir = Path(project_dir)
         project_dir = caller_project_dir.resolve(strict=True)
-        manifest = read_json(
+        manifest = read_project_manifest(
             contained_project_path(project_dir, "project.json", must_exist=True)
         )
     except (OSError, ValueError, json.JSONDecodeError) as error:
@@ -290,7 +290,7 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
         transaction.stage_bytes(
             "exports/pdf-verification.json", verification_payload
         )
-        locked_manifest = read_json(
+        locked_manifest = read_project_manifest(
             contained_project_path(project_dir, "project.json", must_exist=True)
         )
         existing_artifacts = locked_manifest.get("artifacts")

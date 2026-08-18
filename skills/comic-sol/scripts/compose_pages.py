@@ -21,6 +21,7 @@ from .comic_sol import (
     PAGE_WIDTH,
     atomic_write_bytes,
     canonical_artifact_bytes,
+    read_project_manifest,
     read_json,
 )
 from .layouts import LAYOUT_VERSION, get_layout, match_layout, validate_custom_layout
@@ -203,7 +204,7 @@ def compose_all_pages(project_dir: Path) -> list[Path]:
     """Compose every storyboard page in numeric order after a complete preflight."""
     project_dir = Path(project_dir)
     storyboard = read_json(contained_project_path(project_dir, "plan/storyboard.json", must_exist=True))
-    manifest = read_json(contained_project_path(project_dir, "project.json", must_exist=True))
+    manifest = read_project_manifest(contained_project_path(project_dir, "project.json", must_exist=True))
     settings = manifest.get("settings")
     artifacts = manifest.get("artifacts", {})
     if not isinstance(settings, dict) or not isinstance(artifacts, dict):
@@ -273,7 +274,7 @@ def compose_all_pages(project_dir: Path) -> list[Path]:
             output_paths.append(project_dir / relative)
         transaction.stage_bytes(COMPOSITION_CACHE_PATH, cache_payload)
         # Re-read under the lock so a concurrent writer's manifest is not lost.
-        locked_manifest = read_json(project_dir / "project.json")
+        locked_manifest = read_project_manifest(project_dir / "project.json")
         descriptors = locked_manifest.get("artifacts")
         if not isinstance(descriptors, dict):
             descriptors = {}
@@ -312,7 +313,7 @@ def main(argv: list[str] | None = None) -> int:
             paths = compose_all_pages(arguments.project_dir)
         else:
             storyboard = read_json(contained_project_path(arguments.project_dir, "plan/storyboard.json", must_exist=True))
-            manifest = read_json(contained_project_path(arguments.project_dir, "project.json", must_exist=True))
+            manifest = read_project_manifest(contained_project_path(arguments.project_dir, "project.json", must_exist=True))
             settings = manifest.get("settings")
             artifacts = manifest.get("artifacts", {})
             if not isinstance(settings, dict) or not isinstance(artifacts, dict):
