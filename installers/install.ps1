@@ -11,6 +11,12 @@ $ErrorActionPreference = "Stop"
 $InstallMutex = $null
 $InstallMarkerName = ".comic-sol-install"
 $InstallMarkerMagic = "comic-sol-install-v1"
+function Encode-MarkerRoot {
+    param([string]$Path)
+    $normalized = $Path.Replace('\', '/')
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($normalized)
+    return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
+}
 function Acquire-InstallMutex {
     $name = "ComicSol-Install-" + (($InstallRoot.ToLowerInvariant()) -replace '[^A-Za-z0-9]', '_')
     $script:InstallMutex = New-Object System.Threading.Mutex($false, $name)
@@ -82,11 +88,13 @@ if ($Uninstall) {
         $MarkerLines = @(Get-Content -LiteralPath $Marker)
         $ActiveVersion = (Get-Content -Raw -LiteralPath $Pointer).Trim()
         $comparison = [System.StringComparison]::OrdinalIgnoreCase
+        $ExpectedMarkerRoot = Encode-MarkerRoot -Path $InstallRoot
         if ($MarkerLines.Count -ne 3 -or
             $MarkerLines[0] -ne $InstallMarkerMagic -or
             -not $MarkerLines[1] -or
             $MarkerLines[1] -ne $ActiveVersion -or
-            -not $MarkerLines[2].Equals($InstallRoot, $comparison)) {
+            (-not $MarkerLines[2].Equals($ExpectedMarkerRoot, $comparison) -and
+             -not $MarkerLines[2].Equals($InstallRoot, $comparison))) {
             throw "refusing to uninstall: install registration is invalid; reinstall or upgrade this root first"
         }
 
@@ -211,7 +219,7 @@ try {
     Set-Content -NoNewline -LiteralPath (Join-Path $InstallRoot "active-version.new") -Value "$Version`n" -Encoding utf8
     Move-Item -Force -LiteralPath (Join-Path $InstallRoot "active-version.new") -Destination $Pointer
     $MarkerNew = Join-Path $InstallRoot ".comic-sol-install.new"
-    Set-Content -LiteralPath $MarkerNew -Value @($InstallMarkerMagic, $Version, $InstallRoot) -Encoding utf8
+    Set-Content -LiteralPath $MarkerNew -Value @($InstallMarkerMagic, $Version, (Encode-MarkerRoot -Path $InstallRoot)) -Encoding utf8
     Move-Item -Force -LiteralPath $MarkerNew -Destination (Join-Path $InstallRoot $InstallMarkerName)
     $Committed = $true
     foreach ($Path in @($StableBackup, $TargetBackup)) {
