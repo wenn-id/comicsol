@@ -48,6 +48,31 @@ class DoctorDiagnosticContractTests(unittest.TestCase):
         self.assertIn("reinstall", cast(str, templates_check["remediation"]).lower())
         self.assertFalse(report["ready"])
 
+    def test_doctor_rejects_malformed_or_empty_json_templates(self):
+        with tempfile.TemporaryDirectory() as raw:
+            templates = Path(raw) / "templates"
+            templates.mkdir()
+            for name in ("manifest.json", "character-bible.json", "story-plan.json", "storyboard.json", "panel-record.json"):
+                (templates / name).write_text('{"placeholder": true}\n', encoding="utf-8")
+            (templates / "qa-report.md.tmpl").write_text("{{PROJECT_SUMMARY}}\n", encoding="utf-8")
+            for content in ("{}\n", "{"):
+                (templates / "manifest.json").write_text(content, encoding="utf-8")
+                with mock.patch.object(comic_sol, "TEMPLATES", templates):
+                    report = comic_sol.doctor_report(Path(raw) / "output")
+                checks = cast(list[dict[str, object]], report["checks"])
+                templates_check = next(check for check in checks if check["id"] == "templates")
+                self.assertEqual("fail", templates_check["status"])
+                self.assertFalse(report["ready"])
+
+    def test_doctor_reports_unusable_mcp_installation(self):
+        with tempfile.TemporaryDirectory() as raw:
+            with mock.patch.object(comic_sol.importlib, "import_module", side_effect=ImportError("partial MCP")):
+                report = comic_sol.doctor_report(Path(raw) / "output")
+        checks = cast(list[dict[str, object]], report["checks"])
+        mcp_check = next(check for check in checks if check["id"] == "mcp")
+        self.assertEqual("warn", mcp_check["status"])
+        self.assertIn("unusable", cast(str, mcp_check["message"]))
+
     def test_doctor_reports_broken_output_as_failed_actionable_check(self):
         with tempfile.TemporaryDirectory() as raw:
             output = Path(raw) / "not-a-directory"
@@ -78,6 +103,7 @@ class DoctorDiagnosticContractTests(unittest.TestCase):
             self.assertEqual(0, human_code)
             self.assertEqual("", stderr.getvalue())
             self.assertIn("READY", stdout.getvalue())
+            self.assertEqual(len(payload["data"]["messages"]), len(set(payload["data"]["messages"])))
 
 
 if __name__ == "__main__":

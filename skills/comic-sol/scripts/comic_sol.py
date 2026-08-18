@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import importlib.util
 import io
 import json
@@ -1737,9 +1738,18 @@ def doctor_report(output_root: Path) -> dict[str, object]:
         "manifest.json", "character-bible.json", "story-plan.json",
         "storyboard.json", "panel-record.json", "qa-report.md.tmpl",
     )
+    json_template_names = set(template_names) - {"qa-report.md.tmpl"}
     missing_templates = [name for name in template_names if not (TEMPLATES / name).is_file()]
-    if missing_templates:
-        add_check("templates", "fail", f"Templates missing: {', '.join(missing_templates)}", "Reinstall Comic Sol so its bundled templates are restored.", missing=missing_templates)
+    invalid_templates: list[str] = []
+    for name in sorted(json_template_names - set(missing_templates)):
+        try:
+            if not read_json(TEMPLATES / name):
+                raise ValueError("template object is empty")
+        except Exception as error:
+            invalid_templates.append(f"{name} ({type(error).__name__})")
+    if missing_templates or invalid_templates:
+        failures = missing_templates + invalid_templates
+        add_check("templates", "fail", f"Templates missing or invalid: {', '.join(failures)}", "Reinstall Comic Sol so its bundled templates are restored.", missing=missing_templates, invalid=invalid_templates)
     else:
         add_check("templates", "pass", "Bundled templates available.", "No action required.")
 
@@ -1763,10 +1773,23 @@ def doctor_report(output_root: Path) -> dict[str, object]:
     except OSError as error:
         add_check("output-root", "fail", f"Output root is not writable: {type(error).__name__}: {error}", "Choose a writable project directory with --output-root or fix its permissions.")
 
-    if importlib.util.find_spec("mcp") is not None:
-        add_check("mcp", "pass", "MCP support is installed.", "No action required.")
-    else:
+    try:
+        try:
+            server_module = importlib.import_module("mcp.server.fastmcp")
+            exceptions_module = importlib.import_module("mcp.server.fastmcp.exceptions")
+            api_name = "FastMCP"
+        except ModuleNotFoundError:
+            server_module = importlib.import_module("mcp.server.mcpserver")
+            exceptions_module = importlib.import_module("mcp.server.mcpserver.exceptions")
+            api_name = "MCPServer"
+        if not hasattr(server_module, api_name) or not hasattr(exceptions_module, "ToolError"):
+            raise ImportError("required MCP server APIs are missing")
+    except ModuleNotFoundError:
         add_check("mcp", "warn", "MCP support is unavailable in this environment.", "Install the optional MCP extra with: python -m pip install 'comic-sol[mcp]'.")
+    except Exception as error:
+        add_check("mcp", "warn", f"MCP support is installed but unusable ({type(error).__name__}).", "Reinstall the optional MCP extra and rerun doctor.")
+    else:
+        add_check("mcp", "pass", "MCP support is installed and its server APIs are importable.", "No action required.")
     add_check("image-capability", "warn", "Image-generation capability must be inspected in the agent session.", "Enable an image-generation skill/tool, then resume the project when panels are needed.")
 
     ready = not any(check["status"] == "fail" for check in checks)
@@ -1795,9 +1818,6 @@ def doctor_report(output_root: Path) -> dict[str, object]:
     output_check = next(check for check in checks if check["id"] == "output-root")
     messages.append(f"{'PASS' if output_check['status'] == 'pass' else 'FAIL'} {output_check['message']}")
     messages.append("INFO image capability: inspect in agent session")
-    for check in checks:
-        prefix = {"pass": "PASS", "warn": "WARN", "fail": "FAIL"}[str(check["status"])]
-        messages.append(f"{prefix} {check['id']}: {check['message']} — {check['remediation']}")
     return {"ready": ready, "healthy": ready, "checks": checks, "messages": messages}
 
 
