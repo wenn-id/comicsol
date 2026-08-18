@@ -70,10 +70,11 @@ def ensure_supported_project_schema(version: object) -> None:
 def read_project_manifest(path: Path) -> Manifest:
     """Read a project manifest after applying the non-mutating legacy gate."""
     manifest = _read_manifest(Path(path))
-    # Pre-schema manifests are the legacy 1.0 representation. Accept them
-    # without rewriting bytes; explicit malformed values remain rejected.
+    # Pre-schema manifests are the legacy 1.0 representation. Normalize only
+    # in memory so every downstream validator/consumer sees one contract.
     version = manifest.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
     ensure_supported_project_schema(version)
+    manifest.setdefault("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
     return manifest
 
 
@@ -88,8 +89,9 @@ def migrate_project_manifest(project_dir: Path) -> Manifest:
     project_dir = Path(project_dir)
     manifest_path = project_dir / "project.json"
     manifest = _read_manifest(manifest_path)
-    source_version = manifest.get("schema_version")
+    source_version = manifest.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
     if source_version == CURRENT_PROJECT_SCHEMA_VERSION:
+        manifest.setdefault("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
         return manifest
     migration = PROJECT_MIGRATIONS.get((str(source_version), CURRENT_PROJECT_SCHEMA_VERSION))
     if migration is None:

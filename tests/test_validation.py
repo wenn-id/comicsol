@@ -307,6 +307,10 @@ class StrictSchemaValidationTests(unittest.TestCase):
             any(issue.field == "schema_version" for issue in malformed_issues)
         )
 
+        legacy = valid_manifest()
+        legacy.pop("schema_version")
+        self.assertEqual([], validate_manifest(legacy))
+
         cases = []
         data = valid_manifest(); data["surprise"] = True; cases.append((data, "surprise"))
         data = valid_manifest(); data["project_id"] = "Bad ID"; cases.append((data, "project_id"))

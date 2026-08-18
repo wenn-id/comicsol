@@ -230,15 +230,15 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
     path = "project.json"
     issues: list[ValidationIssue] = []
     required_fields = {
-        "schema_version", "project_id", "title", "created_at", "updated_at",
+        "project_id", "title", "created_at", "updated_at",
         "status", "input", "settings", "capability", "artifacts",
         "stage_versions", "panels", "warnings",
     }
-    fields = required_fields | {"blocked_from", "blocked_reason"}
+    fields = required_fields | {"schema_version", "blocked_from", "blocked_reason"}
     root = _object(data, fields, required_fields, issues, path, "")
     if root is None:
         return _sorted(issues)
-    schema_version = root.get("schema_version")
+    schema_version = root.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
     if (
         not isinstance(schema_version, str)
         or schema_version not in SUPPORTED_PROJECT_SCHEMA_VERSIONS

@@ -74,6 +74,26 @@ class ManifestTests(unittest.TestCase):
         manifest = read_project_manifest(project / "project.json")
         self.assertEqual("1.0", manifest["schema_version"])
 
+    def test_legacy_manifest_without_schema_version_is_normalized_without_write(self):
+        project = init_project(
+            self.root,
+            "Legacy Schema",
+            b"Schema contract source",
+            {"mode": "short_prompt", "language": "en"},
+        )
+        manifest_path = project / "project.json"
+        manifest = read_json(manifest_path)
+        manifest.pop("schema_version")
+        atomic_write_json(manifest_path, manifest)
+        before = manifest_path.read_bytes()
+
+        read_manifest = read_project_manifest(manifest_path)
+        self.assertEqual(CURRENT_PROJECT_SCHEMA_VERSION, read_manifest["schema_version"])
+        self.assertEqual(before, manifest_path.read_bytes())
+        migrated = migrate_project_manifest(project)
+        self.assertEqual(CURRENT_PROJECT_SCHEMA_VERSION, migrated["schema_version"])
+        self.assertEqual(before, manifest_path.read_bytes())
+
     def test_unsupported_project_schema_is_rejected_without_mutation(self):
         project = init_project(
             self.root,
