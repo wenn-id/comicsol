@@ -30,6 +30,12 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
+      - name: Verify v2.0 stable release gate is present
+        shell: bash
+        run: |
+          set -eu
+          test -f docs/releases/v2.0-stable-criteria.md
+          grep -Fq "authoritative release gate" docs/releases/v2.0-stable-criteria.md
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: '3.11.15'

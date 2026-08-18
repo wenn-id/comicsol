@@ -17,6 +17,9 @@ class ReleaseDocumentationTests(unittest.TestCase):
         cls.release_workflow = (
             cls.root / ".github/workflows/release.yml"
         ).read_text(encoding="utf-8")
+        cls.stable_criteria = (
+            cls.root / "docs/releases/v2.0-stable-criteria.md"
+        ).read_text(encoding="utf-8")
 
     def test_release_workflow_resolves_tag_prefixed_notes_in_prepare(self):
         expected_notes = self.root / f"docs/releases/v{__version__}.md"
@@ -31,12 +34,57 @@ class ReleaseDocumentationTests(unittest.TestCase):
 
     def test_readme_links_native_install_and_release_security(self):
         self.assertIn("docs/install.md", self.readme)
+        self.assertIn("docs/releases/v2.0-stable-criteria.md", self.readme)
         self.assertIn("MCP trust boundary", self.install)
         self.assertIn("MCP trust boundary", self.readme)
         self.assertIn("v2.0.0rc4", self.readme)
         self.assertIn("SHA256SUMS", self.readme)
         self.assertIn("unsigned", self.readme.lower())
         self.assertIn("docker compose", self.install)
+
+    def test_v2_stable_criteria_is_authoritative_and_complete(self):
+        criteria = self.stable_criteria
+        for phrase in (
+            "authoritative release gate",
+            "Supported clean-install targets",
+            "Required CLI and project lifecycle",
+            "Interrupted generation and resume",
+            "Project-data preservation and lifecycle safety",
+            "Release artifacts, integrity, and provenance",
+            "No open P0/P1 issue",
+            "SHA256SUMS",
+            "CycloneDX SBOM",
+            "Build provenance attestations",
+            "#109",
+            "#110",
+            "#111",
+            "#112",
+            "#113",
+            "#114",
+            "#115",
+            "#116",
+            "#117",
+        ):
+            self.assertIn(phrase, criteria)
+        for platform in ("Linux x86_64", "macOS x86_64", "Windows x86_64", "WSL2"):
+            self.assertIn(platform, criteria)
+        for command in (
+            "doctor",
+            "init",
+            "status",
+            "validate",
+            "resume",
+            "finalize",
+            "setup",
+            "repair",
+            "uninstall",
+        ):
+            self.assertIn(f"`{command}`", criteria)
+        self.assertIn(
+            "test -f docs/releases/v2.0-stable-criteria.md",
+            self.release_workflow,
+        )
+        self.assertIn("authoritative release gate", self.release_workflow)
 
     def test_install_guide_covers_every_supported_lifecycle(self):
         for phrase in (

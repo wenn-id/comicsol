@@ -105,7 +105,8 @@ and references, so installed execution does not require a system Python.
 Every native bundle includes `SHA256SUMS`, deterministic metadata, and a
 CycloneDX SBOM. The RC artifacts are explicitly **unsigned** and not notarized;
 verify the SHA-256 digest before execution. Exact install, upgrade, rollback,
-uninstall, and security instructions are in [`docs/install.md`](docs/install.md).
+uninstall, and security instructions are in [`docs/install.md`](docs/install.md). The authoritative
+stable-release checklist is [`docs/releases/v2.0-stable-criteria.md`](docs/releases/v2.0-stable-criteria.md).
 
 Container and Compose deployment commands are documented in
 [`docs/install.md`](docs/install.md); they are optional and are not required for
