@@ -146,15 +146,23 @@ class LifecycleFailureInjectionTests(unittest.TestCase):
             if verification.exists():
                 verification.unlink()
 
-            real_replace = project_io.replace_contained
+            real_replace_contained = project_io.replace_contained
+            real_os_replace = project_io.os.replace
 
-            def fail_verification_publish(root, source, destination):
-                if destination == "exports/pdf-verification.json":
+            def fail_verification_contained(root, source, destination):
+                if Path(destination).name == "pdf-verification.json":
                     raise OSError("injected disk full")
-                return real_replace(root, source, destination)
+                return real_replace_contained(root, source, destination)
+
+            def fail_verification_os(source, destination, *args, **kwargs):
+                if Path(destination).name == "pdf-verification.json":
+                    raise OSError("injected disk full")
+                return real_os_replace(source, destination, *args, **kwargs)
 
             with mock.patch.object(
-                project_io, "replace_contained", side_effect=fail_verification_publish
+                project_io, "replace_contained", side_effect=fail_verification_contained
+            ), mock.patch.object(
+                project_io.os, "replace", side_effect=fail_verification_os
             ):
                 with self.assertRaisesRegex(OSError, "disk full"):
                     guarded_export(project)
