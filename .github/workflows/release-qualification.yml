@@ -40,18 +40,24 @@ jobs:
           set -euo pipefail
           version="${RELEASE_TAG#v}"
           archive="comic-sol-${version}-${PLATFORM}-x86_64.zip"
+          metadata="comic-sol-${version}-${PLATFORM}-x86_64.metadata.json"
+          sbom="comic-sol-${version}-${PLATFORM}-x86_64.sbom.json"
           mkdir -p qualification
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern "$archive" \
             --pattern SHA256SUMS \
             --pattern "$INSTALLER" \
+            --pattern "$metadata" \
+            --pattern "$sbom" \
             --dir qualification
           gh api "repos/$GITHUB_REPOSITORY/contents/scripts/release_qualification.py?ref=$RELEASE_TAG" \
             --jq .content | base64 --decode > qualification/release_qualification.py
           test -s "qualification/$archive"
           test -s qualification/SHA256SUMS
           test -s "qualification/$INSTALLER"
+          test -s "qualification/$metadata"
+          test -s "qualification/$sbom"
           test -s qualification/release_qualification.py
       - name: Qualify published release artifact
         shell: bash
@@ -63,10 +69,14 @@ jobs:
           set -euo pipefail
           version="${RELEASE_TAG#v}"
           archive="qualification/comic-sol-${version}-${PLATFORM}-x86_64.zip"
+          metadata="qualification/comic-sol-${version}-${PLATFORM}-x86_64.metadata.json"
+          sbom="qualification/comic-sol-${version}-${PLATFORM}-x86_64.sbom.json"
           python qualification/release_qualification.py \
             --archive "$archive" \
             --installer "qualification/$INSTALLER" \
             --sha256 qualification/SHA256SUMS \
+            --metadata "$metadata" \
+            --sbom "$sbom" \
             --platform "$PLATFORM" \
             --summary "qualification/summary-$PLATFORM.json"
       - name: Upload qualification summary
@@ -91,12 +101,16 @@ jobs:
           set -euo pipefail
           version="${RELEASE_TAG#v}"
           archive="comic-sol-${version}-linux-x86_64.zip"
+          metadata="comic-sol-${version}-linux-x86_64.metadata.json"
+          sbom="comic-sol-${version}-linux-x86_64.sbom.json"
           mkdir -p qualification
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern "$archive" \
             --pattern SHA256SUMS \
             --pattern install.sh \
+            --pattern "$metadata" \
+            --pattern "$sbom" \
             --dir qualification
           gh api "repos/$GITHUB_REPOSITORY/contents/scripts/release_qualification.py?ref=$RELEASE_TAG" \
             --jq .content | base64 --decode > qualification/release_qualification.py
@@ -118,7 +132,9 @@ jobs:
           $version = $env:RELEASE_TAG.Substring(1)
           $qualificationRoot = $wslRoot
           $archive = "$qualificationRoot/comic-sol-$version-linux-x86_64.zip"
-          & wsl.exe -- bash -lc "python3 '$qualificationRoot/release_qualification.py' --archive '$archive' --installer '$qualificationRoot/install.sh' --sha256 '$qualificationRoot/SHA256SUMS' --platform wsl --summary '$qualificationRoot/summary-wsl.json'"
+          $metadata = "$qualificationRoot/comic-sol-$version-linux-x86_64.metadata.json"
+          $sbom = "$qualificationRoot/comic-sol-$version-linux-x86_64.sbom.json"
+          & wsl.exe -- bash -lc "python3 '$qualificationRoot/release_qualification.py' --archive '$archive' --installer '$qualificationRoot/install.sh' --sha256 '$qualificationRoot/SHA256SUMS' --metadata '$metadata' --sbom '$sbom' --platform wsl --summary '$qualificationRoot/summary-wsl.json'"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload WSL qualification summary
         if: always()
@@ -126,4 +142,96 @@ jobs:
         with:
           name: qualification-summary-wsl
           path: qualification/summary-wsl.json
+          if-no-files-found: error
+
+  source:
+    name: qualify (source P0 gates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11.15'
+      - name: Install locked release and audit tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements/locks/release-linux-x86_64.txt
+          python -m venv "${RUNNER_TEMP}/comic-sol-audit"
+          "${RUNNER_TEMP}/comic-sol-audit/bin/python" -m pip install --require-hashes -r requirements/locks/audit-python311.txt
+      - name: Run pip-audit security gate and source P0 qualification gates
+        shell: bash
+        run: |
+          set +e
+          failures=()
+          python -m unittest discover -s tests -v
+          [ $? -eq 0 ] || failures+=("unit-integration")
+          python -m unittest tests.test_golden_pipeline -v
+          [ $? -eq 0 ] || failures+=("golden")
+          python -m unittest tests.test_resume -v
+          [ $? -eq 0 ] || failures+=("resume")
+          python -m unittest tests.test_lifecycle_failures -v
+          [ $? -eq 0 ] || failures+=("failure-injection")
+          "${RUNNER_TEMP}/comic-sol-audit/bin/python" -m pip_audit -r requirements/locks/runtime-linux-x86_64.txt
+          [ $? -eq 0 ] || failures+=("security")
+          python -m unittest tests.test_distribution tests.test_release_qualification -v
+          [ $? -eq 0 ] || failures+=("artifact-contract")
+          if [ ${#failures[@]} -eq 0 ]; then status=passed; else status=failed; fi
+          export QUALIFY_STATUS="$status" QUALIFY_FAILURES="${failures[*]}"
+          python - <<'PY'
+          import json, os
+          record = {
+              "platform": "source",
+              "status": os.environ["QUALIFY_STATUS"],
+              "checks": ["unit-integration", "golden", "resume", "failure-injection", "security", "artifact-contract"],
+              "exceptions": os.environ["QUALIFY_FAILURES"].split() if os.environ["QUALIFY_FAILURES"] else [],
+          }
+          with open("summary-source.json", "w", encoding="utf-8") as handle:
+              json.dump(record, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          PY
+          exit ${#failures[@]}
+      - name: Upload source qualification summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: qualification-summary-source
+          path: summary-source.json
+          if-no-files-found: error
+
+  aggregate:
+    name: release qualification decision
+    if: always()
+    needs: [native, wsl, source]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: qualification-summary-*
+          path: qualification
+          merge-multiple: true
+      - name: Aggregate P0 qualification summaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The harness emits RELEASE READY or RELEASE BLOCKED and exits non-zero when blocked.
+          python scripts/release_qualification.py \
+            --aggregate-root qualification \
+            --aggregate-output qualification/release-summary.json \
+            --require-source
+          grep -Fq "RELEASE READY" qualification/release-summary.md
+      - name: Upload final qualification decision
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-qualification-summary
+          path: |
+            qualification/release-summary.json
+            qualification/release-summary.md
           if-no-files-found: error
