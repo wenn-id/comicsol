@@ -16,7 +16,13 @@ if __package__ in {None, ""}:
 
 from PIL import Image
 
-from .comic_sol import atomic_write_bytes, atomic_write_json, read_json, sha256_file
+from .comic_sol import (
+    ProjectTransaction,
+    atomic_write_bytes,
+    canonical_artifact_bytes,
+    read_json,
+    sha256_file,
+)
 from .project_io import contained_project_path, open_path_nofollow
 from .quality_records import PANEL_CHECK_IDS
 from .schema import read_project_manifest
@@ -575,16 +581,17 @@ def _record_report_descriptor(project_dir: Path, report_path: Path) -> None:
     stage-by-stage route reaches a valid terminal state without a manual edit.
     """
     manifest_path = project_dir / "project.json"
-    manifest = read_project_manifest(manifest_path)
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict):
-        artifacts = {}
-    artifacts["qa_report"] = {
-        "path": "qa/report.md",
-        "sha256": sha256_file(report_path),
-    }
-    manifest["artifacts"] = artifacts
-    atomic_write_json(manifest_path, manifest)
+    with ProjectTransaction(project_dir, "report-descriptor") as transaction:
+        manifest = read_project_manifest(manifest_path, normalize_legacy=False)
+        artifacts = manifest.get("artifacts")
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+        artifacts["qa_report"] = {
+            "path": "qa/report.md",
+            "sha256": sha256_file(report_path),
+        }
+        manifest["artifacts"] = artifacts
+        transaction.stage_bytes("project.json", canonical_artifact_bytes(manifest))
 
 
 def _build_parser() -> argparse.ArgumentParser:
