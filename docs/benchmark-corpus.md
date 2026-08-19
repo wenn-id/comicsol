@@ -20,11 +20,12 @@ every project under the current schema.
 | `night-low-light` | 1 / 3 | Night and low-light rendering: single-source dark key lighting, narrow night palettes, and text legibility at low contrast. | `lighting:low-light`, `palette:night`, `contrast:legibility` |
 | `long-dialogue` | 1 / 1 | Long-form dialogue close to the 32-word ceiling, paired with a caption inside a full-page panel that has to reserve a tall text column. | `text:long-dialogue`, `text:word-budget`, `layout:full-page` |
 | `complex-background` | 1 / 3 | Dense environmental detail: crowded, signage-heavy backgrounds that still reserve text-safe space in every panel. | `background:dense-detail`, `composition:text-safe-space`, `layout:two-top-hero-bottom` |
-| `four-page-story` | 4 / 7 | A complete four-page arc: contiguous page numbering, four different layouts, and a beginning-to-resolution structure across seven panels. | `story:four-page-arc`, `layout:mixed`, `pages:contiguous-numbering` |
+| `four-page-story` | 4 / 9 | A complete four-page arc: contiguous page numbering, four different layouts, and a beginning-to-resolution structure across nine panels. | `story:four-page-arc`, `layout:mixed`, `pages:contiguous-numbering` |
 
 Across the corpus the nine projects cover every registered layout: `full-page`,
 `two-horizontal`, `three-horizontal`, `hero-top-two-bottom`, `two-top-hero-bottom`, and
-`four-grid`.
+`four-grid`. `tests/test_benchmark_corpus.py` asserts that against the layout registry, so
+adding a layout to the registry without covering it here fails the suite.
 
 ## Size and evidence boundary
 
@@ -38,6 +39,12 @@ Each project carries a metadata record — `capability`, `stresses`, and the exp
 panel, character, and text counts — written next to the project as
 `{scenario}.benchmark.json`. The sidecar is deliberately outside the project boundary so a
 benchmark project contains only artifacts the engine itself recognizes.
+
+Every claim in a `capability` string is asserted by a test rather than left as prose: the
+per-panel text counts, the speaker order, the layout sequence, and the panel counts are all
+checked. Where a claim is about rendering rather than structure — the night scenario's
+single dark key source, for example — the test states what it actually proves, which is that
+exactly one key source was authored and no competing source was written alongside it.
 
 Benchmark projects stop at `STORYBOARDED`. They are structural evidence: they prove plan,
 character, storyboard, layout, continuity, and text-budget mechanics under the current
