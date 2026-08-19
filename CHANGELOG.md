@@ -4,14 +4,14 @@
 
 ### Added
 
-- Added a real-world comic benchmark corpus (`tests/benchmark_corpus.py`,
-  `docs/benchmark-corpus.md`) with nine plan-complete projects covering dialogue-heavy,
-  action, two-character, multi-character, silent-manga, night/low-light, long-dialogue,
-  complex-background, and four-page story scenarios.
-- Benchmark projects are materialized on demand rather than committed, take panel
-  rectangles from the immutable layout registry, validate at the `storyboard` stage,
-  and record the capability each project stresses alongside expected page, panel,
-  character, and text counts.
+- Added the Comic Sol benchmark framework (`scripts/benchmark.py`) with a validated
+  benchmark project contract in `benchmarks/cases/`, comparable pipeline success,
+  resume success, repair rate, panel acceptance, dialogue correctness, and export
+  success metrics, versioned machine-readable result records, and a fail-closed
+  two-revision diff wired into `.github/workflows/benchmark.yml`.
+- Deterministic benchmark runs are byte-reproducible and label themselves
+  `proves_visual_quality: false`; optional live-provider runs consume already
+  retained rasters with explicit caller-supplied provenance.
 
 ### Removed
 
