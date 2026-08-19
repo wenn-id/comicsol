@@ -1206,7 +1206,7 @@ GREEN_VALLEY = "green channel water under low evening light"
 FOUR_PAGE_STORY = {
     "capability": (
         "A complete four-page arc: contiguous page numbering, four different layouts, and a "
-        "beginning-to-resolution structure across seven panels."
+        "beginning-to-resolution structure across nine panels."
     ),
     "stresses": ("story:four-page-arc", "layout:mixed", "pages:contiguous-numbering"),
     "title": "Four Page Story Benchmark",
@@ -1215,7 +1215,7 @@ FOUR_PAGE_STORY = {
         "that still has water.\n"
     ),
     "expected_pages": 4,
-    "expected_panels": 7,
+    "expected_panels": 9,
     "characters": _bible([
         _character(
             "lira", "Lira", "older sister", "young-adult", "she/her",
@@ -1365,14 +1365,38 @@ FOUR_PAGE_STORY = {
                 [_caption("The dust took an hour and both canteens.", "top-left", 1)],
             ),
         ]),
-        _page("full-page", [
+        _page("two-top-hero-bottom", [
+            _panel(
+                "green-valley",
+                "The valley channel comes into view.",
+                ("lira", "bakar"),
+                "medium shot from the ridge path",
+                "pair low left with the channel glinting in the cleared upper text band",
+                "Lira points down the slope while Bakar shifts the pump",
+                "disbelief turning to relief",
+                "low golden evening key from the valley mouth",
+                (f"lira:{LIRA[0]}", f"green-valley:{GREEN_VALLEY}"),
+                [_dialogue("lira", "There. The channel is still running.", "top-left", 1, (0.42, 0.52))],
+            ),
+            _panel(
+                "green-valley",
+                "Bakar sets the pump on the bank.",
+                ("bakar",),
+                "medium close shot at the channel edge",
+                "figure centered low with open water space above for text",
+                "Bakar lowers the pump frame onto wet clay",
+                "exhausted care",
+                "warm evening key with cool reflected water fill",
+                (f"bakar:{BAKAR[1]}", f"green-valley:{GREEN_VALLEY}"),
+                [_caption("Bakar set the pump down without a word.", "top-right", 1)],
+            ),
             _panel(
                 "green-valley",
                 "The pump reaches running water.",
                 ("lira", "bakar"),
-                "full-page wide shot down into the valley",
+                "wide hero shot down the valley channel",
                 "siblings on the lower left with the channel leading right and open sky text space",
-                "Bakar sets the pump into the channel bank while Lira drinks",
+                "Lira drinks while the pump turns for the first time in weeks",
                 "quiet joy across both faces",
                 "low golden evening key with cool water reflections",
                 (f"lira:{LIRA[0]}", f"bakar:{BAKAR[0]}", f"green-valley:{GREEN_VALLEY}"),
