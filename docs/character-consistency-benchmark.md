@@ -117,7 +117,11 @@ explicitly **unscored**, with its limitations named: no image provider runs in C
 panel of this baseline was rendered.
 
 That honesty is the point. A committed number that nobody measured would make the next
-comparison meaningless. Regenerate a baseline for a release with:
+comparison meaningless. For the same reason the engine revision under test has to carry
+its own baseline: the suite requires `baseline-v<current version>.json` to exist and to
+describe the current definition, so a version bump without a regenerated baseline fails
+instead of inheriting an older one. Baselines for earlier revisions stay as history.
+Regenerate a baseline for a release with:
 
 ```bash
 python -m tests.consistency_benchmark baseline benchmarks/consistency/baseline-v<version>.json
