@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- Added a real-world comic benchmark corpus (`tests/benchmark_corpus.py`,
+  `docs/benchmark-corpus.md`) with nine plan-complete projects covering dialogue-heavy,
+  action, two-character, multi-character, silent-manga, night/low-light, long-dialogue,
+  complex-background, and four-page story scenarios.
+- Benchmark projects are materialized on demand rather than committed, take panel
+  rectangles from the immutable layout registry, validate at the `storyboard` stage,
+  and record the capability each project stresses alongside expected page, panel,
+  character, and text counts.
+
 ### Removed
 
 - Removed the unwired `comic_sol_product.providers` Python API. Integrations must
