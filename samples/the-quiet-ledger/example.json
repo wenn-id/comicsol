@@ -1,0 +1,17 @@
+{
+  "evidence_mode": "deterministic",
+  "example_id": "the-quiet-ledger",
+  "kind": "comic-example",
+  "layouts": [
+    "full-page",
+    "three-horizontal",
+    "four-grid",
+    "two-top-hero-bottom"
+  ],
+  "page_count": 4,
+  "panel_count": 11,
+  "schema_version": "1.0",
+  "seed": 20260820,
+  "summary": "Maximum supported scope: four pages, eleven panels, two recurring characters, four distinct layouts, and one authored sound effect.",
+  "title": "The Quiet Ledger"
+}

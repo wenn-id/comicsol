@@ -1,0 +1,59 @@
+{
+  "beginning": "Ren copies the week's repairs into the loft ledger and finds three towers logged with no name.",
+  "climax": "At tower seven the fresh solder, the trued minute hand, and the placed plank identify Sable.",
+  "ending": "Ren returns to the loft and writes Sable's name into every unattributed entry.",
+  "logline": "An apprentice clockwright traces a week of unsigned repairs and finds the mentor who has been fixing the city for free.",
+  "rating": "teen",
+  "scenes": [
+    {
+      "characters": [
+        "ren"
+      ],
+      "continuity_anchor": "sloped skylight over a workbench of disassembled brass movements",
+      "id": "clock-loft",
+      "location": "clockwrights' loft above the guild workshop",
+      "purpose": "discover the unattributed repairs in the ledger",
+      "time": "late afternoon"
+    },
+    {
+      "characters": [
+        "ren"
+      ],
+      "continuity_anchor": "limestone clock face with a bent minute hand and a scaffold plank at its base",
+      "id": "market-tower",
+      "location": "public clock tower seven above the market",
+      "purpose": "read the physical evidence of who did the work",
+      "time": "early evening"
+    },
+    {
+      "characters": [
+        "ren"
+      ],
+      "continuity_anchor": "green canal water at knee height against a stone walkway with iron mooring rings",
+      "id": "flood-canal",
+      "location": "flooded canal walkway between the market and the guild",
+      "purpose": "carry the conclusion back through the drowned city",
+      "time": "dusk"
+    },
+    {
+      "characters": [
+        "ren",
+        "sable"
+      ],
+      "continuity_anchor": "sloped skylight showing night sky above a single lit bench lamp",
+      "id": "loft-return",
+      "location": "clockwrights' loft after dark",
+      "purpose": "name the work in the ledger",
+      "time": "night"
+    }
+  ],
+  "schema_version": "1.0",
+  "setting": "Vell, a canal city whose public clocks are maintained by a small guild of clockwrights.",
+  "theme": "Unrecorded care is still care, and recording it is its own kind of repair.",
+  "title": "The Quiet Ledger",
+  "tone": [
+    "measured",
+    "warm"
+  ],
+  "turn": "Tower seven runs four minutes fast, and its repair is newer than any logged entry."
+}
