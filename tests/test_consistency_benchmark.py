@@ -61,6 +61,10 @@ REQUIRED_DIMENSIONS = {
     "proportions",
     "signature-traits",
 }
+# Twelve panels hold fifteen character appearances, so one dimension is scored
+# fifteen times and the whole scorecard holds 105 scores.
+CHARACTER_APPEARANCES = 15
+TOTAL_SCORES = CHARACTER_APPEARANCES * len(REQUIRED_DIMENSIONS)
 # Fixtures stay text-only: a raster would immediately break these budgets.
 MAX_PROJECT_FILE_BYTES = 32 * 1024
 MAX_PROJECT_BYTES = 256 * 1024
@@ -69,10 +73,11 @@ MAX_PROJECT_BYTES = 256 * 1024
 def _scored_template(score=4, unscored=()):
     """Return a scorecard filled with one synthetic score plus review provenance."""
     scorecard = scorecard_template()
+    skipped = set(unscored)
     for panel_id, panel in scorecard["panels"].items():
         for character_id, scores in panel["characters"].items():
             for dimension in scores:
-                if (panel_id, character_id, dimension) in set(unscored):
+                if (panel_id, character_id, dimension) in skipped:
                     continue
                 scores[dimension] = score
     scorecard["review"].update({
@@ -163,7 +168,7 @@ class ConsistencyDefinitionTests(unittest.TestCase):
     def test_every_panel_prompt_restates_every_immutable_trait_verbatim(self):
         restatements = trait_restatements()
         self.assertEqual(restatements["expected"], restatements["recorded"])
-        self.assertEqual(105, restatements["expected"])
+        self.assertEqual(TOTAL_SCORES, restatements["expected"])
         for panel_id in PANEL_IDS:
             prompt = panel_prompt(panel_id)
             row = MATRIX_BY_PANEL[panel_id]
@@ -228,14 +233,14 @@ class ConsistencyScorecardTests(unittest.TestCase):
                 self.assertEqual(set(CONSISTENCY_DIMENSIONS), set(scores))
                 self.assertEqual([None] * len(scores), list(scores.values()))
                 recorded += len(scores)
-        self.assertEqual(trait_restatements()["expected"], recorded)
+        self.assertEqual(TOTAL_SCORES, recorded)
 
     def test_unscored_template_summarizes_as_incomplete_without_a_mean(self):
         summary = summarize_scorecard(scorecard_template())
         self.assertFalse(summary["complete"])
         self.assertIsNone(summary["overall"]["mean"])
         self.assertEqual(0, summary["overall"]["scored"])
-        self.assertEqual(105, summary["overall"]["total"])
+        self.assertEqual(TOTAL_SCORES, summary["overall"]["total"])
 
     def test_summary_aggregates_scored_entries_by_dimension_view_and_character(self):
         summary = summarize_scorecard(_scored_template(3))
@@ -244,21 +249,23 @@ class ConsistencyScorecardTests(unittest.TestCase):
         self.assertEqual(set(CONSISTENCY_DIMENSIONS), set(summary["by_dimension"]))
         self.assertEqual(set(VIEWS), set(summary["by_view"]))
         self.assertEqual(set(CHARACTERS), set(summary["by_character"]))
-        for group in summary["by_dimension"].values():
-            self.assertEqual(3, group["min"])
-            self.assertEqual(3, group["max"])
-            self.assertEqual(group["total"], group["scored"])
+        for dimension, group in summary["by_dimension"].items():
+            with self.subTest(dimension=dimension):
+                self.assertEqual(3, group["min"])
+                self.assertEqual(3, group["max"])
+                self.assertEqual(CHARACTER_APPEARANCES, group["total"])
+                self.assertEqual(group["total"], group["scored"])
 
     def test_summary_averages_only_the_dimensions_a_reviewer_scored(self):
         skipped = (("p01-01", "rani", "face"), ("p01-01", "rani", "hair"))
         summary = summarize_scorecard(_scored_template(2, unscored=skipped))
         self.assertFalse(summary["complete"])
-        self.assertEqual(103, summary["overall"]["scored"])
-        self.assertEqual(105, summary["overall"]["total"])
+        self.assertEqual(TOTAL_SCORES - len(skipped), summary["overall"]["scored"])
+        self.assertEqual(TOTAL_SCORES, summary["overall"]["total"])
         # An unscored dimension is missing evidence, not a zero.
         self.assertEqual(2.0, summary["overall"]["mean"])
-        self.assertEqual(14, summary["by_dimension"]["face"]["total"])
-        self.assertEqual(13, summary["by_dimension"]["face"]["scored"])
+        self.assertEqual(CHARACTER_APPEARANCES, summary["by_dimension"]["face"]["total"])
+        self.assertEqual(CHARACTER_APPEARANCES - 1, summary["by_dimension"]["face"]["scored"])
 
     def test_scorecard_scored_against_another_definition_is_rejected(self):
         scorecard = _scored_template()
@@ -270,9 +277,9 @@ class ConsistencyScorecardTests(unittest.TestCase):
     def test_scorecard_rejects_unknown_panels_and_characters(self):
         missing_panel = scorecard_template()
         missing_panel["panels"].pop("p02-01")
-        with self.assertRaises(ScorecardError):
-            validate = summarize_scorecard(missing_panel)
-            self.assertIsNone(validate)
+        with self.assertRaises(ScorecardError) as raised:
+            summarize_scorecard(missing_panel)
+        self.assertIn("every benchmark panel", str(raised.exception))
 
         foreign_character = scorecard_template()
         foreign_character["panels"]["p01-01"]["characters"]["bayu"] = {
@@ -431,7 +438,9 @@ class ConsistencyBaselineTests(unittest.TestCase):
         structural = self.report["structural"]
         self.assertEqual(BASELINE_KIND, self.report["kind"])
         self.assertEqual(structural_baseline(), structural)
-        self.assertEqual({"result": "pass", "stage": "storyboard"}, self.report["project_validation"])
+        self.assertEqual(
+            {"result": "pass", "stage": "storyboard"}, self.report["project_validation"]
+        )
         self.assertEqual(12, structural["panel_count"])
         self.assertEqual(3, structural["page_count"])
         self.assertEqual(sorted(CHARACTERS), structural["characters"])
@@ -448,7 +457,7 @@ class ConsistencyBaselineTests(unittest.TestCase):
         # CI states the boundary instead of publishing an opinion as a number.
         self.assertFalse(visual["scored"])
         self.assertEqual(0, visual["scored_dimensions"])
-        self.assertEqual(105, visual["total_dimensions"])
+        self.assertEqual(TOTAL_SCORES, visual["total_dimensions"])
         self.assertGreaterEqual(len(visual["limitations"]), 3)
         self.assertEqual(SCORE_SCALE, visual["scale"])
         self.assertIn("summarize", visual["how_to_score"])
