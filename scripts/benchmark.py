@@ -60,6 +60,11 @@ from .page_quality import (
     build_page_quality_record,
     write_page_quality_record,
 )
+from .pdf_quality import (
+    MAX_GRID_REGION_ERROR,
+    MAX_HIGH_ERROR_PIXEL_RATIO,
+    MAX_MEAN_ABSOLUTE_CHANNEL_ERROR,
+)
 from .quality_sample import build_evidence_record
 from .raster_limits import MAX_DECODED_PIXELS
 from .stage_registry import RESUME_STAGES
@@ -564,14 +569,29 @@ def _attempt_payload(
     )
 
 
-def _panel_checks(mode: str, *, reviewer_method: str | None) -> list[dict[str, Any]]:
+def _panel_checks(
+    mode: str,
+    *,
+    reviewer_method: str | None,
+    review_assertions: Mapping[str, Mapping[str, str]] | None = None,
+) -> list[dict[str, Any]]:
     """Return the seven panel checks a benchmark run can honestly record."""
     method = DETERMINISTIC_METHOD if mode == "deterministic" else str(reviewer_method)
     checks: list[dict[str, Any]] = []
     for check_id in PANEL_CHECK_IDS:
+        assertion = (review_assertions or {}).get(check_id)
+        if mode == "live-visual" and (
+            not isinstance(assertion, Mapping)
+            or assertion.get("result") != "pass"
+            or not isinstance(assertion.get("evidence"), str)
+            or not assertion["evidence"].strip()
+        ):
+            raise ValueError(
+                f"live-visual evidence requires a passing assertion for {check_id}"
+            )
         proven = mode == "live-visual" or check_id in MECHANICAL_PANEL_CHECK_IDS
         evidence = (
-            LIVE_PANEL_EVIDENCE[check_id]
+            str(cast(Mapping[str, str], assertion)["evidence"])
             if mode == "live-visual"
             else PANEL_CHECK_EVIDENCE[check_id]
         )
@@ -588,7 +608,11 @@ def _panel_checks(mode: str, *, reviewer_method: str | None) -> list[dict[str, A
 
 
 def _write_panel_records(
-    project: Path, case: Mapping[str, Any], *, reviewer_method: str | None
+    project: Path,
+    case: Mapping[str, Any],
+    *,
+    reviewer_method: str | None,
+    review_assertions: Mapping[str, Mapping[str, Mapping[str, str]]] | None = None,
 ) -> None:
     """Write one schema-2.0 panel QA record per panel bound to current artifacts."""
     mode = str(case["evidence_mode"])
@@ -600,7 +624,11 @@ def _write_panel_records(
             raw_size = image.size
         with Image.open(clean) as image:
             clean_size = image.size
-        checks = _panel_checks(mode, reviewer_method=reviewer_method)
+        checks = _panel_checks(
+            mode,
+            reviewer_method=reviewer_method,
+            review_assertions=(review_assertions or {}).get(panel_id),
+        )
         warnings = [check for check in checks if check["result"] == "warning"]
         record = {
             "bindings": {
@@ -934,6 +962,12 @@ def _export_verified(project: Path, case: Mapping[str, Any]) -> tuple[int, int]:
                 or value < 0
             ):
                 return 0, expected
+        if (
+            page["mean_absolute_channel_error"] > MAX_MEAN_ABSOLUTE_CHANNEL_ERROR
+            or page["high_error_pixel_ratio"] > MAX_HIGH_ERROR_PIXEL_RATIO
+            or page["maximum_grid_region_error"] > MAX_GRID_REGION_ERROR
+        ):
+            return 0, expected
         page_path = project / f"pages/page-{number:03d}.png"
         qa_path = project / f"qa/pages/page-{number:03d}.json"
         if (
@@ -995,6 +1029,7 @@ def run_case(
     provider: str | None = None,
     model: str | None = None,
     reviewer_method: str | None = None,
+    review_assertions: Mapping[str, Mapping[str, Mapping[str, str]]] | None = None,
     limitations: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Run one benchmark case end to end and return its comparable result record."""
@@ -1002,17 +1037,24 @@ def run_case(
     if issues:
         raise ValueError(f"invalid benchmark case: {', '.join(issues)}")
     mode = str(case["evidence_mode"])
-    if mode == "live-visual" and not (attempt_root and provider and model and reviewer_method):
+    if mode == "live-visual" and not (
+        attempt_root and provider and model and reviewer_method and review_assertions
+    ):
         raise ValueError(
             "live-visual benchmark runs require an attempt root, provider, model, "
-            "and reviewer method"
+            "reviewer method, and per-check review assertions"
         )
 
     project = materialize_case_project(case, Path(output_root), fixture_root=fixture_root)
     storyboard = read_json(project / "plan/storyboard.json")
     panels = _storyboard_panels(storyboard)
     promoted_attempts = _panel_attempts(project, case, panels, attempt_root=attempt_root)
-    _write_panel_records(project, case, reviewer_method=reviewer_method)
+    _write_panel_records(
+        project,
+        case,
+        reviewer_method=reviewer_method,
+        review_assertions=review_assertions,
+    )
     transition(project, "PANELS_READY")
     transition(project, "QA_READY")
     record_stage(project, "generation")
@@ -1233,8 +1275,8 @@ def diff_results(
     markdown: Path | None = None,
 ) -> dict[str, Any]:
     """Diff two engine revisions' benchmark results with a fail-closed verdict."""
-    if tolerance < 0:
-        raise ValueError("benchmark tolerance must not be negative")
+    if not math.isfinite(tolerance) or tolerance < 0:
+        raise ValueError("benchmark tolerance must be finite and non-negative")
     baseline_records, exceptions = load_results(baseline)
     candidate_records, candidate_exceptions = load_results(candidate)
     exceptions = [f"baseline: {item}" for item in exceptions]
@@ -1407,6 +1449,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--provider")
     parser.add_argument("--model")
     parser.add_argument("--reviewer-method")
+    parser.add_argument("--review-assertions", type=Path)
     parser.add_argument("--limitation", action="append", default=[])
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--candidate", type=Path)
@@ -1463,6 +1506,17 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.output_root is None or arguments.results is None:
         parser.error("benchmark runs require --output-root and --results")
 
+    review_assertions: Mapping[str, Mapping[str, Mapping[str, str]]] | None = None
+    if arguments.review_assertions is not None:
+        loaded_assertions = json.loads(
+            arguments.review_assertions.read_text(encoding="utf-8")
+        )
+        if not isinstance(loaded_assertions, Mapping):
+            parser.error("--review-assertions must contain a JSON object")
+        review_assertions = cast(
+            Mapping[str, Mapping[str, Mapping[str, str]]], loaded_assertions
+        )
+
     status = 0
     for path in dict.fromkeys(case_paths):
         case_id = Path(path).stem
@@ -1479,6 +1533,7 @@ def main(argv: list[str] | None = None) -> int:
                 provider=arguments.provider,
                 model=arguments.model,
                 reviewer_method=arguments.reviewer_method,
+                review_assertions=review_assertions,
                 limitations=arguments.limitation,
             )
         except Exception as error:  # noqa: BLE001 - evidence must survive any failure

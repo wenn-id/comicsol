@@ -304,6 +304,13 @@ class BenchmarkDiffTests(unittest.TestCase):
         self.assertEqual("failed", strict["status"])
         with self.assertRaises(ValueError):
             diff_results(self.baseline, self.candidate, self.root / "bad.json", tolerance=-1)
+        with self.assertRaises(ValueError):
+            diff_results(
+                self.baseline,
+                self.candidate,
+                self.root / "nan.json",
+                tolerance=float("nan"),
+            )
 
     def test_missing_cases_and_changed_contracts_block_the_diff(self):
         self._publish(self.baseline, _minimal_result("case-one", PERFECT))
@@ -476,6 +483,18 @@ class BenchmarkRunTests(unittest.TestCase):
         )
         panels = _storyboard_panels(storyboard)
         live_case = {**case, "evidence_mode": "live-visual"}
+        from scripts.core_primitives import PANEL_CHECK_IDS
+
+        review_assertions = {
+            panel_id: {
+                check_id: {
+                    "result": "pass",
+                    "evidence": f"reviewed {panel_id} for {check_id}",
+                }
+                for check_id in PANEL_CHECK_IDS
+            }
+            for panel_id in case["panels"]
+        }
         with tempfile.TemporaryDirectory() as temporary_directory:
             attempt_root = Path(temporary_directory) / "attempts"
             attempt_root.mkdir()
@@ -495,6 +514,7 @@ class BenchmarkRunTests(unittest.TestCase):
                 provider="provider",
                 model="model",
                 reviewer_method="bounded review",
+                review_assertions=review_assertions,
             )
         evidence = result["evidence"]["panels"]["p01-02"]
         self.assertEqual(
@@ -510,6 +530,10 @@ class BenchmarkRunTests(unittest.TestCase):
         try:
             verification = json.loads(original)
             verification["pages"][0]["page_number"] = 2
+            verification_path.write_text(json.dumps(verification), encoding="utf-8")
+            self.assertEqual((0, 1), _export_verified(project, self.case))
+            verification["pages"][0]["page_number"] = 1
+            verification["pages"][0]["mean_absolute_channel_error"] = 999.0
             verification_path.write_text(json.dumps(verification), encoding="utf-8")
             self.assertEqual((0, 1), _export_verified(project, self.case))
         finally:
@@ -576,6 +600,7 @@ class BenchmarkIntegrationTests(unittest.TestCase):
             "--diff-output",
             "--tolerance",
             "--attempt-root",
+            "--review-assertions",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, source)

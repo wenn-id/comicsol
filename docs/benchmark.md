@@ -95,13 +95,31 @@ python scripts/benchmark.py --case benchmarks/cases/mini-comic.json \
   --attempt-root path/to/retained/rasters \
   --provider example-provider --model example-model \
   --reviewer-method "human bounded visual review" \
+  --review-assertions path/to/review-assertions.json \
   --limitation "single reviewer, single locale"
 ```
 
 Rasters are read as `<panel-id>-<revision>.png`, falling back to `<panel-id>.png`.
-Set the case's `evidence_mode` to `live-visual`; the harness then upgrades the
-subjective panel and page checks to reviewer assertions and marks the result
-`proves_visual_quality: true`. Live results are not byte-reproducible.
+Set the case's `evidence_mode` to `live-visual`. The assertions file must contain
+one passing, non-empty evidence assertion for every panel/check, for example:
+
+```json
+{
+  "p01-01": {
+    "character-identity": {"result": "pass", "evidence": "reviewed identity"},
+    "anatomy": {"result": "pass", "evidence": "reviewed anatomy"},
+    "action": {"result": "pass", "evidence": "reviewed action"},
+    "composition": {"result": "pass", "evidence": "reviewed composition"},
+    "continuity": {"result": "pass", "evidence": "reviewed continuity"},
+    "text-free": {"result": "pass", "evidence": "reviewed text-free art"},
+    "technical": {"result": "pass", "evidence": "reviewed technical output"}
+  }
+}
+```
+
+The harness then upgrades the subjective panel and page checks to reviewer
+assertions and marks the result `proves_visual_quality: true`. Live results are not
+byte-reproducible.
 
 ## Diffing two engine revisions
 
