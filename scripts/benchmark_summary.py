@@ -42,12 +42,16 @@ try:
         MATRIX_BY_PANEL as CANONICAL_MATRIX_BY_PANEL,
         PANEL_IDS as CANONICAL_PANEL_IDS,
         definition_digest as canonical_definition_digest,
+        structural_baseline as canonical_structural_baseline,
     )
-except ImportError:  # pragma: no cover - packaged runtime has no test tree
+    CANONICAL_DEFINITION_ERROR = None
+except ImportError as error:  # pragma: no cover - packaged runtime has no test tree
     CANONICAL_CONSISTENCY_DIMENSIONS = ()
     CANONICAL_MATRIX_BY_PANEL = {}
     CANONICAL_PANEL_IDS = ()
     canonical_definition_digest = None
+    canonical_structural_baseline = None
+    CANONICAL_DEFINITION_ERROR = error
 
 SUMMARY_SCHEMA_VERSION = "1.0"
 SUMMARY_KIND = "benchmark-summary"
@@ -89,6 +93,13 @@ CONSISTENCY_LIMITATION = (
     "Character consistency metrics are reported and never gated: the structural plane is "
     "asserted by its own suite, and the visual plane is a reviewer judgement."
 )
+
+
+def _require_canonical_definition() -> None:
+    """Refuse consistency evidence when its canonical definition is unavailable."""
+    if canonical_definition_digest is None or canonical_structural_baseline is None:
+        detail = f": {CANONICAL_DEFINITION_ERROR}" if CANONICAL_DEFINITION_ERROR else ""
+        raise ValueError(f"canonical character consistency definition is unavailable{detail}")
 
 
 # --------------------------------------------------------------------------- #
@@ -287,6 +298,7 @@ def _metric_contract_problems(
 
 def load_consistency_baseline(path: Path) -> dict[str, Any]:
     """Read and validate one character consistency baseline report."""
+    _require_canonical_definition()
     baseline = _read_json_object(path)
     problems: list[str] = []
     if baseline.get("kind") != CONSISTENCY_BASELINE_KIND:
@@ -309,6 +321,14 @@ def load_consistency_baseline(path: Path) -> dict[str, Any]:
     if not isinstance(structural, Mapping):
         problems.append("structural must be a JSON object")
     else:
+        canonical = cast(Mapping[str, Any], canonical_structural_baseline())
+        for field in (
+            "backgrounds", "characters", "dimensions", "expressions", "lighting_conditions",
+            "layouts", "page_count", "panel_count", "panels", "text_item_count", "views",
+            "views_per_character",
+        ):
+            if structural.get(field) != canonical.get(field):
+                problems.append(f"structural.{field} does not match the canonical definition")
         for field in ("invariant_pins", "trait_restatements"):
             if not _is_count_pair(structural.get(field)):
                 problems.append(
@@ -330,9 +350,16 @@ def load_consistency_baseline(path: Path) -> dict[str, Any]:
     else:
         if not isinstance(visual.get("scored"), bool):
             problems.append("visual.scored must state whether any dimension was scored")
+        visual_counts_valid = True
         for field in ("scored_dimensions", "total_dimensions"):
             if not _is_count(visual.get(field)):
+                visual_counts_valid = False
                 problems.append(f"visual.{field} must be a non-negative integer")
+        if visual_counts_valid and int(visual["scored_dimensions"]) > int(visual["total_dimensions"]):
+            problems.append("visual.scored_dimensions must not exceed total_dimensions")
+        canonical_total = cast(Mapping[str, Any], canonical_structural_baseline())["trait_restatements"]["expected"]
+        if visual.get("total_dimensions") != canonical_total:
+            problems.append("visual.total_dimensions does not match the canonical definition")
     if problems:
         raise ValueError(
             f"{Path(path).name}: invalid character consistency baseline: "
@@ -369,6 +396,7 @@ def load_consistency_scorecard(path: Path) -> dict[str, Any]:
     A scored scorecard without a named reviewer and method is refused: an
     unattributable score is not evidence, so it is not summarized either.
     """
+    _require_canonical_definition()
     scorecard = _read_json_object(path)
     problems: list[str] = []
     if scorecard.get("kind") != CONSISTENCY_SCORECARD_KIND:
@@ -463,6 +491,7 @@ def consistency_report(
     """
     if baseline is None and scorecard is None:
         raise ValueError("a character consistency report needs a baseline or a scorecard")
+    _require_canonical_definition()
     metrics: dict[str, Any] = {}
     report: dict[str, Any] = {
         "benchmark": CONSISTENCY_BENCHMARK,
@@ -601,7 +630,6 @@ def summarize_results(
                 isinstance(consistency_engine, str)
                 and isinstance(result_engine, str)
                 and consistency_engine != result_engine
-                and result_engine != "unknown"
             ):
                 source_label = (
                     "scorecard" if consistency_scorecard is not None and consistency_baseline is None else "baseline"
@@ -611,6 +639,8 @@ def summarize_results(
                     f"{consistency_engine!r} does not match result engine version "
                     f"{result_engine!r}"
                 )
+            elif result_engine == "unknown":
+                exceptions.append("result engine version is unknown; consistency evidence is not comparable")
 
     metrics = aggregate_metrics(records)
     cases = {
@@ -691,6 +721,21 @@ def load_summary(path: Path) -> dict[str, Any]:
             digest = case.get("case_sha256")
             if not isinstance(digest, str) or len(digest) != 64:
                 problems.append(f"case {case_id!r} has no valid case_sha256")
+            if case.get("status") not in {"passed", "failed"}:
+                problems.append(f"case {case_id!r} has no valid status")
+            case_metrics = case.get("metrics")
+            if not isinstance(case_metrics, Mapping) or set(case_metrics) != set(METRIC_IDS):
+                problems.append(f"case {case_id!r} metrics do not match the registered metric IDs")
+            else:
+                for metric_id in METRIC_IDS:
+                    value = case_metrics[metric_id]
+                    if (
+                        not isinstance(value, (int, float))
+                        or isinstance(value, bool)
+                        or not math.isfinite(float(value))
+                        or not 0 <= float(value) <= 1
+                    ):
+                        problems.append(f"case {case_id!r} {metric_id} must be a ratio scalar")
     consistency = summary.get("consistency")
     if consistency is not None and not isinstance(consistency, Mapping):
         problems.append("summary consistency must be a JSON object or null")

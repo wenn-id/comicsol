@@ -102,6 +102,8 @@ def _result(
 
 def _baseline(**overrides):
     """Build one character consistency baseline report."""
+    from tests.consistency_benchmark import structural_baseline
+
     baseline = {
         "benchmark": "character-consistency",
         "definition_sha256": definition_digest(),
@@ -110,17 +112,7 @@ def _baseline(**overrides):
         "kind": "character-consistency-baseline",
         "project_validation": {"result": "pass", "stage": "storyboard"},
         "schema_version": "1.0",
-        "structural": {
-            "backgrounds": ["harbor-noon", "reference-studio"],
-            "character_count": 2,
-            "expressions": ["neutral"],
-            "invariant_pins": {"expected": 60, "recorded": 60},
-            "lighting_conditions": ["hard-noon-sun", "even-neutral-daylight"],
-            "page_count": 3,
-            "panel_count": 12,
-            "trait_restatements": {"expected": 105, "recorded": 105},
-            "views": {"front": 3, "profile": 2},
-        },
+        "structural": structural_baseline(),
         "visual": {"scored": False, "scored_dimensions": 0, "total_dimensions": 105},
     }
     baseline.update(overrides)
@@ -493,15 +485,15 @@ class SummaryDeltaTests(TemporaryRootTestCase):
         baseline = self._summary(
             "baseline",
             [
-                _result("case-one", {"repair_rate": (0, 1)}),
-                _result("case-two", {"repair_rate": (2, 1)}),
+                _result("case-one", {"repair_rate": (0, 2)}),
+                _result("case-two", {"repair_rate": (2, 2)}),
             ],
         )
         candidate = self._summary(
             "candidate",
             [
-                _result("case-one", {"repair_rate": (2, 1)}),
-                _result("case-two", {"repair_rate": (0, 1)}),
+                _result("case-one", {"repair_rate": (2, 2)}),
+                _result("case-two", {"repair_rate": (0, 2)}),
             ],
         )
         delta = diff_summaries(baseline, candidate, self.root / "delta.json")
