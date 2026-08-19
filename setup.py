@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent
 BUILD_ONLY_SCRIPTS = {
     "assemble_release.py",
     "benchmark.py",
+    "benchmark_summary.py",
     "build_portable.py",
     "clean_install_smoke.py",
     "installed_mcp_smoke.py",
