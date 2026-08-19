@@ -18,6 +18,9 @@ from scripts.benchmark import (  # noqa: E402
     load_case,
     load_results,
     main,
+    _attempt_payload,
+    _metric,
+    _storyboard_panels,
     panel_raster_size,
     run_case,
     synthesize_panel_raster,
@@ -120,6 +123,20 @@ class BenchmarkContractTests(unittest.TestCase):
 
 
 class BenchmarkPrimitiveTests(unittest.TestCase):
+    def test_live_retry_requires_revision_specific_raster(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "p01-01.png").write_bytes(
+                synthesize_panel_raster(1, "p01-01", 0, (512, 512))
+            )
+            case = {"evidence_mode": "live-visual"}
+            with self.assertRaises(FileNotFoundError):
+                _attempt_payload(case, "p01-01", 1, (512, 512), attempt_root=root)
+
+    def test_dialogue_correctness_is_vacuously_successful_without_dialogue(self):
+        metric = _metric("dialogue_correctness", 0, 0)
+        self.assertEqual(1.0, metric["value"])
+
     def test_synthesized_rasters_are_seeded_and_reproducible(self):
         size = (736, 1136)
         first = synthesize_panel_raster(1, "p01-01", 0, size)
@@ -364,6 +381,40 @@ class BenchmarkRunTests(unittest.TestCase):
                 output_root=self.root / "live",
             )
         self.assertIn("live-visual", str(context.exception))
+
+    def test_live_evidence_binds_to_the_promoted_repair_attempt(self):
+        case = load_case(CASES_ROOT / "sunlight-courier.json")
+        fixture = ROOT / case["fixture"]
+        storyboard = json.loads(
+            (fixture / "plan/storyboard.json").read_text(encoding="utf-8")
+        )
+        panels = _storyboard_panels(storyboard)
+        live_case = {**case, "evidence_mode": "live-visual"}
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            attempt_root = Path(temporary_directory) / "attempts"
+            attempt_root.mkdir()
+            for panel_id in case["panels"]:
+                size = panel_raster_size(panels[panel_id]["rect"])
+                (attempt_root / f"{panel_id}-0.png").write_bytes(
+                    synthesize_panel_raster(7, panel_id, 0, size)
+                )
+                if panel_id in case["repair_panels"]:
+                    (attempt_root / f"{panel_id}-1.png").write_bytes(
+                        synthesize_panel_raster(7, panel_id, 1, size)
+                    )
+            result = run_case(
+                live_case,
+                output_root=Path(temporary_directory) / "project",
+                attempt_root=attempt_root,
+                provider="provider",
+                model="model",
+                reviewer_method="bounded review",
+            )
+        evidence = result["evidence"]["panels"]["p01-02"]
+        self.assertEqual(
+            "panels/attempts/p01-02/visual_retry-1.png",
+            evidence["retained_attempt"],
+        )
 
 
 class BenchmarkCommandTests(unittest.TestCase):

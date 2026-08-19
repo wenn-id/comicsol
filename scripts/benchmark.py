@@ -484,10 +484,10 @@ def _panel_attempts(
     panels: Mapping[str, Mapping[str, Any]],
     *,
     attempt_root: Path | None,
-) -> dict[str, int]:
+) -> dict[str, Path]:
     """Retain and promote one raster per panel, repairing the declared panels."""
     repairs = set(case["repair_panels"])
-    attempts: dict[str, int] = {}
+    promoted_attempts: dict[str, Path] = {}
     for panel_id in case["panels"]:
         size = panel_raster_size(panels[panel_id]["rect"])
         planned: list[tuple[str, int]] = [("initial", 0)]
@@ -503,11 +503,11 @@ def _panel_attempts(
             sequence = 1
             attempt = project / f"panels/attempts/{panel_id}/{kind}-{sequence}.png"
             promote_attempt(project, panel_id, attempt.relative_to(project))
-        attempts[panel_id] = len(planned)
+            promoted_attempts[panel_id] = attempt.relative_to(project)
         normalize_panel(
             project, panel_id, f"panels/raw/{panel_id}.png", size, "exact"
         )
-    return attempts
+    return promoted_attempts
 
 
 def _attempt_payload(
@@ -523,7 +523,9 @@ def _attempt_payload(
         return synthesize_panel_raster(int(case["seed"]), panel_id, revision, size)
     if attempt_root is None:
         raise ValueError("live-visual benchmark runs require --attempt-root")
-    candidates = [f"{panel_id}-{revision}.png", f"{panel_id}.png"]
+    candidates = [f"{panel_id}-{revision}.png"]
+    if revision == 0:
+        candidates.append(f"{panel_id}.png")
     for name in candidates:
         candidate = Path(attempt_root) / name
         if candidate.is_file():
@@ -774,7 +776,10 @@ def _metric(metric_id: str, numerator: float, denominator: int) -> dict[str, Any
     if metric_id not in METRIC_DIRECTIONS:
         raise ValueError(f"unknown benchmark metric: {metric_id}")
     denominator = int(denominator)
-    value = round(numerator / denominator, 6) if denominator > 0 else 0.0
+    if denominator > 0:
+        value = round(numerator / denominator, 6)
+    else:
+        value = 1.0 if metric_id == "dialogue_correctness" else 0.0
     return {
         "denominator": denominator,
         "direction": METRIC_DIRECTIONS[metric_id],
@@ -940,7 +945,7 @@ def run_case(
     project = materialize_case_project(case, Path(output_root), fixture_root=fixture_root)
     storyboard = read_json(project / "plan/storyboard.json")
     panels = _storyboard_panels(storyboard)
-    _panel_attempts(project, case, panels, attempt_root=attempt_root)
+    promoted_attempts = _panel_attempts(project, case, panels, attempt_root=attempt_root)
     _write_panel_records(project, case, reviewer_method=reviewer_method)
     transition(project, "PANELS_READY")
     transition(project, "QA_READY")
@@ -998,10 +1003,10 @@ def run_case(
         panel_id: build_evidence_record(
             mode,
             retained_attempt=(
-                f"panels/attempts/{panel_id}/initial-1.png" if mode == "live-visual" else None
+                str(promoted_attempts[panel_id]) if mode == "live-visual" else None
             ),
             attempt_sha256=(
-                sha256_file(project / f"panels/attempts/{panel_id}/initial-1.png")
+                sha256_file(project / promoted_attempts[panel_id])
                 if mode == "live-visual"
                 else None
             ),
