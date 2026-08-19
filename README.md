@@ -261,9 +261,32 @@ exports/pdf-verification.json PDF verification (`pdf_verification` descriptor)
 logs/                         sanitized events, cache, and retry accounting
 ```
 
-The committed [one-page synthetic fixture](tests/fixtures/valid-one-page) provides
-sample-output inspection without an external provider. Its three geometric panel
-PNGs are deterministic test data, not generated art or a claimed live sample.
+### Official examples
+
+To see that structure filled in before running anything yourself, read
+[`samples/README.md`](samples/README.md). It catalogs three reference projects and
+states which of them is evidence of visual quality:
+
+| Example | Pages | Panels | Tier |
+|---|---:|---:|---|
+| [`first-light-signal`](samples/first-light-signal) | 1 | 3 | Deterministic |
+| [`sunlight-courier`](samples/sunlight-courier) | 2 | 4 | Live-generated |
+| [`the-quiet-ledger`](samples/the-quiet-ledger) | 4 | 11 | Deterministic |
+
+`sunlight-courier` tracks real generated artwork and its exported PDF; it is the
+one to look at for image output. The two deterministic examples commit only
+editable inputs — story plan, character bible, storyboard, and prompts — and build
+their pages, QA records, and PDF locally with no provider call:
+
+```bash
+"$PYTHON" scripts/build_examples.py
+```
+
+Each build is validated at the `final` stage. Deterministic builds prove schema,
+lettering, composition, export, and validation mechanics; their placeholder panel
+artwork is not a claimed live sample. The committed
+[one-page synthetic fixture](tests/fixtures/valid-one-page) remains available as
+minimal test data.
 
 ## Architecture
 
