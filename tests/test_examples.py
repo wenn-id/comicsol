@@ -1,0 +1,140 @@
+"""Official example projects build, validate, and stay documented."""
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from scripts.build_examples import build_example, discover_examples
+from scripts.comic_sol import read_json
+from scripts.validate_project import require_valid_project
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SAMPLES = ROOT / "samples"
+RASTER_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".pdf"})
+
+
+class ExampleContractTests(unittest.TestCase):
+    def test_every_deterministic_example_commits_only_editable_inputs(self):
+        for example in discover_examples():
+            with self.subTest(example=example.name):
+                tracked = [
+                    path.relative_to(example).as_posix()
+                    for path in example.rglob("*")
+                    if path.is_file() and path.suffix.lower() in RASTER_SUFFIXES
+                ]
+                self.assertEqual(
+                    [],
+                    tracked,
+                    "deterministic examples must not commit rasters or exports",
+                )
+
+    def test_every_example_is_listed_in_the_samples_index(self):
+        index = (SAMPLES / "README.md").read_text(encoding="utf-8")
+        for example in discover_examples():
+            with self.subTest(example=example.name):
+                self.assertIn(f"({example.name})", index)
+                self.assertTrue(
+                    (example / "README.md").is_file(),
+                    "each example needs its own README",
+                )
+
+    def test_readme_links_the_examples_from_the_usage_flow(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("samples/README.md", readme)
+        for example in discover_examples():
+            with self.subTest(example=example.name):
+                self.assertIn(f"samples/{example.name}", readme)
+
+    def test_contract_declares_the_storyboard_scope(self):
+        for example in discover_examples():
+            with self.subTest(example=example.name):
+                contract = read_json(example / "example.json")
+                storyboard = read_json(example / "plan/storyboard.json")
+                pages = storyboard["pages"]
+                panels = [panel for page in pages for panel in page["panels"]]
+                self.assertEqual("deterministic", contract["evidence_mode"])
+                self.assertEqual(example.name, contract["example_id"])
+                self.assertEqual(len(pages), contract["page_count"])
+                self.assertEqual(len(panels), contract["panel_count"])
+                self.assertEqual(
+                    sorted({page["layout"] for page in pages}),
+                    sorted(set(contract["layouts"])),
+                )
+
+
+class ExampleBuildTests(unittest.TestCase):
+    """Build every committed example once, then assert on the results."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._temporary_directory = tempfile.TemporaryDirectory()
+        root = Path(cls._temporary_directory.name)
+        cls.built = {
+            example.name: build_example(example, root)
+            for example in discover_examples()
+        }
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._temporary_directory.cleanup()
+
+    def test_each_example_reaches_a_validated_terminal_state(self):
+        for name, project in self.built.items():
+            with self.subTest(example=name):
+                manifest = read_json(project / "project.json")
+                self.assertEqual("COMPLETE", manifest["status"])
+                self.assertEqual([], manifest["warnings"])
+                require_valid_project(project, "final")
+
+    def test_each_example_exports_a_recorded_pdf_and_report(self):
+        for name, project in self.built.items():
+            with self.subTest(example=name):
+                manifest = read_json(project / "project.json")
+                for descriptor in ("pdf", "qa_report", "composition_cache"):
+                    self.assertIn(descriptor, manifest["artifacts"])
+                pdf = manifest["artifacts"]["pdf"]["path"]
+                self.assertEqual(f"exports/{name}.pdf", pdf)
+                self.assertTrue((project / pdf).is_file())
+                self.assertTrue((project / "qa/report.md").is_file())
+
+    def test_each_example_composes_every_declared_page(self):
+        for name, project in self.built.items():
+            with self.subTest(example=name):
+                contract = read_json(SAMPLES / name / "example.json")
+                pages = sorted((project / "pages").glob("page-*.png"))
+                self.assertEqual(contract["page_count"], len(pages))
+                for page_number in range(1, contract["page_count"] + 1):
+                    self.assertTrue(
+                        (project / f"qa/pages/page-{page_number:03d}.json").is_file()
+                    )
+
+    def test_each_example_labels_itself_as_deterministic_evidence(self):
+        for name, project in self.built.items():
+            with self.subTest(example=name):
+                evidence = read_json(project / "qa/evidence.json")
+                self.assertEqual("deterministic", evidence["mode"])
+                self.assertFalse(evidence["proves_visual_quality"])
+                report = (project / "qa/report.md").read_text(encoding="utf-8")
+                self.assertIn("Mode: deterministic", report)
+
+    def test_committed_plan_artifacts_are_recorded_verbatim(self):
+        for name, project in self.built.items():
+            with self.subTest(example=name):
+                source = SAMPLES / name
+                for relative in (
+                    "plan/story-plan.json",
+                    "plan/character-bible.json",
+                    "plan/storyboard.json",
+                    "source/input.txt",
+                ):
+                    self.assertEqual(
+                        (source / relative).read_bytes(),
+                        (project / relative).read_bytes(),
+                        relative,
+                    )
+
+
+if __name__ == "__main__":
+    unittest.main()
