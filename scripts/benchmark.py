@@ -61,6 +61,7 @@ from .page_quality import (
     write_page_quality_record,
 )
 from .quality_sample import build_evidence_record
+from .raster_limits import MAX_DECODED_PIXELS
 from .stage_registry import RESUME_STAGES
 from .validate_project import ProjectValidationError, require_valid_project
 
@@ -290,11 +291,14 @@ def validate_case(case: object, *, fixture_root: Path = ROOT) -> tuple[str, ...]
 
 def load_case(path: Path, *, fixture_root: Path = ROOT) -> dict[str, Any]:
     """Read and validate one benchmark case contract."""
-    case = json.loads(Path(path).read_text(encoding="utf-8"))
+    path = Path(path)
+    case = json.loads(path.read_text(encoding="utf-8"))
     issues = validate_case(case, fixture_root=fixture_root)
+    if isinstance(case, Mapping) and case.get("case_id") != path.stem:
+        issues = tuple(sorted((*issues, "case-filename")))
     if issues:
-        raise ValueError(f"invalid benchmark case {Path(path).name}: {', '.join(issues)}")
-    return case
+        raise ValueError(f"invalid benchmark case {path.name}: {', '.join(issues)}")
+    return cast(dict[str, Any], case)
 
 
 def discover_cases(root: Path = CASES_ROOT) -> tuple[Path, ...]:
@@ -378,6 +382,8 @@ def synthesize_panel_raster(seed: int, panel_id: str, revision: int, size: tuple
     width, height = size
     if width < 512 or height < 512:
         raise ValueError("benchmark panel raster must be at least 512px on both axes")
+    if width * height > MAX_DECODED_PIXELS:
+        raise ValueError("benchmark panel raster exceeds the decoded pixel limit")
     digest = hashlib.sha256(f"{seed}:{panel_id}:{revision}".encode("utf-8")).digest()
     background = tuple(40 + digest[index] // 2 for index in range(3))
     image = Image.new("RGB", (width, height), background)
@@ -416,7 +422,10 @@ def panel_raster_size(rect: Mapping[str, object]) -> tuple[int, int]:
     while width % divisor == 0 and height % divisor == 0 and min(width, height) // divisor >= 512:
         divisor *= 2
     divisor = max(1, divisor // 2)
-    return width // divisor, height // divisor
+    raster_size = (width // divisor, height // divisor)
+    if raster_size[0] * raster_size[1] > MAX_DECODED_PIXELS:
+        raise ValueError("benchmark panel raster exceeds the decoded pixel limit")
+    return raster_size
 
 
 # --------------------------------------------------------------------------- #
@@ -1013,8 +1022,10 @@ def run_case(
 
     letter_project(project)
     transition(project, "LETTERED")
+    record_stage(project, "lettering")
     compose_project(project)
     transition(project, "COMPOSED")
+    record_stage(project, "composition")
     dialogue_count = _write_page_records(project, case, reviewer_method=reviewer_method)
     if dialogue_count != int(case["dialogue_count"]):
         raise ValueError(
@@ -1118,6 +1129,23 @@ def write_result(record: Mapping[str, Any], results_root: Path) -> Path:
         encoding="utf-8",
     )
     return output
+
+
+def _failed_result_record(
+    case_id: str, error: Exception, *, case: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    """Build a schema-valid failed record so failed cases remain diffable evidence."""
+    return {
+        "case_id": case_id,
+        "case_sha256": case_digest(case) if case is not None else "0" * 64,
+        "exceptions": [f"{type(error).__name__}: {error}"],
+        "harness_version": HARNESS_VERSION,
+        "kind": RESULT_KIND,
+        "metrics": {metric_id: _metric(metric_id, 0, 1) for metric_id in METRIC_IDS},
+        "revision": engine_revision(),
+        "schema_version": RESULT_SCHEMA_VERSION,
+        "status": "failed",
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -1438,8 +1466,10 @@ def main(argv: list[str] | None = None) -> int:
     status = 0
     for path in dict.fromkeys(case_paths):
         case_id = Path(path).stem
+        loaded_case: Mapping[str, Any] | None = None
         try:
             case = load_case(path, fixture_root=arguments.fixture_root)
+            loaded_case = case
             case_id = str(case["case_id"])
             record = run_case(
                 case,
@@ -1452,16 +1482,7 @@ def main(argv: list[str] | None = None) -> int:
                 limitations=arguments.limitation,
             )
         except Exception as error:  # noqa: BLE001 - evidence must survive any failure
-            record = {
-                "case_id": case_id,
-                "exceptions": [f"{type(error).__name__}: {error}"],
-                "harness_version": HARNESS_VERSION,
-                "kind": RESULT_KIND,
-                "metrics": {},
-                "revision": engine_revision(),
-                "schema_version": RESULT_SCHEMA_VERSION,
-                "status": "failed",
-            }
+            record = _failed_result_record(case_id, error, case=loaded_case)
             print(record["exceptions"][0], file=sys.stderr)
         write_result(record, arguments.results)
         if record["status"] != "passed":

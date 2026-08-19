@@ -132,6 +132,12 @@ class BenchmarkContractTests(unittest.TestCase):
             load_case(path)
         self.assertIn("case-missing-field", str(context.exception))
 
+    def test_load_case_requires_filename_stem_to_match_case_id(self):
+        path = self.root / "wrong-name.json"
+        path.write_text(MINI_COMIC.read_text(encoding="utf-8"), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "case-filename"):
+            load_case(path)
+
 
 class BenchmarkPrimitiveTests(unittest.TestCase):
     def test_live_retry_requires_revision_specific_raster(self):
@@ -185,6 +191,8 @@ class BenchmarkPrimitiveTests(unittest.TestCase):
     def test_synthesized_rasters_refuse_sizes_the_engine_rejects(self):
         with self.assertRaises(ValueError):
             synthesize_panel_raster(1, "p01-01", 0, (511, 1136))
+        with self.assertRaisesRegex(ValueError, "decoded pixel limit"):
+            synthesize_panel_raster(1, "p01-01", 0, (9000, 9000))
 
     def test_raster_size_preserves_the_storyboard_aspect_ratio(self):
         for rect, expected in (
@@ -412,6 +420,30 @@ class BenchmarkRunTests(unittest.TestCase):
             {"composition", "export", "generation", "lettering", "planning", "storyboard"},
             set(revision["stage_versions"]),
         )
+
+    def test_failed_command_records_are_schema_valid(self):
+        case_path = self.root / "cases/unusable.json"
+        case_path.parent.mkdir(parents=True)
+        case = load_case(MINI_COMIC)
+        case_path.write_text(
+            json.dumps({**case, "fixture": "does/not/exist"}), encoding="utf-8"
+        )
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(
+                1,
+                main([
+                    "--case", str(case_path),
+                    "--output-root", str(self.root / "projects"),
+                    "--results", str(self.root / "results"),
+                ]),
+            )
+        record = json.loads(
+            (self.root / "results/result-unusable.json").read_text(encoding="utf-8")
+        )
+        records, exceptions = load_results(self.root / "results")
+        self.assertEqual([], exceptions)
+        self.assertEqual("failed", records["unusable"]["status"])
+        self.assertEqual("failed", record["status"])
 
     def test_repeated_deterministic_runs_are_byte_comparable(self):
         second = run_case(self.case, output_root=self.root / "second")
