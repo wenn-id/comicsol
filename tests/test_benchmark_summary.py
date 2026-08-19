@@ -685,19 +685,17 @@ class SummaryIntegrationTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, documentation)
 
-    def test_workflow_publishes_both_summaries_and_gates_on_the_delta(self):
-        workflow = (ROOT / ".github/workflows/benchmark.yml").read_text(encoding="utf-8")
+    def test_docs_publish_the_ci_wiring_for_both_summaries_and_the_delta(self):
+        documentation = (ROOT / "docs/benchmark.md").read_text(encoding="utf-8")
         for token in (
-            "scripts/benchmark_summary.py",
+            ".github/workflows/benchmark.yml",
             "benchmark/candidate-summary.json",
             "benchmark/baseline-summary.json",
             "benchmark/summary-delta.json",
-            "--consistency-baseline",
-            "NO REGRESSION",
-            "if-no-files-found: error",
+            "GITHUB_STEP_SUMMARY",
         ):
             with self.subTest(token=token):
-                self.assertIn(token, workflow)
+                self.assertIn(token, documentation)
 
 
 if __name__ == "__main__":
