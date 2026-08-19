@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- Added the Comic Sol benchmark framework (`scripts/benchmark.py`) with a validated
+  benchmark project contract in `benchmarks/cases/`, comparable pipeline success,
+  resume success, repair rate, panel acceptance, dialogue correctness, and export
+  success metrics, versioned machine-readable result records, and a fail-closed
+  two-revision diff wired into `.github/workflows/benchmark.yml`.
+- Deterministic benchmark runs are byte-reproducible and label themselves
+  `proves_visual_quality: false`; optional live-provider runs consume already
+  retained rasters with explicit caller-supplied provenance.
+
 ### Removed
 
 - Removed the unwired `comic_sol_product.providers` Python API. Integrations must

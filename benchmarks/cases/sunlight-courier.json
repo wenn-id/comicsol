@@ -1,0 +1,21 @@
+{
+  "case_id": "sunlight-courier",
+  "dialogue_count": 1,
+  "evidence_mode": "deterministic",
+  "fixture": "samples/sunlight-courier",
+  "kind": "benchmark-case",
+  "page_count": 2,
+  "panels": [
+    "p01-01",
+    "p01-02",
+    "p02-01",
+    "p02-02"
+  ],
+  "repair_panels": [
+    "p01-02"
+  ],
+  "resume_stage": "composition",
+  "schema_version": "1.0",
+  "seed": 20260819,
+  "title": "Sunlight Courier Benchmark"
+}

@@ -1,0 +1,16 @@
+{
+  "case_id": "mini-comic",
+  "dialogue_count": 1,
+  "evidence_mode": "deterministic",
+  "fixture": "tests/golden/mini-comic",
+  "kind": "benchmark-case",
+  "page_count": 1,
+  "panels": [
+    "p01-01"
+  ],
+  "repair_panels": [],
+  "resume_stage": "composition",
+  "schema_version": "1.0",
+  "seed": 20260819,
+  "title": "Mini Comic Benchmark"
+}
