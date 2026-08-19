@@ -29,7 +29,7 @@ import math
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -38,6 +38,8 @@ if __package__ in {None, ""}:
 from PIL import Image, ImageDraw
 
 from .comic_sol import (
+    PAGE_HEIGHT,
+    PAGE_WIDTH,
     TERMINAL_STATUSES,
     atomic_write_json,
     finalize_project,
@@ -267,6 +269,22 @@ def validate_case(case: object, *, fixture_root: Path = ROOT) -> tuple[str, ...]
             required += [f"prompts/panels/{panel_id}.txt" for panel_id in panels]
             if any(not (directory / relative).is_file() for relative in required):
                 issues.add("case-fixture-incomplete")
+            else:
+                try:
+                    storyboard = json.loads(
+                        (directory / "plan/storyboard.json").read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError, json.JSONDecodeError):
+                    issues.add("case-fixture-incomplete")
+                else:
+                    pages = storyboard.get("pages") if isinstance(storyboard, dict) else None
+                    if (
+                        isinstance(case.get("page_count"), int)
+                        and not isinstance(case.get("page_count"), bool)
+                        and isinstance(pages, list)
+                        and len(pages) != case["page_count"]
+                    ):
+                        issues.add("case-page-count")
     return tuple(sorted(issues))
 
 
@@ -384,7 +402,9 @@ def synthesize_panel_raster(seed: int, panel_id: str, revision: int, size: tuple
 
 def _reference_raster(seed: int, character_id: str) -> bytes:
     """Return a seeded, glyph-free RGB PNG for one character reference."""
-    return synthesize_panel_raster(seed, "p99-99", abs(hash(character_id)) % 7, (512, 512))
+    digest = hashlib.sha256(character_id.encode("utf-8")).digest()
+    revision = int.from_bytes(digest[:4], "big") % 7
+    return synthesize_panel_raster(seed, "p99-99", revision, (512, 512))
 
 
 def panel_raster_size(rect: Mapping[str, object]) -> tuple[int, int]:
@@ -877,9 +897,46 @@ def _export_verified(project: Path, case: Mapping[str, Any]) -> tuple[int, int]:
     ):
         return 0, expected
     pages = verification.get("pages")
-    if not isinstance(pages, list):
+    if not isinstance(pages, list) or len(pages) != expected:
         return 0, expected
-    return sum(1 for page in pages if isinstance(page, dict)), expected
+    source_pages = verification.get("source_pages")
+    if not isinstance(source_pages, list) or len(source_pages) != expected:
+        return 0, expected
+    for number, (page, source) in enumerate(zip(pages, source_pages), 1):
+        if not isinstance(page, dict) or not isinstance(source, dict):
+            return 0, expected
+        if (
+            page.get("page_number") != number
+            or page.get("dimensions") != [PAGE_WIDTH, PAGE_HEIGHT]
+            or page.get("mode") != "RGB"
+            or page.get("compared_pixels") != PAGE_WIDTH * PAGE_HEIGHT
+        ):
+            return 0, expected
+        for field in (
+            "mean_absolute_channel_error",
+            "high_error_pixel_ratio",
+            "maximum_grid_region_error",
+        ):
+            value = page.get(field)
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(float(value))
+                or value < 0
+            ):
+                return 0, expected
+        page_path = project / f"pages/page-{number:03d}.png"
+        qa_path = project / f"qa/pages/page-{number:03d}.json"
+        if (
+            source.get("path") != f"pages/page-{number:03d}.png"
+            or source.get("page_qa_path") != f"qa/pages/page-{number:03d}.json"
+            or not page_path.is_file()
+            or not qa_path.is_file()
+            or source.get("sha256") != sha256_file(page_path)
+            or source.get("page_qa_sha256") != sha256_file(qa_path)
+        ):
+            return 0, expected
+    return expected, expected
 
 
 def _resume_drill(project: Path, case: Mapping[str, Any]) -> dict[str, Any]:
@@ -1082,8 +1139,9 @@ def load_results(path: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
         except (OSError, json.JSONDecodeError) as error:
             exceptions.append(f"{item.name}: {type(error).__name__}: {error}")
             continue
-        if not isinstance(record, dict) or record.get("kind") != RESULT_KIND:
-            exceptions.append(f"{item.name}: not a benchmark result record")
+        validation_error = _validate_result_record(record)
+        if validation_error is not None:
+            exceptions.append(f"{item.name}: invalid benchmark result: {validation_error}")
             continue
         case_id = record.get("case_id")
         if not isinstance(case_id, str) or not case_id:
@@ -1094,6 +1152,48 @@ def load_results(path: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
             continue
         records[case_id] = record
     return records, exceptions
+
+
+def _validate_result_record(record: object) -> str | None:
+    """Return a stable error for a malformed result before it enters a diff."""
+    if not isinstance(record, Mapping):
+        return "record must be an object"
+    if record.get("kind") != RESULT_KIND:
+        return "wrong result kind"
+    if record.get("schema_version") != RESULT_SCHEMA_VERSION:
+        return "unsupported result schema"
+    case_id = record.get("case_id")
+    if not isinstance(case_id, str) or not case_id:
+        return "result has no case ID"
+    digest = record.get("case_sha256")
+    if not isinstance(digest, str) or len(digest) != 64:
+        return "result has no valid case digest"
+    if record.get("status") not in {"passed", "failed"}:
+        return "invalid result status"
+    metrics = record.get("metrics")
+    if not isinstance(metrics, Mapping) or set(metrics) != set(METRIC_IDS):
+        return "result metrics do not match the registered metric IDs"
+    for metric_id in METRIC_IDS:
+        metric = metrics[metric_id]
+        if not isinstance(metric, Mapping):
+            return f"metric is not an object: {metric_id}"
+        if metric.get("direction") != METRIC_DIRECTIONS[metric_id]:
+            return f"metric direction is invalid: {metric_id}"
+        if metric.get("unit") != "ratio":
+            return f"metric unit is invalid: {metric_id}"
+        denominator = metric.get("denominator")
+        if not isinstance(denominator, int) or isinstance(denominator, bool) or denominator < 0:
+            return f"metric denominator is invalid: {metric_id}"
+        for field in ("numerator", "value"):
+            value = metric.get(field)
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(float(value))
+                or value < 0
+            ):
+                return f"metric {field} is invalid: {metric_id}"
+    return None
 
 
 def diff_results(
@@ -1148,7 +1248,9 @@ def diff_results(
         if candidate_status != "passed":
             regressions.append(f"{case_id}/status")
 
-    clean = not regressions and not missing_cases and not exceptions
+    if new_cases:
+        regressions.extend(f"{case_id}/new-case" for case_id in new_cases)
+    clean = not regressions and not missing_cases and not new_cases and not exceptions
     result: dict[str, Any] = {
         "baseline_revisions": _revisions(baseline_records),
         "candidate_revisions": _revisions(candidate_records),
@@ -1186,9 +1288,16 @@ def _compare_metric(
     before, after = baseline.get(metric_id), candidate.get(metric_id)
     if not isinstance(before, Mapping) or not isinstance(after, Mapping):
         return None
-    before_value, after_value = before.get("value"), after.get("value")
-    if not isinstance(before_value, (int, float)) or not isinstance(after_value, (int, float)):
-        return None
+    before_value = cast(float | int, before.get("value"))
+    after_value = cast(float | int, after.get("value"))
+    for value in (before_value, after_value):
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(float(value))
+            or value < 0
+        ):
+            return None
     delta = round(float(after_value) - float(before_value), 6)
     direction = METRIC_DIRECTIONS[metric_id]
     if direction == "higher-is-better":

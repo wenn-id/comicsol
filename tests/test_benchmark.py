@@ -1,8 +1,12 @@
 """Coverage for the versioned Comic Sol benchmark harness."""
 
 import contextlib
+import hashlib
 import io
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,7 +23,10 @@ from scripts.benchmark import (  # noqa: E402
     load_results,
     main,
     _attempt_payload,
+    _compare_metric,
+    _export_verified,
     _metric,
+    _reference_raster,
     _storyboard_panels,
     panel_raster_size,
     run_case,
@@ -106,6 +113,10 @@ class BenchmarkContractTests(unittest.TestCase):
             ),
         )
 
+    def test_contract_requires_fixture_page_count_to_match(self):
+        case = load_case(MINI_COMIC)
+        self.assertIn("case-page-count", validate_case({**case, "page_count": 2}))
+
     def test_contract_refuses_a_fixture_outside_the_fixture_root(self):
         nested = self.root / "nested"
         nested.mkdir()
@@ -136,6 +147,32 @@ class BenchmarkPrimitiveTests(unittest.TestCase):
     def test_dialogue_correctness_is_vacuously_successful_without_dialogue(self):
         metric = _metric("dialogue_correctness", 0, 0)
         self.assertEqual(1.0, metric["value"])
+
+    def test_reference_rasters_are_reproducible_across_processes(self):
+        code = (
+            "from scripts.benchmark import _reference_raster; "
+            "import hashlib; "
+            "print(hashlib.sha256(_reference_raster(1, 'hero')).hexdigest())"
+        )
+        environment = {**os.environ, "PYTHONHASHSEED": "random"}
+        first = subprocess.check_output([sys.executable, "-c", code], env=environment, text=True)
+        second = subprocess.check_output([sys.executable, "-c", code], env=environment, text=True)
+        self.assertEqual(first, second)
+        self.assertEqual(
+            first.strip(), hashlib.sha256(_reference_raster(1, "hero")).hexdigest()
+        )
+
+    def test_metric_comparison_rejects_non_finite_and_boolean_values(self):
+        for invalid in (True, float("nan"), float("inf"), -0.1):
+            with self.subTest(invalid=invalid):
+                self.assertIsNone(
+                    _compare_metric(
+                        {"x": {"value": invalid}},
+                        {"x": {"value": 1.0}},
+                        "pipeline_success",
+                        0.0,
+                    )
+                )
 
     def test_synthesized_rasters_are_seeded_and_reproducible(self):
         size = (736, 1136)
@@ -275,6 +312,23 @@ class BenchmarkDiffTests(unittest.TestCase):
             any("contract changed" in item for item in result["exceptions"]),
             result["exceptions"],
         )
+
+    def test_candidate_only_cases_block_the_diff(self):
+        self._publish(self.baseline, _minimal_result("case-one", PERFECT))
+        self._publish(self.candidate, _minimal_result("case-one", PERFECT))
+        self._publish(self.candidate, _minimal_result("case-two", PERFECT))
+        result = diff_results(self.baseline, self.candidate, self.root / "diff.json")
+        self.assertEqual(["case-two"], result["new_cases"])
+        self.assertEqual("failed", result["status"])
+
+    def test_malformed_result_metrics_are_rejected_fail_closed(self):
+        self._publish(self.baseline, _minimal_result("case-one", PERFECT))
+        malformed = _minimal_result("case-one", PERFECT)
+        malformed["metrics"]["pipeline_success"]["value"] = float("nan")
+        self._publish(self.candidate, malformed)
+        result = diff_results(self.baseline, self.candidate, self.root / "diff.json")
+        self.assertEqual("failed", result["status"])
+        self.assertTrue(any("invalid benchmark result" in item for item in result["exceptions"]))
 
     def test_unreadable_and_foreign_results_are_reported_not_ignored(self):
         self.baseline.mkdir(parents=True)
@@ -416,6 +470,18 @@ class BenchmarkRunTests(unittest.TestCase):
             evidence["retained_attempt"],
         )
         self.assertNotIn("\\", evidence["retained_attempt"])
+
+    def test_export_verification_rejects_malformed_page_records(self):
+        project = self.root / "first/mini-comic-benchmark"
+        verification_path = project / "exports/pdf-verification.json"
+        original = verification_path.read_bytes()
+        try:
+            verification = json.loads(original)
+            verification["pages"][0]["page_number"] = 2
+            verification_path.write_text(json.dumps(verification), encoding="utf-8")
+            self.assertEqual((0, 1), _export_verified(project, self.case))
+        finally:
+            verification_path.write_bytes(original)
 
 
 class BenchmarkCommandTests(unittest.TestCase):

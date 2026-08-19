@@ -127,9 +127,11 @@ the decision is `NO REGRESSION`. It fails closed on:
 - any metric that moved the wrong way beyond `--tolerance` (default `0.0`),
 - a candidate case whose own status is not `passed`,
 - a case present in the baseline but missing from the candidate,
+- a case present only in the candidate (new benchmark coverage must be explicitly
+  established against a baseline),
 - a case whose `case_sha256` changed, meaning the contract itself moved and the two
   runs are not comparable,
-- unreadable, foreign, or duplicated result records.
+- unreadable, foreign, malformed, or duplicated result records.
 
 `.github/workflows/benchmark.yml` runs this end to end: it benchmarks the merge base
 and the current revision, uploads both result sets, and gates on the diff.
