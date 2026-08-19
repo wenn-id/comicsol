@@ -1118,8 +1118,21 @@ def resume_project(
             progress({"status": "working", "stage": "resume", "completed": [], "remaining": list(RESUME_STAGES)})
         result = _resume_project_locked(project_dir, manifest_path)
         if progress is not None:
-            state = str(result.get("status", "")).lower()
-            progress({"status": "blocked" if state == "blocked" else "complete", "stage": "resume", "completed": list(result.get("preserved", [])), "remaining": list(result.get("invalidated", []))})
+            state = str(result.get("status", "")).upper()
+            preserved = result.get("preserved")
+            invalidated = result.get("invalidated")
+            progress({
+                "status": (
+                    "blocked"
+                    if state == "BLOCKED"
+                    else "complete"
+                    if state in TERMINAL_STATUSES
+                    else "working"
+                ),
+                "stage": "resume",
+                "completed": preserved if isinstance(preserved, list) else [],
+                "remaining": invalidated if isinstance(invalidated, list) else [],
+            })
         return result
 
 

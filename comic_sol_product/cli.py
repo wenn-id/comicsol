@@ -117,7 +117,12 @@ class _ProgressReporter:
         line = " ".join(fields)
         self.lines.append(line)
         if not self.as_json and self.stream is not None:
-            print(line, file=self.stream, flush=True)
+            try:
+                print(line, file=self.stream, flush=True)
+            except OSError:
+                # Progress is advisory; a closed stderr must never change the
+                # lifecycle result or escape through the engine callback.
+                self.stream = None
 
     def failure(self, *, blocked: bool = False) -> None:
         self({"status": "blocked" if blocked else "failed", "stage": self.current_stage})

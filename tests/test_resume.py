@@ -220,6 +220,18 @@ class ResumeTests(unittest.TestCase):
         ):
             return finalize_project(self.project if project_dir is None else project_dir)
 
+    def test_resume_reports_intermediate_status_as_working(self):
+        manifest = read_json(self.project / "project.json")
+        manifest["status"] = "INIT"
+        atomic_write_json(self.project / "project.json", manifest)
+        events = []
+
+        result = resume_project(self.project, progress=events.append)
+
+        self.assertEqual("INIT", result["status"])
+        self.assertEqual("working", events[-1]["status"])
+        self.assertNotEqual("complete", events[-1]["status"])
+
     def test_cache_key_is_canonical_and_excludes_timestamps(self):
         first = stage_cache_key("planning", [{"updated_at": "one", "b": 2, "a": 1}], [], "1")
         second = stage_cache_key("planning", [{"a": 1, "b": 2, "updated_at": "two"}], [], "1")

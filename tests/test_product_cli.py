@@ -227,6 +227,39 @@ class ProductCliTests(unittest.TestCase):
             reporter.lines,
         )
 
+    def test_broken_progress_stream_does_not_change_lifecycle_result(self):
+        class BrokenStream:
+            def write(self, value):
+                raise OSError("closed stderr")
+
+            def flush(self):
+                raise OSError("closed stderr")
+
+        reporter = cli._ProgressReporter(as_json=False, stream=BrokenStream())
+        reporter({"status": "working", "stage": "export"})
+        reporter.failure()
+        self.assertEqual(
+            ["WORKING stage=export", "FAILED stage=export"], reporter.lines
+        )
+
+    def test_resume_intermediate_status_is_not_reported_as_complete(self):
+        class FakeEngine:
+            def resume_project(self, project_dir, *, progress=None):
+                progress({"status": "working", "stage": "resume"})
+                return {
+                    "status": "INIT",
+                    "preserved": [],
+                    "invalidated": ["planning"],
+                    "next_action": "run planning",
+                }
+
+        with mock.patch.object(cli, "_load_engine", return_value=FakeEngine()):
+            code, stdout, stderr = self.invoke(["resume", "/tmp/project"])
+
+        self.assertEqual(0, code)
+        self.assertNotIn("COMPLETE stage=resume", stderr)
+        self.assertIn('"status": "INIT"', stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
