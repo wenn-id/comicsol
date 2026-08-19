@@ -38,6 +38,27 @@ REQUIRED_SCENARIOS = {
 MAX_PROJECT_FILE_BYTES = 32 * 1024
 MAX_CORPUS_BYTES = 512 * 1024
 
+# The night scenario claims a single dark key source. Prose cannot prove a render,
+# but it can prove that exactly one key source is named and that no competing
+# daylight source was authored alongside it.
+NIGHT_KEY_SOURCES = ("lamp", "lantern")
+NIGHT_COMPETING_SOURCES = (
+    "sun",
+    "daylight",
+    "fluorescent",
+    "floodlight",
+    "bulb",
+    "headlight",
+    "dawn",
+    "window",
+)
+FOUR_PAGE_LAYOUTS = [
+    "full-page",
+    "two-horizontal",
+    "three-horizontal",
+    "two-top-hero-bottom",
+]
+
 
 def _panels(scenario):
     """Return every resolved panel of one benchmark scenario in reading order."""
@@ -46,13 +67,18 @@ def _panels(scenario):
 
 
 def _text_items(scenario, kind=None):
-    """Return the scenario's text items, optionally filtered by kind."""
+    """Return the scenario's text items in reading order, optionally filtered by kind."""
     return [
         item
         for panel in _panels(scenario)
         for item in panel["text"]
         if kind is None or item["kind"] == kind
     ]
+
+
+def _panel_speakers(panel):
+    """Return the dialogue speakers of one panel in authored order."""
+    return [item["speaker"] for item in panel["text"] if item["kind"] == "dialogue"]
 
 
 class BenchmarkCorpusCoverageTests(unittest.TestCase):
@@ -95,27 +121,36 @@ class BenchmarkCorpusCoverageTests(unittest.TestCase):
 
 
 class BenchmarkScenarioShapeTests(unittest.TestCase):
-    def test_dialogue_heavy_stacks_multiple_speakers_per_panel(self):
+    def test_dialogue_heavy_packs_three_text_items_into_every_panel(self):
         panels = _panels("dialogue-heavy")
-        self.assertGreaterEqual(len(_text_items("dialogue-heavy", "dialogue")), 5)
+        self.assertEqual(2, len(panels))
         for panel in panels:
-            self.assertGreaterEqual(len(panel["text"]), 2)
-        speakers = {item["speaker"] for item in _text_items("dialogue-heavy", "dialogue")}
-        self.assertEqual({"nadia", "bram"}, speakers)
+            self.assertEqual(3, len(panel["text"]), panel["id"])
+        self.assertEqual(5, len(_text_items("dialogue-heavy", "dialogue")))
+        self.assertEqual(1, len(_text_items("dialogue-heavy", "caption")))
+        # The capability is alternating speakers, so reading order is the claim.
+        # A set comparison would also accept one character carrying every line.
+        self.assertEqual(
+            ["nadia", "bram", "nadia", "bram", "nadia"],
+            [item["speaker"] for item in _text_items("dialogue-heavy", "dialogue")],
+        )
 
     def test_action_scenario_is_sfx_led_and_dialogue_light(self):
         self.assertEqual(3, len(_panels("action-sequence")))
         self.assertGreaterEqual(len(_text_items("action-sequence", "sfx")), 3)
         self.assertLessEqual(len(_text_items("action-sequence", "dialogue")), 1)
 
-    def test_two_character_scenario_alternates_exactly_two_speakers(self):
+    def test_two_character_scenario_gives_both_speakers_every_panel(self):
         specification = BENCHMARK_SCENARIOS["two-character"]
         self.assertEqual(2, len(specification["characters"]["characters"]))
         for panel in _panels("two-character"):
-            self.assertEqual(2, len(panel["characters"]))
-            self.assertEqual(2, len(panel["text"]))
-        speakers = {item["speaker"] for item in _text_items("two-character", "dialogue")}
-        self.assertEqual({"mei", "ari"}, speakers)
+            speakers = _panel_speakers(panel)
+            with self.subTest(panel=panel["id"]):
+                self.assertEqual(2, len(panel["characters"]))
+                # Two dialogue items whose speakers are the two characters means
+                # the pair trades lines inside every panel, not across the scenario.
+                self.assertEqual(2, len(speakers))
+                self.assertEqual({"mei", "ari"}, set(speakers), speakers)
 
     def test_multi_character_scenario_frames_four_characters_at_once(self):
         specification = BENCHMARK_SCENARIOS["multi-character"]
@@ -131,14 +166,23 @@ class BenchmarkScenarioShapeTests(unittest.TestCase):
         for panel in panels:
             self.assertIn("sound effects", panel["negative"])
 
-    def test_night_scenario_uses_single_source_low_light(self):
-        for scene in BENCHMARK_SCENARIOS["night-low-light"]["story"]["scenes"]:
+    def test_night_scenario_names_exactly_one_dark_key_source(self):
+        specification = BENCHMARK_SCENARIOS["night-low-light"]
+        for scene in specification["story"]["scenes"]:
             self.assertEqual("night", scene["time"])
+        for character in specification["characters"]["characters"]:
+            palette = character["visual_fingerprint"]["palette"]
+            with self.subTest(character=character["id"]):
+                self.assertTrue(
+                    any("black" in tone or "dim" in tone for tone in palette), palette
+                )
         for panel in _panels("night-low-light"):
             lighting = panel["lighting"].lower()
-            self.assertTrue(
-                "lamp" in lighting or "lantern" in lighting, panel["lighting"]
-            )
+            named = [source for source in NIGHT_KEY_SOURCES if source in lighting]
+            with self.subTest(panel=panel["id"]):
+                self.assertEqual(1, len(named), panel["lighting"])
+                for competing in NIGHT_COMPETING_SOURCES:
+                    self.assertNotIn(competing, lighting, panel["lighting"])
 
     def test_long_dialogue_scenario_approaches_the_word_ceiling(self):
         dialogue = _text_items("long-dialogue", "dialogue")
@@ -156,12 +200,16 @@ class BenchmarkScenarioShapeTests(unittest.TestCase):
         for panel in panels:
             self.assertIn("text", panel["composition"].lower())
 
-    def test_four_page_scenario_numbers_four_pages_with_mixed_layouts(self):
+    def test_four_page_scenario_numbers_four_pages_with_four_layouts(self):
         storyboard = build_storyboard(BENCHMARK_SCENARIOS["four-page-story"]["pages"])
         pages = storyboard["pages"]
+        layouts = [page["layout"] for page in pages]
         self.assertEqual([1, 2, 3, 4], [page["number"] for page in pages])
-        self.assertGreaterEqual(len({page["layout"] for page in pages}), 3)
-        self.assertEqual(7, len(_panels("four-page-story")))
+        # The capability promises four different layouts, so assert the exact
+        # sequence: a duplicated layout would otherwise pass unnoticed.
+        self.assertEqual(FOUR_PAGE_LAYOUTS, layouts)
+        self.assertEqual(4, len(set(layouts)), layouts)
+        self.assertEqual(9, len(_panels("four-page-story")))
 
 
 class BenchmarkProjectValidationTests(unittest.TestCase):
