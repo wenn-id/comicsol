@@ -371,14 +371,16 @@ def load_consistency_scorecard(path: Path) -> dict[str, Any]:
         elif not cast(int, minimum) <= score <= cast(int, maximum):
             problems.append(f"{location}: score is outside the published scale")
     review = scorecard.get("review")
-    if any(score is not None for _, score in _scorecard_entries(scorecard)) and not (
+    scored = any(score is not None for _, score in _scorecard_entries(scorecard))
+    if scored and not (
         isinstance(review, Mapping)
         and str(review.get("reviewer") or "").strip()
         and str(review.get("method") or "").strip()
+        and str(review.get("engine_version") or "").strip()
     ):
         problems.append(
-            "a scored scorecard must name review.method and review.reviewer, because an "
-            "unattributable score is not evidence"
+            "a scored scorecard must name review.engine_version, review.method and "
+            "review.reviewer, because an unattributable score is not evidence"
         )
     if problems:
         raise ValueError(
@@ -469,8 +471,11 @@ def consistency_report(
         report["definition_sha256"] = scorecard["definition_sha256"]
         report["review"] = {
             field: (review.get(field) if isinstance(review, Mapping) else None)
-            for field in ("method", "model", "provider", "reviewer")
+            for field in ("engine_version", "method", "model", "provider", "reviewer")
         }
+        report["engine_version"] = (
+            review.get("engine_version") if isinstance(review, Mapping) else None
+        )
         report["scored"] = bool(scores)
         report["proves_visual_quality"] = bool(scores)
         if scores:
@@ -539,8 +544,11 @@ def summarize_results(
                 and consistency_engine != result_engine
                 and result_engine != "unknown"
             ):
+                source_label = (
+                    "scorecard" if consistency_scorecard is not None and consistency_baseline is None else "baseline"
+                )
                 exceptions.append(
-                    "character consistency baseline engine version "
+                    f"character consistency {source_label} engine version "
                     f"{consistency_engine!r} does not match result engine version "
                     f"{result_engine!r}"
                 )
@@ -735,6 +743,16 @@ def _metric_value(metrics: object, metric_id: str) -> object:
     return metric.get("value") if isinstance(metric, Mapping) else None
 
 
+def _case_metric_value(metrics: object, metric_id: str) -> object:
+    """Return one case metric value, whose summary representation is scalar."""
+    if not isinstance(metrics, Mapping):
+        return None
+    value = metrics.get(metric_id)
+    if isinstance(value, Mapping):
+        return value.get("value")
+    return value
+
+
 def _consistency_values(summary: Mapping[str, Any]) -> dict[str, object]:
     """Return the consistency metric values one summary actually reported."""
     consistency = summary.get("consistency")
@@ -889,6 +907,26 @@ def diff_summaries(
                 regressions.append(f"{case_id}/status")
             if cases[case_id]["baseline_case_sha256"] != cases[case_id]["candidate_case_sha256"]:
                 regressions.append(f"{case_id}/case_sha256")
+            baseline_metrics = (
+                baseline_case.get("metrics") if isinstance(baseline_case, Mapping) else None
+            )
+            candidate_metrics = (
+                candidate_case.get("metrics") if isinstance(candidate_case, Mapping) else None
+            )
+            for metric_id in METRIC_IDS:
+                comparison = _compare_value(
+                    _case_metric_value(baseline_metrics, metric_id),
+                    _case_metric_value(candidate_metrics, metric_id),
+                    METRIC_DIRECTIONS[metric_id],
+                    tolerance,
+                )
+                if comparison is None:
+                    exceptions.append(f"{case_id}: invalid {metric_id} metric")
+                elif comparison["verdict"] == "regressed":
+                    regressions.append(f"{case_id}/{metric_id}")
+                elif comparison["verdict"] == "improved":
+                    improvements.append(f"{case_id}/{metric_id}")
+                cases[case_id].setdefault("metrics", {})[metric_id] = comparison
         if missing_cases or new_cases:
             exceptions.append(
                 "the two summaries cover different benchmark cases, so their pooled "

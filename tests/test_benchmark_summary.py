@@ -127,7 +127,7 @@ def _baseline(**overrides):
     return baseline
 
 
-def _scorecard(scores):
+def _scorecard(scores, *, engine_version="2.0.0rc4"):
     """Build one attributable character consistency scorecard."""
     from tests.consistency_benchmark import scorecard_template
 
@@ -135,6 +135,7 @@ def _scorecard(scores):
     for dimension, score in scores.items():
         scorecard["panels"]["p01-01"]["characters"]["rani"][dimension] = score
     scorecard["review"] = {
+        "engine_version": engine_version,
         "method": "bounded visual review",
         "model": "example-model",
         "provider": "example-provider",
@@ -211,6 +212,18 @@ class ConsistencyPlaneTests(TemporaryRootTestCase):
         self.assertTrue(report["scored"])
         self.assertTrue(report["proves_visual_quality"])
         self.assertEqual("reviewer", report["review"]["reviewer"])
+
+    def test_scorecard_engine_version_must_match_result_revision(self):
+        scorecard = load_consistency_scorecard(
+            self._json(_scorecard({"face": 4}, engine_version="2.0.0rc3"), "scored.json")
+        )
+        report = consistency_report(scorecard=scorecard)
+        self.assertEqual("2.0.0rc3", report["engine_version"])
+        results = self.root / "results"
+        write_result(_result("case-one"), results)
+        summary = summarize_results(results, consistency_scorecard=self.root / "scored.json")
+        self.assertEqual("failed", summary["status"])
+        self.assertTrue(any("scorecard engine version" in item for item in summary["exceptions"]))
 
     def test_a_scorecard_from_another_definition_is_refused(self):
         foreign = _scorecard({"face": 4})
@@ -464,6 +477,25 @@ class SummaryDeltaTests(TemporaryRootTestCase):
             "NO REGRESSION", (self.root / "delta.md").read_text(encoding="utf-8")
         )
 
+    def test_case_metric_regression_is_not_hidden_by_equal_pooling(self):
+        baseline = self._summary(
+            "baseline",
+            [
+                _result("case-one", {"repair_rate": (0, 1)}),
+                _result("case-two", {"repair_rate": (2, 1)}),
+            ],
+        )
+        candidate = self._summary(
+            "candidate",
+            [
+                _result("case-one", {"repair_rate": (2, 1)}),
+                _result("case-two", {"repair_rate": (0, 1)}),
+            ],
+        )
+        delta = diff_summaries(baseline, candidate, self.root / "delta.json")
+        self.assertEqual("REGRESSION", delta["decision"])
+        self.assertIn("case-one/repair_rate", delta["regressions"])
+
     def test_pooled_regressions_are_highlighted_and_fail_closed(self):
         baseline = self._summary("baseline", [_result("case-one")])
         candidate = self._summary(
@@ -494,7 +526,7 @@ class SummaryDeltaTests(TemporaryRootTestCase):
         candidate = self._summary("candidate", [_result("case-one")])
         delta = diff_summaries(baseline, candidate, self.root / "delta.json")
         self.assertEqual("passed", delta["status"])
-        self.assertEqual(["repair_rate"], delta["improvements"])
+        self.assertEqual(["case-one/repair_rate", "repair_rate"], delta["improvements"])
 
     def test_tolerance_absorbs_noise_but_not_real_regressions(self):
         baseline = self._summary(
