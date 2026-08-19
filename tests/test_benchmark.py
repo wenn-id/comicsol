@@ -415,6 +415,7 @@ class BenchmarkRunTests(unittest.TestCase):
             "panels/attempts/p01-02/visual_retry-1.png",
             evidence["retained_attempt"],
         )
+        self.assertNotIn("\\", evidence["retained_attempt"])
 
 
 class BenchmarkCommandTests(unittest.TestCase):

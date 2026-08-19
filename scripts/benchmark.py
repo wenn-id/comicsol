@@ -1003,7 +1003,7 @@ def run_case(
         panel_id: build_evidence_record(
             mode,
             retained_attempt=(
-                str(promoted_attempts[panel_id]) if mode == "live-visual" else None
+                promoted_attempts[panel_id].as_posix() if mode == "live-visual" else None
             ),
             attempt_sha256=(
                 sha256_file(project / promoted_attempts[panel_id])
