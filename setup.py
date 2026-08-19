@@ -12,6 +12,7 @@ from setuptools.command.build_py import build_py as _build_py
 ROOT = Path(__file__).resolve().parent
 BUILD_ONLY_SCRIPTS = {
     "assemble_release.py",
+    "benchmark.py",
     "build_portable.py",
     "clean_install_smoke.py",
     "installed_mcp_smoke.py",
