@@ -24,9 +24,11 @@ from scripts.benchmark import (  # noqa: E402
     main,
     _attempt_payload,
     _compare_metric,
+    _dialogue_counts,
     _export_verified,
     _metric,
     _reference_raster,
+    _validate_result_record,
     _storyboard_panels,
     panel_raster_size,
     run_case,
@@ -211,6 +213,18 @@ class BenchmarkPrimitiveTests(unittest.TestCase):
     def test_raster_size_rejects_an_invalid_rectangle(self):
         with self.assertRaises(ValueError):
             panel_raster_size({"width": 0, "height": 10})
+        with self.assertRaisesRegex(ValueError, "at least 512"):
+            panel_raster_size({"width": 400, "height": 800})
+
+    def test_result_metrics_reject_impossible_or_inconsistent_ratios(self):
+        record = _minimal_result("case-one", PERFECT)
+        record["metrics"]["panel_acceptance"]["numerator"] = 2
+        record["metrics"]["panel_acceptance"]["value"] = 2.0
+        self.assertEqual("metric value exceeds ratio range: panel_acceptance", _validate_result_record(record))
+        record = _minimal_result("case-one", PERFECT)
+        record["metrics"]["panel_acceptance"]["numerator"] = 1
+        record["metrics"]["panel_acceptance"]["denominator"] = 2
+        self.assertEqual("metric value is inconsistent: panel_acceptance", _validate_result_record(record))
 
     def test_tail_verdict_requires_an_aligned_contained_tail(self):
         tail = {
@@ -451,6 +465,38 @@ class BenchmarkRunTests(unittest.TestCase):
         self.assertEqual([], exceptions)
         self.assertEqual("failed", records["unusable"]["status"])
         self.assertEqual("failed", record["status"])
+
+    def test_dialogue_metric_ignores_pages_without_dialogue(self):
+        project = self.root / "dialogueless"
+        (project / "plan").mkdir(parents=True)
+        (project / "qa/pages").mkdir(parents=True)
+        (project / "plan/storyboard.json").write_text(
+            json.dumps({
+                "pages": [{
+                    "number": 1,
+                    "panels": [{
+                        "id": "p01-01",
+                        "text": [{"id": "caption", "kind": "caption"}],
+                    }],
+                }]
+            }),
+            encoding="utf-8",
+        )
+        (project / "qa/pages/page-001.json").write_text(
+            json.dumps({
+                "checks": [
+                    {"id": check_id, "result": "fail"}
+                    for check_id in (
+                        "clipped-text",
+                        "text-overlap",
+                        "reading-order",
+                        "bubble-tail-direction",
+                    )
+                ]
+            }),
+            encoding="utf-8",
+        )
+        self.assertEqual((0, 0), _dialogue_counts(project, {"page_count": 1}))
 
     def test_repeated_deterministic_runs_are_byte_comparable(self):
         second = run_case(self.case, output_root=self.root / "second")

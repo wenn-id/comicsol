@@ -428,6 +428,8 @@ def panel_raster_size(rect: Mapping[str, object]) -> tuple[int, int]:
         divisor *= 2
     divisor = max(1, divisor // 2)
     raster_size = (width // divisor, height // divisor)
+    if min(raster_size) < 512:
+        raise ValueError("benchmark panel raster must be at least 512px on both axes")
     if raster_size[0] * raster_size[1] > MAX_DECODED_PIXELS:
         raise ValueError("benchmark panel raster exceeds the decoded pixel limit")
     return raster_size
@@ -874,7 +876,25 @@ def _dialogue_counts(project: Path, case: Mapping[str, Any]) -> tuple[int, int]:
     """Count passing and total dialogue-bearing page checks and tail regions."""
     passed = 0
     total = 0
+    storyboard = read_json(project / "plan/storyboard.json")
+    pages = {
+        page.get("number"): page
+        for page in storyboard.get("pages", [])
+        if isinstance(page, dict) and isinstance(page.get("number"), int)
+    }
     for page_number in range(1, int(case["page_count"]) + 1):
+        page = pages.get(page_number)
+        dialogue_items = [
+            item
+            for storyboard_panel in (
+                page.get("panels", []) if isinstance(page, Mapping) else []
+            )
+            if isinstance(storyboard_panel, dict)
+            for item in storyboard_panel.get("text", [])
+            if isinstance(item, dict) and item.get("kind") == "dialogue"
+        ]
+        if not dialogue_items:
+            continue
         record = read_json(project / f"qa/pages/page-{page_number:03d}.json")
         checks = {
             check["id"]: check
@@ -1263,6 +1283,17 @@ def _validate_result_record(record: object) -> str | None:
                 or value < 0
             ):
                 return f"metric {field} is invalid: {metric_id}"
+        numerator = cast(float | int, metric["numerator"])
+        value = cast(float | int, metric["value"])
+        expected_value = (
+            round(float(numerator) / denominator, 6) if denominator else (
+                1.0 if metric_id == "dialogue_correctness" else 0.0
+            )
+        )
+        if value != expected_value:
+            return f"metric value is inconsistent: {metric_id}"
+        if metric_id != "repair_rate" and value > 1:
+            return f"metric value exceeds ratio range: {metric_id}"
     return None
 
 
