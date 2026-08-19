@@ -8,7 +8,7 @@ import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from . import __version__
 from .config import default_output_root
@@ -96,7 +96,38 @@ def _safe_message(error: Exception) -> str:
     return safe_error_detail(error)
 
 
-def _run(arguments: argparse.Namespace) -> Any:
+class _ProgressReporter:
+    """Render bounded lifecycle events without polluting machine output."""
+
+    def __init__(self, *, as_json: bool, stream: TextIO | None = None) -> None:
+        self.as_json = as_json
+        self.stream = stream
+        self.lines: list[str] = []
+        self.current_stage = "lifecycle"
+
+    def __call__(self, event: dict[str, object]) -> None:
+        status = str(event.get("status", "working")).upper()
+        stage = str(event.get("stage", self.current_stage))
+        self.current_stage = stage
+        fields = [f"{status} stage={stage}"]
+        for key in ("completed", "remaining"):
+            values = event.get(key)
+            if isinstance(values, list):
+                fields.append(f"{key}={len(values)}")
+        line = " ".join(fields)
+        self.lines.append(line)
+        if not self.as_json and self.stream is not None:
+            print(line, file=self.stream, flush=True)
+
+    def failure(self, *, blocked: bool = False) -> None:
+        self({"status": "blocked" if blocked else "failed", "stage": self.current_stage})
+
+
+def _run(
+    arguments: argparse.Namespace,
+    *,
+    progress: _ProgressReporter | None = None,
+) -> Any:
     engine = _load_engine()
     if arguments.command == "doctor":
         return engine.doctor_report(arguments.output_root)
@@ -117,9 +148,9 @@ def _run(arguments: argparse.Namespace) -> Any:
             issues = error.issues
         return [asdict(issue) for issue in issues]
     if arguments.command == "resume":
-        return engine.resume_project(arguments.project_dir)
+        return engine.resume_project(arguments.project_dir, progress=progress)
     if arguments.command == "finalize":
-        return engine.finalize_project(arguments.project_dir)
+        return engine.finalize_project(arguments.project_dir, progress=progress)
     if arguments.command in {"setup", "repair", "uninstall"}:
         from .setup import setup_clients, uninstall_clients
 
@@ -142,13 +173,20 @@ def _run(arguments: argparse.Namespace) -> Any:
 def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     command = arguments.command
+    reporter = _ProgressReporter(
+        as_json=arguments.as_json,
+        stream=None if arguments.as_json else sys.stderr,
+    )
     try:
         if command == "mcp":
             from .mcp import run as run_mcp
 
             run_mcp(arguments.root)
             return 0
-        data = _run(arguments)
+        data = _run(
+            arguments,
+            progress=reporter if command in {"resume", "finalize"} else None,
+        )
         if arguments.as_json:
             print(json.dumps(_success(command, data), ensure_ascii=False, sort_keys=True))
         elif command == "doctor":
@@ -170,6 +208,11 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.as_json:
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         else:
+            if command in {"resume", "finalize"}:
+                reporter.failure(
+                    blocked="blocked" in str(error).lower()
+                    or "capability" in str(error).lower()
+                )
             print(format_human_error(error, command=command), file=sys.stderr)
         return 2
     except OSError as error:
@@ -177,6 +220,8 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.as_json:
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         else:
+            if command in {"resume", "finalize"}:
+                reporter.failure()
             print(format_human_error(error, command=command), file=sys.stderr)
         return 1
     except RuntimeError as error:
@@ -184,6 +229,11 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.as_json:
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         else:
+            if command in {"resume", "finalize"}:
+                reporter.failure(
+                    blocked="blocked" in str(error).lower()
+                    or "capability" in str(error).lower()
+                )
             print(format_human_error(error, command=command), file=sys.stderr)
         return 1
 

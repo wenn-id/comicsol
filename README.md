@@ -96,6 +96,12 @@ The CLI exposes `doctor`, `init`, `status`, `validate`, `resume`, `finalize`,
 `setup`, `repair`, and `uninstall`, plus the optional `mcp` launcher. Machine-readable
 responses use one stable envelope containing `ok`, `command`, `data`, and `error`.
 
+Lifecycle commands report concise stage progress only on the human-readable surface:
+`WORKING`, `BLOCKED`, `FAILED`, or `COMPLETE`, followed by the current stage and known
+completed/remaining counts. Progress is written to `stderr`, so scripts can consume
+`stdout` safely. With `--json`, `stdout` remains one parseable JSON envelope and both
+human progress and error details stay out of the machine stream.
+
 ## Native Distribution (`v2.0.0rc4`)
 
 The `v2.0.0rc4` prerelease provides bundled portable archives for Linux, macOS,

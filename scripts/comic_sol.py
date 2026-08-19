@@ -17,10 +17,9 @@ import tempfile
 import unicodedata
 import warnings
 from dataclasses import asdict, dataclass
-from typing import cast
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -98,6 +97,9 @@ GENERATION_LIMIT_MESSAGES = {
     "transient_repeat": "at most one transient repeat is allowed per panel",
     "visual_retry": "at most two visual retries are allowed per panel",
 }
+ProgressCallback = Callable[[dict[str, object]], None]
+
+
 @dataclass(frozen=True)
 class ResumeAction:
     stage: str
@@ -1102,13 +1104,23 @@ def _next_resume_action(project_dir: Path, stage: str | None) -> dict[str, str] 
     return {"command": shlex.join(str(part) for part in command)}
 
 
-def resume_project(project_dir: Path) -> dict[str, object]:
+def resume_project(
+    project_dir: Path,
+    *,
+    progress: ProgressCallback | None = None,
+) -> dict[str, object]:
     """Recover transactions and move a blocked project to its last valid state."""
     project_dir = Path(project_dir).resolve(strict=True)
     manifest_path = contained_project_path(project_dir, "project.json", must_exist=True)
     with ProjectLock(project_dir):
         ProjectTransaction.recover(project_dir)
-        return _resume_project_locked(project_dir, manifest_path)
+        if progress is not None:
+            progress({"status": "working", "stage": "resume", "completed": [], "remaining": list(RESUME_STAGES)})
+        result = _resume_project_locked(project_dir, manifest_path)
+        if progress is not None:
+            state = str(result.get("status", "")).lower()
+            progress({"status": "blocked" if state == "blocked" else "complete", "stage": "resume", "completed": list(result.get("preserved", [])), "remaining": list(result.get("invalidated", []))})
+        return result
 
 
 def _resume_project_locked(
@@ -1828,16 +1840,37 @@ def doctor(output_root: Path) -> tuple[bool, list[str]]:
     return bool(report["ready"]), list(cast(list[str], report["messages"]))
 
 
-def finalize_project(project_dir: Path) -> dict[str, object]:
+def finalize_project(
+    project_dir: Path,
+    *,
+    progress: ProgressCallback | None = None,
+) -> dict[str, object]:
     """Serialize one complete deterministic finalization workflow."""
     caller_project_dir = Path(project_dir)
     project_dir = caller_project_dir.resolve(strict=True)
     with ProjectLock(project_dir, timeout=PROJECT_OPERATION_LOCK_TIMEOUT):
-        return _finalize_project_locked(project_dir, caller_project_dir)
+        if progress is not None:
+            progress({
+                "status": "working",
+                "stage": "lettering",
+                "completed": [],
+                "remaining": ["composition", "export"],
+            })
+        result = _finalize_project_locked(project_dir, caller_project_dir, progress)
+        if progress is not None:
+            progress({
+                "status": "complete",
+                "stage": "export",
+                "completed": ["lettering", "composition", "export"],
+                "remaining": [],
+            })
+        return result
 
 
 def _finalize_project_locked(
-    project_dir: Path, caller_project_dir: Path | None = None
+    project_dir: Path,
+    caller_project_dir: Path | None = None,
+    progress: ProgressCallback | None = None,
 ) -> dict[str, object]:
     """Run all deterministic finalization steps and transition to terminal status.
 
@@ -1880,6 +1913,14 @@ def _finalize_project_locked(
     if _allowed_transition(str(manifest.get("status")), "LETTERED"):
         transition(caller_project_dir, "LETTERED")
 
+    if progress is not None:
+        progress({
+            "status": "working",
+            "stage": "composition",
+            "completed": ["lettering"],
+            "remaining": ["export"],
+        })
+
     # 3. Composition (if stale), advance status. compose_project writes
     #    cache/composition.json and its manifest descriptor.
     need_composition = "composition" in stale or not (project_dir / "cache/composition.json").is_file()
@@ -1890,6 +1931,14 @@ def _finalize_project_locked(
     manifest = read_project_manifest(manifest_path, normalize_legacy=False)
     if _allowed_transition(str(manifest.get("status")), "COMPOSED"):
         transition(caller_project_dir, "COMPOSED")
+
+    if progress is not None:
+        progress({
+            "status": "working",
+            "stage": "export",
+            "completed": ["lettering", "composition"],
+            "remaining": [],
+        })
 
     # 4. Fail closed on agent-produced page-QA integrity records.
     from .page_quality import validate_page_quality

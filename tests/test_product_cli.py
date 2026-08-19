@@ -168,6 +168,65 @@ class ProductCliTests(unittest.TestCase):
             executable=launcher,
         )
 
+    def test_human_lifecycle_progress_is_stage_aware_and_plain(self):
+        events = [
+            {"status": "working", "stage": "lettering", "completed": [], "remaining": ["composition", "export"]},
+            {"status": "working", "stage": "composition", "completed": ["lettering"], "remaining": ["export"]},
+            {"status": "complete", "stage": "export", "completed": ["lettering", "composition", "export"], "remaining": []},
+        ]
+
+        class FakeEngine:
+            def finalize_project(self, project_dir, *, progress=None):
+                for event in events:
+                    progress(event)
+                return {"status": "COMPLETE", "pdf": "exports/project.pdf", "report": "qa/report.md"}
+
+        with mock.patch.object(cli, "_load_engine", return_value=FakeEngine()):
+            code, stdout, stderr = self.invoke(["finalize", "/tmp/project"])
+
+        self.assertEqual(0, code)
+        self.assertIn("WORKING stage=lettering", stderr)
+        self.assertIn("WORKING stage=composition", stderr)
+        self.assertIn("COMPLETE stage=export", stderr)
+        self.assertNotIn("\\x1b[", stderr)
+        self.assertIn('"status": "COMPLETE"', stdout)
+
+    def test_json_lifecycle_progress_stays_out_of_stdout_and_stderr(self):
+        seen = []
+
+        class FakeEngine:
+            def finalize_project(self, project_dir, *, progress=None):
+                seen.append(progress)
+                progress({"status": "working", "stage": "export", "completed": [], "remaining": []})
+                return {"status": "COMPLETE", "pdf": "exports/project.pdf", "report": "qa/report.md"}
+
+        with mock.patch.object(cli, "_load_engine", return_value=FakeEngine()):
+            code, stdout, stderr = self.invoke(["--json", "finalize", "/tmp/project"])
+
+        self.assertEqual(0, code)
+        self.assertEqual("", stderr)
+        self.assertIsNotNone(seen[0])
+        self.assertEqual({"ok", "command", "data", "error"}, set(json.loads(stdout)))
+        self.assertEqual("COMPLETE", json.loads(stdout)["data"]["status"])
+
+    def test_human_progress_renderer_distinguishes_blocked_failed_and_complete(self):
+        reporter = cli._ProgressReporter(as_json=False)
+        for event in (
+            {"status": "blocked", "stage": "generation"},
+            {"status": "failed", "stage": "export"},
+            {"status": "complete", "stage": "export"},
+        ):
+            reporter(event)
+
+        self.assertEqual(
+            [
+                "BLOCKED stage=generation",
+                "FAILED stage=export",
+                "COMPLETE stage=export",
+            ],
+            reporter.lines,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

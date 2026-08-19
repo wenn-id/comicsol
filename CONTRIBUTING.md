@@ -51,6 +51,8 @@ $artifacts = Get-ChildItem -Path dist\*.whl, dist\*.tar.gz |
 
 Changes to packaging, runtime freezing, MCP, release automation, or distribution must also pass clean-install and portable-runtime smoke tests. Visual output changes require an actual before/after render and visual inspection; green geometry tests alone are insufficient.
 
+CLI lifecycle progress is a human-only `stderr` contract: use concise `WORKING`, `BLOCKED`, `FAILED`, and `COMPLETE` stage lines with known completed/remaining counts. Never write progress to `stdout`; `--json` must remain a single parseable JSON envelope with no human-only output on either stream.
+
 Changes to the lifecycle engine, lettering, composition, or export should also be
 measured against the benchmark framework so a quality regression is visible rather
 than argued. `docs/benchmark.md` documents the case contract, the metrics, and how to
