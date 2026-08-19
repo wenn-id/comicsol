@@ -343,15 +343,33 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.all_pages:
             paths = compose_all_pages(arguments.project_dir)
         else:
-            storyboard = read_json(contained_project_path(arguments.project_dir, "plan/storyboard.json", must_exist=True))
-            manifest = read_project_manifest(contained_project_path(arguments.project_dir, "project.json", must_exist=True))
-            settings = manifest.get("settings")
-            artifacts = manifest.get("artifacts", {})
-            if not isinstance(settings, dict) or not isinstance(artifacts, dict):
-                raise ValueError("manifest settings and artifacts must be objects")
-            paths = [compose_page(
-                arguments.project_dir, arguments.page, storyboard, settings, artifacts
-            )]
+            with ProjectLock(
+                Path(arguments.project_dir), timeout=PROJECT_OPERATION_LOCK_TIMEOUT
+            ):
+                storyboard = read_json(
+                    contained_project_path(
+                        arguments.project_dir, "plan/storyboard.json", must_exist=True
+                    )
+                )
+                manifest = read_project_manifest(
+                    contained_project_path(
+                        arguments.project_dir, "project.json", must_exist=True
+                    ),
+                    normalize_legacy=False,
+                )
+                settings = manifest.get("settings")
+                artifacts = manifest.get("artifacts", {})
+                if not isinstance(settings, dict) or not isinstance(artifacts, dict):
+                    raise ValueError("manifest settings and artifacts must be objects")
+                paths = [
+                    _compose_page_locked(
+                        arguments.project_dir,
+                        arguments.page,
+                        storyboard,
+                        settings,
+                        artifacts,
+                    )
+                ]
         print("\n".join(path.as_posix() for path in paths))
         return 0
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:

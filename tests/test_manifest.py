@@ -463,19 +463,20 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual("INIT", json.loads(output.getvalue())["status"])
 
     def test_cli_manifest_reads_accept_relative_project_paths(self):
-        project = init_project(
-            self.root,
-            "Relative CLI Story",
-            b"CLI source",
-            {"mode": "short_prompt", "language": "en"},
-        )
-        relative = os.path.relpath(project, Path.cwd())
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            self.assertEqual(0, main(["status", relative, "--json"]))
-            self.assertEqual(0, main(["transition", relative, "PLANNED"]))
-        with contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(0, main(["invalidate", relative, "storyboard"]))
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:
+            project = init_project(
+                Path(temporary),
+                "Relative CLI Story",
+                b"CLI source",
+                {"mode": "short_prompt", "language": "en"},
+            )
+            relative = os.path.relpath(project, Path.cwd())
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(0, main(["status", relative, "--json"]))
+                self.assertEqual(0, main(["transition", relative, "PLANNED"]))
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(0, main(["invalidate", relative, "storyboard"]))
 
 
 class SourceBoundaryTests(unittest.TestCase):
