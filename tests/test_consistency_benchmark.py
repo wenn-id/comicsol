@@ -408,31 +408,40 @@ class ConsistencyBaselineTests(unittest.TestCase):
     def setUpClass(cls):
         cls.report = build_baseline_report()
         cls.baselines = sorted(BASELINE_DIRECTORY.glob("baseline-v*.json"))
+        cls.current = BASELINE_DIRECTORY / f"baseline-v{cls.report['engine_version']}.json"
 
-    def test_a_baseline_is_committed_for_at_least_one_release(self):
+    def test_the_current_engine_revision_carries_its_own_baseline(self):
+        # A baseline for an older engine is history, not coverage. Without this the
+        # next version bump would inherit a stale baseline and claim the release was
+        # measured when it never was.
         self.assertTrue(self.baselines, BASELINE_DIRECTORY)
+        self.assertIn(self.current, self.baselines, sorted(path.name for path in self.baselines))
 
     def test_committed_baselines_are_named_for_the_engine_they_measured(self):
         for path in self.baselines:
             recorded = json.loads(path.read_text(encoding="utf-8"))
             with self.subTest(baseline=path.name):
+                self.assertEqual(BASELINE_KIND, recorded["kind"])
+                self.assertEqual(SCENARIO, recorded["benchmark"])
                 self.assertTrue(str(recorded["engine_version"]).strip())
                 self.assertEqual(f"baseline-v{recorded['engine_version']}.json", path.name)
+                # Every baseline states its own evidence boundary, including older
+                # ones kept as history.
+                self.assertFalse(recorded["visual"]["scored"])
 
-    def test_committed_baselines_still_describe_the_current_definition(self):
-        for path in self.baselines:
-            recorded = json.loads(path.read_text(encoding="utf-8"))
-            with self.subTest(baseline=path.name):
-                for key in (
-                    "benchmark",
-                    "evidence_mode",
-                    "kind",
-                    "project_validation",
-                    "schema_version",
-                    "structural",
-                    "visual",
-                ):
-                    self.assertEqual(self.report[key], recorded[key], key)
+    def test_the_current_baseline_describes_the_current_definition(self):
+        recorded = json.loads(self.current.read_text(encoding="utf-8"))
+        self.assertEqual(self.report["engine_version"], recorded["engine_version"])
+        for key in (
+            "benchmark",
+            "evidence_mode",
+            "kind",
+            "project_validation",
+            "schema_version",
+            "structural",
+            "visual",
+        ):
+            self.assertEqual(self.report[key], recorded[key], key)
 
     def test_baseline_reports_a_measured_structural_plane(self):
         structural = self.report["structural"]
