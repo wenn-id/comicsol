@@ -20,6 +20,17 @@
   rectangles from the immutable layout registry, validate at the `storyboard` stage, and
   record the capability each project stresses alongside expected page, panel, character,
   and text counts.
+- Added a character consistency benchmark (`tests/consistency_benchmark.py`,
+  `docs/character-consistency-benchmark.md`) that carries two canonical characters through
+  twelve panels covering front, profile, three-quarter, full-body, and close-up views
+  across nine expressions, four lighting conditions, and four backgrounds, with a
+  single-condition control page and one renderable prompt per panel.
+- Character consistency scores stay out of deterministic CI: the benchmark emits an
+  unscored scorecard for manual or model-assisted review, refuses a scorecard produced
+  against a different definition digest or without review provenance, averages only the
+  dimensions a reviewer actually scored, and records the release baseline in
+  `benchmarks/consistency/baseline-v2.0.0rc4.json` with its visual plane explicitly
+  unscored.
 
 ### Removed
 
