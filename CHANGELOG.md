@@ -12,6 +12,14 @@
 - Deterministic benchmark runs are byte-reproducible and label themselves
   `proves_visual_quality: false`; optional live-provider runs consume already
   retained rasters with explicit caller-supplied provenance.
+- Added a real-world comic benchmark corpus (`tests/benchmark_corpus.py`,
+  `docs/benchmark-corpus.md`) with nine plan-complete projects covering dialogue-heavy,
+  action, two-character, multi-character, silent-manga, night/low-light, long-dialogue,
+  complex-background, and four-page story scenarios.
+- Benchmark corpus projects are materialized on demand rather than committed, take panel
+  rectangles from the immutable layout registry, validate at the `storyboard` stage, and
+  record the capability each project stresses alongside expected page, panel, character,
+  and text counts.
 
 ### Removed
 

@@ -46,17 +46,30 @@ capability and bounded visual review.
 
 ## Relationship to the benchmark harness
 
-This corpus is the scenario inventory, not a metric harness. It answers "which realistic
-comic shapes must the pipeline handle" and proves each one is a schema-valid project. It
-deliberately stops short of running the full lifecycle so nine scenarios stay cheap enough
-to validate on every pull request.
+This corpus is the scenario inventory; `scripts/benchmark.py` is the scoreboard. They
+answer different questions and deliberately stay separate.
 
-The benchmark harness tracked in issue #118 consumes project fixtures through a separate
-case contract. Each scenario here is already shaped to be registered as such a case once
-that harness lands: it supplies the source, the three plan artifacts, contiguous panel
-identities, and a declared page and panel count. Registering a scenario as a metric case is
-a follow-up decision per scenario, because a full lifecycle run costs far more than
-structural validation.
+- This corpus answers "which realistic comic shapes must the pipeline handle at all", and
+  proves each one is a schema-valid project. Nine scenarios validate in seconds, so they
+  run on every pull request.
+- The harness in [`docs/benchmark.md`](benchmark.md) answers "did this engine revision get
+  better or worse", by driving one case through the full lifecycle and reporting six
+  comparable metrics against a baseline revision.
+
+Every scenario here is already shaped to become a `benchmarks/cases/<case-id>.json` case:
+it supplies the source, the three plan artifacts, contiguous panel identities, and declared
+page and panel counts. Promotion is a deliberate per-scenario decision rather than a bulk
+import, because a metric case costs far more than structural validation:
+
+- The harness reads a fixture from a committed directory, so a promoted scenario has to be
+  written out as `source/` and `plan/` plus one `prompts/panels/<panel-id>.txt` per panel.
+  Materializing a scenario produces the first two; panel prompts are authored per case.
+- A case also declares `seed`, `repair_panels`, `resume_stage`, and an exact
+  `dialogue_count`, and every run drives generation, lettering, composition, export, and a
+  resume drill. `.github/workflows/benchmark.yml` runs the whole set twice, once per
+  revision, so each added case is paid for on every pull request.
+- Word budgets in this corpus were sized against the storyboard schema, not against
+  balloon fit. Check a scenario through lettering before registering it as a case.
 
 ## Commands
 
