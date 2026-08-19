@@ -744,6 +744,26 @@ def _scorecard_scores(scorecard):
                 yield panel_id, character_id, dimension, scores[dimension]
 
 
+def load_scorecard(path):
+    """Return the scorecard at ``path``, or raise ``ScorecardError``.
+
+    Unreadable, non-UTF-8, and malformed input are scorecard problems like any
+    other, so callers get one error type and one failure path instead of a
+    traceback for the most ordinary mistake there is.
+    """
+    path = Path(path)
+    try:
+        payload = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ScorecardError(f"{path}: cannot be read: {error.strerror or error}") from error
+    except UnicodeDecodeError as error:
+        raise ScorecardError(f"{path}: is not valid UTF-8") from error
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError as error:
+        raise ScorecardError(f"{path}: is not valid JSON: {error}") from error
+
+
 def validate_scorecard(scorecard):
     """Return the scorecard, or raise ``ScorecardError`` describing every problem."""
     if not isinstance(scorecard, dict):
@@ -990,9 +1010,10 @@ def main(argv=None):
         print(arguments.output_path)
         return 0
 
-    recorded = json.loads(arguments.scorecard_path.read_text(encoding="utf-8"))
+    # Reading and parsing belong inside the handled path: a missing file is a far
+    # more likely failure than an invalid score, and both deserve one diagnostic.
     try:
-        summary = summarize_scorecard(recorded)
+        summary = summarize_scorecard(load_scorecard(arguments.scorecard_path))
     except ScorecardError as error:
         print(f"invalid scorecard: {error}", file=sys.stderr)
         return 1
