@@ -1,5 +1,6 @@
 {
   "benchmark": "character-consistency",
+  "definition_sha256": "729607cc8ff0bb14589a73bb283badb86a391659abe97ee8e339e43446cc5ad8",
   "engine_version": "2.0.0rc4",
   "evidence_mode": "structural",
   "generated_by": "python -m tests.consistency_benchmark baseline",

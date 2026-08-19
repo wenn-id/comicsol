@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from comic_sol_product import __version__
+from tests.consistency_benchmark import definition_digest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -69,12 +70,13 @@ def _result(
     git="a" * 40,
     harness=HARNESS_VERSION,
     proves_visual_quality=False,
+    case_sha256="b" * 64,
 ):
     """Build one synthetic benchmark result record for summary coverage."""
     measured = {**PERFECT, **(metrics or {})}
     return {
         "case_id": case_id,
-        "case_sha256": "b" * 64,
+        "case_sha256": case_sha256,
         "evidence": {
             "mode": "deterministic",
             "panels": {},
@@ -102,6 +104,7 @@ def _baseline(**overrides):
     """Build one character consistency baseline report."""
     baseline = {
         "benchmark": "character-consistency",
+        "definition_sha256": definition_digest(),
         "engine_version": __version__,
         "evidence_mode": "structural",
         "kind": "character-consistency-baseline",
@@ -126,20 +129,18 @@ def _baseline(**overrides):
 
 def _scorecard(scores):
     """Build one attributable character consistency scorecard."""
-    return {
-        "benchmark": "character-consistency",
-        "definition_sha256": "c" * 64,
-        "kind": "character-consistency-scorecard",
-        "panels": {"p01-01": {"characters": {"rani": dict(scores)}}},
-        "review": {
-            "method": "bounded visual review",
-            "model": "example-model",
-            "provider": "example-provider",
-            "reviewer": "reviewer",
-        },
-        "scale": {"max": 4, "min": 0},
-        "schema_version": "1.0",
+    from tests.consistency_benchmark import scorecard_template
+
+    scorecard = scorecard_template()
+    for dimension, score in scores.items():
+        scorecard["panels"]["p01-01"]["characters"]["rani"][dimension] = score
+    scorecard["review"] = {
+        "method": "bounded visual review",
+        "model": "example-model",
+        "provider": "example-provider",
+        "reviewer": "reviewer",
     }
+    return scorecard
 
 
 class TemporaryRootTestCase(unittest.TestCase):
@@ -206,19 +207,16 @@ class ConsistencyPlaneTests(TemporaryRootTestCase):
         self.assertEqual(0.75, score["value"])
         coverage = report["metrics"]["consistency_visual_coverage"]
         self.assertEqual(2, coverage["numerator"])
-        self.assertEqual(3, coverage["denominator"])
+        self.assertEqual(105, coverage["denominator"])
         self.assertTrue(report["scored"])
         self.assertTrue(report["proves_visual_quality"])
         self.assertEqual("reviewer", report["review"]["reviewer"])
 
     def test_a_scorecard_from_another_definition_is_refused(self):
-        scorecard = load_consistency_scorecard(
-            self._json(_scorecard({"face": 4}), "short.json")
-        )
-        with self.assertRaisesRegex(ValueError, "one benchmark definition"):
-            consistency_report(
-                baseline=load_consistency_baseline(RELEASE_BASELINE), scorecard=scorecard
-            )
+        foreign = _scorecard({"face": 4})
+        foreign["definition_sha256"] = "c" * 64
+        with self.assertRaisesRegex(ValueError, "canonical benchmark definition"):
+            load_consistency_scorecard(self._json(foreign, "short.json"))
 
     def test_unattributable_and_out_of_scale_scores_are_refused(self):
         unattributed = _scorecard({"face": 4})
@@ -330,6 +328,19 @@ class SummaryTests(TemporaryRootTestCase):
         self.assertEqual("failed", summary["status"])
         self.assertTrue(
             any("benchmark harness" in item for item in summary["exceptions"]),
+            summary["exceptions"],
+        )
+
+    def test_consistency_baseline_engine_must_match_result_engine(self):
+        self._publish(_result("case-one"))
+        baseline_path = self.root / "foreign-engine-baseline.json"
+        baseline_path.write_text(
+            json.dumps(_baseline(engine_version="2.0.0rc3")), encoding="utf-8"
+        )
+        summary = summarize_results(self.results, consistency_baseline=baseline_path)
+        self.assertEqual("failed", summary["status"])
+        self.assertTrue(
+            any("baseline engine version" in item for item in summary["exceptions"]),
             summary["exceptions"],
         )
 
@@ -487,10 +498,10 @@ class SummaryDeltaTests(TemporaryRootTestCase):
 
     def test_tolerance_absorbs_noise_but_not_real_regressions(self):
         baseline = self._summary(
-            "baseline", [_result("case-one", {"dialogue_correctness": (100, 100)})]
+            "baseline", [_result("case-one", {"repair_rate": (0, 100)})]
         )
         candidate = self._summary(
-            "candidate", [_result("case-one", {"dialogue_correctness": (99, 100)})]
+            "candidate", [_result("case-one", {"repair_rate": (1, 100)})]
         )
         absorbed = diff_summaries(
             baseline, candidate, self.root / "absorbed.json", tolerance=0.02
@@ -507,6 +518,22 @@ class SummaryDeltaTests(TemporaryRootTestCase):
             diff_summaries(
                 baseline, candidate, self.root / "nan.json", tolerance=float("nan")
             )
+
+    def test_different_case_digests_are_not_comparable(self):
+        baseline = self._summary("baseline", [_result("case-one", case_sha256="b" * 64)])
+        candidate = self._summary("candidate", [_result("case-one", case_sha256="c" * 64)])
+        delta = diff_summaries(baseline, candidate, self.root / "delta.json")
+        self.assertEqual("failed", delta["status"])
+        self.assertIn("case-one/case_sha256", delta["regressions"])
+
+    def test_failed_summary_status_and_exceptions_block_delta(self):
+        baseline = self._summary("baseline", [_result("case-one")])
+        candidate = self._summary(
+            "candidate", [_result("case-one", harness="foreign-harness")]
+        )
+        delta = diff_summaries(baseline, candidate, self.root / "delta.json")
+        self.assertEqual("failed", delta["status"])
+        self.assertTrue(any("candidate" in item for item in delta["exceptions"]))
 
     def test_differing_case_sets_are_not_comparable(self):
         baseline = self._summary(

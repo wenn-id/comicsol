@@ -967,6 +967,7 @@ def build_baseline_report(engine_version=ENGINE_VERSION):
         validation = storyboard_validation(Path(raw))
     return {
         "benchmark": SCENARIO,
+        "definition_sha256": definition_digest(),
         "engine_version": engine_version,
         "evidence_mode": "structural",
         "generated_by": "python -m tests.consistency_benchmark baseline",

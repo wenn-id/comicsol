@@ -36,6 +36,19 @@ if __package__ in {None, ""}:
 
 from .benchmark import HARNESS_VERSION, METRIC_DIRECTIONS, METRIC_IDS, load_results
 
+try:
+    from tests.consistency_benchmark import (
+        CONSISTENCY_DIMENSIONS as CANONICAL_CONSISTENCY_DIMENSIONS,
+        MATRIX_BY_PANEL as CANONICAL_MATRIX_BY_PANEL,
+        PANEL_IDS as CANONICAL_PANEL_IDS,
+        definition_digest as canonical_definition_digest,
+    )
+except ImportError:  # pragma: no cover - packaged runtime has no test tree
+    CANONICAL_CONSISTENCY_DIMENSIONS = ()
+    CANONICAL_MATRIX_BY_PANEL = {}
+    CANONICAL_PANEL_IDS = ()
+    canonical_definition_digest = None
+
 SUMMARY_SCHEMA_VERSION = "1.0"
 SUMMARY_KIND = "benchmark-summary"
 DELTA_SCHEMA_VERSION = "1.0"
@@ -222,6 +235,11 @@ def load_consistency_baseline(path: Path) -> dict[str, Any]:
         problems.append(f"benchmark must be {CONSISTENCY_BENCHMARK!r}")
     if baseline.get("schema_version") != CONSISTENCY_SCHEMA_VERSION:
         problems.append(f"schema_version must be {CONSISTENCY_SCHEMA_VERSION!r}")
+    digest = baseline.get("definition_sha256")
+    if not isinstance(digest, str) or len(digest) != 64:
+        problems.append("definition_sha256 must bind the baseline to one definition")
+    elif canonical_definition_digest is not None and digest != canonical_definition_digest():
+        problems.append("definition_sha256 does not match the canonical benchmark definition")
     if not isinstance(baseline.get("engine_version"), str) or not baseline["engine_version"]:
         problems.append("engine_version must name the revision the baseline measured")
     validation = baseline.get("project_validation")
@@ -300,6 +318,13 @@ def load_consistency_scorecard(path: Path) -> dict[str, Any]:
     digest = scorecard.get("definition_sha256")
     if not isinstance(digest, str) or len(digest) != 64:
         problems.append("definition_sha256 must bind the score to one definition")
+    elif canonical_definition_digest is not None and digest != canonical_definition_digest():
+        problems.append("definition_sha256 does not match the canonical benchmark definition")
+    dimensions = scorecard.get("dimensions")
+    if canonical_definition_digest is not None and dimensions != list(
+        CANONICAL_CONSISTENCY_DIMENSIONS
+    ):
+        problems.append("dimensions must match the canonical benchmark definition")
     scale = scorecard.get("scale")
     minimum = scale.get("min") if isinstance(scale, Mapping) else None
     maximum = scale.get("max") if isinstance(scale, Mapping) else None
@@ -310,16 +335,33 @@ def load_consistency_scorecard(path: Path) -> dict[str, Any]:
     if not isinstance(panels, Mapping) or not panels:
         problems.append("panels must be a non-empty JSON object")
     else:
+        if canonical_definition_digest is not None and set(panels) != set(CANONICAL_PANEL_IDS):
+            problems.append("panels must contain exactly every canonical benchmark panel")
         for panel_id in sorted(panels):
             panel = panels[panel_id]
             characters = panel.get("characters") if isinstance(panel, Mapping) else None
             if not isinstance(characters, Mapping) or not characters:
                 problems.append(f"{panel_id}: characters must be a non-empty JSON object")
                 continue
+            expected_characters = (
+                set(CANONICAL_MATRIX_BY_PANEL[panel_id]["characters"])
+                if canonical_definition_digest is not None and panel_id in CANONICAL_MATRIX_BY_PANEL
+                else None
+            )
+            if expected_characters is not None and set(characters) != expected_characters:
+                problems.append(f"{panel_id}: characters must match the canonical benchmark panel")
             for character_id in sorted(characters):
-                if not isinstance(characters[character_id], Mapping) or not characters[character_id]:
+                scores = characters[character_id]
+                if not isinstance(scores, Mapping) or not scores:
                     problems.append(
                         f"{panel_id}/{character_id}: scores must be a non-empty JSON object"
+                    )
+                    continue
+                if canonical_definition_digest is not None and set(scores) != set(
+                    CANONICAL_CONSISTENCY_DIMENSIONS
+                ):
+                    problems.append(
+                        f"{panel_id}/{character_id}: dimensions must match the canonical benchmark"
                     )
     for location, score in _scorecard_entries(scorecard):
         if score is None:
@@ -389,6 +431,9 @@ def consistency_report(
                 CONSISTENCY_METRIC_DIRECTIONS[metric_id],
             )
         report["engine_version"] = baseline["engine_version"]
+        report["definition_sha256"] = (
+            canonical_definition_digest() if canonical_definition_digest is not None else baseline.get("definition_sha256")
+        )
         report["project_validation"] = cast(
             Mapping[str, Any], baseline["project_validation"]
         )["result"]
@@ -411,6 +456,13 @@ def consistency_report(
             raise ValueError(
                 "the scorecard and the baseline describe a different number of scoreable "
                 "dimensions, so they do not describe one benchmark definition"
+            )
+        if baseline is not None and scorecard["definition_sha256"] != baseline.get(
+            "definition_sha256"
+        ):
+            raise ValueError(
+                "the scorecard and the baseline have different definition_sha256 values, "
+                "so they do not describe one benchmark definition"
             )
         scored_dimensions, total_dimensions = len(scores), len(entries)
         review = scorecard.get("review")
@@ -478,10 +530,25 @@ def summarize_results(
             )
         except (OSError, ValueError) as error:
             exceptions.append(f"character consistency: {error}")
+        else:
+            consistency_engine = consistency.get("engine_version")
+            result_engine = revision.get("engine_version")
+            if (
+                isinstance(consistency_engine, str)
+                and isinstance(result_engine, str)
+                and consistency_engine != result_engine
+                and result_engine != "unknown"
+            ):
+                exceptions.append(
+                    "character consistency baseline engine version "
+                    f"{consistency_engine!r} does not match result engine version "
+                    f"{result_engine!r}"
+                )
 
     metrics = aggregate_metrics(records)
     cases = {
         case_id: {
+            "case_sha256": records[case_id].get("case_sha256"),
             "metrics": {
                 metric_id: cast(Mapping[str, Any], records[case_id]["metrics"])[metric_id][
                     "value"
@@ -546,6 +613,14 @@ def load_summary(path: Path) -> dict[str, Any]:
         problems.append("summary metrics do not match the registered metric IDs")
     if not isinstance(summary.get("cases"), Mapping):
         problems.append("summary cases must be a JSON object")
+    else:
+        for case_id, case in summary["cases"].items():
+            if not isinstance(case, Mapping):
+                problems.append(f"case {case_id!r} must be a JSON object")
+                continue
+            digest = case.get("case_sha256")
+            if not isinstance(digest, str) or len(digest) != 64:
+                problems.append(f"case {case_id!r} has no valid case_sha256")
     consistency = summary.get("consistency")
     if consistency is not None and not isinstance(consistency, Mapping):
         problems.append("summary consistency must be a JSON object or null")
@@ -739,6 +814,12 @@ def diff_summaries(
     advisory: list[str] = []
 
     if before is not None and after is not None:
+        for label, summary in (("baseline", before), ("candidate", after)):
+            if summary["status"] != "passed":
+                exceptions.append(f"{label}: summary status is {summary['status']!r}")
+            summary_exceptions = summary.get("exceptions")
+            if isinstance(summary_exceptions, list) and summary_exceptions:
+                exceptions.append(f"{label}: summary contains exceptions")
         for metric_id in METRIC_IDS:
             comparison = _compare_value(
                 _metric_value(before["metrics"], metric_id),
@@ -788,6 +869,16 @@ def diff_summaries(
                 candidate_case.get("status") if isinstance(candidate_case, Mapping) else None
             )
             cases[case_id] = {
+                "baseline_case_sha256": (
+                    baseline_case.get("case_sha256")
+                    if isinstance(baseline_case, Mapping)
+                    else None
+                ),
+                "candidate_case_sha256": (
+                    candidate_case.get("case_sha256")
+                    if isinstance(candidate_case, Mapping)
+                    else None
+                ),
                 "baseline_status": (
                     baseline_case.get("status") if isinstance(baseline_case, Mapping) else None
                 ),
@@ -796,6 +887,8 @@ def diff_summaries(
             }
             if candidate_status != "passed":
                 regressions.append(f"{case_id}/status")
+            if cases[case_id]["baseline_case_sha256"] != cases[case_id]["candidate_case_sha256"]:
+                regressions.append(f"{case_id}/case_sha256")
         if missing_cases or new_cases:
             exceptions.append(
                 "the two summaries cover different benchmark cases, so their pooled "
