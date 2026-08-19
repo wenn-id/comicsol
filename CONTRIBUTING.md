@@ -51,6 +51,19 @@ $artifacts = Get-ChildItem -Path dist\*.whl, dist\*.tar.gz |
 
 Changes to packaging, runtime freezing, MCP, release automation, or distribution must also pass clean-install and portable-runtime smoke tests. Visual output changes require an actual before/after render and visual inspection; green geometry tests alone are insufficient.
 
+Changes to the lifecycle engine, lettering, composition, or export should also be
+measured against the benchmark framework so a quality regression is visible rather
+than argued. `docs/benchmark.md` documents the case contract, the metrics, and how to
+diff two engine revisions:
+
+```bash
+.venv/bin/python scripts/benchmark.py --all \
+  --output-root build/benchmark/projects --results build/benchmark/results
+```
+
+Deterministic benchmark runs prove pipeline and geometry mechanics only; they never
+substitute for the visual inspection required above.
+
 The root `SKILL.md`, deterministic scripts, templates, fonts, and non-host-specific
 references are canonical. Synchronize and verify the self-contained plugin bundle with:
 
