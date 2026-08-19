@@ -352,6 +352,70 @@ class ProjectTransactionTests(unittest.TestCase):
                 transaction.stage_bytes(r"\\server\share\file.bin", b"unc-path")
         self.assertFalse((self.project.parent / "outside.bin").is_file())
 
+    def test_append_bytes_rolls_back_after_a_later_publish_failure(self):
+        event_path = self.project / "logs/events.jsonl"
+        event_path.write_bytes(b'{"event":"before"}\n')
+        before = event_path.read_bytes()
+        real_replace = project_io.os.replace
+
+        def fail_staged_replace(source, destination, **kwargs):
+            if Path(source).name.startswith("staged-"):
+                raise OSError("injected replacement failure")
+            return real_replace(source, destination, **kwargs)
+
+        with self.assertRaisesRegex(OSError, "injected replacement failure"):
+            with mock.patch.object(project_io.os, "replace", side_effect=fail_staged_replace):
+                with project_io.ProjectTransaction(self.project, "append") as transaction:
+                    transaction.append_bytes(
+                        "logs/events.jsonl", b'{"event":"after"}\n'
+                    )
+                    transaction.stage_bytes("pages/page-001.png", b"new-one")
+
+        self.assertEqual(before, event_path.read_bytes())
+
+    def test_recover_restores_interrupted_append_with_torn_tail(self):
+        event_path = self.project / "logs/events.jsonl"
+        before = b'{"event":"before"}\n{"event":"torn"'
+        event_path.write_bytes(before)
+        transaction = project_io.ProjectTransaction(self.project, "append")
+        transaction.__enter__()
+        transaction.append_bytes(
+            "logs/events.jsonl", b'{"event":"after"}\n', repair_torn_jsonl=True
+        )
+        transaction._phase = "publishing"
+        transaction._write_journal()
+        with project_io.open_contained(
+            self.project,
+            "logs/events.jsonl",
+            flags=os.O_RDWR,
+        ) as handle:
+            handle.seek(transaction._journal[0]["repair_size"])
+            handle.truncate()
+            handle.write(b'{"event":"after"}\n')
+            handle.flush()
+            os.fsync(handle.fileno())
+        transaction._lock.__exit__(None, None, None)
+        transaction._lock = None
+
+        project_io.ProjectTransaction.recover(self.project)
+
+        self.assertEqual(before, event_path.read_bytes())
+
+    def test_append_repairs_large_torn_tail_without_reordering_chunks(self):
+        event_path = self.project / "logs/events.jsonl"
+        valid = b'{"event":"before"}\n'
+        torn = b"x" * (64 * 1024 + 17)
+        event_path.write_bytes(valid + torn)
+
+        with project_io.ProjectTransaction(self.project, "append") as transaction:
+            transaction.append_bytes(
+                "logs/events.jsonl",
+                b'{"event":"after"}\n',
+                repair_torn_jsonl=True,
+            )
+
+        self.assertEqual(valid + b'{"event":"after"}\n', event_path.read_bytes())
+
     def test_recover_rejects_malicious_journal_paths(self):
         tx_dir = self.project / "logs/transactions/1"
         tx_dir.mkdir(parents=True)
