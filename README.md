@@ -17,6 +17,11 @@ This repository, [`wenn-id/comicsol`](https://github.com/wenn-id/comicsol),
 is the canonical, independent home of Comic Sol. New development, issues, pull
 requests, documentation, and releases happen here.
 
+> **New here? Read [`docs/onboarding.md`](docs/onboarding.md) first.** It is one
+> short first-run path from installation to your first finished comic, including
+> the readiness check and where the output lands. The rest of this README is the
+> full reference.
+
 ## Install
 
 Requirements are Python 3.11+ and `Pillow==12.3.0`. Resolve one Python 3.11+ launcher per device, store it as `PYTHON`, then use `"$PYTHON"` consistently for each run. Image creation additionally
