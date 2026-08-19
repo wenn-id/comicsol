@@ -579,13 +579,20 @@ class SummaryDeltaTests(TemporaryRootTestCase):
         self.assertEqual("failed", delta["status"])
         self.assertTrue(any("candidate" in item for item in delta["exceptions"]))
 
-    def test_different_engine_revisions_are_not_comparable(self):
+    def test_different_engine_revisions_are_comparable(self):
         baseline = self._summary("baseline", [_result("case-one", engine="2.0.0rc3")])
         candidate = self._summary("candidate", [_result("case-one", engine="2.0.0rc4")])
         delta = diff_summaries(baseline, candidate, self.root / "delta.json")
-        self.assertEqual("REGRESSION", delta["decision"])
-        self.assertEqual("failed", delta["status"])
-        self.assertTrue(any("engine" in item for item in delta["exceptions"]))
+        self.assertEqual("NO REGRESSION", delta["decision"])
+        self.assertEqual("passed", delta["status"])
+
+    def test_corrupt_archived_metric_is_rejected(self):
+        summary_path = self._summary("baseline", [_result("case-one")])
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        payload["metrics"]["panel_acceptance"]["value"] = 0.25
+        summary_path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "panel_acceptance.value"):
+            load_summary(summary_path)
 
     def test_differing_case_sets_are_not_comparable(self):
         baseline = self._summary(

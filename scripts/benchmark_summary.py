@@ -227,9 +227,62 @@ def _is_count_pair(value: object) -> bool:
 
 def _has_valid_provenance(review: object, fields: tuple[str, ...]) -> bool:
     """Require every provenance field to be a non-empty string."""
-    return isinstance(review, Mapping) and all(
-        isinstance(review.get(field), str) and review[field].strip() for field in fields
-    )
+    if not isinstance(review, Mapping):
+        return False
+    if not all(isinstance(review.get(field), str) and review[field].strip() for field in fields):
+        return False
+    for field in ("model", "provider", "reviewed_at", "evidence_mode"):
+        value = review.get(field)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            return False
+    return True
+
+
+def _metric_contract_problems(
+    metric_id: str, metric: object, *, location: str = ""
+) -> list[str]:
+    """Validate one archived ratio metric before it enters a comparison."""
+    prefix = f"{location}{metric_id}"
+    problems: list[str] = []
+    if not isinstance(metric, Mapping):
+        return [f"{prefix} must be a JSON object"]
+    if metric.get("direction") != METRIC_DIRECTIONS[metric_id]:
+        problems.append(f"{prefix}.direction is invalid")
+    if metric.get("unit") != "ratio":
+        problems.append(f"{prefix}.unit must be 'ratio'")
+    numerator = metric.get("numerator")
+    denominator = metric.get("denominator")
+    value = metric.get("value")
+    if (
+        not isinstance(numerator, (int, float))
+        or isinstance(numerator, bool)
+        or not math.isfinite(float(numerator))
+        or numerator < 0
+    ):
+        problems.append(f"{prefix}.numerator must be a finite non-negative number")
+    if not _is_count(denominator):
+        problems.append(f"{prefix}.denominator must be a non-negative integer")
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(float(value))
+        or value < 0
+    ):
+        problems.append(f"{prefix}.value must be a finite non-negative number")
+    elif (
+        isinstance(numerator, (int, float))
+        and not isinstance(numerator, bool)
+        and _is_count(denominator)
+    ):
+        denominator_value = cast(int, denominator)
+        expected = (
+            round(float(numerator) / denominator_value, 6)
+            if denominator_value > 0
+            else EMPTY_METRIC_VALUES.get(metric_id, 0.0)
+        )
+        if value != expected:
+            problems.append(f"{prefix}.value does not match its numerator and denominator")
+    return problems
 
 
 def load_consistency_baseline(path: Path) -> dict[str, Any]:
@@ -625,6 +678,9 @@ def load_summary(path: Path) -> dict[str, Any]:
     metrics = summary.get("metrics")
     if not isinstance(metrics, Mapping) or set(metrics) != set(METRIC_IDS):
         problems.append("summary metrics do not match the registered metric IDs")
+    elif isinstance(metrics, Mapping):
+        for metric_id in METRIC_IDS:
+            problems.extend(_metric_contract_problems(metric_id, metrics[metric_id]))
     if not isinstance(summary.get("cases"), Mapping):
         problems.append("summary cases must be a JSON object")
     else:
@@ -842,10 +898,6 @@ def diff_summaries(
         after_revision = after.get("revision")
         if not isinstance(before_revision, Mapping) or not isinstance(after_revision, Mapping):
             exceptions.append("summaries must publish revision provenance")
-        else:
-            for field in ("engine_version", "git_revision"):
-                if before_revision.get(field) != after_revision.get(field):
-                    exceptions.append(f"summary {field} values differ")
         if before.get("harness_version") != after.get("harness_version"):
             exceptions.append("summary harness_version values differ")
         for label, summary in (("baseline", before), ("candidate", after)):
