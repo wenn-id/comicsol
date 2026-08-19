@@ -26,6 +26,7 @@ from .comic_sol import (
 )
 from .layouts import LAYOUT_VERSION, get_layout, match_layout, validate_custom_layout
 from .project_io import (
+    PROJECT_OPERATION_LOCK_TIMEOUT,
     ProjectLock,
     ProjectTransaction,
     contained_project_path,
@@ -213,7 +214,7 @@ def compose_page(
     source_artifacts: dict,
 ) -> Path:
     """Compose one page while holding the project operation lock."""
-    with ProjectLock(Path(project_dir)):
+    with ProjectLock(Path(project_dir), timeout=PROJECT_OPERATION_LOCK_TIMEOUT):
         return _compose_page_locked(
             project_dir, page_number, storyboard, manifest_settings, source_artifacts
         )
@@ -223,7 +224,10 @@ def _compose_all_pages_locked(project_dir: Path) -> list[Path]:
     """Compose every storyboard page in numeric order after a complete preflight."""
     project_dir = Path(project_dir)
     storyboard = read_json(contained_project_path(project_dir, "plan/storyboard.json", must_exist=True))
-    manifest = read_project_manifest(contained_project_path(project_dir, "project.json", must_exist=True))
+    manifest = read_project_manifest(
+        contained_project_path(project_dir, "project.json", must_exist=True),
+        normalize_legacy=False,
+    )
     settings = manifest.get("settings")
     artifacts = manifest.get("artifacts", {})
     if not isinstance(settings, dict) or not isinstance(artifacts, dict):
@@ -293,7 +297,9 @@ def _compose_all_pages_locked(project_dir: Path) -> list[Path]:
             output_paths.append(project_dir / relative)
         transaction.stage_bytes(COMPOSITION_CACHE_PATH, cache_payload)
         # Re-read under the lock so a concurrent writer's manifest is not lost.
-        locked_manifest = read_project_manifest(project_dir / "project.json")
+        locked_manifest = read_project_manifest(
+            project_dir / "project.json", normalize_legacy=False
+        )
         descriptors = locked_manifest.get("artifacts")
         if not isinstance(descriptors, dict):
             descriptors = {}
@@ -311,7 +317,7 @@ def _compose_all_pages_locked(project_dir: Path) -> list[Path]:
 
 def compose_all_pages(project_dir: Path) -> list[Path]:
     """Compose every storyboard page under one consistent project snapshot."""
-    with ProjectLock(Path(project_dir)):
+    with ProjectLock(Path(project_dir), timeout=PROJECT_OPERATION_LOCK_TIMEOUT):
         return _compose_all_pages_locked(Path(project_dir))
 
 
