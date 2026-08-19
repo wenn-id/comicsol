@@ -66,17 +66,18 @@ Windows PowerShell:
 & $PYTHON -3 scripts\comic_sol.py doctor
 ```
 
-Read the last line of output:
+`doctor` prints a readiness summary plus one prefixed line per check. Read it by
+prefix, not by position:
 
-- `READY` — the deterministic engine, fonts, templates, references, and your
-  output directory are all usable. Go to step 3.
+- `READY`, with no `FAIL` line — the deterministic engine, fonts, templates,
+  references, and your output directory are all usable. Go to step 3.
 - Any `FAIL` line — fix it using the table in step 5, then run `doctor` again.
-- A `WARN` line for MCP or image capability — expected on a fresh install. MCP is
-  optional. Image capability is checked in your agent session, not here; step 3
-  explains it.
+- A `WARN` or `INFO` line about MCP or image capability — expected on a fresh
+  install. MCP is optional, and image capability is checked in your agent session
+  rather than here; step 3 explains it.
 
-`doctor` exits `0` when ready and `1` when it is not, so you can trust the exit
-code in a script.
+The exit code is the definitive signal: `doctor` exits `0` when ready and `1`
+when it is not, so you can rely on it in a script.
 
 ## 3. Understand the one requirement `doctor` cannot check
 
