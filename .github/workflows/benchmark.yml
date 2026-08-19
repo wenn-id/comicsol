@@ -67,6 +67,24 @@ jobs:
             --output-root "${RUNNER_TEMP}/baseline/projects" \
             --results "${GITHUB_WORKSPACE}/benchmark/baseline"
 
+      - name: Summarize the candidate revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python -c 'from comic_sol_product import __version__; print(__version__)')"
+          python scripts/benchmark_summary.py \
+            --results benchmark/candidate \
+            --consistency-baseline "benchmarks/consistency/baseline-v${version}.json" \
+            --output benchmark/candidate-summary.json
+
+      - name: Summarize the baseline revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/benchmark_summary.py \
+            --results benchmark/baseline \
+            --output benchmark/baseline-summary.json
+
       - name: Diff the two revisions
         shell: bash
         run: |
@@ -75,15 +93,28 @@ jobs:
             --baseline benchmark/baseline \
             --candidate benchmark/candidate \
             --diff-output benchmark/diff.json
+          python scripts/benchmark_summary.py \
+            --baseline benchmark/baseline-summary.json \
+            --candidate benchmark/candidate-summary.json \
+            --output benchmark/summary-delta.json
           grep -Fq "NO REGRESSION" benchmark/diff.md
+          grep -Fq "NO REGRESSION" benchmark/summary-delta.md
 
       - name: Publish the benchmark report
         if: always()
         shell: bash
         run: |
-          if [ -f benchmark/diff.md ]; then
-            cat benchmark/diff.md >> "$GITHUB_STEP_SUMMARY"
-          fi
+          set -euo pipefail
+          for report in \
+            benchmark/candidate-summary.md \
+            benchmark/baseline-summary.md \
+            benchmark/summary-delta.md \
+            benchmark/diff.md; do
+            if [ -f "${report}" ]; then
+              cat "${report}" >> "$GITHUB_STEP_SUMMARY"
+              printf '\\n' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
 
       - name: Upload benchmark evidence
         if: always()

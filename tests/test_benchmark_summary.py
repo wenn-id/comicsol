@@ -687,6 +687,7 @@ class SummaryIntegrationTests(unittest.TestCase):
 
     def test_docs_publish_the_ci_wiring_for_both_summaries_and_the_delta(self):
         documentation = (ROOT / "docs/benchmark.md").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github/workflows/benchmark.yml").read_text(encoding="utf-8")
         for token in (
             ".github/workflows/benchmark.yml",
             "benchmark/candidate-summary.json",
@@ -694,8 +695,26 @@ class SummaryIntegrationTests(unittest.TestCase):
             "benchmark/summary-delta.json",
             "GITHUB_STEP_SUMMARY",
         ):
-            with self.subTest(token=token):
+            with self.subTest(token=token, source="documentation"):
                 self.assertIn(token, documentation)
+        for token in (
+            "name: Summarize the candidate revision",
+            "name: Summarize the baseline revision",
+            "python scripts/benchmark_summary.py",
+            "--results benchmark/candidate",
+            "--results benchmark/baseline",
+            "--output benchmark/candidate-summary.json",
+            "--output benchmark/baseline-summary.json",
+            "--baseline benchmark/baseline-summary.json",
+            "--candidate benchmark/candidate-summary.json",
+            "--output benchmark/summary-delta.json",
+            "benchmark/candidate-summary.md",
+            "benchmark/baseline-summary.md",
+            "benchmark/summary-delta.md",
+            'cat \"${report}\" >> \"$GITHUB_STEP_SUMMARY\"',
+        ):
+            with self.subTest(token=token, source="workflow"):
+                self.assertIn(token, workflow)
 
 
 if __name__ == "__main__":
