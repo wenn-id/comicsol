@@ -6,6 +6,8 @@ synthetic scores, and the committed baseline is required to declare its visual
 plane unscored.
 """
 
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -36,6 +38,8 @@ from tests.consistency_benchmark import (
     definition_digest,
     immutable_traits,
     invariant_pins,
+    load_scorecard,
+    main,
     panel_prompt,
     resolved_panels,
     scorecard_template,
@@ -87,6 +91,14 @@ def _scored_template(score=4, unscored=()):
         "reviewer": "test suite",
     })
     return scorecard
+
+
+def _run_command(*argv):
+    """Run the benchmark CLI, returning its exit code, stdout, and stderr."""
+    out, reported = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(reported):
+        code = main(list(argv))
+    return code, out.getvalue(), reported.getvalue()
 
 
 class ConsistencyDefinitionTests(unittest.TestCase):
@@ -314,6 +326,41 @@ class ConsistencyScorecardTests(unittest.TestCase):
         with self.assertRaises(ScorecardError) as raised:
             summarize_scorecard(unattributed)
         self.assertIn("review.reviewer", str(raised.exception))
+
+
+class ConsistencyCommandTests(unittest.TestCase):
+    def test_summarize_fails_closed_on_missing_unreadable_or_malformed_input(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            malformed = root / "malformed.json"
+            malformed.write_text('{"panels": ', encoding="utf-8")
+            not_utf8 = root / "not-utf8.json"
+            not_utf8.write_bytes(b"\xff\xfe{}")
+            foreign = root / "foreign.json"
+            foreign.write_text(json.dumps({"kind": "something-else"}), encoding="utf-8")
+            for path in (root / "absent.json", malformed, not_utf8, foreign):
+                with self.subTest(scorecard=path.name):
+                    code, _, reported = _run_command("summarize", str(path))
+                    # A traceback is not a diagnostic: the command owns its failure.
+                    self.assertEqual(1, code)
+                    self.assertIn("invalid scorecard", reported)
+
+    def test_load_scorecard_names_the_path_it_could_not_use(self):
+        with tempfile.TemporaryDirectory() as raw:
+            missing = Path(raw) / "absent.json"
+            with self.assertRaises(ScorecardError) as raised:
+                load_scorecard(missing)
+            self.assertIn(missing.name, str(raised.exception))
+
+    def test_emitted_scorecard_summarizes_as_unscored(self):
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "scorecard.json"
+            self.assertEqual(0, _run_command("scorecard", str(path))[0])
+            code, printed, _ = _run_command("summarize", str(path))
+            self.assertEqual(0, code)
+            summary = json.loads(printed)
+            self.assertFalse(summary["complete"])
+            self.assertEqual(TOTAL_SCORES, summary["overall"]["total"])
 
 
 class ConsistencyProjectTests(unittest.TestCase):
