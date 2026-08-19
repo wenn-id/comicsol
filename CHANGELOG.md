@@ -31,6 +31,28 @@
   dimensions a reviewer actually scored, and records the release baseline in
   `benchmarks/consistency/baseline-v2.0.0rc4.json` with its visual plane explicitly
   unscored.
+- Added a compact, version-tagged benchmark summary report
+  (`scripts/benchmark_summary.py`) that pools each metric's numerator and denominator
+  across cases, so pipeline success, resume success, panel acceptance, repair rate,
+  dialogue correctness, and export success are reported over all cases, all panels, all
+  dialogue checks, and all exported pages, and that publishes both machine-readable JSON
+  and a reviewable Markdown table suitable for release notes or a CI artifact.
+- Benchmark summaries carry one `v<engine version>+<git revision>` tag taken from the
+  records themselves, fail closed on records spanning more than one engine revision or a
+  foreign harness version, repeat the limitations of the records they summarize, claim
+  `proves_visual_quality` only when every summarized record does, and are byte-identical
+  for two byte-identical deterministic runs.
+- Comparing two benchmark summaries reports every pooled metric as a baseline,
+  candidate, delta, and verdict under an explicit tolerance, and fails closed on an
+  unreadable or foreign summary, a candidate case that is not passed, and case sets that
+  differ between the two runs, because pooled aggregates over different case sets are not
+  comparable.
+- Benchmark summaries fold in character consistency metrics from the published baseline
+  or a scored scorecard as reported, never gated, evidence: invariant pinning and trait
+  restatement restate the structural plane, visual coverage and the normalized visual
+  score report only what a reviewer actually scored, an unscored dimension is never
+  averaged in as a zero, and an unattributable score or a scorecard from another
+  definition is refused rather than summarized.
 
 ### Removed
 

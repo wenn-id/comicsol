@@ -154,6 +154,149 @@ the decision is `NO REGRESSION`. It fails closed on:
 `.github/workflows/benchmark.yml` runs this end to end: it benchmarks the merge base
 and the current revision, uploads both result sets, and gates on the diff.
 
+## Summary report
+
+A directory of result records is complete evidence and an unreadable report. Nobody
+qualifying a release reads six metrics across every case and concludes anything from
+them, so `scripts/benchmark_summary.py` folds one revision's records into one
+compact, version-tagged summary:
+
+```sh
+python scripts/benchmark_summary.py \
+  --results build/benchmark/results \
+  --output build/benchmark/summary.json
+```
+
+The summary is a separate tool on purpose. Result records are the interface, so a
+summary can be produced from results that already exist — an archived CI artifact, or
+a baseline benchmarked from another worktree — without rerunning the engine and
+without touching the byte-reproducible run path.
+
+It writes `summary.json` and a reviewable `summary.md` beside it (or wherever
+`--markdown` points), and:
+
+- pools every metric's numerator and denominator across cases, so `panel_acceptance`
+  is accepted panels over **all** panels, `repair_rate` is extra generation calls over
+  all panels, `dialogue_correctness` is passing dialogue page checks and tail regions
+  over all of them, `export_success` is verified PDF pages over all expected pages,
+  and `pipeline_success` and `resume_success` are successful cases over all cases. An
+  average of per-case ratios would weight a one-panel case like a twelve-panel case;
+  pooling does not,
+- carries one `version_tag` of the form `v<engine version>+<git revision>`, taken from
+  the records themselves, and fails closed when the records span more than one engine
+  revision or a foreign harness version, because those records do not summarize one
+  revision,
+- keeps the honesty labeling of the records it summarizes: it repeats their
+  `limitations` and reports `proves_visual_quality: true` only when every summarized
+  record does,
+- is byte-identical for two byte-identical deterministic runs.
+
+`status` is `passed` only when every case passed, no summary exception was raised, and
+every gating metric is at `1.0`. `repair_rate` is not a gating metric: a case that
+declares a scripted repair is supposed to record one, so a non-zero repair rate is
+evidence rather than a failure.
+
+### Character consistency metrics
+
+`--consistency-baseline` folds the character consistency baseline
+(`benchmarks/consistency/baseline-v<version>.json`) into the summary, and
+`--consistency-scorecard` folds a scored scorecard:
+
+```sh
+python scripts/benchmark_summary.py \
+  --results build/benchmark/results \
+  --consistency-baseline benchmarks/consistency/baseline-v2.0.0rc4.json \
+  --consistency-scorecard /tmp/consistency-scorecard.json \
+  --output build/benchmark/summary.json
+```
+
+Both planes are read from their own published artifacts, never by importing the test
+tree, and **neither one gates**:
+
+| metric | numerator / denominator |
+| --- | --- |
+| `consistency_invariant_pinning` | recorded over expected storyboard invariant pins |
+| `consistency_trait_restatement` | recorded over expected per-prompt trait restatements |
+| `consistency_visual_coverage` | dimensions a reviewer scored over all scoreable dimensions |
+| `consistency_visual_score` | summed scores over the published scale maximum, **over scored entries only** |
+
+The first two restate the structural plane that `tests/test_consistency_benchmark.py`
+already asserts. The last two report the visual plane, which is a reviewer judgement:
+an unscored dimension is reported as unscored and never averaged in as a zero, a
+scored scorecard without `review.reviewer` and `review.method` is refused rather than
+summarized, and a scorecard describing a different number of scoreable dimensions than
+the baseline is refused because the two are not one definition. See
+[`docs/character-consistency-benchmark.md`](character-consistency-benchmark.md).
+
+## Comparing two summaries
+
+The result diff answers "did any case regress". The summary delta answers the release
+question — "did this revision get better or worse" — in one table:
+
+```sh
+python scripts/benchmark_summary.py \
+  --baseline /tmp/baseline/summary.json \
+  --candidate /tmp/candidate/summary.json \
+  --output build/benchmark/summary-delta.json
+```
+
+Every pooled metric is reported as `baseline`, `candidate`, `delta`, and a verdict of
+`improved`, `unchanged`, or `regressed` under `--tolerance` (default `0.0`). The delta
+writes `summary-delta.json` plus `summary-delta.md`, exits non-zero unless the decision
+is `NO REGRESSION`, and fails closed on an unreadable or foreign summary, a candidate
+case that is not `passed`, and case sets that differ between the two runs, because
+pooled aggregates over different case sets are not comparable.
+
+Character consistency verdicts are reported under `advisory` and never change the
+decision. A consistency metric published by only one of the two summaries is listed as
+unavailable rather than treated as a change.
+
+### Wiring the summary into CI
+
+`.github/workflows/benchmark.yml` already benchmarks the merge base and the current
+revision. Summarize both and gate on the delta so a pull request shows a metric table
+instead of a directory of JSON:
+
+```yaml
+      - name: Summarize the candidate revision
+        shell: bash
+        env:
+          VERSION: ${{ steps.engine.outputs.version }}
+        run: |
+          set -euo pipefail
+          python scripts/benchmark_summary.py \
+            --results benchmark/candidate \
+            --consistency-baseline "benchmarks/consistency/baseline-v${VERSION}.json" \
+            --output benchmark/candidate-summary.json
+
+      - name: Summarize the baseline revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/benchmark_summary.py \
+            --results benchmark/baseline \
+            --output benchmark/baseline-summary.json
+
+      - name: Compare the two summaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/benchmark_summary.py \
+            --baseline benchmark/baseline-summary.json \
+            --candidate benchmark/candidate-summary.json \
+            --output benchmark/summary-delta.json
+          grep -Fq "NO REGRESSION" benchmark/summary-delta.md
+```
+
+The baseline is summarized by the current tool from the records it produced, not from
+its own worktree: result records are the interface, so a baseline predating the summary
+tool still summarizes. Only the candidate folds in a consistency baseline, because the
+baseline revision may carry a different engine version and therefore a different
+consistency baseline file, and a one-sided consistency metric is advisory anyway.
+`cat benchmark/candidate-summary.md benchmark/summary-delta.md >> "$GITHUB_STEP_SUMMARY"`
+publishes both tables on the run page; `benchmark/` is already uploaded as the
+`benchmark-results` artifact.
+
 ## Adding a case
 
 1. Add a fixture directory (or reuse an existing one) with the required files.
