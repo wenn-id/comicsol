@@ -42,6 +42,7 @@ REQUIRED_SDIST_SUFFIXES = frozenset(
 FORBIDDEN_WHEEL_MEMBERS = frozenset(
     {
         "comic_sol_product/engine/assemble_release.py",
+        "comic_sol_product/engine/benchmark.py",
         "comic_sol_product/engine/build_portable.py",
         "comic_sol_product/engine/clean_install_smoke.py",
         "comic_sol_product/engine/installed_mcp_smoke.py",
