@@ -1,0 +1,144 @@
+{
+  "pages": [
+    {
+      "layout": "hero-top-two-bottom",
+      "number": 1,
+      "panels": [
+        {
+          "action": "Ada leans over the mast rail and presses the brass signal key.",
+          "beat": "The routine dawn pulse leaves the mast.",
+          "characters": [
+            "ada"
+          ],
+          "composition": "Ada on the right third, lattice receding left, upper-left kept clear for caption",
+          "continuity": [
+            "ada:copper headset band worn above the ears",
+            "relay-mast:fog-bleached steel lattice with oxidized copper cabling, lit only by a low grey dawn"
+          ],
+          "expression": "patient concentration",
+          "id": "p01-01",
+          "lighting": "flat grey dawn from behind the fog with a weak copper glint on the cabling",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx"
+          ],
+          "order": 1,
+          "rect": {
+            "height": 1176,
+            "width": 1472,
+            "x": 64,
+            "y": 64
+          },
+          "scene_id": "relay-mast",
+          "shot": "wide establishing shot, camera slightly below the platform",
+          "text": [
+            {
+              "anchor": "top-left",
+              "content": "Nine years of dawns. The same pulse into the same fog.",
+              "id": "p01-01-t01",
+              "kind": "caption",
+              "priority": 1,
+              "speaker": null
+            }
+          ]
+        },
+        {
+          "action": "Ada's hand freezes on the key as the needle swings back.",
+          "beat": "The pulse returns.",
+          "characters": [
+            "ada"
+          ],
+          "composition": "tight on Ada's face and the gauge, lower-right left open for dialogue",
+          "continuity": [
+            "ada:pale burn scar across the left cheekbone"
+          ],
+          "expression": "disbelief cracking into focus",
+          "id": "p01-02",
+          "lighting": "cold fog light with a single copper reflection on the gauge glass",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx"
+          ],
+          "order": 2,
+          "rect": {
+            "height": 1064,
+            "width": 720,
+            "x": 64,
+            "y": 1272
+          },
+          "scene_id": "relay-mast",
+          "shot": "close-up over the shoulder",
+          "text": [
+            {
+              "anchor": "bottom-right",
+              "content": "That is not my echo.",
+              "id": "p01-02-t01",
+              "kind": "dialogue",
+              "priority": 1,
+              "speaker": "ada",
+              "speaker_anchor": [
+                0.42,
+                0.46
+              ],
+              "voice_source": "human"
+            }
+          ]
+        },
+        {
+          "action": "Ada descends the wet basalt stair two steps at a time.",
+          "beat": "She carries the answer down to the town.",
+          "characters": [
+            "ada"
+          ],
+          "composition": "Ada small in frame on the left, stair falling away right, top kept clear",
+          "continuity": [
+            "ada:grey canvas coat with a rolled left cuff",
+            "harbour-stair:wet basalt steps descending between fog-dulled lamp posts"
+          ],
+          "expression": "urgent resolve",
+          "id": "p01-03",
+          "lighting": "lamp posts blooming in fog, dawn brightening the stair below",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx"
+          ],
+          "order": 3,
+          "rect": {
+            "height": 1064,
+            "width": 720,
+            "x": 816,
+            "y": 1272
+          },
+          "scene_id": "harbour-stair",
+          "shot": "high wide shot down the stair",
+          "text": [
+            {
+              "anchor": "top-center",
+              "content": "Somebody out there is still transmitting.",
+              "id": "p01-03-t01",
+              "kind": "caption",
+              "priority": 1,
+              "speaker": null
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "schema_version": "1.0"
+}
