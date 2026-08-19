@@ -236,6 +236,10 @@ class ConsistencyPlaneTests(TemporaryRootTestCase):
         unattributed["review"] = {"method": None, "reviewer": None}
         with self.assertRaisesRegex(ValueError, "review.method and review.reviewer"):
             load_consistency_scorecard(self._json(unattributed, "unattributed.json"))
+        with self.assertRaisesRegex(ValueError, "review.engine_version"):
+            invalid_type = _scorecard({"face": 4})
+            invalid_type["review"]["engine_version"] = ["2.0.0rc4"]
+            load_consistency_scorecard(self._json(invalid_type, "invalid-type.json"))
         with self.assertRaisesRegex(ValueError, "outside the published scale"):
             load_consistency_scorecard(self._json(_scorecard({"face": 9}), "high.json"))
         with self.assertRaisesRegex(ValueError, "integer or null"):
@@ -246,6 +250,14 @@ class ConsistencyPlaneTests(TemporaryRootTestCase):
             load_consistency_baseline(
                 self._json(_baseline(kind="something-else"), "foreign.json")
             )
+        over_recorded = _baseline(
+            structural={
+                **_baseline()["structural"],
+                "invariant_pins": {"expected": 60, "recorded": 61},
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "recorded.*expected"):
+            load_consistency_baseline(self._json(over_recorded, "over-recorded.json"))
         broken = _baseline()
         broken["structural"] = {
             **broken["structural"],
@@ -566,6 +578,14 @@ class SummaryDeltaTests(TemporaryRootTestCase):
         delta = diff_summaries(baseline, candidate, self.root / "delta.json")
         self.assertEqual("failed", delta["status"])
         self.assertTrue(any("candidate" in item for item in delta["exceptions"]))
+
+    def test_different_engine_revisions_are_not_comparable(self):
+        baseline = self._summary("baseline", [_result("case-one", engine="2.0.0rc3")])
+        candidate = self._summary("candidate", [_result("case-one", engine="2.0.0rc4")])
+        delta = diff_summaries(baseline, candidate, self.root / "delta.json")
+        self.assertEqual("REGRESSION", delta["decision"])
+        self.assertEqual("failed", delta["status"])
+        self.assertTrue(any("engine" in item for item in delta["exceptions"]))
 
     def test_differing_case_sets_are_not_comparable(self):
         baseline = self._summary(

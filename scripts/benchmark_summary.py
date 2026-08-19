@@ -225,6 +225,13 @@ def _is_count_pair(value: object) -> bool:
     return all(_is_count(value.get(field)) for field in ("expected", "recorded"))
 
 
+def _has_valid_provenance(review: object, fields: tuple[str, ...]) -> bool:
+    """Require every provenance field to be a non-empty string."""
+    return isinstance(review, Mapping) and all(
+        isinstance(review.get(field), str) and review[field].strip() for field in fields
+    )
+
+
 def load_consistency_baseline(path: Path) -> dict[str, Any]:
     """Read and validate one character consistency baseline report."""
     baseline = _read_json_object(path)
@@ -254,6 +261,8 @@ def load_consistency_baseline(path: Path) -> dict[str, Any]:
                 problems.append(
                     f"structural.{field} must record non-negative expected and recorded counts"
                 )
+            elif structural[field]["recorded"] > structural[field]["expected"]:
+                problems.append(f"structural.{field}.recorded must not exceed expected")
         for field in ("character_count", "page_count", "panel_count"):
             if not _is_count(structural.get(field)):
                 problems.append(f"structural.{field} must be a non-negative integer")
@@ -372,11 +381,8 @@ def load_consistency_scorecard(path: Path) -> dict[str, Any]:
             problems.append(f"{location}: score is outside the published scale")
     review = scorecard.get("review")
     scored = any(score is not None for _, score in _scorecard_entries(scorecard))
-    if scored and not (
-        isinstance(review, Mapping)
-        and str(review.get("reviewer") or "").strip()
-        and str(review.get("method") or "").strip()
-        and str(review.get("engine_version") or "").strip()
+    if scored and not _has_valid_provenance(
+        review, ("engine_version", "method", "reviewer")
     ):
         problems.append(
             "a scored scorecard must name review.engine_version, review.method and "
@@ -832,6 +838,16 @@ def diff_summaries(
     advisory: list[str] = []
 
     if before is not None and after is not None:
+        before_revision = before.get("revision")
+        after_revision = after.get("revision")
+        if not isinstance(before_revision, Mapping) or not isinstance(after_revision, Mapping):
+            exceptions.append("summaries must publish revision provenance")
+        else:
+            for field in ("engine_version", "git_revision"):
+                if before_revision.get(field) != after_revision.get(field):
+                    exceptions.append(f"summary {field} values differ")
+        if before.get("harness_version") != after.get("harness_version"):
+            exceptions.append("summary harness_version values differ")
         for label, summary in (("baseline", before), ("candidate", after)):
             if summary["status"] != "passed":
                 exceptions.append(f"{label}: summary status is {summary['status']!r}")
