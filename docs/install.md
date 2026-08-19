@@ -2,6 +2,11 @@
 
 Comic Sol `v2.0.0rc4` is a prerelease distributed as native portable archives for Linux, macOS, and Windows, plus a Python wheel/source archive and an OCI image definition. Native archives bundle Python 3.11, Pillow, MCP, fonts, templates, the Skill, and references; no system Python is required after extraction.
 
+> **First time installing Comic Sol?** Start with
+> [`docs/onboarding.md`](onboarding.md) instead. It is one short path from install
+> to a first comic. This page is the complete distribution reference: archives,
+> checksum verification, upgrade, rollback, uninstall, and containers.
+
 ## Recommended companion: Superpowers
 
 For structured brainstorming, planning, debugging, and verification workflows,
