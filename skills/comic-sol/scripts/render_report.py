@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -543,7 +544,7 @@ def _resume(project_dir: Path) -> str:
 
 
 def _render_report_locked(project_dir: Path, output_path: Path | None = None) -> Path:
-    """Render structured QA sections and atomically publish UTF-8 Markdown."""
+    """Render structured QA sections and publish the default report atomically."""
     project_dir = Path(project_dir)
     manifest = read_project_manifest(project_dir / "project.json")
     records = _load_records(project_dir)
@@ -567,10 +568,25 @@ def _render_report_locked(project_dir: Path, output_path: Path | None = None) ->
     rendered = template
     for token, content in replacements.items():
         rendered = rendered.replace(token, content)
-    destination = Path(output_path) if output_path is not None else project_dir / "qa/report.md"
-    atomic_write_bytes(destination, (rendered.rstrip() + "\n").encode("utf-8"))
-    if destination == project_dir / "qa/report.md":
-        _record_report_descriptor(project_dir, destination)
+    report_bytes = (rendered.rstrip() + "\n").encode("utf-8")
+
+    if output_path is not None:
+        destination = Path(output_path)
+        atomic_write_bytes(destination, report_bytes)
+        return destination
+
+    destination = project_dir / "qa/report.md"
+    with ProjectTransaction(project_dir, "report-publish") as transaction:
+        artifacts = manifest.get("artifacts")
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+        artifacts["qa_report"] = {
+            "path": "qa/report.md",
+            "sha256": hashlib.sha256(report_bytes).hexdigest(),
+        }
+        manifest["artifacts"] = artifacts
+        transaction.stage_bytes("qa/report.md", report_bytes)
+        transaction.stage_bytes("project.json", canonical_artifact_bytes(manifest))
     return destination
 
 
@@ -578,26 +594,6 @@ def render_report(project_dir: Path, output_path: Path | None = None) -> Path:
     """Render a report and descriptor from one locked project snapshot."""
     with ProjectLock(Path(project_dir)):
         return _render_report_locked(Path(project_dir), output_path)
-
-
-def _record_report_descriptor(project_dir: Path, report_path: Path) -> None:
-    """Record the qa_report descriptor final validation requires.
-
-    Mirrors ``export_pdf.guarded_export`` recording the pdf descriptor, so the
-    stage-by-stage route reaches a valid terminal state without a manual edit.
-    """
-    manifest_path = project_dir / "project.json"
-    with ProjectTransaction(project_dir, "report-descriptor") as transaction:
-        manifest = read_project_manifest(manifest_path, normalize_legacy=False)
-        artifacts = manifest.get("artifacts")
-        if not isinstance(artifacts, dict):
-            artifacts = {}
-        artifacts["qa_report"] = {
-            "path": "qa/report.md",
-            "sha256": sha256_file(report_path),
-        }
-        manifest["artifacts"] = artifacts
-        transaction.stage_bytes("project.json", canonical_artifact_bytes(manifest))
 
 
 def _build_parser() -> argparse.ArgumentParser:

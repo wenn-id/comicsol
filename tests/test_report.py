@@ -1,6 +1,5 @@
 import hashlib
 import io
-import json
 import shutil
 import tempfile
 import unittest
@@ -14,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 from scripts.comic_sol import atomic_write_json, canonical_json_bytes, read_json  # noqa: E402
 from scripts.quality_records import PANEL_CHECK_IDS  # noqa: E402
 from scripts.render_report import QaSummary, main, render_report, summarize_qa  # noqa: E402
+from scripts import project_io  # noqa: E402
 
 
 def panel_record(panel_id, *, attempts=1, decision="accept", warning=None,
@@ -350,7 +350,30 @@ class ReportTests(unittest.TestCase):
         self.assertIn(f"- `p01-02, project`: {warning}", text)
         self.assertEqual(1, text.count(warning))
 
-    def test_custom_output_cli_atomic_write_and_unresolved_token_failure(self):
+    def test_report_publish_failure_restores_report_and_manifest(self):
+        render_report(self.project)
+        report_path = self.project / "qa/report.md"
+        manifest_path = self.project / "project.json"
+        before_report = report_path.read_bytes()
+        before_manifest = manifest_path.read_bytes()
+        real_replace = project_io.os.replace
+        staged_calls = 0
+
+        def fail_second_publish(source, destination, **kwargs):
+            nonlocal staged_calls
+            if Path(source).name.startswith("staged-"):
+                staged_calls += 1
+                if staged_calls == 2:
+                    raise OSError("injected report publish failure")
+            return real_replace(source, destination, **kwargs)
+
+        with self.assertRaisesRegex(OSError, "injected report publish failure"):
+            with mock.patch.object(project_io.os, "replace", side_effect=fail_second_publish):
+                render_report(self.project)
+
+        self.assertEqual(before_report, report_path.read_bytes())
+        self.assertEqual(before_manifest, manifest_path.read_bytes())
+
         custom = self.project / "deliverables/report.md"
         self.assertEqual(custom, render_report(self.project, custom))
         self.assertTrue(custom.is_file())
