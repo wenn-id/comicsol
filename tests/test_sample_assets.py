@@ -23,7 +23,7 @@ DERIVED_RASTERS = (
 )
 
 
-def tracked_rasters() -> tuple[Path, ...]:
+def tracked_sample_rasters() -> tuple[Path, ...]:
     compatibility = {
         SAMPLE / "panels/raw",
         SAMPLE / "panels/clean",
@@ -31,7 +31,7 @@ def tracked_rasters() -> tuple[Path, ...]:
     return tuple(
         sorted(
             path
-            for path in (*ROOT.glob("samples/**/*.png"), *ROOT.glob("assets/*.png"))
+            for path in SAMPLE.glob("**/*.png")
             if path.parent not in compatibility
         )
     )
@@ -59,8 +59,8 @@ class SampleAssetTests(unittest.TestCase):
         for relative in ("panels/raw", "panels/clean"):
             shutil.rmtree(self.project / relative, ignore_errors=True)
 
-    def test_tracked_rasters_stay_within_sample_weight_budget(self):
-        total = sum(path.stat().st_size for path in tracked_rasters())
+    def test_tracked_sample_rasters_stay_within_weight_budget(self):
+        total = sum(path.stat().st_size for path in tracked_sample_rasters())
 
         self.assertLessEqual(total, MAX_TRACKED_RASTER_BYTES)
         for relative in DERIVED_RASTERS:
