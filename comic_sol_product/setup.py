@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import stat
@@ -29,6 +30,60 @@ MAX_CONFIG_BACKUPS = 5
 _REPARSE_POINT = 0x400
 
 
+def _open_lock_descriptor(path: Path) -> int:
+    """Open a Windows lock file without following reparse points."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    class _FileInformation(ctypes.Structure):
+        _fields_ = [
+            ("attributes", wintypes.DWORD),
+            ("creation_time", wintypes.FILETIME),
+            ("access_time", wintypes.FILETIME),
+            ("write_time", wintypes.FILETIME),
+            ("volume", wintypes.DWORD),
+            ("size_high", wintypes.DWORD),
+            ("size_low", wintypes.DWORD),
+            ("links", wintypes.DWORD),
+            ("index_high", wintypes.DWORD),
+            ("index_low", wintypes.DWORD),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    handle = kernel32.CreateFileW(
+        str(path),
+        0xC0000000,  # GENERIC_READ | GENERIC_WRITE
+        0x00000001 | 0x00000002 | 0x00000004,
+        None,
+        4,  # OPEN_ALWAYS
+        0x00200000,  # FILE_FLAG_OPEN_REPARSE_POINT
+        None,
+    )
+    invalid = ctypes.c_void_p(-1).value
+    handle_value = getattr(handle, "value", handle)
+    if handle_value == invalid:
+        error_number = ctypes.get_last_error()
+        raise OSError(error_number, ctypes.FormatError(error_number))
+    try:
+        kernel32.GetFileInformationByHandle.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(_FileInformation),
+        ]
+        kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+        information = _FileInformation()
+        if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(information)):
+            error_number = ctypes.get_last_error()
+            raise OSError(error_number, ctypes.FormatError(error_number))
+        if information.attributes & _REPARSE_POINT:
+            raise OSError("client config lock must not be a symlink or reparse point")
+        return msvcrt.open_osfhandle(handle_value, os.O_RDWR)
+    except BaseException:
+        kernel32.CloseHandle(handle)
+        raise
+
+
 @dataclass(frozen=True)
 class _FileSnapshot:
     data: bytes
@@ -54,10 +109,15 @@ class _ConfigLock:
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         nofollow = getattr(os, "O_NOFOLLOW", 0)
-        if not nofollow and self.path.is_symlink():
-            raise ValueError("client config lock path must not be a symlink")
-        descriptor = os.open(self.path, os.O_RDWR | os.O_CREAT | nofollow, 0o600)
+        if not nofollow and os.name != "nt":
+            raise OSError("client config lock requires no-follow open support")
+        if os.name == "nt":
+            descriptor = _open_lock_descriptor(self.path)
+        else:
+            descriptor = os.open(self.path, os.O_RDWR | os.O_CREAT | nofollow, 0o600)
         self._handle = os.fdopen(descriptor, "r+b")
+        if os.name != "nt" and self._handle is not None:
+            os.fchmod(self._handle.fileno(), 0o600)
         try:
             if os.name == "nt":
                 self._acquire_windows()
@@ -79,7 +139,7 @@ class _ConfigLock:
                 fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return
             except OSError as error:
-                if error.errno not in {11, 13} or time.monotonic() >= deadline:
+                if error.errno not in {errno.EAGAIN, errno.EACCES, errno.EDEADLK} or time.monotonic() >= deadline:
                     raise TimeoutError("client config is locked") from error
                 time.sleep(0.05)
 
@@ -310,11 +370,19 @@ def _publish_expected(path: Path, temporary: Path, expected: _FileSnapshot) -> N
         return
 
     if not (sys.platform.startswith("linux") or sys.platform == "darwin"):
-        raise OSError("atomic compare-and-publish is unavailable on this platform")
-    exchanged = False
+        _assert_snapshot(path, expected)
+        os.replace(temporary, path)
+        return
     try:
         _rename_exchange(temporary, path)
-        exchanged = True
+    except OSError as error:
+        if error.errno not in {errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP}:
+            raise
+        _assert_snapshot(path, expected)
+        os.replace(temporary, path)
+        return
+    exchanged = True
+    try:
         displaced = _read_snapshot(temporary)
         if (
             displaced.data != expected.data
@@ -393,13 +461,7 @@ def _open_snapshot_descriptor(path: Path) -> int:
         except BaseException:
             kernel32.CloseHandle(handle)
             raise
-    try:
-        metadata = path.stat(follow_symlinks=False)
-    except OSError as error:
-        raise OSError("client config could not be inspected without following links") from error
-    if path.is_symlink() or getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT:
-        raise OSError("client config must not be a symlink or reparse point")
-    return os.open(path, os.O_RDONLY)
+    raise OSError("client config requires no-follow open support")
 
 
 def _read_snapshot(path: Path) -> _FileSnapshot:
@@ -520,14 +582,18 @@ def default_adapters(home: Path | None = None) -> list[ClientAdapter]:
 
 def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: bool) -> SetupResult:
     path = adapter.config_path
-    if not adapter.detect():
+    try:
+        detected = adapter.detect()
+    except Exception as error:
+        return SetupResult(adapter.name, "failed", str(path), None, str(error))
+    if not detected:
         return SetupResult(adapter.name, "skipped", str(path), None, "client config not found")
 
     try:
         try:
             snapshot = _read_snapshot(path)
             config = adapter.load(snapshot.data)
-        except (OSError, UnicodeError, ValueError) as error:
+        except Exception as error:
             return SetupResult(
                 adapter.name,
                 "failed",
@@ -535,7 +601,10 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
                 None,
                 f"malformed or unreadable config: {error}",
             )
-        updated, changed = adapter.remove(config) if remove else adapter.mutate(config, entry)
+        try:
+            updated, changed = adapter.remove(config) if remove else adapter.mutate(config, entry)
+        except Exception as error:
+            return SetupResult(adapter.name, "failed", str(path), None, str(error))
         if not changed:
             status = "unchanged" if not remove else "not-configured"
             return SetupResult(adapter.name, status, str(path), None, "no config change required")
@@ -544,7 +613,7 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
             try:
                 snapshot = _read_snapshot(path)
                 config = adapter.load(snapshot.data)
-            except (OSError, UnicodeError, ValueError) as error:
+            except Exception as error:
                 return SetupResult(
                     adapter.name,
                     "failed",
@@ -552,7 +621,10 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
                     None,
                     f"malformed or unreadable config: {error}",
                 )
-            updated, changed = adapter.remove(config) if remove else adapter.mutate(config, entry)
+            try:
+                updated, changed = adapter.remove(config) if remove else adapter.mutate(config, entry)
+            except Exception as error:
+                return SetupResult(adapter.name, "failed", str(path), None, str(error))
             if not changed:
                 status = "unchanged" if not remove else "not-configured"
                 return SetupResult(adapter.name, status, str(path), None, "no config change required")
@@ -590,7 +662,7 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
                     )
                 _assert_snapshot(path, published)
                 _prune_backups(path)
-            except (OSError, UnicodeError, ValueError, _ConfigChangedError) as error:
+            except Exception as error:
                 try:
                     if backup_created and published is not None:
                         _assert_snapshot(path, published)
@@ -634,20 +706,28 @@ def setup_clients(
     for adapter in candidates:
         if chosen and adapter.name not in chosen:
             results.append(SetupResult(adapter.name, "skipped", str(adapter.config_path), None, "not selected"))
-        elif not adapter.detect():
-            results.append(
-                SetupResult(
-                    adapter.name,
-                    "skipped",
-                    str(adapter.config_path),
-                    None,
-                    "client config not found",
-                )
-            )
         else:
-            if entry is None:
-                entry = mcp_entry(_resolve_executable(executable), output_root)
-            results.append(_configure_one(adapter, entry, remove=False))
+            try:
+                detected = adapter.detect()
+            except Exception as error:
+                results.append(
+                    SetupResult(adapter.name, "failed", str(adapter.config_path), None, str(error))
+                )
+                continue
+            if not detected:
+                results.append(
+                    SetupResult(
+                        adapter.name,
+                        "skipped",
+                        str(adapter.config_path),
+                        None,
+                        "client config not found",
+                    )
+                )
+            else:
+                if entry is None:
+                    entry = mcp_entry(_resolve_executable(executable), output_root)
+                results.append(_configure_one(adapter, entry, remove=False))
     if using_defaults:
         present = {adapter.name for adapter in candidates}
         for name in SUPPORTED_CLIENT_NAMES:

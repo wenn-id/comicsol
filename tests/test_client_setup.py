@@ -1,4 +1,5 @@
 import contextlib
+import errno
 import json
 import os
 import stat
@@ -316,6 +317,112 @@ class ClientSetupTests(unittest.TestCase):
         with self.assertRaises(client_setup._ConfigChangedError):
             client_setup._atomic_write(config, b"stale", expected=snapshot)
         self.assertEqual(concurrent, config.read_bytes())
+
+    def test_atomic_publish_falls_back_when_exchange_is_unavailable(self):
+        config = self.home / "config.json"
+        config.write_bytes(b"original")
+        snapshot = client_setup._read_snapshot(config)
+
+        with mock.patch.object(
+            client_setup,
+            "_rename_exchange",
+            side_effect=OSError(errno.ENOTSUP, "exchange unavailable"),
+        ):
+            client_setup._atomic_write(config, b"candidate", expected=snapshot)
+
+        self.assertEqual(b"candidate", config.read_bytes())
+
+    def test_adapter_detect_failure_is_per_client(self):
+        class DetectFailure:
+            name = "detect-failure"
+            config_path = self.home / "detect.conf"
+
+            def detect(self):
+                raise TypeError("detect failed")
+
+        result = setup_clients(self.output, adapters=[DetectFailure()])[0]
+        self.assertEqual("failed", result.status)
+        self.assertIn("detect failed", result.message)
+
+    def test_adapter_mutate_failure_does_not_abort_later_adapter(self):
+        class MutateFailure:
+            name = "mutate-failure"
+
+            def __init__(self, path):
+                self.config_path = path
+
+            def detect(self):
+                return True
+
+            def load(self, raw):
+                return raw
+
+            def mutate(self, config, entry):
+                raise TypeError("mutate failed")
+
+            def remove(self, config):
+                return config, False
+
+            def dump(self, config):
+                return config
+
+            def verify(self, expected=None):
+                return True
+
+        first = self.home / "first.conf"
+        first.write_bytes(b"first")
+        second = self.home / ".cursor" / "mcp.json"
+        second.parent.mkdir(parents=True)
+        second.write_text("{}\n", encoding="utf-8")
+        results = setup_clients(
+            self.output,
+            adapters=[
+                MutateFailure(first),
+                JsonClientAdapter("cursor", second, "mcpServers"),
+            ],
+            executable=self.launcher,
+        )
+
+        self.assertEqual("failed", results[0].status)
+        self.assertIn("mutate failed", results[0].message)
+        self.assertEqual("configured", results[1].status)
+
+    def test_adapter_dump_failure_is_returned_as_per_client_failure(self):
+        class DumpFailure:
+            name = "dump-failure"
+
+            def __init__(self, path):
+                self.config_path = path
+
+            def detect(self):
+                return True
+
+            def load(self, raw):
+                return raw
+
+            def mutate(self, config, entry):
+                return b"changed", True
+
+            def remove(self, config):
+                return config, False
+
+            def dump(self, config):
+                raise KeyError("dump failed")
+
+            def verify(self, expected=None):
+                return True
+
+        config = self.home / "dump.conf"
+        config.write_bytes(b"original")
+        result = setup_clients(
+            self.output,
+            adapters=[DumpFailure(config)],
+            executable=self.launcher,
+        )[0]
+
+        self.assertEqual("failed", result.status)
+        self.assertIn("dump failed", result.message)
+        self.assertEqual(b"original", config.read_bytes())
 
     def test_setup_aborts_when_config_changes_before_publish(self):
         config = self.home / ".cursor" / "mcp.json"
