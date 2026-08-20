@@ -18,6 +18,7 @@ from .core_primitives import (
     BALLOON_COVERAGE_WARNING_RATIO,
     balloon_separation_minimum,
     balloon_subject_clearance,
+    is_geometry_point,
     rectangle_overlap_area,
     rectangle_separation,
     subject_keepout_radius,
@@ -278,6 +279,31 @@ def _subject_obstruction_regions(
     return regions
 
 
+def _attachment_near_box(
+    attachment: object, box: object
+) -> bool:
+    """Return whether a tail attachment point sits on or inside the balloon box.
+
+    The renderer places the attachment on the inscribed ellipse, which is always
+    inside the bounding box. Geometry is rounded to four decimals, so a 1-pixel
+    tolerance accommodates rounding without accepting a fully detached tail.
+    """
+    if not is_geometry_point(attachment) or not isinstance(box, Mapping):
+        return False
+    x = box.get("x")
+    y = box.get("y")
+    w = box.get("width")
+    h = box.get("height")
+    if not all(isinstance(v, int) and not isinstance(v, bool) for v in (x, y, w, h)):
+        return False
+    ax, ay = float(attachment[0]), float(attachment[1])  # type: ignore[index]
+    tolerance = 1.0
+    return (
+        ax >= x - tolerance and ax <= x + w + tolerance
+        and ay >= y - tolerance and ay <= y + h + tolerance
+    )
+
+
 def _tail_geometry_regions(
     panel_id: str,
     panel: Mapping[str, object],
@@ -296,6 +322,7 @@ def _tail_geometry_regions(
         text_id = item.get("id")
         placement = placements.get(text_id) if isinstance(text_id, str) else None
         tail = placement.get("tail") if isinstance(placement, Mapping) else None
+        box = placement.get("box") if isinstance(placement, Mapping) else None
         anchor = item.get("speaker_anchor")
         if not isinstance(tail, Mapping):
             reason = "missing-tail"
@@ -303,6 +330,8 @@ def _tail_geometry_regions(
             reason = "speaker-anchor-mismatch"
         elif tail.get("voice_source") != item.get("voice_source"):
             reason = "voice-source-mismatch"
+        elif not _attachment_near_box(tail.get("attachment"), box):
+            reason = "detached-tail"
         elif tail_geometry_result(tail, anchor, width, height) != "pass":
             reason = "tail-does-not-point-at-speaker"
         else:
@@ -442,8 +471,16 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
                 clipped_regions.append({"panel_id": panel_id, "item_id": item_id, "reason": "invalid-box"})
                 continue
             x, y, width, height = values
-            if x < 0 or y < 0 or width <= 0 or height <= 0 or x + width > panel_width or y + height > panel_height:
+            clipped = (
+                x < 0 or y < 0 or width <= 0 or height <= 0
+                or x + width > panel_width or y + height > panel_height
+            )
+            if clipped:
                 clipped_regions.append({"panel_id": panel_id, "item_id": item_id, "box": box})
+                # A box outside the clean raster is already a regenerate-level
+                # defect. Do not let it trigger secondary overlap, obstruction, or
+                # crowding failures that would obscure the primary problem.
+                continue
             for prior_id, prior_box, _ in boxes:
                 shared = rectangle_overlap_area(box, prior_box)
                 if shared <= 0:

@@ -322,11 +322,17 @@ class PageQualityTests(unittest.TestCase):
     def test_geometry_detects_clipping_overlap_and_bad_reading_order(self):
         geometry_path = self.project / "panels/p01-01/lettering.json"
         geometry = json.loads(geometry_path.read_text("utf-8"))
-        duplicate = dict(geometry["items"][0])
-        duplicate["id"] = "overlap"
-        duplicate["reading_order"] = 1
-        duplicate["box"] = {"x": -10, "y": -10, "width": 100, "height": 100}
-        geometry["items"].append(duplicate)
+        # Add a clipped box (outside the clean raster) to test clipping detection.
+        clipped = dict(geometry["items"][0])
+        clipped["id"] = "clipped"
+        clipped["reading_order"] = 2
+        clipped["box"] = {"x": -10, "y": -10, "width": 100, "height": 100}
+        # Add an in-bounds box that overlaps the first item to test overlap detection.
+        overlapping = dict(geometry["items"][0])
+        overlapping["id"] = "overlap"
+        overlapping["reading_order"] = 1
+        overlapping["box"] = {"x": 29, "y": 24, "width": 100, "height": 100}
+        geometry["items"].extend([clipped, overlapping])
         geometry_path.write_text(
             json.dumps(geometry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             "utf-8",
