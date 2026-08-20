@@ -6,6 +6,7 @@ import stat
 import sys
 import json
 from pathlib import Path
+from threading import RLock
 from typing import Any, Literal
 
 if __package__ in {None, ""}:
@@ -58,6 +59,7 @@ _SYMLINK_SCAN_CACHE: OrderedDict[
     str,
     tuple[Path, dict[str, _DirectorySnapshot]],
 ] = OrderedDict()
+_SYMLINK_SCAN_CACHE_LOCK = RLock()
 
 _VALIDATION_STAGES = frozenset({"all", "plan", "storyboard", "panels", "final", "export-ready"})
 _PANEL_ID = PANEL_ID_PATTERN
@@ -321,10 +323,11 @@ def _cache_project_snapshot(
     snapshots: dict[str, _DirectorySnapshot],
 ) -> None:
     """Store one successful scan while keeping project cache memory bounded."""
-    _SYMLINK_SCAN_CACHE[project_id] = (resolved, snapshots)
-    _SYMLINK_SCAN_CACHE.move_to_end(project_id)
-    while len(_SYMLINK_SCAN_CACHE) > _SYMLINK_SCAN_CACHE_MAX_ENTRIES:
-        _SYMLINK_SCAN_CACHE.popitem(last=False)
+    with _SYMLINK_SCAN_CACHE_LOCK:
+        _SYMLINK_SCAN_CACHE[project_id] = (resolved, snapshots)
+        _SYMLINK_SCAN_CACHE.move_to_end(project_id)
+        while len(_SYMLINK_SCAN_CACHE) > _SYMLINK_SCAN_CACHE_MAX_ENTRIES:
+            _SYMLINK_SCAN_CACHE.popitem(last=False)
 
 
 def _resolve_project(project_id: str) -> Path:
@@ -342,20 +345,23 @@ def _resolve_project(project_id: str) -> Path:
             _reject("security-error: project directory resolves outside output root")
         if not resolved.is_dir():
             _reject("security-error: project directory is not an initialized Comic Sol project")
-        cached = _SYMLINK_SCAN_CACHE.get(project_id)
+        with _SYMLINK_SCAN_CACHE_LOCK:
+            cached = _SYMLINK_SCAN_CACHE.get(project_id)
+            if cached is not None and cached[0] == resolved and "." in cached[1]:
+                _SYMLINK_SCAN_CACHE.move_to_end(project_id)
         if cached is None or cached[0] != resolved or "." not in cached[1]:
             snapshots: dict[str, _DirectorySnapshot] = {}
             _scan_subtree(resolved, ".", snapshots)
             _cache_project_snapshot(project_id, resolved, snapshots)
         else:
-            _SYMLINK_SCAN_CACHE.move_to_end(project_id)
             try:
                 refresh = (
                     _refresh_windows_snapshot if os.name == "nt" else _refresh_project_snapshot
                 )
                 snapshots, changed = refresh(resolved, cached[1])
             except Exception:
-                _SYMLINK_SCAN_CACHE.pop(project_id, None)
+                with _SYMLINK_SCAN_CACHE_LOCK:
+                    _SYMLINK_SCAN_CACHE.pop(project_id, None)
                 raise
             if changed:
                 _cache_project_snapshot(project_id, resolved, snapshots)

@@ -1,10 +1,12 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import json
 import shutil
 import sys
 import tempfile
 import unittest
+from threading import Event
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -361,6 +363,55 @@ class McpServerUnitTests(unittest.TestCase):
         finally:
             cache.clear()
             cache.update(previous)
+
+    def test_symlink_cache_concurrent_eviction_does_not_fail(self):
+        projects = {}
+        for name in ("cache-race-a", "cache-race-b", "cache-race-c"):
+            project = self.root / name
+            project.mkdir()
+            (project / "project.json").write_text("{}", encoding="utf-8")
+            projects[name] = project.resolve()
+
+        entered_move = Event()
+        release_move = Event()
+        scanned_c = Event()
+        cache_type = type(mcp_server._SYMLINK_SCAN_CACHE)
+
+        class BlockingCache(cache_type):
+            armed = False
+
+            def move_to_end(self, key, last=True):
+                if self.armed and key == "cache-race-a" and not entered_move.is_set():
+                    entered_move.set()
+                    if not release_move.wait(5):
+                        raise AssertionError("timed out waiting to release cache hit")
+                return super().move_to_end(key, last=last)
+
+        cache = BlockingCache()
+        real_scan_subtree = mcp_server._scan_subtree
+
+        def scan_subtree(project_dir, relative, snapshots):
+            if project_dir == projects["cache-race-c"]:
+                scanned_c.set()
+            return real_scan_subtree(project_dir, relative, snapshots)
+
+        with (
+            mock.patch.object(mcp_server, "_SYMLINK_SCAN_CACHE", cache),
+            mock.patch.object(mcp_server, "_SYMLINK_SCAN_CACHE_MAX_ENTRIES", 2),
+            mock.patch.object(mcp_server, "_scan_subtree", side_effect=scan_subtree),
+        ):
+            mcp_server._resolve_project("cache-race-a")
+            mcp_server._resolve_project("cache-race-b")
+            cache.armed = True
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                cached_result = pool.submit(mcp_server._resolve_project, "cache-race-a")
+                self.assertTrue(entered_move.wait(5))
+                evicting_result = pool.submit(mcp_server._resolve_project, "cache-race-c")
+                scanned_c.wait(2)
+                release_move.set()
+                self.assertEqual(projects["cache-race-a"], cached_result.result(timeout=5))
+                self.assertEqual(projects["cache-race-c"], evicting_result.result(timeout=5))
 
     @unittest.skipIf(sys.platform == "win32", "Windows requires a fresh symlink scan")
     def test_symlink_cache_hit_avoids_directory_rescan(self):
