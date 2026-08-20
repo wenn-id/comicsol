@@ -29,8 +29,9 @@ claim, and mixing them would let placeholder geometry masquerade as illustration
 
 `sunlight-courier` contains real generated artwork from an image capability, and
 its final PDF and page PNGs are tracked in Git. This is the tier to look at for
-visual output. It is also the expensive tier: its rasters dominate the repository's
-sample weight, which is why there is exactly one of them.
+visual output. The canonical clean panels and character reference remain
+full-fidelity source art; tracked lettered panels and page PNGs are compact,
+opaque-RGB delivery derivatives that preserve their published dimensions.
 
 Its canonical clean panel art is tracked once at `panels/<panel-id>/clean.png`.
 Raw and legacy-clean compatibility copies are generated locally and ignored by
@@ -140,6 +141,9 @@ Generated rasters are large and compress poorly, so this directory keeps exactly
 one tracked live-generated project and derives everything else:
 
 - Tracked binaries are limited to the single live-generated example.
+- The live example keeps canonical clean/reference art at source fidelity, while
+  its tracked lettered/page delivery rasters use compact opaque-RGB PNG encoding
+  and stay under the sample raster budget enforced by `tests/test_sample_assets.py`.
 - Deterministic examples track no rasters at all; a full four-page build is about
   2.5 MB and is produced locally in seconds.
 - No example requires a provider call, a credential, or a downloaded asset to
