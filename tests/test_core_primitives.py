@@ -4,6 +4,7 @@ from scripts.core_primitives import (
     PAGE_CHECK_IDS,
     PANEL_CHECK_IDS,
     PANEL_ID_PATTERN,
+    balloon_outline_deviation,
     balloon_separation_minimum,
     balloon_subject_clearance,
     canonical_artifact_bytes,
@@ -125,6 +126,18 @@ class BalloonGeometryPrimitiveTests(unittest.TestCase):
             "fail", tail_geometry_result({**tail, "tip": [1400.0, 100.0]}, [1.0, 0.1], 1000, 1000)
         )
         self.assertEqual("fail", tail_geometry_result(tail, "not-an-anchor", 1000, 1000))
+
+    def test_outline_deviation_is_zero_only_on_the_ellipse(self):
+        box = {"x": 0, "y": 0, "width": 200, "height": 100}
+        # Both semi-axis endpoints lie exactly on the outline.
+        self.assertAlmostEqual(0.0, balloon_outline_deviation(box, (200, 50)))
+        self.assertAlmostEqual(0.0, balloon_outline_deviation(box, (100, 100)))
+        # The centre is one semi-minor axis away from the nearest outline, so an
+        # attachment resting there is detached even though it is inside the box.
+        self.assertAlmostEqual(50.0, balloon_outline_deviation(box, (100, 50)))
+        # Deviation is unsigned: inside and outside both report a distance.
+        self.assertGreater(balloon_outline_deviation(box, (150, 50)), 0.0)
+        self.assertGreater(balloon_outline_deviation(box, (260, 50)), 0.0)
 
     def test_tail_verdict_recomputes_the_claimed_source_gap(self):
         tail = {

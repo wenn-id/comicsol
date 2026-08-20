@@ -60,6 +60,11 @@ TAIL_ALIGNMENT_MINIMUM = 0.999
 # is recomputed from the retained tip. Geometry points are published rounded to
 # four decimals, so a pixel of slack is far more than rounding needs.
 TAIL_SOURCE_GAP_TOLERANCE = 1.0
+# The renderer resolves every attachment exactly onto the balloon outline, so the
+# only slack needed here is coordinate rounding, which costs well under a
+# thousandth of a pixel. Half a pixel is generous and still rejects an
+# attachment that has drifted into the balloon body.
+TAIL_ATTACHMENT_TOLERANCE = 0.5
 
 Rectangle: TypeAlias = Mapping[str, int] | Sequence[int]
 Point: TypeAlias = Sequence[float]
@@ -189,6 +194,34 @@ def balloon_subject_clearance(
     if normalized_distance <= 1.0:
         return 0.0
     return math.hypot(delta_x, delta_y) * (1.0 - 1.0 / normalized_distance)
+
+
+def balloon_outline_deviation(box: Rectangle, point: Point) -> float:
+    """Return the radial distance from a point to an inscribed ellipse outline.
+
+    Zero means the point lies on the outline. `letter_panels` resolves every tail
+    attachment onto this outline exactly, so an attachment that has drifted off
+    it — to the balloon centre, for instance — is not attached to the balloon it
+    claims to speak from, even when it still sits inside the bounding box.
+    """
+    x, y, width, height = _rectangle_values(box)
+    if not is_geometry_point(point):
+        raise ValueError("point must contain two finite coordinates")
+    point_x, point_y = (float(value) for value in point)
+    center_x = x + width / 2
+    center_y = y + height / 2
+    radius_x = max(0.5, width / 2)
+    radius_y = max(0.5, height / 2)
+    delta_x = point_x - center_x
+    delta_y = point_y - center_y
+    normalized_distance = math.sqrt(
+        (delta_x / radius_x) ** 2 + (delta_y / radius_y) ** 2
+    )
+    if normalized_distance == 0.0:
+        # The point is the centre, whose nearest outline is one semi-axis away.
+        return min(radius_x, radius_y)
+    distance = math.hypot(delta_x, delta_y)
+    return abs(distance - distance / normalized_distance)
 
 
 def tail_geometry_result(

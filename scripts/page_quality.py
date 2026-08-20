@@ -16,6 +16,8 @@ from PIL import Image
 from .comic_sol import atomic_write_json, read_json, sha256_file
 from .core_primitives import (
     BALLOON_COVERAGE_WARNING_RATIO,
+    TAIL_ATTACHMENT_TOLERANCE,
+    balloon_outline_deviation,
     balloon_separation_minimum,
     balloon_subject_clearance,
     is_geometry_point,
@@ -279,29 +281,20 @@ def _subject_obstruction_regions(
     return regions
 
 
-def _attachment_near_box(
-    attachment: object, box: object
-) -> bool:
-    """Return whether a tail attachment point sits on or inside the balloon box.
+def _attached_to_balloon(attachment: object, box: object) -> bool:
+    """Return whether a tail attachment sits on the outline of its balloon.
 
-    The renderer places the attachment on the inscribed ellipse, which is always
-    inside the bounding box. Geometry is rounded to four decimals, so a 1-pixel
-    tolerance accommodates rounding without accepting a fully detached tail.
+    Membership in the bounding box is not enough: the balloon is the inscribed
+    ellipse, so an attachment resting at the centre is inside the box and still
+    detached from anything drawn.
     """
     if not is_geometry_point(attachment) or not isinstance(box, Mapping):
         return False
-    x = box.get("x")
-    y = box.get("y")
-    w = box.get("width")
-    h = box.get("height")
-    if not all(isinstance(v, int) and not isinstance(v, bool) for v in (x, y, w, h)):
+    try:
+        deviation = balloon_outline_deviation(box, attachment)  # type: ignore[arg-type]
+    except ValueError:
         return False
-    ax, ay = float(attachment[0]), float(attachment[1])  # type: ignore[index]
-    tolerance = 1.0
-    return (
-        ax >= x - tolerance and ax <= x + w + tolerance
-        and ay >= y - tolerance and ay <= y + h + tolerance
-    )
+    return deviation <= TAIL_ATTACHMENT_TOLERANCE
 
 
 def _tail_geometry_regions(
@@ -323,6 +316,7 @@ def _tail_geometry_regions(
         placement = placements.get(text_id) if isinstance(text_id, str) else None
         tail = placement.get("tail") if isinstance(placement, Mapping) else None
         box = placement.get("box") if isinstance(placement, Mapping) else None
+        kind = placement.get("kind") if isinstance(placement, Mapping) else None
         anchor = item.get("speaker_anchor")
         if not isinstance(tail, Mapping):
             reason = "missing-tail"
@@ -330,7 +324,11 @@ def _tail_geometry_regions(
             reason = "speaker-anchor-mismatch"
         elif tail.get("voice_source") != item.get("voice_source"):
             reason = "voice-source-mismatch"
-        elif not _attachment_near_box(tail.get("attachment"), box):
+        elif kind != "dialogue":
+            # Only dialogue is drawn as a balloon with a tail, so there is no
+            # outline to attach to and the shape cannot be verified.
+            reason = "placement-kind-mismatch"
+        elif not _attached_to_balloon(tail.get("attachment"), box):
             reason = "detached-tail"
         elif tail_geometry_result(tail, anchor, width, height) != "pass":
             reason = "tail-does-not-point-at-speaker"

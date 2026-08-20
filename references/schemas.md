@@ -606,8 +606,10 @@ rectangle the panel is later fitted into. `clipped-text` regions report the offe
 box; `balloon-subject-obstruction` regions report the measured `clearance` and the
 `required_clearance` a balloon must keep from an authored `speaker_anchor`;
 `bubble-tail-geometry` regions report a `reason` of `missing-tail`,
-`speaker-anchor-mismatch`, `voice-source-mismatch`, or
-`tail-does-not-point-at-speaker`. `balloon-crowding` is the one warning-severity
+`speaker-anchor-mismatch`, `voice-source-mismatch`, `placement-kind-mismatch`,
+`detached-tail`, or `tail-does-not-point-at-speaker`. `detached-tail` is measured
+against the ellipse actually drawn rather than its bounding box, so an attachment
+resting in the balloon body is detached even though it is inside the box. `balloon-crowding` is the one warning-severity
 deterministic check: it reports `balloons`, `coverage_ratio`, `coverage_limit`,
 `required_separation`, and `tight_pairs` per crowded panel, selects `accept-warning`,
 and never blocks export on its own.

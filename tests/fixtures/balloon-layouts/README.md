@@ -33,5 +33,6 @@ and 720x1064 for `p01-02` and `p01-03`.
 | `bad-subject-obstruction-caption.json` | A caption dropped onto another line's protected speaker anchor. |
 | `bad-tail-points-away.json` | A tail tip that no longer points at its authored speaker. |
 | `bad-tail-voice-source.json` | Tail voice source that disagrees with the storyboard. |
+| `bad-tail-detached.json` | An attachment inside the bounding box but off the drawn ellipse. |
 | `warn-crowded-coverage.json` | One balloon covering more of the panel than the reading budget allows. |
 | `warn-crowded-separation.json` | Two balloons sitting closer than the readable separation. |

@@ -428,7 +428,7 @@ class BalloonPlacementQualityTests(unittest.TestCase):
 
     def test_named_balloon_layouts_reach_their_expected_verdict(self):
         paths = sorted(BALLOON_LAYOUTS.glob("*.json"))
-        self.assertEqual(8, len(paths))
+        self.assertEqual(9, len(paths))
         for path in paths:
             layout = json.loads(path.read_text("utf-8"))
             with self.subTest(layout=path.stem):
@@ -619,6 +619,51 @@ class BalloonPlacementQualityTests(unittest.TestCase):
                     [{"panel_id": "p01-02", "reason": reason, "text_id": "p01-02-t01"}],
                     check["regions"],
                 )
+
+    def test_tail_attachment_must_sit_on_the_drawn_balloon_outline(self):
+        project = self._fresh_project()
+        geometry = json.loads(
+            (project / "panels/p01-02/lettering.json").read_text("utf-8")
+        )
+        box = next(
+            item["box"] for item in geometry["items"] if item["id"] == "p01-02-t01"
+        )
+        centre = [box["x"] + box["width"] / 2, box["y"] + box["height"] / 2]
+
+        apply_balloon_layout(project, {
+            "panels": {
+                "p01-02": {
+                    "replace": {"p01-02-t01": {"tail_fields": {"attachment": centre}}}
+                }
+            }
+        })
+        check = self._checks(project)["bubble-tail-geometry"]
+
+        # The centre is inside the bounding box, so a box-membership test would
+        # accept it. Only the ellipse outline exposes a tail attached to nothing.
+        self.assertEqual("fail", check["result"])
+        self.assertEqual(
+            [{
+                "panel_id": "p01-02",
+                "reason": "detached-tail",
+                "text_id": "p01-02-t01",
+            }],
+            check["regions"],
+        )
+
+    def test_tail_on_a_non_dialogue_placement_is_rejected(self):
+        project = self._fresh_project()
+        apply_balloon_layout(project, {
+            "panels": {"p01-02": {"replace": {"p01-02-t01": {"kind": "caption"}}}}
+        })
+        check = self._checks(project)["bubble-tail-geometry"]
+
+        # Only dialogue is drawn as a balloon, so there is no outline to verify.
+        self.assertEqual("fail", check["result"])
+        self.assertEqual(
+            ["placement-kind-mismatch"],
+            [region["reason"] for region in check["regions"]],
+        )
 
     def test_tail_geometry_detects_a_stale_speaker_anchor_echo(self):
         project = self._fresh_project()
