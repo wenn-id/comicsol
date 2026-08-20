@@ -29,6 +29,11 @@ from .character_quality import (
 from .core_primitives import PANEL_ID_PATTERN as CORE_PANEL_ID_PATTERN
 from .project_io import contained_project_path, open_path_nofollow
 from .raster_limits import MAX_DECODED_PIXELS
+from .repair_strategy import (
+    REPAIR_PLAN_PATH,
+    validate_defect_regions,
+    validate_repair_plan,
+)
 from .page_quality import validate_page_quality
 from .quality_records import PANEL_CHECK_IDS, validate_quality_checks
 from .schema import (
@@ -758,6 +763,11 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
                 ),
             ):
                 _add(issues, path, f"checks.character-identity.{category}", category)
+        for check in checks:
+            if not isinstance(check, dict):
+                continue
+            for category in validate_defect_regions(check):
+                _add(issues, path, f"checks.{check.get('id')}.{category}", category)
 
     review_fields = {"method", "reviewer", "reviewed_at"}
     review = _object(root.get("review"), review_fields, review_fields, issues, path, "review")
@@ -1593,6 +1603,13 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
 
     if needs_panels and storyboard is not None:
         panel_map = _storyboard_panel_map(storyboard)
+        # The repair plan is optional provenance: absent until a repair is
+        # planned, but re-derived and compared with the current reviews whenever
+        # it is present, so a plan can never outlive the record it describes.
+        if (project_dir / REPAIR_PLAN_PATH).is_file():
+            if _read_canonical_json(project_dir, REPAIR_PLAN_PATH, issues) is not None:
+                for category in validate_repair_plan(project_dir):
+                    _add(issues, REPAIR_PLAN_PATH, category, category)
         for panel_id, panel in panel_map.items():
             record_relative = f"qa/panels/{panel_id}.json"
             record = _read_canonical_json(project_dir, record_relative, issues)

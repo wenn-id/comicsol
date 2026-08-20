@@ -38,6 +38,7 @@ from .project_io import (
     validate_source_bytes,
 )
 from .raster_limits import MAX_DECODED_PIXELS
+from .repair_strategy import REPAIR_STRATEGIES, recorded_panel_plan
 from .schema import read_project_manifest
 from .stage_registry import (
     ARTIFACT_STAGE,
@@ -97,6 +98,9 @@ GENERATION_LIMIT_MESSAGES = {
     "transient_repeat": "at most one transient repeat is allowed per panel",
     "visual_retry": "at most two visual retries are allowed per panel",
 }
+# Both quality schemas spell an accepted panel, and either spelling protects the
+# accepted raster from being replaced before a fresh review asks for a repair.
+ACCEPTED_DECISIONS = frozenset({"accept", "accept-warning", "accept_with_warnings"})
 ProgressCallback = Callable[[dict[str, object]], None]
 
 
@@ -152,6 +156,7 @@ EVENT_DETAIL_KINDS = {
     "status": "category",
     "from": "category",
     "to": "category",
+    "strategy": "category",
     "warning_present": "boolean",
     "reused": "boolean",
 }
@@ -1534,6 +1539,44 @@ def _verify_raster(path: Path) -> tuple[int, int]:
         raise ValueError("attempt must be a readable raster") from error
 
 
+def _replacement_problem(project_dir: Path, panel_id: str) -> str | None:
+    """Report why an accepted panel raster may not be replaced yet.
+
+    Replacing an accepted raster while its QA record still accepts the panel
+    would silently invalidate every hash and dimension the record binds, so the
+    reviewed panel and the file on disk would disagree with nothing recording
+    which one the reader should trust. A repair therefore starts from a record
+    that already asked for one: the accepted bytes stay in place until the review
+    faults them. A panel with no record yet has not been accepted at all, so
+    initial generation and transient repeats remain free to re-promote.
+    """
+    record_relative = f"qa/panels/{panel_id}.json"
+    try:
+        record_path = contained_project_path(
+            project_dir, record_relative, must_exist=True
+        )
+        if not record_path.is_file():
+            return None
+        record = read_json(record_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    if record.get("decision") in ACCEPTED_DECISIONS:
+        return (
+            "accepted panel QA record does not require repair; re-review "
+            f"{record_relative} before replacing the accepted raster"
+        )
+    return None
+
+
+def _recorded_repair_strategy(project_dir: Path, panel_id: str) -> str | None:
+    """Return the repair strategy recorded for one panel, when a plan exists."""
+    entry = recorded_panel_plan(project_dir, panel_id)
+    if entry is None:
+        return None
+    strategy = entry.get("strategy")
+    return strategy if strategy in REPAIR_STRATEGIES else None
+
+
 def promote_attempt(project_dir: Path, panel_id: str, attempt_path: Path) -> Path:
     """Verify and atomically copy one retained attempt into the accepted raw slot."""
     if PANEL_ID_PATTERN.fullmatch(panel_id) is None:
@@ -1560,6 +1603,14 @@ def promote_attempt(project_dir: Path, panel_id: str, attempt_path: Path) -> Pat
             old_bytes = read_contained_bytes(project_dir, destination_relative)
             if hashlib.sha256(old_bytes).hexdigest() == hashlib.sha256(new_bytes).hexdigest():
                 return destination
+            # The repaired attempt has passed raster verification above; the
+            # accepted bytes are only touched once the review has faulted them.
+            problem = _replacement_problem(project_dir, panel_id)
+            if problem is not None:
+                raise ValueError(problem)
+            strategy = _recorded_repair_strategy(project_dir, panel_id)
+            if strategy is not None:
+                event_details["strategy"] = strategy
             number = 1
             while True:
                 archive_relative = Path(f"panels/raw/{panel_id}.attempt-{number}.png")

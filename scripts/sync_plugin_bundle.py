@@ -52,6 +52,7 @@ BUNDLED_SCRIPTS = (
     "raster_limits.py",
     "reference_strategy.py",
     "render_report.py",
+    "repair_strategy.py",
     "schema.py",
     "stage_registry.py",
     "typography.py",
