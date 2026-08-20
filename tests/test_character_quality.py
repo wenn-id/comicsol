@@ -214,6 +214,23 @@ class CharacterQualityContextTests(unittest.TestCase):
                 storyboard=board,
             )
 
+    def test_context_rejects_a_selected_reference_not_derived_from_the_identity_pack(self):
+        module = importlib.import_module("scripts.character_quality")
+        bible = character_bible()
+        pack = derive_identity_pack(bible)
+        board = storyboard()
+        plan = project_reference_plan(pack, board)
+        plan["panels"][0]["selected"][0]["path"] = "../outside.png"
+
+        with self.assertRaisesRegex(module.CharacterQualityError, "reference plan"):
+            module.character_consistency_context(
+                pack,
+                bible,
+                plan,
+                "p01-01",
+                storyboard=board,
+            )
+
 
 class CharacterIdentityCheckTests(unittest.TestCase):
     def test_warning_trait_is_explainable_without_becoming_a_hard_failure(self):
@@ -403,6 +420,21 @@ class CharacterQualityProvenanceTests(unittest.TestCase):
         self.assertEqual((), validator(self.project, self.record))
         self.assertIsNone(_accepted_panel_problem(self.project, self.record))
 
+    def test_semantically_unchanged_json_formatting_keeps_the_review_reusable(self):
+        for relative in (
+            "plan/character-identity-pack.json",
+            "logs/reference-selection.json",
+        ):
+            path = self.project / relative
+            document = json.loads(path.read_text("utf-8"))
+            path.write_text(json.dumps(document, separators=(",", ":")), encoding="utf-8")
+
+        self.assertEqual(
+            (),
+            self.module.validate_character_quality_provenance(self.project, self.record),
+        )
+        self.assertIsNone(_accepted_panel_problem(self.project, self.record))
+
     def test_changed_reference_plan_makes_the_accepted_review_stale(self):
         validator = getattr(self.module, "validate_character_quality_provenance", None)
         self.assertIsNotNone(validator, "character QA provenance validator is not implemented")
@@ -475,6 +507,17 @@ class CharacterQualityProvenanceTests(unittest.TestCase):
 
         self.assertTrue(
             any("character-trait-structure" in issue.field for issue in issues),
+            issues,
+        )
+
+    def test_panel_schema_rejects_rich_character_regions_without_provenance(self):
+        broken = deepcopy(self.record)
+        del broken["checks"][0]["provenance"]
+
+        issues = validate_panel_record(broken)
+
+        self.assertTrue(
+            any("character-provenance-structure" in issue.field for issue in issues),
             issues,
         )
 
@@ -630,6 +673,38 @@ class CharacterQualityProvenanceTests(unittest.TestCase):
         self.assertEqual("warning", character_check["regions"][0]["severity"])
         self.assertEqual([], validate_panel_record(record))
         self.assertIsNone(_accepted_panel_problem(self.project, record))
+
+    def test_unrelated_override_preserves_a_warning_character_check(self):
+        assessments = passing_assessments()
+        assessments[0].update(
+            {
+                "evidence": "face shape has a minor but recognizable drift",
+                "result": "fail",
+                "severity": "warning",
+            }
+        )
+        self.module.record_character_quality_review(
+            self.project,
+            "p01-01",
+            assessments,
+            method="human-review",
+            reviewer="editor",
+        )
+        qa_path = self.project / "qa/panels/p01-01.json"
+        record = json.loads(qa_path.read_text("utf-8"))
+        record["checks"][1].update({"result": "fail", "severity": "error"})
+        record["decision"] = "regenerate"
+        qa_path.write_bytes(canonical_artifact_bytes(record))
+
+        record_override(self.project, "p01-01", "user accepts the anatomy drift")
+
+        updated = json.loads(qa_path.read_text("utf-8"))
+        character_check = updated["checks"][0]
+        self.assertEqual(
+            ("warning", "warning"),
+            (character_check["result"], character_check["severity"]),
+        )
+        self.assertEqual([], validate_panel_record(updated))
 
     def test_overridden_panel_must_be_regenerated_before_a_new_review(self):
         assessments = passing_assessments()

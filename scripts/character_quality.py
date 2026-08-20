@@ -19,7 +19,7 @@ from .character_identity import IDENTITY_PACK_PATH, STORYBOARD_PATH, validate_id
 from .core_primitives import PANEL_ID_PATTERN, canonical_artifact_bytes
 from .project_io import ProjectTransaction, read_contained_bytes
 from .quality_records import GENERIC_EVIDENCE
-from .reference_strategy import REFERENCE_PLAN_PATH
+from .reference_strategy import REFERENCE_PLAN_PATH, project_reference_plan
 
 
 CHARACTER_TRAITS = (
@@ -137,6 +137,18 @@ def character_consistency_context(
     selected = panel.get("selected")
     if not isinstance(character_ids, list) or not isinstance(selected, list):
         raise CharacterQualityError("reference plan panel is incomplete")
+    try:
+        expected_plan = project_reference_plan(
+            identity_pack,
+            storyboard,
+            reference_budget=panel.get("reference_budget"),
+        )
+    except ValueError as error:
+        raise CharacterQualityError(f"reference plan is invalid: {error}") from error
+    if reference_plan != expected_plan:
+        raise CharacterQualityError(
+            "reference plan does not match the identity pack and storyboard"
+        )
     storyboard_ids = _storyboard_characters(storyboard, panel_id)
     unknown_storyboard_ids = [
         character_id for character_id in storyboard_ids if character_id not in pack
@@ -430,7 +442,7 @@ def validate_character_identity_check(
 ) -> tuple[str, ...]:
     """Return stable categories for a rich character-identity check."""
     if "provenance" not in check:
-        return ()
+        return () if check.get("regions") == [] else ("character-provenance-structure",)
     issues: set[str] = set()
     if set(check) != CHECK_FIELDS:
         issues.add("character-check-structure")
@@ -550,8 +562,6 @@ def _bound_document(
     except (OSError, ValueError) as error:
         issues.append(f"{label} cannot be read: {type(error).__name__}")
         return None
-    if hashlib.sha256(payload).hexdigest() != provenance.get(hash_field):
-        issues.append(f"{label} hash does not match the reviewed artifact")
     try:
         document = json.loads(payload)
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -560,6 +570,8 @@ def _bound_document(
     if not isinstance(document, Mapping):
         issues.append(f"{label} must contain a JSON object")
         return None
+    if _digest(document) != provenance.get(hash_field):
+        issues.append(f"{label} hash does not match the reviewed artifact")
     return document
 
 

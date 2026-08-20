@@ -750,7 +750,12 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
         )
         if character_check is not None:
             for category in validate_character_identity_check(
-                character_check, allow_override="override_reason" in root
+                character_check,
+                allow_override=(
+                    "override_reason" in root
+                    and character_check.get("result") == "fail"
+                    and character_check.get("severity") == "warning"
+                ),
             ):
                 _add(issues, path, f"checks.character-identity.{category}", category)
 
