@@ -5,6 +5,7 @@ from pathlib import Path
 
 from scripts.character_identity import (
     CANONICAL_VIEW,
+    DERIVED_FINGERPRINT_FIELDS,
     IDENTITY_PACK_PATH,
     IDENTITY_PACK_SCHEMA_VERSION,
     IdentityPackError,
@@ -245,6 +246,60 @@ class ValidationTests(IdentityPackHarness):
             issues,
         )
 
+    def test_edited_wardrobe_and_avoid_must_match_the_bible_verbatim(self):
+        pack = derive_identity_pack(self.bible)
+        mira = pack["characters"][0]
+        mira["wardrobe"]["base"] = "black tactical armour"
+        mira["wardrobe"]["accessories"] = ["knife"]
+        mira["wardrobe"]["palette"] = ["neon pink"]
+        mira["avoid"] = []
+
+        issues = validate_identity_pack(pack, character_bible=self.bible)
+
+        self.assertEqual(
+            (
+                "character-identity-pack character 'mira' avoid must match the bible "
+                "verbatim",
+                "character-identity-pack character 'mira' wardrobe.accessories must "
+                "match the bible verbatim",
+                "character-identity-pack character 'mira' wardrobe.base must match the "
+                "bible verbatim",
+                "character-identity-pack character 'mira' wardrobe.palette must match "
+                "the bible verbatim",
+            ),
+            issues,
+        )
+
+    def test_every_derived_field_is_covered_by_the_bible_comparison(self):
+        """A derived field must not be addable without cross-artifact enforcement."""
+        derived = derive_identity_pack(self.bible)["characters"][0]
+        enforced = {path.split(".")[0] for path, _ in DERIVED_FINGERPRINT_FIELDS}
+
+        self.assertEqual(
+            {"avoid", "immutable_traits", "wardrobe"},
+            enforced,
+        )
+        # Everything else in an entry is either authored or the digest itself.
+        self.assertEqual(
+            {"id", "proportions", "reference_views", "source_fingerprint_sha256"},
+            set(derived) - enforced,
+        )
+
+    def test_authored_proportions_are_not_forced_to_match_the_bible(self):
+        pack = derive_identity_pack(self.bible)
+        pack["characters"][0]["proportions"]["build"] = "seven heads tall, long limbed"
+        pack["characters"][0]["proportions"]["notes"] = ["hands slightly oversized"]
+
+        self.assertEqual((), validate_identity_pack(pack, character_bible=self.bible))
+
+    def test_authored_extra_reference_view_is_not_forced_to_match_the_bible(self):
+        pack = derive_identity_pack(self.bible)
+        pack["characters"][0]["reference_views"].append(
+            {"path": "references/characters/mira-profile.png", "view": "profile"}
+        )
+
+        self.assertEqual((), validate_identity_pack(pack, character_bible=self.bible))
+
     def test_pack_built_against_an_older_fingerprint_is_reported_as_stale(self):
         pack = derive_identity_pack(self.bible)
         bible = character_bible()
@@ -252,10 +307,13 @@ class ValidationTests(IdentityPackHarness):
 
         issues = validate_identity_pack(pack, character_bible=bible)
 
+        # The digest reports that the bible moved; the field comparison names what moved.
         self.assertEqual(
             (
                 "character-identity-pack character 'mira' is stale: re-derive it "
                 "after the character bible fingerprint changed",
+                "character-identity-pack character 'mira' wardrobe.palette must match "
+                "the bible verbatim",
             ),
             issues,
         )
@@ -418,6 +476,23 @@ class PersistenceTests(IdentityPackHarness):
             "cropped silver hair",
             read_identity_pack(self.project)["characters"][0]["immutable_traits"]["hair"],
         )
+
+    def test_tampered_persisted_wardrobe_is_rejected_by_check(self):
+        derive_and_write_identity_pack(self.project)
+        pack = json.loads((self.project / IDENTITY_PACK_PATH).read_text(encoding="utf-8"))
+        pack["characters"][0]["wardrobe"]["base"] = "black tactical armour"
+        (self.project / IDENTITY_PACK_PATH).write_text(
+            json.dumps(pack, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+        self.assertEqual(
+            (
+                "character-identity-pack character 'mira' wardrobe.base must match the "
+                "bible verbatim",
+            ),
+            check_identity_pack(self.project),
+        )
+        self.assertEqual(1, main([str(self.project), "--panel", "p01-01"]))
 
     def test_corrupt_pack_fails_closed_instead_of_discarding_authored_content(self):
         derive_and_write_identity_pack(self.project)
