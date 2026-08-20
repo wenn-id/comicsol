@@ -68,6 +68,22 @@ REFERENCE_VIEW_FIELDS = ("path", "view")
 MIN_INVARIANTS = 2
 MAX_INVARIANTS = 5
 
+# Every pack field that `derive_character_entry` rebuilds from the bible fingerprint,
+# mapped to the fingerprint key it must equal verbatim. Cross-artifact validation walks
+# this table so a derived field can never be added without also being enforced.
+# `proportions` and non-canonical reference views are authored, so they are deliberately
+# absent: an author may override them and re-derivation preserves them.
+DERIVED_FINGERPRINT_FIELDS = (
+    ("avoid", "avoid"),
+    ("immutable_traits.face", "face"),
+    ("immutable_traits.hair", "hair"),
+    ("immutable_traits.invariants", "invariants"),
+    ("immutable_traits.silhouette", "silhouette"),
+    ("wardrobe.accessories", "signature_props"),
+    ("wardrobe.base", "wardrobe"),
+    ("wardrobe.palette", "palette"),
+)
+
 
 class IdentityPackError(ValueError):
     """Raised when a pack cannot be read, derived, or trusted."""
@@ -452,6 +468,21 @@ def validate_identity_pack(
     return tuple(sorted(set(issues)))
 
 
+def _entry_field(entry: Mapping[str, Any], path: str) -> Any:
+    """Resolve a dotted pack-entry path, returning None when any step is absent."""
+    value: Any = entry
+    for part in path.split("."):
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(part)
+    return value
+
+
+def _comparable(value: object) -> object:
+    """Normalize a value for verbatim comparison against the character bible."""
+    return _strings(value) if isinstance(value, list) else value
+
+
 def _bible_issues(
     characters: Sequence[Any],
     character_bible: Mapping[str, Any],
@@ -492,18 +523,11 @@ def _bible_issues(
                 f"character-identity-pack character '{character_id}' is stale: "
                 "re-derive it after the character bible fingerprint changed"
             )
-        traits = entry.get("immutable_traits")
-        if isinstance(traits, Mapping):
-            for field in ("face", "hair", "silhouette"):
-                if traits.get(field) != fingerprint.get(field):
-                    issues.append(
-                        f"character-identity-pack character '{character_id}' "
-                        f"immutable_traits.{field} must match the bible verbatim"
-                    )
-            if _strings(traits.get("invariants")) != _strings(fingerprint.get("invariants")):
+        for path, key in DERIVED_FINGERPRINT_FIELDS:
+            if _comparable(_entry_field(entry, path)) != _comparable(fingerprint.get(key)):
                 issues.append(
                     f"character-identity-pack character '{character_id}' "
-                    "immutable_traits.invariants must match the bible verbatim"
+                    f"{path} must match the bible verbatim"
                 )
         views = entry.get("reference_views")
         canonical = None
