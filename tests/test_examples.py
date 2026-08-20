@@ -84,9 +84,76 @@ class ExampleBuildTests(unittest.TestCase):
         for name, project in self.built.items():
             with self.subTest(example=name):
                 manifest = read_json(project / "project.json")
-                self.assertEqual("COMPLETE", manifest["status"])
-                self.assertEqual([], manifest["warnings"])
+                self.assertEqual("COMPLETE_WITH_WARNINGS", manifest["status"])
+                self.assertNotEqual([], manifest["warnings"])
                 require_valid_project(project, "final")
+
+    def test_no_panel_check_claims_a_visual_review_that_did_not_happen(self):
+        """A placeholder build must not publish passing subjective panel QA.
+
+        Only `text-free` and `technical` are decidable from a synthetic raster;
+        the builder measures both. Every other panel check is a judgement about
+        artwork this build does not have, so it has to be recorded as an
+        unreviewed warning rather than a pass.
+        """
+        for name, project in self.built.items():
+            for record_path in sorted((project / "qa/panels").glob("*.json")):
+                with self.subTest(example=name, panel=record_path.stem):
+                    record = read_json(record_path)
+                    self.assertEqual("accept-warning", record["decision"])
+                    results = {
+                        check["id"]: (check["result"], check["severity"])
+                        for check in record["checks"]
+                    }
+                    for check_id in ("text-free", "technical"):
+                        self.assertEqual(("pass", "error"), results[check_id])
+                    unreviewed = [
+                        check for check in record["checks"]
+                        if check["id"] not in {"text-free", "technical"}
+                    ]
+                    self.assertEqual(5, len(unreviewed))
+                    for check in unreviewed:
+                        self.assertEqual("warning", check["result"])
+                        self.assertEqual("warning", check["severity"])
+                        self.assertTrue(
+                            check["evidence"].startswith("Not reviewed"),
+                            f"{check['id']} must say what was not reviewed",
+                        )
+                        self.assertIn(check["evidence"], record["unresolved_warnings"])
+
+    def test_no_page_check_claims_an_artwork_review_that_did_not_happen(self):
+        """Artwork-content page checks stay unreviewed on a placeholder build.
+
+        Tail direction is exempt: page-QA construction re-derives the expected
+        regions from the storyboard and placed geometry and rejects stale or
+        incomplete evidence, so that pass is machine-earned.
+        """
+        for name, project in self.built.items():
+            for record_path in sorted((project / "qa/pages").glob("*.json")):
+                with self.subTest(example=name, page=record_path.stem):
+                    record = read_json(record_path)
+                    self.assertEqual("accept-warning", record["decision"])
+                    results = {
+                        check["id"]: check["result"] for check in record["checks"]
+                    }
+                    for check_id in (
+                        "face-action-obstruction",
+                        "accidental-text-watermark",
+                    ):
+                        self.assertEqual("warning", results[check_id])
+                    self.assertEqual("pass", results["bubble-tail-direction"])
+
+    def test_unreviewed_panel_warnings_reach_the_manifest_and_the_report(self):
+        for name, project in self.built.items():
+            with self.subTest(example=name):
+                manifest_warnings = read_json(project / "project.json")["warnings"]
+                report = (project / "qa/report.md").read_text(encoding="utf-8")
+                record = read_json(
+                    sorted((project / "qa/panels").glob("*.json"))[0]
+                )
+                for warning in record["unresolved_warnings"]:
+                    self.assertIn(warning, manifest_warnings)
+                    self.assertIn(warning, report)
 
     def test_each_example_exports_a_recorded_pdf_and_report(self):
         for name, project in self.built.items():

@@ -13,6 +13,13 @@ example proves project structure, lettering, composition, export, and validation
 mechanics. It does not demonstrate live illustration quality. See
 ``samples/README.md`` for the evidence tiers and ``samples/sunlight-courier``
 for the tracked live-generated example.
+
+Because the artwork is a placeholder, most QA checks have nothing to inspect.
+Those are recorded as warning-level "not reviewed" rather than passed, so a built
+example terminates as ``COMPLETE_WITH_WARNINGS`` and its report states the gap. A
+recorded pass is always earned: ``technical`` is measured off the raster,
+``text-free`` follows from a generator that loads no font, and the page-QA layer
+independently re-derives tail geometry before accepting ``bubble-tail-direction``.
 """
 
 from __future__ import annotations
@@ -53,7 +60,8 @@ from .validate_project import ProjectValidationError, require_valid_project
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = ROOT / "samples"
 DEFAULT_OUTPUT_ROOT = ROOT / "build/examples"
-REVIEW_METHOD = "deterministic-example-build"
+REVIEW_METHOD = "deterministic-example-build-no-visual-review"
+REVIEWER = "comic-sol-example-builder (automated; no visual review)"
 REVIEWED_AT = "2026-08-19T00:00:00Z"
 
 PLAN_ARTIFACTS = {
@@ -62,49 +70,60 @@ PLAN_ARTIFACTS = {
     "storyboard": "plan/storyboard.json",
 }
 
-PANEL_CHECK_EVIDENCE = {
+# A placeholder raster contains no cast, no faces, and no staging, so most
+# panel checks have nothing to review. Only these two are decidable from the
+# artifact itself, and the builder proves both before recording a pass.
+VERIFIED_PANEL_CHECK_IDS = ("text-free", "technical")
+
+# Everything else is a judgement about artwork this build does not have. These
+# are recorded as warning-level "not reviewed" so the decision becomes
+# accept-warning, the project lands in COMPLETE_WITH_WARNINGS, and the QA report
+# states the gap instead of implying a review that never happened.
+UNREVIEWED_PANEL_EVIDENCE = {
     "character-identity": (
-        "Each cast member in this panel matches the committed character-bible "
-        "fingerprint for silhouette, hair, wardrobe, and palette."
+        "Not reviewed: character identity needs generated artwork to compare "
+        "against the character-bible fingerprint, and this panel is a synthetic "
+        "placeholder with no cast drawn in it."
     ),
     "anatomy": (
-        "Limb count, joint direction, and head-to-body proportion are coherent "
-        "across every figure the panel places inside its rectangle."
+        "Not reviewed: anatomy needs a drawn figure, and this panel contains only "
+        "seeded geometry with no limbs, joints, or proportions to assess."
     ),
     "action": (
-        "The rendered staging performs the storyboard beat for this panel rather "
-        "than a neighbouring beat."
+        "Not reviewed: whether the artwork performs the storyboard beat cannot be "
+        "judged from a placeholder that depicts no action."
     ),
     "composition": (
-        "The subject sits on a clear third and the anchor region reserved for "
-        "lettering stays free of competing detail."
+        "Not reviewed: subject placement and text-safe space need a drawn subject; "
+        "this panel has none, so only the rectangle itself is known to be correct."
     ),
     "continuity": (
-        "Every continuity fact this panel declares is visible and agrees with the "
-        "owning character invariant or scene anchor."
-    ),
-    "text-free": (
-        "The generated artwork carries no dialogue, caption, balloon, signature, "
-        "logo, or watermark; authored lettering is applied downstream."
-    ),
-    "technical": (
-        "The raster is opaque RGB at the exact storyboard rectangle with no seam, "
-        "banding, or resampling artifact."
+        "Not reviewed: the declared continuity facts describe visible traits, and "
+        "no such traits are rendered in a placeholder raster."
     ),
 }
 
-PAGE_CHECK_EVIDENCE = {
-    "face-action-obstruction": (
-        "No placed balloon or caption strip covers a speaking face or the beat "
-        "action anywhere on this composed page."
-    ),
+# Tail direction is geometric, and page-QA construction independently re-derives
+# the expected regions from the storyboard and the placed lettering geometry,
+# rejecting anything stale or incomplete. That makes it the one subjective-slot
+# page check a placeholder build can honestly pass.
+VERIFIED_PAGE_EVIDENCE = {
     "bubble-tail-direction": (
-        "Every dialogue tail on this page terminates toward its authored speaker "
-        "anchor and stops short of the voice source."
+        "Verified geometrically: every authored dialogue has a tail region whose "
+        "tip is the actual computed geometry for its panel, cross-checked against "
+        "the authored speaker anchor and rejected if stale or incomplete. Reading "
+        "quality over drawn artwork is not claimed."
+    ),
+}
+
+UNREVIEWED_PAGE_EVIDENCE = {
+    "face-action-obstruction": (
+        "Not reviewed: this page composes placeholder panels, so there is no "
+        "speaking face or beat action that a balloon could be found to cover."
     ),
     "accidental-text-watermark": (
-        "The composed page shows only authored lettering; no provider watermark "
-        "or accidental glyph is present in the artwork."
+        "Not reviewed: the builder draws no glyphs and contacts no provider, so a "
+        "provider watermark is out of scope rather than inspected and cleared."
     ),
 }
 
@@ -123,9 +142,9 @@ def _seeded_color(seed: int, key: str, *, floor: int = 24, ceiling: int = 210) -
 def _synthetic_raster(size: tuple[int, int], color: tuple[int, int, int]) -> Image.Image:
     """Draw one deterministic, text-free placeholder raster.
 
-    The figure is intentionally geometric. It must never contain glyphs, because
-    generated panel artwork is required to be text-free and the panel QA record
-    asserts exactly that.
+    The figure is intentionally geometric, and no font is loaded here. That is
+    what lets the panel record honestly pass the text-free check: generated panel
+    artwork must contain no glyphs, and this generator cannot produce any.
     """
     width, height = size
     image = Image.new("RGB", size, color)
@@ -150,6 +169,40 @@ def _synthetic_raster(size: tuple[int, int], color: tuple[int, int, int]) -> Ima
         width=max(2, inset // 4),
     )
     return image
+
+
+def _verified_panel_evidence(
+    project: Path, panel_id: str, size: tuple[int, int]
+) -> dict[str, str]:
+    """Prove the two decidable panel checks and return their earned evidence.
+
+    Nothing here is asserted on trust. The raster is measured, and a mismatch
+    raises instead of recording a pass, so a `pass` in the published record
+    always corresponds to a property this function actually confirmed.
+    """
+    clean = project / f"panels/{panel_id}/clean.png"
+    with Image.open(clean) as image:
+        mode, actual = image.mode, image.size
+    if mode != "RGB":
+        raise ExampleError(f"{panel_id}: clean raster must be opaque RGB, found {mode}")
+    if actual != size:
+        raise ExampleError(
+            f"{panel_id}: clean raster is {actual[0]}x{actual[1]}, "
+            f"expected the storyboard rectangle {size[0]}x{size[1]}"
+        )
+    return {
+        "text-free": (
+            "Verified by construction: the example builder renders panels with "
+            "rectangle, line, and ellipse primitives only and loads no font, so "
+            "the raster cannot contain dialogue, captions, balloons, signatures, "
+            "logos, or watermarks. Authored lettering is applied downstream."
+        ),
+        "technical": (
+            f"Verified by measurement: the clean raster opened as opaque {mode} at "
+            f"{actual[0]}x{actual[1]}, matching the storyboard rectangle exactly, "
+            "and is reproduced deterministically from the example seed."
+        ),
+    }
 
 
 def _read_contract(example_dir: Path) -> dict[str, object]:
@@ -260,6 +313,23 @@ def _prepare_manifest(project: Path, contract: dict[str, object], panel_ids: Seq
         transition(project, status)
 
 
+def _record_manifest_warnings(project: Path, warnings: Iterable[str]) -> None:
+    """Mirror unresolved panel warnings into the manifest.
+
+    Final validation requires every unresolved panel warning to appear in the
+    manifest and forbids a plain ``COMPLETE`` while any remain, so this is what
+    steers the build to the honest ``COMPLETE_WITH_WARNINGS`` terminal state.
+    """
+    manifest = read_json(project / "project.json")
+    existing = manifest.get("warnings")
+    merged = list(existing) if isinstance(existing, list) else []
+    for warning in warnings:
+        if warning not in merged:
+            merged.append(warning)
+    manifest["warnings"] = merged
+    atomic_write_json(project / "project.json", manifest)
+
+
 def _build_panels(
     project: Path,
     panels: Sequence[tuple[int, str, dict[str, object]]],
@@ -287,11 +357,15 @@ def _build_panels(
         record = json.loads(json.dumps(template))
         record.update({
             "subject_id": panel_id,
-            "decision": "accept",
-            "unresolved_warnings": [],
+            "decision": "accept-warning",
+            "unresolved_warnings": [
+                UNREVIEWED_PANEL_EVIDENCE[check_id]
+                for check_id in PANEL_CHECK_IDS
+                if check_id in UNREVIEWED_PANEL_EVIDENCE
+            ],
             "review": {
                 "method": REVIEW_METHOD,
-                "reviewer": "comic-sol-example-builder",
+                "reviewer": REVIEWER,
                 "reviewed_at": REVIEWED_AT,
             },
         })
@@ -308,19 +382,25 @@ def _build_panels(
             "raw_sha256": sha256_file(project / f"panels/raw/{panel_id}.png"),
             "raw_width": width,
         })
+        verified = _verified_panel_evidence(project, panel_id, (width, height))
         by_id = {check["id"]: check for check in record["checks"]}
         for check_id in PANEL_CHECK_IDS:
+            reviewed = check_id in VERIFIED_PANEL_CHECK_IDS
             by_id[check_id].update({
-                "result": "pass",
-                "severity": "error",
-                "evidence": PANEL_CHECK_EVIDENCE[check_id],
+                "result": "pass" if reviewed else "warning",
+                "severity": "error" if reviewed else "warning",
+                "evidence": (
+                    verified[check_id] if reviewed
+                    else UNREVIEWED_PANEL_EVIDENCE[check_id]
+                ),
                 "method": REVIEW_METHOD,
-                "reviewer": "comic-sol-example-builder",
+                "reviewer": REVIEWER,
                 "regions": [],
             })
         record["checks"] = [by_id[check_id] for check_id in PANEL_CHECK_IDS]
         atomic_write_json(project / f"qa/panels/{panel_id}.json", record)
 
+    _record_manifest_warnings(project, UNREVIEWED_PANEL_EVIDENCE.values())
     transition(project, "PANELS_READY")
     transition(project, "QA_READY")
 
@@ -350,23 +430,37 @@ def _tail_regions(project: Path, page_number: int) -> list[dict[str, object]]:
 
 
 def _write_page_records(project: Path, page_numbers: Iterable[int]) -> None:
-    """Write one bounded-review page QA record per composed page."""
+    """Write one page QA record per composed page.
+
+    The four deterministic page checks are computed by the page-QA layer itself.
+    Of the three reviewer-supplied slots, only tail direction is machine-earned;
+    the two artwork-content checks are recorded as unreviewed warnings.
+    """
     for page_number in page_numbers:
         checks = [
             {
                 "id": check_id,
-                "result": "pass",
-                "severity": "error",
-                "evidence": PAGE_CHECK_EVIDENCE[check_id],
+                "result": "pass" if check_id in VERIFIED_PAGE_EVIDENCE else "warning",
+                "severity": (
+                    "error" if check_id in VERIFIED_PAGE_EVIDENCE else "warning"
+                ),
+                "evidence": (
+                    VERIFIED_PAGE_EVIDENCE.get(check_id)
+                    or UNREVIEWED_PAGE_EVIDENCE[check_id]
+                ),
                 "method": REVIEW_METHOD,
-                "reviewer": "comic-sol-example-builder",
+                "reviewer": REVIEWER,
                 "regions": (
                     _tail_regions(project, page_number)
                     if check_id == "bubble-tail-direction"
                     else [{"scope": "page"}]
                 ),
             }
-            for check_id in ("face-action-obstruction", "bubble-tail-direction", "accidental-text-watermark")
+            for check_id in (
+                "face-action-obstruction",
+                "bubble-tail-direction",
+                "accidental-text-watermark",
+            )
         ]
         write_page_quality_record(
             project,
@@ -375,7 +469,7 @@ def _write_page_records(project: Path, page_numbers: Iterable[int]) -> None:
                 project,
                 page_number,
                 checks,
-                reviewer="comic-sol-example-builder",
+                reviewer=REVIEWER,
                 reviewed_at=REVIEWED_AT,
             ),
         )
