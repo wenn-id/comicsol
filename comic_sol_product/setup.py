@@ -24,6 +24,7 @@ SUPPORTED_CLIENT_NAMES = (
     "vscode",
     "windsurf",
 )
+MAX_CONFIG_BACKUPS = 5
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,47 @@ class SetupResult:
 def _backup_path(path: Path) -> Path:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     return path.with_name(f"{path.name}.bak-{stamp}")
+
+
+def _write_backup(path: Path, data: bytes) -> None:
+    """Create one private backup without following a pre-existing path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    descriptor = os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(data)
+            stream.flush()
+            if os.name != "nt":
+                os.fchmod(stream.fileno(), 0o600)
+            os.fsync(stream.fileno())
+    finally:
+        if descriptor != -1:
+            os.close(descriptor)
+    if os.name != "nt":
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+
+def _prune_backups(path: Path) -> None:
+    """Keep only newest private backups for one client config."""
+    backups = []
+    for candidate in path.parent.glob(f"{path.name}.bak-*"):
+        try:
+            metadata = candidate.lstat()
+        except OSError:
+            continue
+        if stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+            backups.append(candidate)
+    for candidate in sorted(backups, key=lambda item: item.name, reverse=True)[MAX_CONFIG_BACKUPS:]:
+        try:
+            candidate.unlink()
+        except OSError:
+            pass
 
 
 def _resolve_executable(executable: str | os.PathLike[str] | None) -> str:
@@ -159,19 +201,29 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
         return SetupResult(adapter.name, status, str(path), None, "no config change required")
 
     backup = _backup_path(path)
+    backup_created = False
     try:
-        shutil.copy2(path, backup)
+        _write_backup(backup, original)
+        backup_created = True
         _atomic_write(path, adapter.dump(updated), original_mode)
         if not _verify_persisted(adapter, path, entry, remove=remove):
             _atomic_write(path, original, original_mode)
+            _prune_backups(path)
             return SetupResult(adapter.name, "rolled-back", str(path), str(backup), "verification failed; original restored")
+        _prune_backups(path)
     except (OSError, UnicodeError, ValueError) as error:
         try:
-            if backup.exists():
+            if backup_created:
                 _atomic_write(path, original, original_mode)
         except OSError:
             pass
-        return SetupResult(adapter.name, "failed", str(path), str(backup) if backup.exists() else None, str(error))
+        return SetupResult(
+            adapter.name,
+            "failed",
+            str(path),
+            str(backup) if backup_created else None,
+            str(error),
+        )
 
     status = "removed" if remove else "configured"
     return SetupResult(adapter.name, status, str(path), str(backup), "integration updated")
