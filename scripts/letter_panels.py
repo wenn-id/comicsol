@@ -22,10 +22,15 @@ if __package__ in {None, ""}:
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from .comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json, sha256_file
-from .core_primitives import rectangles_overlap, subject_keepout_radius
+from .core_primitives import (
+    dialogue_attribution_conflicts,
+    rectangles_overlap,
+    subject_keepout_radius,
+)
 from .project_io import ProjectTransaction, contained_project_path, open_path_nofollow, read_contained_bytes
 from .raster_limits import MAX_DECODED_PIXELS
 from .typography import (
+    LETTERING_GEOMETRY_SCHEMA_VERSION,
     display_content,
     lettering_geometry_hash,
     normalize_content,
@@ -299,14 +304,91 @@ def _draw_styled_layout(
         line_top += line.height + layout.spacing
 
 
-def _known_character(character_bible: list[dict], speaker: object) -> bool:
+def _resolve_speaker(character_bible: list[dict], speaker: object) -> tuple[str, str]:
+    """Resolve one authored speaker token to a stable character-bible identity.
+
+    Returns the canonical character ID and how it was established: `declared`
+    when the token is a bible ID, `inferred` when it is a display name that
+    resolves to exactly one character. A display name shared by two characters
+    names no one in particular, so it is refused rather than resolved by
+    authoring order.
+    """
     if not isinstance(speaker, str) or not speaker:
-        return False
-    return any(
-        isinstance(character, dict)
-        and speaker in {character.get("id"), character.get("name")}
+        raise ValueError(f"unknown dialogue character: {speaker}")
+    identified = [
+        character.get("id")
         for character in character_bible
-    )
+        if isinstance(character, dict)
+        and isinstance(character.get("id"), str)
+        and character.get("id")
+    ]
+    if speaker in identified:
+        return speaker, "declared"
+    named = sorted({
+        character["id"]
+        for character in character_bible
+        if isinstance(character, dict)
+        and character.get("name") == speaker
+        and isinstance(character.get("id"), str)
+        and character.get("id")
+    })
+    if len(named) > 1:
+        raise ValueError(
+            "dialogue-attribution-ambiguous: display name "
+            f"{speaker!r} resolves to characters {', '.join(named)}"
+        )
+    if not named:
+        raise ValueError(f"unknown dialogue character: {speaker}")
+    return named[0], "inferred"
+
+
+def _panel_attributions(
+    ordered: list[dict], character_bible: list[dict]
+) -> dict[str, dict[str, object]]:
+    """Bind every spoken balloon in one panel to a verifiable speaker identity.
+
+    Each dialogue item is resolved to a stable character ID and to the anchor it
+    speaks from, then the panel is checked as a whole: attribution that two
+    balloons could equally claim is refused here rather than drawn and left for a
+    reader to guess.
+    """
+    attributions: dict[str, dict[str, object]] = {}
+    for item in ordered:
+        if item.get("kind") != "dialogue":
+            continue
+        speaker, resolution = _resolve_speaker(character_bible, item.get("speaker"))
+        key = item.get("id")
+        if not isinstance(key, str) or not key:
+            # Placements, page-QA regions, and reviewer evidence all address a
+            # balloon by text ID, so a balloon without one cannot carry
+            # attribution anything downstream is able to verify.
+            raise ValueError(
+                "dialogue-attribution-required: every spoken balloon needs a text ID"
+            )
+        if key in attributions:
+            # Placements and page-QA regions are both keyed by text ID, so a
+            # duplicate ID leaves one of the two balloons attributed to the
+            # other's speaker with nothing in the record to reveal it.
+            raise ValueError(
+                f"dialogue-attribution-ambiguous: text ID {key} is used by two spoken balloons"
+            )
+        attributions[key] = {
+            "authored_speaker": item.get("speaker"),
+            "resolution": resolution,
+            "speaker": speaker,
+            "speaker_anchor": item.get("speaker_anchor"),
+        }
+    conflicts = dialogue_attribution_conflicts([
+        (item_id, str(record["speaker"]), record["speaker_anchor"])
+        for item_id, record in attributions.items()
+    ])
+    if conflicts:
+        detail = "; ".join(
+            f"{reason} between {first} and {second}"
+            for reason, first, second in conflicts
+        )
+        raise ValueError(f"dialogue-attribution-ambiguous: {detail}")
+    return attributions
 
 
 def _anchor_rect(anchor: str, width: int, height: int) -> dict[str, int]:
@@ -644,8 +726,8 @@ def render_text_item(
         raise ValueError(f"text item {item.get('id', 'unknown')} has empty content")
     if kind not in {"dialogue", "caption", "sfx"}:
         raise ValueError(f"text item {item.get('id', 'unknown')} has unknown kind")
-    if kind == "dialogue" and not _known_character(character_bible, item.get("speaker")):
-        raise ValueError(f"unknown dialogue character: {item.get('speaker')}")
+    if kind == "dialogue":
+        _resolve_speaker(character_bible, item.get("speaker"))
     if kind == "sfx":
         return
 
@@ -751,9 +833,8 @@ def letter_panel(
         (dict(item) for item in text_items),
         key=lambda item: (item.get("priority", 0), str(item.get("id", ""))),
     )
+    attributions = _panel_attributions(ordered, character_bible)
     for item in ordered:
-        if item.get("kind") == "dialogue" and not _known_character(character_bible, item.get("speaker")):
-            raise ValueError(f"unknown dialogue character: {item.get('speaker')}")
         if item.get("kind") == "dialogue":
             if "tail_target" in item:
                 raise ValueError(
@@ -869,6 +950,7 @@ def letter_panel(
             )
         summary["placements"].append({
             "anchor": selected_anchor,
+            "attribution": attributions.get(item.get("id")),
             "box": {key: int(rect[key]) for key in ("x", "y", "width", "height")},
             "font_runs": font_runs,
             "id": item.get("id"),
@@ -987,7 +1069,7 @@ def _letter_project_with_summaries(
                     "sha256": hashlib.sha256(lettered_payload).hexdigest(),
                 },
                 "panel_id": panel_id,
-                "schema_version": "1.0",
+                "schema_version": LETTERING_GEOMETRY_SCHEMA_VERSION,
             }
             geometry["geometry_sha256"] = lettering_geometry_hash(geometry)
             staged.append((

@@ -17,7 +17,12 @@ from scripts.page_quality import (  # noqa: E402
     validate_page_quality,
     write_page_quality_record,
 )
-from scripts.validate_project import validate_project  # noqa: E402
+from scripts.validate_project import (  # noqa: E402
+    validate_lettering_provenance,
+    validate_project,
+)
+
+from tests.support import write_multi_speaker_panel  # noqa: E402
 
 
 FIXTURE = ROOT / "tests/fixtures/valid-one-page"
@@ -429,7 +434,7 @@ class BalloonPlacementQualityTests(unittest.TestCase):
 
     def test_named_balloon_layouts_reach_their_expected_verdict(self):
         paths = sorted(BALLOON_LAYOUTS.glob("*.json"))
-        self.assertEqual(9, len(paths))
+        self.assertEqual(12, len(paths))
         for path in paths:
             layout = json.loads(path.read_text("utf-8"))
             with self.subTest(layout=path.stem):
@@ -883,6 +888,117 @@ class BalloonPlacementQualityTests(unittest.TestCase):
             and "deterministic failing checks must include failure regions" in issue.message
             for issue in issues
         ), issues)
+
+
+class MultiSpeakerAttributionQualityTests(unittest.TestCase):
+    """Page QA over a panel where two characters speak in the same frame."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._base_directory = tempfile.TemporaryDirectory()
+        cls.base = Path(cls._base_directory.name) / "two-speakers"
+        shutil.copytree(FIXTURE, cls.base)
+        cls.text_ids = write_multi_speaker_panel(cls.base)
+        letter_project(cls.base)
+        compose_all_pages(cls.base)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._base_directory.cleanup()
+
+    def _fresh_project(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        project = Path(directory.name) / "project"
+        shutil.copytree(self.base, project)
+        return project
+
+    def _checks(self, project):
+        record = build_page_quality_record(
+            project,
+            1,
+            reviewer_checks(project),
+            reviewer="fixture-reviewer",
+            reviewed_at="2026-08-14T01:02:03Z",
+        )
+        return record, {check["id"]: check for check in record["checks"]}
+
+    @staticmethod
+    def _geometry_path(project):
+        return project / "panels/p01-02/lettering.json"
+
+    def test_correct_multi_character_panel_passes_without_an_override(self):
+        project = self._fresh_project()
+
+        record, checks = self._checks(project)
+
+        self.assertEqual("accept", record["decision"])
+        self.assertNotIn("override_reason", record)
+        for check_id in DETERMINISTIC_PAGE_CHECK_IDS:
+            with self.subTest(check=check_id):
+                self.assertEqual("pass", checks[check_id]["result"])
+                self.assertEqual([], checks[check_id]["regions"])
+
+    def test_each_balloon_is_attributed_to_the_character_that_speaks_it(self):
+        project = self._fresh_project()
+        geometry = json.loads(self._geometry_path(project).read_text("utf-8"))
+
+        attribution = {
+            item["id"]: item["attribution"] for item in geometry["items"]
+        }
+
+        self.assertEqual(
+            {
+                self.text_ids[0]: {
+                    "authored_speaker": "mira",
+                    "resolution": "declared",
+                    "speaker": "mira",
+                    "speaker_anchor": [0.78, 0.34],
+                },
+                self.text_ids[1]: {
+                    "authored_speaker": "ren",
+                    "resolution": "declared",
+                    "speaker": "ren",
+                    "speaker_anchor": [0.22, 0.62],
+                },
+            },
+            attribution,
+        )
+
+    def test_swapping_the_two_speakers_is_detected_on_both_balloons(self):
+        project = self._fresh_project()
+        path = self._geometry_path(project)
+        geometry = json.loads(path.read_text("utf-8"))
+        items = {item["id"]: item for item in geometry["items"]}
+        first, second = (items[text_id]["attribution"] for text_id in self.text_ids)
+        # Swap only the identities. Both tails still attach correctly and still
+        # point at the anchor the storyboard authored, so nothing but attribution
+        # reveals that the balloons now credit the wrong characters.
+        first["authored_speaker"], second["authored_speaker"] = (
+            second["authored_speaker"], first["authored_speaker"],
+        )
+        first["speaker"], second["speaker"] = second["speaker"], first["speaker"]
+        path.write_text(
+            json.dumps(geometry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            "utf-8",
+        )
+
+        record, checks = self._checks(project)
+
+        self.assertEqual("regenerate", record["decision"])
+        self.assertEqual("fail", checks["bubble-tail-geometry"]["result"])
+        self.assertEqual(
+            [
+                {"panel_id": "p01-02", "reason": "speaker-mismatch", "text_id": self.text_ids[0]},
+                {"panel_id": "p01-02", "reason": "speaker-mismatch", "text_id": self.text_ids[1]},
+            ],
+            checks["bubble-tail-geometry"]["regions"],
+        )
+
+    def test_lettering_provenance_stays_current_for_both_speakers(self):
+        project = self._fresh_project()
+
+        self.assertEqual((), validate_lettering_provenance(project, "p01-02"))
 
 
 if __name__ == "__main__":

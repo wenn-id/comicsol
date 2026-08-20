@@ -27,6 +27,7 @@ from .character_quality import (
     validate_character_quality_provenance,
 )
 from .core_primitives import PANEL_ID_PATTERN as CORE_PANEL_ID_PATTERN
+from .core_primitives import dialogue_attribution_conflicts, is_normalized_point
 from .project_io import contained_project_path, open_path_nofollow
 from .raster_limits import MAX_DECODED_PIXELS
 from .repair_strategy import (
@@ -45,7 +46,7 @@ from .schema import (
     MIN_READER_PROJECT_SCHEMA_VERSION,
     SUPPORTED_PROJECT_SCHEMA_VERSIONS,
 )
-from .typography import lettering_geometry_hash
+from .typography import LETTERING_GEOMETRY_SCHEMA_VERSION, lettering_geometry_hash
 
 from .comic_sol import (
     ALL_STATUSES,
@@ -541,6 +542,43 @@ def _validate_text_item(
     return word_count
 
 
+ATTRIBUTION_CONFLICT_MESSAGES = {
+    "shared-anchor": "attribute different speakers to one speaker anchor",
+    "split-anchor": "attribute one speaker to two distant speaker anchors",
+}
+
+
+def _validate_panel_attribution(
+    text_items: list[object],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> None:
+    """Reject multi-speaker panels whose balloons cannot be attributed apart.
+
+    Per-item rules already require a known speaker and a usable anchor. What only
+    the whole panel can show is whether those anchors still tell the balloons
+    apart, so this is where a panel that reads as ambiguous fails instead of
+    reaching lettering.
+    """
+    spoken = [
+        (item["id"], item["speaker"], item.get("speaker_anchor"))
+        for item in text_items
+        if isinstance(item, dict)
+        and item.get("kind") == "dialogue"
+        and isinstance(item.get("id"), str)
+        and isinstance(item.get("speaker"), str)
+    ]
+    for reason, first, second in dialogue_attribution_conflicts(spoken):
+        _add(
+            issues,
+            path,
+            f"{prefix}.text",
+            "dialogue-attribution-ambiguous: "
+            f"{first} and {second} {ATTRIBUTION_CONFLICT_MESSAGES[reason]}",
+        )
+
+
 def validate_storyboard(
     data: dict[str, object],
     story: dict[str, object],
@@ -686,6 +724,7 @@ def validate_storyboard(
                         all_text_ids.append(text_value["id"])
                 if total_words > 45:
                     _add(issues, path, f"{prefix}.text", "panel text exceeds 45 total words")
+                _validate_panel_attribution(text_items, issues, path, prefix)
         for first_index, (first_prefix, first) in enumerate(page_rectangles):
             for second_prefix, second in page_rectangles[first_index + 1:]:
                 if rectangles_overlap(first, second):
@@ -1139,6 +1178,46 @@ def validate_panel_provenance(
     return tuple(_sorted(issues))
 
 
+def _validate_placement_attribution(
+    entry: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    """Require verifiable speaker attribution on every retained spoken balloon.
+
+    Captions and SFX are not spoken, so they carry no attribution at all; a
+    balloon carries a complete one or its geometry is not trustworthy enough to
+    tell a reader who is talking.
+    """
+    attribution = entry.get("attribution")
+    if entry.get("kind") != "dialogue":
+        if attribution is not None:
+            stale("items.attribution", "only dialogue carries speaker attribution")
+        return
+    if not isinstance(attribution, dict) or set(attribution) != {
+        "authored_speaker", "resolution", "speaker", "speaker_anchor",
+    }:
+        stale("items.attribution", "dialogue attribution record is missing or malformed")
+        return
+    if not all(
+        isinstance(attribution.get(field), str) and attribution.get(field)
+        for field in ("authored_speaker", "speaker")
+    ):
+        stale("items.attribution.speaker", "attribution must name a stable speaker identity")
+    if attribution.get("resolution") not in {"declared", "inferred"}:
+        stale("items.attribution.resolution", "attribution resolution must be declared or inferred")
+    if not is_normalized_point(attribution.get("speaker_anchor")):
+        stale(
+            "items.attribution.speaker_anchor",
+            "attribution must bind a normalized speaker anchor",
+        )
+    tail = entry.get("tail")
+    if isinstance(tail, dict) and tail.get("speaker_anchor") != attribution.get("speaker_anchor"):
+        stale(
+            "items.attribution.speaker_anchor",
+            "attribution anchor does not match the tail that was drawn",
+        )
+
+
 def validate_lettering_provenance(
     project_dir: Path,
     panel_id: str,
@@ -1170,6 +1249,13 @@ def validate_lettering_provenance(
         return tuple(_sorted(issues))
     if geometry.get("panel_id") != panel_id:
         stale("panel_id", "geometry panel ID does not match its path")
+    if geometry.get("schema_version") != LETTERING_GEOMETRY_SCHEMA_VERSION:
+        # Geometry is fully derived from the clean raster, the storyboard, and the
+        # font policy, so an older record is re-lettered rather than migrated.
+        stale(
+            "schema_version",
+            "geometry predates speaker attribution and must be lettered again",
+        )
     if geometry.get("geometry_sha256") != lettering_geometry_hash(geometry):
         stale("geometry_sha256", "canonical geometry hash does not match")
 
@@ -1282,6 +1368,7 @@ def validate_lettering_provenance(
                 or box.get("height", 0) <= 0
             ):
                 stale("items.box", "item box is missing or non-positive")
+            _validate_placement_attribution(entry, stale)
             tail = entry.get("tail")
             if tail is not None:
                 expected_tail_fields = {

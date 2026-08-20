@@ -1,0 +1,18 @@
+{
+  "description": "A balloon retained without attribution, as a pre-attribution engine or a hand edit would leave it. Nothing ties the drawn tail to a character, so the placement is reported instead of assumed to agree with the storyboard.",
+  "expected_check": "bubble-tail-geometry",
+  "expected_decision": "regenerate",
+  "expected_reasons": [
+    "missing-attribution"
+  ],
+  "expected_result": "fail",
+  "panels": {
+    "p01-02": {
+      "replace": {
+        "p01-02-t01": {
+          "attribution": null
+        }
+      }
+    }
+  }
+}

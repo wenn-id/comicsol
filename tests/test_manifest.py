@@ -46,7 +46,7 @@ class ManifestTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
-    def test_template_uses_lettering_cache_version_two_only(self):
+    def test_template_uses_lettering_cache_version_three_only(self):
         manifest = read_json(ROOT / "templates/manifest.json")
 
         self.assertEqual("1.0", manifest["schema_version"])
@@ -55,7 +55,7 @@ class ManifestTests(unittest.TestCase):
                 "composition": "1",
                 "export": "1",
                 "generation": "1",
-                "lettering": "2",
+                "lettering": "3",
                 "planning": "1",
                 "storyboard": "1",
             },

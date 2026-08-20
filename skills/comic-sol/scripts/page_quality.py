@@ -312,6 +312,25 @@ def _attached_to_balloon(attachment: object, box: object) -> bool:
     return deviation <= TAIL_ATTACHMENT_TOLERANCE
 
 
+def _attribution_is_complete(attribution: object) -> bool:
+    """Report whether a placement names the speaker it was lettered for.
+
+    Attribution is the only field tying a drawn balloon back to a character, so a
+    record that is absent or partial cannot be compared against the storyboard at
+    all and is reported rather than assumed to agree.
+    """
+    if not isinstance(attribution, Mapping):
+        return False
+    return (
+        all(
+            isinstance(attribution.get(field), str) and attribution.get(field)
+            for field in ("authored_speaker", "speaker")
+        )
+        and attribution.get("resolution") in {"declared", "inferred"}
+        and is_geometry_point(attribution.get("speaker_anchor"))
+    )
+
+
 def _tail_geometry_regions(
     panel_id: str,
     panel: Mapping[str, object],
@@ -332,9 +351,19 @@ def _tail_geometry_regions(
         tail = placement.get("tail") if isinstance(placement, Mapping) else None
         box = placement.get("box") if isinstance(placement, Mapping) else None
         kind = placement.get("kind") if isinstance(placement, Mapping) else None
+        attribution = placement.get("attribution") if isinstance(placement, Mapping) else None
         anchor = item.get("speaker_anchor")
         if not isinstance(tail, Mapping):
             reason = "missing-tail"
+        elif not _attribution_is_complete(attribution):
+            reason = "missing-attribution"
+        elif attribution["speaker"] != item.get("speaker") and (  # type: ignore[index]
+            attribution["authored_speaker"] != item.get("speaker")  # type: ignore[index]
+        ):
+            # A balloon retained against a different character than the storyboard
+            # gives it is the exact defect a swapped pair of speakers produces, and
+            # neither balloon's geometry looks wrong on its own.
+            reason = "speaker-mismatch"
         elif tail.get("speaker_anchor") != anchor:
             reason = "speaker-anchor-mismatch"
         elif tail.get("voice_source") != item.get("voice_source"):
@@ -352,6 +381,12 @@ def _tail_geometry_regions(
             reason = "detached-tail"
         elif tail_geometry_result(tail, anchor, width, height) != "pass":
             reason = "tail-does-not-point-at-speaker"
+        elif attribution["speaker_anchor"] != tail.get("speaker_anchor"):  # type: ignore[index]
+            # Checked last and against the tail rather than the storyboard: a
+            # storyboard edit is already reported as an anchor mismatch, so what
+            # is left here is attribution naming a different voice source than the
+            # tail that was actually drawn.
+            reason = "attribution-anchor-mismatch"
         else:
             continue
         regions.append({

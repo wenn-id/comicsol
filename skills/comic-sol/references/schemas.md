@@ -346,9 +346,33 @@ rather than constraining it, and reports `unclassified` when it recognizes no fr
 | `anchor` | enum | One of eight anchors below |
 | `priority` | integer | Positive placement order; ties break by item ID |
 
-Anchors are `top-left`, `top-center`, `top-right`, `middle-left`, `middle-right`, `bottom-left`, `bottom-center`, and `bottom-right`. `anchor` places every text item, captions included. Human `speaker_anchor` identifies the visible mouth/face voice-source region; spoken devices use `voice_source: device` and anchor their visible audio source. Non-spoken system status is a caption and has no tail. Captions and SFX omit `voice_source` and `speaker_anchor`. Legacy `tail_target` remains readable but produces `balloon-tail-migration-required` at lettering and later stages; it is never silently reinterpreted. Control characters other than newline are invalid. Explicit newlines are optional wrapping hints. Authored punctuation and words are not rewritten by deterministic scripts.
+Anchors are `top-left`, `top-center`, `top-right`, `middle-left`, `middle-right`, `bottom-left`, `bottom-center`, and `bottom-right`. `anchor` places every text item, captions included. Human `speaker_anchor` identifies the visible mouth/face voice-source region; spoken devices use `voice_source: device` and anchor their visible audio source.
+
+A panel that letters more than one balloon must stay attributable. Because a
+`speaker_anchor` is the only machine-readable evidence tying a balloon to a
+character, two rules decide attribution in normalized panel space and are applied
+identically by storyboard validation and by lettering. Anchors closer than `0.04`
+belonging to *different* speakers read as one voice source and fail as
+`shared-anchor`; anchors farther apart than `0.25` claimed by the *same* speaker
+place one character in two positions and fail as `split-anchor`. One speaker may
+hold several balloons at the same anchor. Every spoken balloon also needs a text
+ID, unique within its panel, because placements, page-QA regions, and reviewer
+evidence all address a balloon by that ID. A violation is reported as
+`dialogue-attribution-ambiguous` — or `dialogue-attribution-required` for a
+missing ID — and is never resolved by authoring order. Non-spoken system status is a caption and has no tail. Captions and SFX omit `voice_source` and `speaker_anchor`. Legacy `tail_target` remains readable but produces `balloon-tail-migration-required` at lettering and later stages; it is never silently reinterpreted. Control characters other than newline are invalid. Explicit newlines are optional wrapping hints. Authored punctuation and words are not rewritten by deterministic scripts.
 
 The word limits are a ceiling, not a guarantee of fit. Dialogue is inscribed in an oval, which holds roughly half the text of the rectangle bounding it, and an anchor area is about 42% of panel width by 30% of panel height. A 32-word line needs a panel of roughly 1000x1200 px or larger; a 720x1064 panel holds about 14 words. Lettering fails with `text item {id} does not fit inside the panel` rather than printing over the artwork, so size dialogue to the panel rectangle the storyboard assigns it.
+
+Lettering geometry is schema `1.1`. Every retained placement carries an
+`attribution` record: `null` for captions and SFX, which are not spoken, and for
+dialogue exactly `authored_speaker` (the token the storyboard wrote), `speaker`
+(the stable character-bible ID it resolved to), `resolution` (`declared` when the
+token was that ID, `inferred` when it was a display name matching exactly one
+character), and `speaker_anchor` (the voice source the attribution is bound to). A
+display name shared by two characters resolves to no one and is refused. Because
+geometry is fully derived from the clean raster, the storyboard, and the font
+policy, a record written at schema `1.0` is reported as
+`lettering-record-stale` and re-lettered rather than migrated in place.
 
 Dialogue tails are stored in lettering geometry as `organic-cubic-v1` records containing `attachment`, `base`, `control`, `tip`, `speaker_anchor`, `voice_source`, `source_gap`, `length`, `width`, and `policy_version`. The body and cubic tail are supersampled into one mask before one outline is derived. Page-QA check `bubble-tail-direction` requires exactly one current `regions` entry per dialogue with `panel_id`, `text_id`, `speaker`, `voice_source`, `speaker_anchor`, `tip`, and `result`; generic or stale regions fail closed.
 
@@ -613,9 +637,17 @@ rectangle the panel is later fitted into. `clipped-text` regions report the offe
 box; `balloon-subject-obstruction` regions report the measured `clearance` and the
 `required_clearance` a balloon must keep from an authored `speaker_anchor`;
 `bubble-tail-geometry` regions report a `reason` of `missing-tail`,
-`speaker-anchor-mismatch`, `voice-source-mismatch`, `placement-kind-mismatch`,
-`speaker-anchor-out-of-range`, `detached-tail`, or
-`tail-does-not-point-at-speaker`. `detached-tail` is measured against the ellipse
+`missing-attribution`, `speaker-mismatch`, `speaker-anchor-mismatch`,
+`voice-source-mismatch`, `placement-kind-mismatch`,
+`speaker-anchor-out-of-range`, `detached-tail`,
+`tail-does-not-point-at-speaker`, or `attribution-anchor-mismatch`.
+`missing-attribution` and `speaker-mismatch` audit identity rather than shape:
+they compare the placement's retained `attribution` against the speaker the
+storyboard authored, which is how a swapped pair of speakers is caught when both
+tails are drawn correctly. `attribution-anchor-mismatch` is checked last and
+against the drawn tail, so a storyboard edit is still reported as an anchor
+mismatch and what remains here is attribution naming a voice source the tail was
+never aimed at. `detached-tail` is measured against the ellipse
 actually drawn rather than its bounding box, so an attachment resting in the
 balloon body is detached even though it is inside the box.
 `speaker-anchor-out-of-range` fails an anchor outside normalized `[0,1]` even when

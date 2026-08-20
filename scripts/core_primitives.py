@@ -66,6 +66,23 @@ TAIL_SOURCE_GAP_TOLERANCE = 1.0
 # attachment that has drifted into the balloon body.
 TAIL_ATTACHMENT_TOLERANCE = 0.5
 
+# Speaker attribution policy for panels that letter more than one balloon.
+#
+# A `speaker_anchor` names the visible mouth or audio device a balloon speaks
+# from, so it is the only machine-readable evidence tying a balloon to a
+# character. Two rules make that evidence decide attribution instead of merely
+# describing it, and both are measured in normalized panel space so the renderer
+# and the storyboard validator apply exactly the same thresholds.
+#
+# Anchors closer than this read as one voice source, so two different speakers
+# claiming them cannot be told apart by anything drawn in the panel.
+DISTINCT_SPEAKER_ANCHOR_SEPARATION = 0.04
+# One character occupies one place in a panel. Anchors farther apart than this
+# claim one speaker is talking from two positions, so the balloons cannot both
+# be attributed to them.
+SAME_SPEAKER_ANCHOR_SPREAD = 0.25
+ATTRIBUTION_CONFLICT_REASONS = ("shared-anchor", "split-anchor")
+
 Rectangle: TypeAlias = Mapping[str, int] | Sequence[int]
 Point: TypeAlias = Sequence[float]
 
@@ -149,6 +166,43 @@ def is_normalized_point(value: object) -> bool:
     return is_geometry_point(value) and all(
         0.0 <= float(item) <= 1.0 for item in value  # type: ignore[union-attr]
     )
+
+
+def dialogue_attribution_conflicts(
+    attributions: Sequence[tuple[str, str, object]],
+) -> list[tuple[str, str, str]]:
+    """Return speaker-anchor pairings that make one panel's attribution ambiguous.
+
+    `attributions` holds one `(text_id, speaker, speaker_anchor)` triple per
+    spoken balloon in a single panel, where `speaker_anchor` is a normalized
+    point. Each returned triple is `(reason, first_text_id, second_text_id)` with
+    the two IDs ordered so the report does not depend on authoring order.
+
+    A balloon whose anchor is unusable is not compared: an absent or out-of-range
+    anchor is already a hard defect reported against that item, and pairing it
+    here would only duplicate the failure under a less specific reason.
+    """
+    usable = [
+        (text_id, speaker, (float(anchor[0]), float(anchor[1])))  # type: ignore[index]
+        for text_id, speaker, anchor in attributions
+        if is_normalized_point(anchor)
+    ]
+    conflicts: list[tuple[str, str, str]] = []
+    for index, (first_id, first_speaker, first_anchor) in enumerate(usable):
+        for second_id, second_speaker, second_anchor in usable[index + 1:]:
+            distance = math.dist(first_anchor, second_anchor)
+            if first_speaker != second_speaker:
+                if distance < DISTINCT_SPEAKER_ANCHOR_SEPARATION:
+                    reason = "shared-anchor"
+                else:
+                    continue
+            elif distance > SAME_SPEAKER_ANCHOR_SPREAD:
+                reason = "split-anchor"
+            else:
+                continue
+            pair = (first_id, second_id) if first_id <= second_id else (second_id, first_id)
+            conflicts.append((reason, *pair))
+    return sorted(set(conflicts))
 
 
 def subject_keepout_radius(width: int, height: int) -> float:

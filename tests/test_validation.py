@@ -400,6 +400,48 @@ class StrictSchemaValidationTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assert_issue(validate_storyboard(data, story, characters), field)
 
+    def test_storyboard_accepts_and_separates_multi_speaker_attribution(self):
+        story, characters = valid_story(), valid_characters()
+        characters["characters"].append({
+            **deepcopy(characters["characters"][0]),
+            "id": "ren", "name": "Ren", "role": "gatekeeper",
+            "reference_path": "references/characters/ren.png",
+        })
+
+        def two_speakers(first_anchor, second_anchor, second_speaker="ren"):
+            """Return a storyboard whose only panel letters two spoken balloons."""
+            data = valid_storyboard()
+            panel = data["pages"][0]["panels"][0]
+            panel["characters"] = ["mira", "ren"]
+            first = panel["text"][0]
+            first["speaker_anchor"] = first_anchor
+            second = deepcopy(first)
+            second.update({
+                "id": "p01-01-t02", "speaker": second_speaker,
+                "speaker_anchor": second_anchor, "priority": 2,
+                "content": "Then I hold the gate.",
+            })
+            panel["text"] = [first, second]
+            return data
+
+        self.assertEqual(
+            [],
+            validate_storyboard(two_speakers([0.78, 0.34], [0.22, 0.62]), story, characters),
+        )
+
+        for description, data in (
+            ("shared anchor", two_speakers([0.78, 0.34], [0.78, 0.35])),
+            ("split anchor", two_speakers([0.78, 0.34], [0.22, 0.62], "mira")),
+        ):
+            with self.subTest(description=description):
+                issues = validate_storyboard(data, story, characters)
+                self.assertTrue(any(
+                    issue.field == "pages[0].panels[0].text"
+                    and issue.message.startswith("dialogue-attribution-ambiguous:")
+                    and "p01-01-t01 and p01-01-t02" in issue.message
+                    for issue in issues
+                ), issues)
+
     def test_storyboard_reports_legacy_tail_migration_and_tail_free_captions(self):
         story, characters = valid_story(), valid_characters()
         legacy = valid_storyboard()

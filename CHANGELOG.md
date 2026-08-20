@@ -4,6 +4,24 @@
 
 ### Added
 
+- Made speaker attribution explicit and verifiable for multi-character panels. Every
+  spoken balloon now resolves to a stable character-bible ID — declared when the
+  storyboard writes that ID, inferred when it writes a display name matching exactly one
+  character — and that identity is retained in lettering geometry as a per-placement
+  `attribution` record alongside the voice source it is bound to. A display name shared by
+  two characters resolves to no one and is refused rather than settled by authoring order.
+- Panels whose balloons cannot be told apart now fail with `dialogue-attribution-ambiguous`
+  at both storyboard validation and lettering, using one shared policy in
+  `scripts/core_primitives.py`: different speakers claiming anchors closer than `0.04`
+  normalized report `shared-anchor`, and one speaker claiming anchors farther apart than
+  `0.25` reports `split-anchor`. A spoken balloon without a text ID, or two sharing one, is
+  refused as `dialogue-attribution-required` because attribution would not be addressable.
+- `bubble-tail-geometry` gained three identity reasons — `missing-attribution`,
+  `speaker-mismatch`, and `attribution-anchor-mismatch` — so a swapped pair of speakers is
+  detected from the record even when both tails attach and point correctly.
+- Added multi-speaker regression coverage: a two-character dialogue panel that passes every
+  deterministic page check without an override, a swap of its two retained attributions that
+  is detected on both balloons, and three named balloon-layout fixtures for the new reasons.
 - Added deterministic speech balloon placement QA to the composed-page record: three new
   page checks in `scripts/page_quality.py` audit balloon geometry the engine previously
   left to the eye. `balloon-subject-obstruction` fails when a balloon comes closer to an
@@ -144,6 +162,14 @@
 
 ### Changed
 
+- **Lettering geometry `schema_version` moves from `"1.0"` to `"1.1"` now that every
+  placement carries an `attribution` record.** Geometry is fully derived from the clean
+  raster, the storyboard, and the font policy, so there is nothing to migrate: a `"1.0"`
+  record is reported as `lettering-record-stale: geometry predates speaker attribution and
+  must be lettered again` and is re-lettered rather than rewritten in place. The lettering
+  stage cache version in `templates/manifest.json` moves from `"2"` to `"3"` for the same
+  reason, so a project carrying the new version reruns lettering instead of reusing a
+  cached result written in the previous shape.
 - **The page-QA record `schema_version` moves from `"2.0"` to `"2.1"`, and `"2.0"` records
   migrate in place.** The page check set grows from seven entries to ten and `bindings` gains
   `normalization_sha256s`, so the record carries a new version instead of changing shape
@@ -263,3 +289,4 @@ First Native Distribution release candidate.
 - x86_64 is the release architecture for `v2.0.0rc1`; arm64 naming is reserved but no arm64 artifact is claimed.
 - Image generation still depends on an agent-exposed provider capability; deterministic fixtures do not claim live visual quality.
 - Provider credentials and provider SDKs remain outside the base package.
+

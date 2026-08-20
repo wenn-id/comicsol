@@ -1,0 +1,26 @@
+{
+  "description": "Retained attribution names a different character than the storyboard gives the line, which is what a swapped pair of speakers leaves behind: both balloons are drawn correctly and only the identity is wrong.",
+  "expected_check": "bubble-tail-geometry",
+  "expected_decision": "regenerate",
+  "expected_reasons": [
+    "speaker-mismatch"
+  ],
+  "expected_result": "fail",
+  "panels": {
+    "p01-02": {
+      "replace": {
+        "p01-02-t01": {
+          "attribution": {
+            "authored_speaker": "ren",
+            "resolution": "declared",
+            "speaker": "ren",
+            "speaker_anchor": [
+              0.7,
+              0.55
+            ]
+          }
+        }
+      }
+    }
+  }
+}

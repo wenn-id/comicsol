@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 from scripts import typography  # noqa: E402
 
 from scripts.typography import (  # noqa: E402
+    LETTERING_GEOMETRY_SCHEMA_VERSION,
     TypographyPreflightError,
     lettering_geometry_hash,
     preflight_text_items,
@@ -226,7 +227,9 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
 
             self.assertTrue(lettered.is_file())
             self.assertEqual("pass", typography["status"])
-            self.assertEqual("1.0", geometry["schema_version"])
+            self.assertEqual(
+                LETTERING_GEOMETRY_SCHEMA_VERSION, geometry["schema_version"]
+            )
             self.assertEqual(panel_id, geometry["panel_id"])
             self.assertRegex(geometry["bindings"]["clean_sha256"], r"^[0-9a-f]{64}$")
             self.assertRegex(geometry["bindings"]["storyboard_sha256"], r"^[0-9a-f]{64}$")
@@ -253,6 +256,15 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
             self.assertTrue(placed["font_runs"])
             self.assertTrue(all("/" not in run["font_id"] for run in placed["font_runs"]))
             if placed["kind"] == "dialogue":
+                self.assertEqual(
+                    {
+                        "authored_speaker": "mira",
+                        "resolution": "declared",
+                        "speaker": "mira",
+                        "speaker_anchor": [0.7, 0.55],
+                    },
+                    placed["attribution"],
+                )
                 tail = placed["tail"]
                 self.assertEqual("organic-cubic-v1", tail["policy_version"])
                 self.assertEqual("human", tail["voice_source"])
@@ -265,6 +277,7 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
                 )
             else:
                 self.assertIsNone(placed["tail"])
+                self.assertIsNone(placed["attribution"])
             self.assertEqual(
                 json.dumps(geometry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 geometry_path.read_text("utf-8"),
@@ -369,6 +382,20 @@ class LetteringProvenanceTests(unittest.TestCase):
                 ),
             ),
             ("glyphs.font_id", lambda g, t: t["glyphs"][0].update(font_id=".notdef")),
+            ("schema_version", lambda g, t: g.update(schema_version="1.0")),
+            ("items.attribution", lambda g, t: g["items"][0].pop("attribution")),
+            (
+                "items.attribution.speaker",
+                lambda g, t: g["items"][0]["attribution"].update(speaker=""),
+            ),
+            (
+                "items.attribution.resolution",
+                lambda g, t: g["items"][0]["attribution"].update(resolution="guessed"),
+            ),
+            (
+                "items.attribution.speaker_anchor",
+                lambda g, t: g["items"][0]["attribution"].update(speaker_anchor=[1.4, 0.2]),
+            ),
         )
         for field, mutate in cases:
             with self.subTest(field=field):
