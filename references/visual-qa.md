@@ -59,7 +59,10 @@ eight storyboard anchor `area` values, with specific evidence and repair guidanc
   and the reason is recorded rather than argued.
 - Retain all attempt images. Do not touch passing panels or their hashes.
 - Promotion replaces an accepted raster only while its QA record asks for a repair. Record
-  the new review first; the previous accepted bytes are archived automatically.
+  the new review first; the previous accepted bytes are archived automatically. A record
+  that cannot be read or whose decision is unrecognized refuses the replacement.
+- A subject defect region names a character the panel's trait review covered. Use an
+  `area` region, or record the trait review first, when it cannot.
 - Permit one immediate transient repeat; it consumes the global budget but not the
   per-panel visual retry budget.
 - After exhaustion, an error-level panel is `BLOCKED` and cannot reach lettering/export.

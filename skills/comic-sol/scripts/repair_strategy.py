@@ -328,9 +328,19 @@ def _defect_region_scope(region: Mapping[str, Any]) -> tuple[str, str]:
 
 
 def _localized_defects(
-    check: Mapping[str, Any], check_id: str, evidence: str
+    check: Mapping[str, Any],
+    check_id: str,
+    evidence: str,
+    reviewed_cast: tuple[str, ...],
 ) -> list[RepairDefect]:
-    """Classify a failing localizable check by its bounded defect regions."""
+    """Classify a failing localizable check by its bounded defect regions.
+
+    A subject target has to be a subject this panel's review actually covered.
+    The reviewed cast comes from the trait review, so naming a character outside
+    it — or naming one at all when no trait review established a cast — cannot be
+    verified, and a localized edit aimed at an unverified subject would leave the
+    stated preservation boundary meaningless.
+    """
     regions = check.get("regions")
     if not isinstance(regions, list):
         raise RepairStrategyError(f"{check_id} regions must be an array")
@@ -339,6 +349,11 @@ def _localized_defects(
         if not isinstance(region, Mapping):
             raise RepairStrategyError(f"{check_id} region must be an object")
         scope, target = _defect_region_scope(region)
+        if scope == SUBJECT_SCOPE and target not in reviewed_cast:
+            raise RepairStrategyError(
+                f"{check_id} region names a character this panel's review did "
+                f"not cover: {target!r}"
+            )
         if region.get("result") not in RESULTS or region.get("severity") not in SEVERITIES:
             raise RepairStrategyError(f"{check_id} region result or severity is invalid")
         if not _non_passing(region):
@@ -366,7 +381,9 @@ def _localized_defects(
     return defects
 
 
-def _check_defects(check: Mapping[str, Any]) -> list[RepairDefect]:
+def _check_defects(
+    check: Mapping[str, Any], reviewed_cast: tuple[str, ...]
+) -> list[RepairDefect]:
     """Classify one panel check into zero or more scoped defects."""
     check_id = check.get("id")
     if check_id not in PANEL_CHECK_IDS:
@@ -386,7 +403,7 @@ def _check_defects(check: Mapping[str, Any]) -> list[RepairDefect]:
         ]
     if check_id == IDENTITY_CHECK:
         return _identity_defects(check, evidence)
-    return _localized_defects(check, str(check_id), evidence)
+    return _localized_defects(check, str(check_id), evidence, reviewed_cast)
 
 
 def _validated_identity_check(
@@ -454,18 +471,25 @@ def _ordered_checks(record: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return list(checks)
 
 
-def _reviewed_subjects(checks: list[Mapping[str, Any]]) -> tuple[str, ...]:
-    """Return every reviewed character in review order, without repeats."""
-    identity = next(check for check in checks if check.get("id") == IDENTITY_CHECK)
-    regions = identity.get("regions")
-    if "provenance" not in identity or not isinstance(regions, list):
+def _reviewed_cast(identity: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return the characters this panel's trait review covered, in review order.
+
+    Provenance is the authority on who was reviewed, not the region list: a
+    region can only be trusted to name a subject once that subject appears here,
+    and a panel with no trait review has established no cast at all.
+    """
+    provenance = identity.get("provenance")
+    if not isinstance(provenance, Mapping):
         return ()
-    subjects = [
-        region["character_id"]
-        for region in regions
-        if isinstance(region, Mapping) and isinstance(region.get("character_id"), str)
+    characters = provenance.get("characters")
+    if not isinstance(characters, list):
+        return ()
+    reviewed = [
+        entry["character_id"]
+        for entry in characters
+        if isinstance(entry, Mapping) and isinstance(entry.get("character_id"), str)
     ]
-    return tuple(dict.fromkeys(subjects))
+    return tuple(dict.fromkeys(reviewed))
 
 
 def _repair_targets(defects: list[RepairDefect]) -> tuple[RepairTarget, ...]:
@@ -512,10 +536,11 @@ def panel_repair_plan(
         raise RepairStrategyError("panel QA bindings must bind the accepted raster")
 
     checks = _ordered_checks(record)
-    _validated_identity_check(record, checks, panel_id)
+    identity = _validated_identity_check(record, checks, panel_id)
+    reviewed_cast = _reviewed_cast(identity)
     defects: list[RepairDefect] = []
     for check in checks:
-        defects.extend(_check_defects(check))
+        defects.extend(_check_defects(check, reviewed_cast))
     unaffected_checks = tuple(
         str(check["id"]) for check in checks if not _non_passing(check)
     )
@@ -523,9 +548,7 @@ def panel_repair_plan(
         defect.target for defect in defects if defect.scope == SUBJECT_SCOPE
     }
     unaffected_subjects = tuple(
-        subject
-        for subject in _reviewed_subjects(checks)
-        if subject not in faulted_subjects
+        subject for subject in reviewed_cast if subject not in faulted_subjects
     )
 
     if decision != "regenerate":
@@ -741,7 +764,12 @@ def recorded_panel_plan(
 
 
 def write_repair_plan(project_dir: Path, document: Mapping[str, Any]) -> Path:
-    """Publish a repair-plan document atomically inside the project."""
+    """Publish an already-derived repair-plan document atomically.
+
+    Prefer ``plan_and_write_repair_plan``, which derives and publishes under one
+    lock. This entry point is for a document the caller already holds, and it
+    cannot promise that the reviews behind that document are still current.
+    """
     project_dir = Path(project_dir)
     payload = canonical_artifact_bytes(document)
     with ProjectTransaction(project_dir, "repair-plan") as transaction:
@@ -754,14 +782,22 @@ def plan_and_write_repair_plan(
 ) -> Path:
     """Plan every reviewed panel's repair, then publish the record.
 
+    Reading the reviews, hashing the bound artifacts, and publishing the plan all
+    happen inside one transaction, so they share the lock that serializes every
+    other project operation. Splitting them would let a concurrent review or a
+    replaced raster land between the hash and the publication, and the plan would
+    then claim to preserve bytes that were no longer the reviewed bytes.
+
     Re-running this on an unchanged project rewrites byte-identical content, so a
     resume repairs exactly what the interrupted run planned to repair.
     """
     project_dir = Path(project_dir)
-    document = project_repair_plan(
-        project_dir, localized_edit_supported=localized_edit_supported
-    )
-    return write_repair_plan(project_dir, document)
+    with ProjectTransaction(project_dir, "repair-plan") as transaction:
+        document = project_repair_plan(
+            project_dir, localized_edit_supported=localized_edit_supported
+        )
+        transaction.stage_bytes(REPAIR_PLAN_PATH, canonical_artifact_bytes(document))
+    return project_dir / REPAIR_PLAN_PATH
 
 
 # --------------------------------------------------------------------------- #

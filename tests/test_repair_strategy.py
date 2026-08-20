@@ -6,8 +6,11 @@ import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 
+from scripts import repair_strategy
 from scripts.core_primitives import PANEL_CHECK_IDS
+from scripts.project_io import ProjectLock
 from scripts.repair_strategy import (
     AREA_SCOPE,
     EDITING_UNSUPPORTED,
@@ -554,6 +557,59 @@ class TrustedIdentityEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(RepairStrategyError, "unreviewed character: 'ren'"):
             panel_repair_plan(record, localized_edit_supported=True)
 
+    def test_a_subject_region_outside_the_reviewed_cast_is_refused(self):
+        for check_id in ("anatomy", "text-free"):
+            with self.subTest(check=check_id):
+                record = failing_record(
+                    overrides={
+                        check_id: {
+                            "result": "fail",
+                            "severity": "error",
+                            "regions": [defect_region(character_id="stranger")],
+                        }
+                    }
+                )
+
+                with self.assertRaisesRegex(
+                    RepairStrategyError, "did not cover: 'stranger'"
+                ):
+                    panel_repair_plan(record, localized_edit_supported=True)
+
+    def test_a_subject_region_needs_a_trait_review_to_establish_the_cast(self):
+        record = failing_record(
+            identity=check("character-identity"),
+            overrides={
+                "anatomy": {
+                    "result": "fail",
+                    "severity": "error",
+                    "regions": [defect_region(character_id="mira")],
+                }
+            },
+        )
+
+        with self.assertRaisesRegex(RepairStrategyError, "did not cover: 'mira'"):
+            panel_repair_plan(record, localized_edit_supported=True)
+
+    def test_an_area_region_needs_no_reviewed_cast(self):
+        record = failing_record(
+            identity=check("character-identity"),
+            overrides={
+                "text-free": {
+                    "result": "fail",
+                    "severity": "error",
+                    "regions": [defect_region(area="bottom-right")],
+                }
+            },
+        )
+
+        plan = panel_repair_plan(record, localized_edit_supported=True)
+
+        self.assertEqual(SELECTIVE_REPAIR, plan.strategy)
+        self.assertEqual(
+            [(AREA_SCOPE, "bottom-right")],
+            [(target.scope, target.target) for target in plan.targets],
+        )
+
 
 class UntrustedInputTests(unittest.TestCase):
     def test_schema_one_records_are_refused(self):
@@ -860,6 +916,30 @@ class PersistenceTests(RepairPlanProjectHarness):
         document = project_repair_plan(self.project, localized_edit_supported=True)
 
         self.assertEqual(["p01-01"], [entry["panel_id"] for entry in document["panels"]])
+
+    def test_reviews_are_hashed_while_the_project_lock_is_held(self):
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
+        observed = []
+        real_check = repair_strategy.accepted_content_is_stale
+
+        def probe(project_dir, record):
+            """Record whether the project lock is held while bindings are hashed."""
+            observed.append(
+                ProjectLock(Path(project_dir))._held_locks().get(
+                    Path(project_dir).resolve()
+                )
+                is not None
+            )
+            return real_check(project_dir, record)
+
+        with patch(
+            "scripts.repair_strategy.accepted_content_is_stale", side_effect=probe
+        ):
+            plan_and_write_repair_plan(self.project, localized_edit_supported=True)
+
+        self.assertEqual([True], observed)
 
     def test_a_resume_rewrites_byte_identical_content(self):
         self._publish_record(

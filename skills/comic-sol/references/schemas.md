@@ -417,6 +417,11 @@ specific, a non-passing or warning-severity entry carries non-empty repair guida
 clean pass uses `null` guidance, exactly as trait regions do. One `(scope, target)` pair
 appears at most once per check.
 
+A `character_id` must name a character the panel's own trait review covered, so a subject
+region requires a `character-identity` check carrying provenance; a region naming anyone
+else, or naming a character when no trait review established a cast, is rejected rather
+than repaired. An `area` region needs no reviewed cast.
+
 `action`, `composition`, `continuity`, and `technical` must keep `regions: []`. Faulting
 camera framing, the scripted beat, a cross-panel anchor, or a whole-raster property is a
 statement about the panel rather than about a patch of it, so bounded regions on those
@@ -495,8 +500,13 @@ performing one: it edits no raster and names no provider, model, endpoint, or cr
 
 A subject-scoped repair is planned only from a trait review its own gate accepts. The
 `character-identity` check is validated before classification, its provenance must name the
-panel under review, and no region may fault a character the review did not cover, so a
-malformed region cannot aim a localized edit at an arbitrary character.
+panel under review, and no region on any check may fault a character outside the reviewed
+cast, so a malformed region cannot aim a localized edit at an arbitrary character.
+
+Reading the reviews, hashing the bound artifacts, and publishing the plan share one project
+transaction, so they hold the lock that serializes every other project operation. A plan
+derived outside that critical section could claim to preserve bytes that a concurrent
+promotion had already replaced.
 
 Validation re-derives every published entry from the current QA record using the recorded
 capability flag. A panel whose review still says `regenerate` must carry a matching entry,
@@ -572,7 +582,7 @@ The version 1.0 project boundary contains `project.json`; exact source/request c
 
 The opt-in `plan/character-identity-pack.json` companion artifact also lives inside this boundary, as does the `logs/reference-selection.json` provenance record derived from it and the `logs/repair-plan.json` record derived from the panel QA records.
 
-Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-number}.png`; only the accepted attempt occupies `panels/raw/{panel-id}.png`. An accepted raster is replaced only while its QA record asks for a repair: promotion verifies the new raster, refuses to overwrite a panel the review still accepts, and archives the previous accepted bytes before publishing the replacement. Generated images intentionally contain no dialogue, captions, speech bubbles, signatures, logos, or watermarks. Exact storyboard-authored SFX is instead allowed and required in generated artwork; generated SFX is forbidden when the storyboard has none.
+Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-number}.png`; only the accepted attempt occupies `panels/raw/{panel-id}.png`. An accepted raster is replaced only while its QA record asks for a repair: promotion verifies the new raster, refuses to overwrite a panel the review still accepts, and archives the previous accepted bytes before publishing the replacement. Only a review that was never written permits replacement, which is what initial generation and transient repeats need; a record that exists but cannot be resolved, read, or understood withholds permission rather than granting it, because it is not evidence that anything faulted the panel. The record is read inside the promotion transaction, under the same lock that publishes the replacement. Generated images intentionally contain no dialogue, captions, speech bubbles, signatures, logos, or watermarks. Exact storyboard-authored SFX is instead allowed and required in generated artwork; generated SFX is forbidden when the storyboard has none.
 
 ## Page QA record: `qa/pages/page-{NNN}.json`
 

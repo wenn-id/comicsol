@@ -628,6 +628,42 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(1, len(archives))
         self.assertEqual(accepted_before, archives[0].read_bytes())
 
+    def test_an_untrustworthy_review_does_not_permit_replacement(self):
+        accepted = self.project / "panels/raw/p01-01.png"
+        accepted_before = accepted.read_bytes()
+        repair = self.project / "panels/raw/p01-01.untrusted.png"
+        Image.new("RGB", (640, 960), "green").save(repair)
+        record_generation_attempt(self.project, "p01-01", "visual_retry", repair)
+        record_path = self.project / "qa/panels/p01-01.json"
+
+        cases = {
+            "cannot be read": lambda: record_path.write_text("not json", "utf-8"),
+            "no recognized quality decision": lambda: self._write_json(
+                "qa/panels/p01-01.json",
+                {**self._failing_panel_record(None), "decision": "probably-fine"},
+            ),
+        }
+        for expected, corrupt in cases.items():
+            with self.subTest(reason=expected):
+                corrupt()
+                with self.assertRaisesRegex(ValueError, expected):
+                    promote_attempt(self.project, "p01-01", repair)
+                self.assertEqual(accepted_before, accepted.read_bytes())
+                self.assertEqual(
+                    [], sorted((self.project / "panels/raw").glob("*.attempt-*.png"))
+                )
+
+    def test_a_never_reviewed_panel_still_permits_replacement(self):
+        (self.project / "qa/panels/p01-01.json").unlink()
+        accepted = self.project / "panels/raw/p01-01.png"
+        repair = self.project / "panels/raw/p01-01.initial.png"
+        Image.new("RGB", (640, 960), "green").save(repair)
+        record_generation_attempt(self.project, "p01-01", "transient_repeat", repair)
+
+        promote_attempt(self.project, "p01-01", repair)
+
+        self.assertEqual(repair.read_bytes(), accepted.read_bytes())
+
     def test_promotion_rechecks_original_relative_path_before_verification(self):
         attempt = self.project / "panels/raw/p01-01.swap-before-verify.png"
         outside = self.root / "outside-valid.png"
