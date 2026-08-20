@@ -179,6 +179,39 @@ class ShotClassificationTests(unittest.TestCase):
             classify_shot("wide shot, then a close-up insert"),
         )
 
+    def test_a_cue_inside_a_longer_word_is_not_a_framing(self):
+        # `profiled` and `closeness` are different words, not declared framings.
+        self.assertEqual(
+            (UNCLASSIFIED, None), classify_shot("profiled character against the wall")
+        )
+        self.assertEqual(
+            (UNCLASSIFIED, None), classify_shot("closeness between the two figures")
+        )
+
+    def test_a_compound_or_plural_cue_still_counts(self):
+        self.assertEqual(
+            (CLOSE_UP, "close-up"),
+            classify_shot("a series of close-ups on the ledger"),
+        )
+        self.assertEqual(
+            (THREE_QUARTER, "medium-wide"),
+            classify_shot("held medium-wide, camera static"),
+        )
+
+    def test_a_negated_cue_does_not_declare_the_framing(self):
+        self.assertEqual(
+            (UNCLASSIFIED, None), classify_shot("not a close-up; hold the whole room")
+        )
+        self.assertEqual(
+            (UNCLASSIFIED, None), classify_shot("stay wide, without a profile")
+        )
+
+    def test_a_negated_cue_yields_to_the_next_declared_cue(self):
+        self.assertEqual(
+            (CLOSE_UP, "close-up"),
+            classify_shot("no wide shot; a close-up of the clasp"),
+        )
+
 
 class SelectionRuleTests(unittest.TestCase):
     def setUp(self):
@@ -342,6 +375,67 @@ class BudgetTests(unittest.TestCase):
                     panel_reference_plan(
                         self.pack, self.storyboard, "p01-01", reference_budget=budget
                     )
+
+
+class MalformedStoryboardTests(unittest.TestCase):
+    """A partial plan is worse than no plan: every panel must be accounted for."""
+
+    def setUp(self):
+        self.pack = derive_identity_pack(character_bible())
+
+    def test_a_page_that_is_not_an_object_is_rejected(self):
+        board = storyboard()
+        board["pages"][1] = "full-page"
+
+        with self.assertRaisesRegex(
+            ReferenceStrategyError, r"pages\[1\] must be an object"
+        ):
+            project_reference_plan(self.pack, board)
+
+    def test_a_page_without_a_panel_array_is_rejected(self):
+        board = storyboard()
+        del board["pages"][1]["panels"]
+
+        with self.assertRaisesRegex(
+            ReferenceStrategyError, r"pages\[1\]\.panels must be an array"
+        ):
+            project_reference_plan(self.pack, board)
+
+    def test_a_panel_that_is_not_an_object_is_rejected(self):
+        board = storyboard()
+        board["pages"][1]["panels"][0] = "p02-01"
+
+        with self.assertRaisesRegex(
+            ReferenceStrategyError, r"panels\[0\] must be an object"
+        ):
+            project_reference_plan(self.pack, board)
+
+    def test_a_panel_without_a_string_id_is_rejected(self):
+        board = storyboard()
+        board["pages"][1]["panels"][0]["id"] = 201
+
+        with self.assertRaisesRegex(
+            ReferenceStrategyError, r"panels\[0\]\.id must be a string"
+        ):
+            project_reference_plan(self.pack, board)
+
+    def test_a_repeated_panel_id_is_rejected(self):
+        board = storyboard()
+        board["pages"][1]["panels"][0]["id"] = "p01-01"
+
+        with self.assertRaisesRegex(
+            ReferenceStrategyError, "must not repeat a panel id"
+        ):
+            project_reference_plan(self.pack, board)
+
+    def test_the_single_panel_lookup_validates_the_whole_storyboard(self):
+        board = storyboard()
+        board["pages"][0]["panels"][1] = None
+
+        with self.assertRaisesRegex(
+            ReferenceStrategyError, r"panels\[1\] must be an object"
+        ):
+            panel_reference_plan(self.pack, board, "p01-01")
 
 
 class ProvenanceTests(unittest.TestCase):
@@ -554,6 +648,19 @@ class PersistenceTests(ReferencePlanProjectHarness):
 
         with self.assertRaisesRegex(ReferenceStrategyError, "is not valid JSON"):
             plan_and_write_reference_plan(self.project)
+
+    def test_a_malformed_storyboard_publishes_nothing(self):
+        derive_and_write_identity_pack(self.project)
+        board = storyboard()
+        board["pages"][1]["panels"][0]["id"] = 201
+        (self.project / "plan/storyboard.json").write_text(
+            json.dumps(board, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+        with self.assertRaisesRegex(ReferenceStrategyError, "id must be a string"):
+            plan_and_write_reference_plan(self.project)
+
+        self.assertFalse((self.project / REFERENCE_PLAN_PATH).exists())
 
 
 class CommandLineTests(ReferencePlanProjectHarness):
