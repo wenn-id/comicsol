@@ -140,6 +140,17 @@ def is_geometry_point(value: object) -> bool:
     )
 
 
+def is_normalized_point(value: object) -> bool:
+    """Report whether a point's coordinates are normalized into `[0, 1]`.
+
+    A `speaker_anchor` addresses a location inside its own panel, so a coordinate
+    outside this range names a voice source that is not in the artwork at all.
+    """
+    return is_geometry_point(value) and all(
+        0.0 <= float(item) <= 1.0 for item in value  # type: ignore[union-attr]
+    )
+
+
 def subject_keepout_radius(width: int, height: int) -> float:
     """Return the clearance a balloon keeps from a protected subject anchor."""
     shortest = min(float(width), float(height))
@@ -232,10 +243,13 @@ def tail_geometry_result(
     tip = tail.get("tip")
     gap = tail.get("source_gap")
     # Every coordinate is validated before any arithmetic: a corrupt tail is a
-    # failed check, never an exception escaping the QA record builder.
+    # failed check, never an exception escaping the QA record builder. The anchor
+    # must also be normalized into the panel, matching the renderer's contract —
+    # a self-consistent tail aimed at an off-panel target is still wrong.
     if (
         not isinstance(speaker_anchor, list)
         or not is_geometry_point(speaker_anchor)
+        or not is_normalized_point(speaker_anchor)
         or not is_geometry_point(attachment)
         or not is_geometry_point(tip)
         or not isinstance(gap, (int, float))

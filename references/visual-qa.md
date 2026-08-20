@@ -120,7 +120,9 @@ geometry is written in.
   retained tail must still agree with the storyboard's `speaker_anchor` and `voice_source`.
   Attachment is checked against the ellipse the renderer actually draws, not its bounding
   box, so a tail whose attachment has drifted into the balloon body is reported as
-  `detached-tail` rather than accepted for being inside the box.
+  `detached-tail` rather than accepted for being inside the box. An anchor outside
+  normalized `[0,1]` fails as `speaker-anchor-out-of-range` even when the retained tail
+  agrees with it, because a self-consistent tail can still aim outside the panel.
 - `balloon-crowding` — warns when balloon coverage passes 30% of a panel or two balloons
   sit closer than the readable separation. It names the crowded panels and suggests
   shortening the line, moving it to another panel, or re-anchoring, then selects

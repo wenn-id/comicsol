@@ -21,6 +21,7 @@ from .core_primitives import (
     balloon_separation_minimum,
     balloon_subject_clearance,
     is_geometry_point,
+    is_normalized_point,
     rectangle_overlap_area,
     rectangle_separation,
     subject_keepout_radius,
@@ -333,6 +334,11 @@ def _tail_geometry_regions(
             # Only dialogue is drawn as a balloon with a tail, so there is no
             # outline to attach to and the shape cannot be verified.
             reason = "placement-kind-mismatch"
+        elif not is_normalized_point(anchor):
+            # Reported explicitly rather than as a direction failure: a tail can
+            # be perfectly self-consistent while aiming at a voice source that is
+            # not inside the panel at all.
+            reason = "speaker-anchor-out-of-range"
         elif not _attached_to_balloon(tail.get("attachment"), box):
             reason = "detached-tail"
         elif tail_geometry_result(tail, anchor, width, height) != "pass":

@@ -1,3 +1,4 @@
+import math
 import unittest
 
 from scripts.core_primitives import (
@@ -10,6 +11,7 @@ from scripts.core_primitives import (
     canonical_artifact_bytes,
     canonical_json_bytes,
     is_geometry_point,
+    is_normalized_point,
     rectangle_overlap_area,
     rectangle_separation,
     rectangles_overlap,
@@ -156,6 +158,25 @@ class BalloonGeometryPrimitiveTests(unittest.TestCase):
             "pass",
             tail_geometry_result({**tail, "source_gap": 50.0001}, [0.5, 0.1], 1000, 1000),
         )
+
+    def test_tail_verdict_rejects_an_anchor_outside_the_panel(self):
+        # A tail can be internally perfect - attachment, direction, tip bounds and
+        # source gap all agreeing - while aiming at a voice source that is not in
+        # the panel. The normalized range is the only thing that catches it.
+        anchor = [2.0, 0.5]
+        target = (round(anchor[0] * 1000), round(anchor[1] * 1000))
+        tip = [200.0, 500.0]
+        consistent = {
+            "attachment": [100.0, 500.0],
+            "source_gap": math.hypot(target[0] - tip[0], target[1] - tip[1]),
+            "tip": tip,
+        }
+        self.assertEqual("fail", tail_geometry_result(consistent, anchor, 1000, 1000))
+        # The panel edges themselves remain valid anchors.
+        for edge in ([0.0, 0.5], [1.0, 0.5], [0.5, 0.0], [0.5, 1.0]):
+            self.assertTrue(is_normalized_point(edge), edge)
+        for outside in ([2.0, 0.5], [-0.1, 0.5], [0.5, 1.2]):
+            self.assertFalse(is_normalized_point(outside), outside)
 
     def test_tail_verdict_fails_closed_on_a_corrupt_speaker_anchor(self):
         tail = {

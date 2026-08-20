@@ -102,7 +102,8 @@ except ImportError:
         gap = tail.get("source_gap")
         if (
             not isinstance(speaker_anchor, list)
-            or len(speaker_anchor) != 2
+            or not _is_point(speaker_anchor)
+            or any(not 0.0 <= float(value) <= 1.0 for value in speaker_anchor)
             or not _is_point(attachment)
             or not _is_point(tip)
             or not isinstance(gap, (int, float))

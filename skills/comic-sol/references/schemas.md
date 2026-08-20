@@ -607,9 +607,13 @@ box; `balloon-subject-obstruction` regions report the measured `clearance` and t
 `required_clearance` a balloon must keep from an authored `speaker_anchor`;
 `bubble-tail-geometry` regions report a `reason` of `missing-tail`,
 `speaker-anchor-mismatch`, `voice-source-mismatch`, `placement-kind-mismatch`,
-`detached-tail`, or `tail-does-not-point-at-speaker`. `detached-tail` is measured
-against the ellipse actually drawn rather than its bounding box, so an attachment
-resting in the balloon body is detached even though it is inside the box. `balloon-crowding` is the one warning-severity
+`speaker-anchor-out-of-range`, `detached-tail`, or
+`tail-does-not-point-at-speaker`. `detached-tail` is measured against the ellipse
+actually drawn rather than its bounding box, so an attachment resting in the
+balloon body is detached even though it is inside the box.
+`speaker-anchor-out-of-range` fails an anchor outside normalized `[0,1]` even when
+the retained tail agrees with it, because a self-consistent tail can still aim at
+a voice source that is not in the panel. `balloon-crowding` is the one warning-severity
 deterministic check: it reports `balloons`, `coverage_ratio`, `coverage_limit`,
 `required_separation`, and `tight_pairs` per crowded panel, selects `accept-warning`,
 and never blocks export on its own.

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import shutil
 import tempfile
 import unittest
@@ -646,6 +647,78 @@ class BalloonPlacementQualityTests(unittest.TestCase):
             [{
                 "panel_id": "p01-02",
                 "reason": "detached-tail",
+                "text_id": "p01-02-t01",
+            }],
+            check["regions"],
+        )
+
+    def test_out_of_range_anchor_fails_even_when_the_tail_agrees_with_it(self):
+        project = self._fresh_project()
+        anchor = [2.0, 0.5]
+        normalization = json.loads(
+            (project / "panels/p01-02/normalization.json").read_text("utf-8")
+        )
+        width, height = normalization["clean"]["size"]
+        geometry = json.loads(
+            (project / "panels/p01-02/lettering.json").read_text("utf-8")
+        )
+        box = next(
+            item["box"] for item in geometry["items"] if item["id"] == "p01-02-t01"
+        )
+
+        # Rebuild a tail that is fully self-consistent for the off-panel anchor:
+        # attachment on the ellipse, tip aimed at the target, gap recomputed. Every
+        # other tail rule therefore passes and only the range check can object.
+        target = (round(anchor[0] * width), round(anchor[1] * height))
+        centre_x = box["x"] + box["width"] / 2
+        centre_y = box["y"] + box["height"] / 2
+        radius_x, radius_y = box["width"] / 2, box["height"] / 2
+        delta_x, delta_y = target[0] - centre_x, target[1] - centre_y
+        normalized = math.sqrt((delta_x / radius_x) ** 2 + (delta_y / radius_y) ** 2)
+        attachment = (
+            centre_x + delta_x / normalized,
+            centre_y + delta_y / normalized,
+        )
+        span = math.hypot(target[0] - attachment[0], target[1] - attachment[1])
+        unit_x = (target[0] - attachment[0]) / span
+        unit_y = (target[1] - attachment[1]) / span
+        length = 86.4
+        tip = (attachment[0] + unit_x * length, attachment[1] + unit_y * length)
+
+        storyboard_path = project / "plan/storyboard.json"
+        storyboard = json.loads(storyboard_path.read_text("utf-8"))
+        for panel in storyboard["pages"][0]["panels"]:
+            for text in panel["text"]:
+                if text.get("kind") == "dialogue":
+                    text["speaker_anchor"] = anchor
+        storyboard_path.write_text(
+            json.dumps(storyboard, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            "utf-8",
+        )
+        apply_balloon_layout(project, {
+            "panels": {
+                "p01-02": {
+                    "replace": {
+                        "p01-02-t01": {
+                            "tail_fields": {
+                                # The echo agrees, so the mismatch rule cannot fire.
+                                "speaker_anchor": anchor,
+                                "attachment": [round(v, 4) for v in attachment],
+                                "tip": [round(v, 4) for v in tip],
+                                "source_gap": round(span - length, 4),
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        check = self._checks(project)["bubble-tail-geometry"]
+
+        self.assertEqual("fail", check["result"])
+        self.assertEqual(
+            [{
+                "panel_id": "p01-02",
+                "reason": "speaker-anchor-out-of-range",
                 "text_id": "p01-02-t01",
             }],
             check["regions"],
