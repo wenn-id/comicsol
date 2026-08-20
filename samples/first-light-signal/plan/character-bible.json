@@ -1,0 +1,44 @@
+{
+  "characters": [
+    {
+      "age_band": "late twenties",
+      "id": "ada",
+      "motivation": "Prove the harbour is still reachable so the relay network is rebuilt.",
+      "name": "Ada Vantor",
+      "personality": [
+        "methodical",
+        "stubbornly hopeful",
+        "understated"
+      ],
+      "pronouns": "she/her",
+      "reference_path": "references/characters/ada.png",
+      "role": "relay keeper and sole operator of the harbour mast",
+      "speech": "Short declarative sentences; states readings before conclusions.",
+      "visual_fingerprint": {
+        "avoid": [
+          "modern branded clothing",
+          "existing franchise uniforms",
+          "visible text on wardrobe"
+        ],
+        "face": "square jaw, deep-set eyes, a pale burn scar across the left cheekbone",
+        "hair": "black hair cropped to the ear and pushed behind a copper headset band",
+        "invariants": [
+          "copper headset band worn above the ears",
+          "pale burn scar across the left cheekbone",
+          "grey canvas coat with a rolled left cuff"
+        ],
+        "palette": [
+          "slate grey",
+          "oxidized copper",
+          "cold fog white"
+        ],
+        "signature_props": [
+          "brass signal key on a wrist cord"
+        ],
+        "silhouette": "tall and narrow, shoulders squared by a heavy standing collar",
+        "wardrobe": "grey canvas storm coat over a ribbed undershirt, left cuff rolled once"
+      }
+    }
+  ],
+  "schema_version": "1.0"
+}

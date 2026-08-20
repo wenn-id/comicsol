@@ -1,0 +1,83 @@
+{
+  "characters": [
+    {
+      "age_band": "late teens",
+      "id": "ren",
+      "motivation": "Keep the ledger true, even when the truth is inconvenient.",
+      "name": "Ren Calloway",
+      "personality": [
+        "precise",
+        "literal-minded",
+        "quietly loyal"
+      ],
+      "pronouns": "they/them",
+      "reference_path": "references/characters/ren.png",
+      "role": "apprentice clockwright and keeper of the loft ledger",
+      "speech": "Clipped observations; reads data aloud before drawing a conclusion.",
+      "visual_fingerprint": {
+        "avoid": [
+          "existing franchise uniforms",
+          "modern branded clothing",
+          "visible text on wardrobe"
+        ],
+        "face": "round face, wide-set brown eyes, a faint permanent squint from close work",
+        "hair": "sandy hair tied in a short tail at the nape",
+        "invariants": [
+          "brass-rimmed loupe pushed up on the forehead",
+          "ink-stained right index finger",
+          "green wool vest with a torn left pocket"
+        ],
+        "palette": [
+          "moss green",
+          "warm brass",
+          "ink black"
+        ],
+        "signature_props": [
+          "clothbound ledger carried under one arm"
+        ],
+        "silhouette": "short and compact, slightly hunched from bench work",
+        "wardrobe": "green wool vest with a torn left pocket over rolled shirtsleeves"
+      }
+    },
+    {
+      "age_band": "early sixties",
+      "id": "sable",
+      "motivation": "Keep the city's clocks honest without being owed anything for it.",
+      "name": "Sable Orrin",
+      "personality": [
+        "understated",
+        "exacting",
+        "privately generous"
+      ],
+      "pronouns": "she/her",
+      "reference_path": "references/characters/sable.png",
+      "role": "senior clockwright and Ren's mentor",
+      "speech": "Short answers that redirect credit away from herself.",
+      "visual_fingerprint": {
+        "avoid": [
+          "existing franchise uniforms",
+          "modern branded clothing",
+          "visible text on wardrobe"
+        ],
+        "face": "long weathered face, heavy brow, deep vertical line between the eyebrows",
+        "hair": "steel-grey hair in a single thick braid",
+        "invariants": [
+          "steel-grey braid over the right shoulder",
+          "leather apron with seven numbered tool loops",
+          "wire-frame spectacles with one darkened lens"
+        ],
+        "palette": [
+          "oiled leather brown",
+          "steel grey",
+          "lamp amber"
+        ],
+        "signature_props": [
+          "short brass soldering iron in the third apron loop"
+        ],
+        "silhouette": "broad-shouldered and square, standing very still",
+        "wardrobe": "oiled leather apron with seven numbered tool loops over a grey work shirt"
+      }
+    }
+  ],
+  "schema_version": "1.0"
+}

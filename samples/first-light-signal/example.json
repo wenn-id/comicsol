@@ -1,0 +1,14 @@
+{
+  "evidence_mode": "deterministic",
+  "example_id": "first-light-signal",
+  "kind": "comic-example",
+  "layouts": [
+    "hero-top-two-bottom"
+  ],
+  "page_count": 1,
+  "panel_count": 3,
+  "schema_version": "1.0",
+  "seed": 20260819,
+  "summary": "Smallest complete Comic Sol project: one page, three panels, one character.",
+  "title": "First Light Signal"
+}

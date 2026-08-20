@@ -1,0 +1,38 @@
+{
+  "beginning": "Ada climbs the harbour mast at dawn and sends her routine test pulse into the fog.",
+  "climax": "She decodes the reply and confirms a second mast is answering from across the water.",
+  "ending": "Ada carries the confirmed signal down the harbour stair to wake the town.",
+  "logline": "A lone relay keeper finally receives an answer to the test pulse she has sent every dawn for nine years.",
+  "rating": "teen",
+  "scenes": [
+    {
+      "characters": [
+        "ada"
+      ],
+      "continuity_anchor": "fog-bleached steel lattice with oxidized copper cabling, lit only by a low grey dawn",
+      "id": "relay-mast",
+      "location": "top platform of the harbour relay mast",
+      "purpose": "establish the routine vigil and break it with a returning signal",
+      "time": "grey dawn"
+    },
+    {
+      "characters": [
+        "ada"
+      ],
+      "continuity_anchor": "wet basalt steps descending between fog-dulled lamp posts",
+      "id": "harbour-stair",
+      "location": "basalt stair from the mast down to the harbour road",
+      "purpose": "commit the answer to the town below",
+      "time": "grey dawn"
+    }
+  ],
+  "schema_version": "1.0",
+  "setting": "A fog-locked northern harbour that has not seen a sunrise in nine years.",
+  "theme": "A signal only becomes real once somebody carries it.",
+  "title": "First Light Signal",
+  "tone": [
+    "quiet",
+    "resolute"
+  ],
+  "turn": "The pulse she expects to lose in the fog returns on the same frequency."
+}

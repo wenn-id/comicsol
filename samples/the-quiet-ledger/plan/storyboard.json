@@ -1,0 +1,549 @@
+{
+  "pages": [
+    {
+      "layout": "full-page",
+      "number": 1,
+      "panels": [
+        {
+          "action": "Ren stands at the bench, ledger open, pen stopped mid-column.",
+          "beat": "Ren closes the week's ledger and finds an entry without a name.",
+          "characters": [
+            "ren"
+          ],
+          "composition": "Ren left of centre beneath the skylight, upper-right kept clear for caption",
+          "continuity": [
+            "ren:brass-rimmed loupe pushed up on the forehead",
+            "ren:green wool vest with a torn left pocket",
+            "clock-loft:sloped skylight over a workbench of disassembled brass movements"
+          ],
+          "expression": "puzzled stillness",
+          "id": "p01-01",
+          "lighting": "low afternoon sun through the sloped skylight, warm brass highlights on the bench",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx"
+          ],
+          "order": 1,
+          "rect": {
+            "height": 2272,
+            "width": 1472,
+            "x": 64,
+            "y": 64
+          },
+          "scene_id": "clock-loft",
+          "shot": "wide establishing shot from the loft doorway",
+          "text": [
+            {
+              "anchor": "top-right",
+              "content": "Every repair in Vell has a name beside it. That is the whole point of the ledger.",
+              "id": "p01-01-t01",
+              "kind": "caption",
+              "priority": 1,
+              "speaker": null
+            },
+            {
+              "anchor": "bottom-left",
+              "content": "Tower seven. Repaired. No name.",
+              "id": "p01-01-t02",
+              "kind": "dialogue",
+              "priority": 2,
+              "speaker": "ren",
+              "speaker_anchor": [
+                0.34,
+                0.44
+              ],
+              "voice_source": "human"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "layout": "three-horizontal",
+      "number": 2,
+      "panels": [
+        {
+          "action": "Ren spreads the ledger flat and traces down the name column.",
+          "beat": "Ren lines up three unsigned entries.",
+          "characters": [
+            "ren"
+          ],
+          "composition": "ledger fills the lower frame, Ren's face upper right, left third kept clear",
+          "continuity": [
+            "ren:ink-stained right index finger",
+            "clock-loft:sloped skylight over a workbench of disassembled brass movements"
+          ],
+          "expression": "narrowing focus",
+          "id": "p02-01",
+          "lighting": "raking afternoon light across the page, brass movements glinting behind",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx"
+          ],
+          "order": 1,
+          "rect": {
+            "height": 736,
+            "width": 1472,
+            "x": 64,
+            "y": 64
+          },
+          "scene_id": "clock-loft",
+          "shot": "close shot across the bench, camera level with the page",
+          "text": [
+            {
+              "anchor": "top-left",
+              "content": "Three towers. Three repairs. No hand to credit.",
+              "id": "p02-01-t01",
+              "kind": "caption",
+              "priority": 1,
+              "speaker": null
+            }
+          ]
+        },
+        {
+          "action": "Ren straightens, pen still capped, looking toward the loft window.",
+          "beat": "Ren states the only conclusion the page allows.",
+          "characters": [
+            "ren"
+          ],
+          "composition": "Ren centred with clear space to the right for dialogue",
+          "continuity": [
+            "ren:brass-rimmed loupe pushed up on the forehead",
+            "clock-loft:sloped skylight over a workbench of disassembled brass movements"
+          ],
+          "expression": "dawning concern",
+          "id": "p02-02",
+          "lighting": "warm side light with the skylight blown out behind",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx"
+          ],
+          "order": 2,
+          "rect": {
+            "height": 736,
+            "width": 1472,
+            "x": 64,
+            "y": 832
+          },
+          "scene_id": "clock-loft",
+          "shot": "medium shot, slight low angle",
+          "text": [
+            {
+              "anchor": "middle-right",
+              "content": "Somebody is working for free.",
+              "id": "p02-02-t01",
+              "kind": "dialogue",
+              "priority": 1,
+              "speaker": "ren",
+              "speaker_anchor": [
+                0.44,
+                0.42
+              ],
+              "voice_source": "human"
+            }
+          ]
+        },
+        {
+          "action": "Ren tucks the ledger under one arm and steps out of frame toward the stair.",
+          "beat": "Ren leaves for the tower.",
+          "characters": [
+            "ren"
+          ],
+          "composition": "Ren small at frame right moving away, caption space upper left",
+          "continuity": [
+            "ren:green wool vest with a torn left pocket",
+            "clock-loft:sloped skylight over a workbench of disassembled brass movements"
+          ],
+          "expression": "decided",
+          "id": "p02-03",
+          "lighting": "cooling light, long shadow thrown back across the bench",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx"
+          ],
+          "order": 3,
+          "rect": {
+            "height": 736,
+            "width": 1472,
+            "x": 64,
+            "y": 1600
+          },
+          "scene_id": "clock-loft",
+          "shot": "wide shot from behind, camera at the bench",
+          "text": [
+            {
+              "anchor": "top-left",
+              "content": "So Ren went to look.",
+              "id": "p02-03-t01",
+              "kind": "caption",
+              "priority": 1,
+              "speaker": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "layout": "four-grid",
+      "number": 3,
+      "panels": [
+        {
+          "action": "Ren looks up at the limestone clock face from the scaffold plank.",
+          "beat": "Tower seven runs fast.",
+          "characters": [
+            "ren"
+          ],
+          "composition": "clock face upper frame, Ren small lower left, top-centre kept clear",
+          "continuity": [
+            "ren:brass-rimmed loupe pushed up on the forehead",
+            "market-tower:limestone clock face with a bent minute hand and a scaffold plank at its base"
+          ],
+          "expression": "measuring",
+          "id": "p03-01",
+          "lighting": "early evening sky behind the tower, face lit from below by market lamps",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx"
+          ],
+          "order": 1,
+          "rect": {
+            "height": 1120,
+            "width": 720,
+            "x": 64,
+            "y": 64
+          },
+          "scene_id": "market-tower",
+          "shot": "low-angle wide shot up the tower face",
+          "text": [
+            {
+              "anchor": "top-center",
+              "content": "Four minutes fast.",
+              "id": "p03-01-t01",
+              "kind": "caption",
+              "priority": 1,
+              "speaker": null
+            }
+          ]
+        },
+        {
+          "action": "Ren drops the loupe to one eye over a bright solder joint.",
+          "beat": "Ren finds fresh solder on the movement.",
+          "characters": [
+            "ren"
+          ],
+          "composition": "solder joint centre frame, lower-right open for dialogue",
+          "continuity": [
+            "ren:brass-rimmed loupe pushed up on the forehead",
+            "ren:ink-stained right index finger"
+          ],
+          "expression": "recognition",
+          "id": "p03-02",
+          "lighting": "hard lamp light on bright metal, deep shadow around it",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx"
+          ],
+          "order": 2,
+          "rect": {
+            "height": 1120,
+            "width": 720,
+            "x": 816,
+            "y": 64
+          },
+          "scene_id": "market-tower",
+          "shot": "extreme close-up on the movement and Ren's eye",
+          "text": [
+            {
+              "anchor": "bottom-right",
+              "content": "Fresh solder. Still bright.",
+              "id": "p03-02-t01",
+              "kind": "dialogue",
+              "priority": 1,
+              "speaker": "ren",
+              "speaker_anchor": [
+                0.5,
+                0.38
+              ],
+              "voice_source": "human"
+            }
+          ]
+        },
+        {
+          "action": "Ren watches the trued minute hand advance one division.",
+          "beat": "The trued minute hand ticks past the mark.",
+          "characters": [
+            "ren"
+          ],
+          "composition": "hand crossing frame centre, Ren's profile at frame left, corners kept clear",
+          "continuity": [
+            "ren:brass-rimmed loupe pushed up on the forehead",
+            "market-tower:limestone clock face with a bent minute hand and a scaffold plank at its base"
+          ],
+          "expression": "held breath",
+          "id": "p03-03",
+          "lighting": "flat evening light on pale limestone",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx",
+            "sfx other than the exact authored text"
+          ],
+          "order": 3,
+          "rect": {
+            "height": 1120,
+            "width": 720,
+            "x": 64,
+            "y": 1216
+          },
+          "scene_id": "market-tower",
+          "shot": "close shot on the clock hand with Ren's face at the frame edge",
+          "text": [
+            {
+              "anchor": "middle-right",
+              "content": "TCK",
+              "id": "p03-03-t01",
+              "kind": "sfx",
+              "priority": 1,
+              "speaker": null
+            }
+          ]
+        },
+        {
+          "action": "Ren crouches by the scaffold plank set low against the tower base.",
+          "beat": "Ren recognises the plank placement.",
+          "characters": [
+            "ren"
+          ],
+          "composition": "plank across the lower frame, Ren right of centre, upper-left clear",
+          "continuity": [
+            "ren:green wool vest with a torn left pocket",
+            "market-tower:limestone clock face with a bent minute hand and a scaffold plank at its base"
+          ],
+          "expression": "quiet certainty",
+          "id": "p03-04",
+          "lighting": "long low light from the market, tower base in warm shadow",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx"
+          ],
+          "order": 4,
+          "rect": {
+            "height": 1120,
+            "width": 720,
+            "x": 816,
+            "y": 1216
+          },
+          "scene_id": "market-tower",
+          "shot": "medium shot from ground level",
+          "text": [
+            {
+              "anchor": "top-left",
+              "content": "Set low. Set for someone shorter than me.",
+              "id": "p03-04-t01",
+              "kind": "caption",
+              "priority": 1,
+              "speaker": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "layout": "two-top-hero-bottom",
+      "number": 4,
+      "panels": [
+        {
+          "action": "Ren wades the walkway, ledger held above the waterline.",
+          "beat": "Ren takes the flooded walkway back.",
+          "characters": [
+            "ren"
+          ],
+          "composition": "Ren centre-left, mooring rings receding right, top kept clear",
+          "continuity": [
+            "ren:green wool vest with a torn left pocket",
+            "flood-canal:green canal water at knee height against a stone walkway with iron mooring rings"
+          ],
+          "expression": "hurried",
+          "id": "p04-01",
+          "lighting": "dusk sky reflected in green water, lamps beginning to catch",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx"
+          ],
+          "order": 1,
+          "rect": {
+            "height": 1064,
+            "width": 720,
+            "x": 64,
+            "y": 64
+          },
+          "scene_id": "flood-canal",
+          "shot": "medium wide shot along the canal walkway",
+          "text": [
+            {
+              "anchor": "top-center",
+              "content": "The canal road was faster.",
+              "id": "p04-01-t01",
+              "kind": "caption",
+              "priority": 1,
+              "speaker": null
+            }
+          ]
+        },
+        {
+          "action": "Sable stands at the dark bench, soldering iron in the third apron loop.",
+          "beat": "Sable answers before Ren asks.",
+          "characters": [
+            "ren",
+            "sable"
+          ],
+          "composition": "Sable right of centre under the lamp, lower-left open for dialogue",
+          "continuity": [
+            "sable:steel-grey braid over the right shoulder",
+            "sable:leather apron with seven numbered tool loops",
+            "loft-return:sloped skylight showing night sky above a single lit bench lamp"
+          ],
+          "expression": "unhurried, faintly caught out",
+          "id": "p04-02",
+          "lighting": "single bench lamp from below, night sky flat in the skylight above",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx"
+          ],
+          "order": 2,
+          "rect": {
+            "height": 1064,
+            "width": 720,
+            "x": 816,
+            "y": 64
+          },
+          "scene_id": "loft-return",
+          "shot": "medium shot, camera at Ren's shoulder height",
+          "text": [
+            {
+              "anchor": "bottom-left",
+              "content": "You found the gaps.",
+              "id": "p04-02-t01",
+              "kind": "dialogue",
+              "priority": 1,
+              "speaker": "sable",
+              "speaker_anchor": [
+                0.62,
+                0.36
+              ],
+              "voice_source": "human"
+            }
+          ]
+        },
+        {
+          "action": "Ren bends over the open ledger writing, Sable watching from the lamp's edge.",
+          "beat": "Ren writes the missing name seven times.",
+          "characters": [
+            "ren",
+            "sable"
+          ],
+          "composition": "Ren left under the lamp, Sable right in half-light, upper band kept clear",
+          "continuity": [
+            "ren:ink-stained right index finger",
+            "sable:wire-frame spectacles with one darkened lens",
+            "loft-return:sloped skylight showing night sky above a single lit bench lamp"
+          ],
+          "expression": "settled resolve against reluctant acceptance",
+          "id": "p04-03",
+          "lighting": "warm lamp pool on the page falling off to cool night at the edges",
+          "negative": [
+            "speech bubbles",
+            "captions",
+            "lettering",
+            "signature",
+            "logo",
+            "watermark",
+            "unauthorized sfx"
+          ],
+          "order": 3,
+          "rect": {
+            "height": 1176,
+            "width": 1472,
+            "x": 64,
+            "y": 1160
+          },
+          "scene_id": "loft-return",
+          "shot": "wide two-shot across the bench",
+          "text": [
+            {
+              "anchor": "top-center",
+              "content": "A ledger is not a bill. It is a record of who showed up.",
+              "id": "p04-03-t01",
+              "kind": "caption",
+              "priority": 1,
+              "speaker": null
+            },
+            {
+              "anchor": "bottom-right",
+              "content": "Seven entries. Your name on all of them.",
+              "id": "p04-03-t02",
+              "kind": "dialogue",
+              "priority": 2,
+              "speaker": "ren",
+              "speaker_anchor": [
+                0.28,
+                0.46
+              ],
+              "voice_source": "human"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "schema_version": "1.0"
+}
