@@ -100,6 +100,11 @@ Scoring is manual or model-assisted, and it is deliberately outside CI.
 4. `python -m tests.consistency_benchmark summarize SCORECARD_PATH` reports means per
    dimension, per view, and per character, over scored entries only. An unscored
    dimension is reported as unscored, never averaged in as a zero.
+5. `python -m tests.consistency_benchmark qa-results SCORECARD_PATH PANEL_ID` emits the
+   seven provider-neutral assessment records consumed by character QA. Score 4 is a pass,
+   score 3 is a warning, and scores 0–2 are hard failures with actionable repair guidance
+   added when the records are built into the panel's `character-identity` check. This
+   repair projection does not turn the benchmark summary into a release gate.
 
 A scorecard records the digest of the definition it was scored against. Change the
 matrix, the characters, or a prompt and an old scorecard is refused rather than silently
@@ -151,4 +156,5 @@ python -m tests.consistency_benchmark materialize /tmp/comic-sol-consistency
 # emit a standalone scorecard, or summarize a scored one
 python -m tests.consistency_benchmark scorecard /tmp/consistency-scorecard.json
 python -m tests.consistency_benchmark summarize /tmp/consistency-scorecard.json
+python -m tests.consistency_benchmark qa-results /tmp/consistency-scorecard.json p01-01
 ```

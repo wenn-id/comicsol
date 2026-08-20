@@ -35,6 +35,7 @@ BUNDLED_FONTS = (
 BUNDLED_SCRIPTS = (
     "__init__.py",
     "character_identity.py",
+    "character_quality.py",
     "comic_sol.py",
     "compose_pages.py",
     "core_primitives.py",

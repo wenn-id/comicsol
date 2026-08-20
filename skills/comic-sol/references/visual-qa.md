@@ -4,7 +4,10 @@ Inspect every generated raw panel against its storyboard, character/scene refere
 declared invariants. Record non-empty evidence for exactly seven ordered checks:
 
 1. `character-identity`: principal identity and all visible fingerprint invariants.
-   Evidence: short phrase (e.g. `"match"`, `"hair ok"`, `"eyes correct"`).
+   For every on-panel character, inspect face, hair, age appearance, clothing,
+   accessories, proportions, and immutable traits against the exact expectations emitted
+   by `character_quality.py PROJECT_DIR --context PANEL_ID`. Record specific observed
+   evidence for every trait; generic evidence such as `"ok"` or `"pass"` is invalid.
 2. `anatomy`: readable pose, hands, limbs, face, and no beat-breaking defects.
    Evidence: short phrase (`"pose ok"`, `"hands visible"`, `"face correct"`).
 3. `action`: the scripted action and important props are present and correct.
@@ -27,6 +30,13 @@ Results are `pass`, `warning`, or `fail`; severity is `warning` or `error`. Deci
 - `accept`: all required checks pass.
 - `accept-warning`: readable warning-level impact remains and is named for the user.
 - `regenerate`: an error-level failure needs a new attempt.
+
+For trait-level identity review, pipe the seven normalized assessment records per
+character to `character_quality.py PROJECT_DIR --record PANEL_ID --method METHOD
+--reviewer REVIEWER`. The engine attaches the canonical expectation and reference
+provenance, derives the panel decision, and generates subject-specific repair guidance for
+every warning or failure. The review method may be human, model-assisted, or another
+bounded visual process; core names no required provider or model.
 
 ## Selective repair budgets
 

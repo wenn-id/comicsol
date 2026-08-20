@@ -13,7 +13,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import tests.consistency_benchmark as consistency_benchmark
+from scripts.character_identity import derive_identity_pack
+from scripts.character_quality import (
+    CHARACTER_TRAITS,
+    build_character_identity_check,
+    character_consistency_context,
+)
 from scripts.comic_sol import read_json, sha256_file
+from scripts.reference_strategy import project_reference_plan
 from scripts.validate_project import ProjectValidationError, require_valid_project
 from tests.consistency_benchmark import (
     BASELINE_KIND,
@@ -97,7 +105,10 @@ def _run_command(*argv):
     """Run the benchmark CLI, returning its exit code, stdout, and stderr."""
     out, reported = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(reported):
-        code = main(list(argv))
+        try:
+            code = main(list(argv))
+        except SystemExit as error:
+            code = int(error.code)
     return code, out.getvalue(), reported.getvalue()
 
 
@@ -327,6 +338,39 @@ class ConsistencyScorecardTests(unittest.TestCase):
             summarize_scorecard(unattributed)
         self.assertIn("review.reviewer", str(raised.exception))
 
+    def test_scored_panel_produces_actionable_results_for_all_qa_traits(self):
+        scorecard = _scored_template(4)
+        scores = scorecard["panels"]["p01-01"]["characters"]["rani"]
+        scores["hair"] = 3
+        scores["face"] = 2
+        converter = getattr(consistency_benchmark, "panel_qa_assessments", None)
+        self.assertIsNotNone(converter, "CS-013 per-trait QA output is not implemented")
+
+        assessments = converter(scorecard, "p01-01")
+        pack = derive_identity_pack(consistency_benchmark.CHARACTER_BIBLE)
+        context = character_consistency_context(
+            pack,
+            consistency_benchmark.CHARACTER_BIBLE,
+            project_reference_plan(pack, consistency_benchmark.STORYBOARD),
+            "p01-01",
+            storyboard=consistency_benchmark.STORYBOARD,
+        )
+        check = build_character_identity_check(
+            context,
+            assessments,
+            method=scorecard["review"]["method"],
+            reviewer=scorecard["review"]["reviewer"],
+        )
+
+        self.assertEqual(list(CHARACTER_TRAITS), [item["trait"] for item in check["regions"]])
+        self.assertEqual(
+            ["fail", "warning", "pass", "pass", "pass", "pass", "pass"],
+            [item["result"] for item in check["regions"]],
+        )
+        self.assertEqual(("fail", "error"), (check["result"], check["severity"]))
+        self.assertTrue(check["regions"][0]["repair_guidance"])
+        self.assertTrue(check["regions"][1]["repair_guidance"])
+
 
 class ConsistencyCommandTests(unittest.TestCase):
     def test_summarize_fails_closed_on_missing_unreadable_or_malformed_input(self):
@@ -361,6 +405,18 @@ class ConsistencyCommandTests(unittest.TestCase):
             summary = json.loads(printed)
             self.assertFalse(summary["complete"])
             self.assertEqual(TOTAL_SCORES, summary["overall"]["total"])
+
+    def test_qa_results_command_emits_one_result_per_panel_trait(self):
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "scorecard.json"
+            path.write_text(json.dumps(_scored_template(4)), encoding="utf-8")
+
+            code, output, reported = _run_command("qa-results", str(path), "p01-01")
+
+        self.assertEqual(0, code, reported)
+        results = json.loads(output)
+        self.assertEqual(list(CHARACTER_TRAITS), [item["trait"] for item in results])
+        self.assertEqual(["pass"] * len(CHARACTER_TRAITS), [item["result"] for item in results])
 
 
 class ConsistencyProjectTests(unittest.TestCase):

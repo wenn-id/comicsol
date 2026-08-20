@@ -71,6 +71,15 @@
   on resume, so a panel that drifts can be reviewed against the references it actually
   received. The engine still names no provider, model, endpoint, or credential, and takes
   the reference limit from the caller rather than inferring one.
+- Added provider-neutral character-consistency QA with explicit face, hair, age-
+  appearance, clothing, accessories, proportions, and immutable-trait results for every
+  on-panel character. Rich checks retain canonical expectations, selected-reference and
+  identity hashes, specific evidence, warning versus hard-failure severity, and
+  actionable subject-level repair guidance.
+- Accepted character reviews are reusable only while their panel artifacts, character
+  bible, identity pack, and reference plan remain current. The CS-013 scorecard can emit
+  the same seven per-trait assessment records with `qa-results`, while its aggregate
+  visual score remains advisory and provider-independent.
 
 ### Removed
 

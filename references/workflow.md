@@ -155,10 +155,20 @@ manifest, and the run continues toward `COMPLETE_WITH_WARNINGS` at the final tra
 Validate with `validate_project.py PROJECT_DIR --stage panels`, then transition through
 `PANELS_READY` and `QA_READY`.
 
+Before judging `character-identity`, run `character_quality.py PROJECT_DIR --context
+PANEL_ID`. Assess all seven emitted traits for every listed character, then pipe the
+normalized assessment array to `character_quality.py PROJECT_DIR --record PANEL_ID
+--method METHOD --reviewer REVIEWER`. The command replaces only the panel's existing
+`character-identity` check, preserves the other six checks, publishes atomically, and
+derives `accept`, `accept-warning`, or `regenerate`. Do not persist a raw vision-provider
+response; keep only the bounded evidence accepted by this command.
+
 When a panel fails `character-identity`, read its entry in
 `logs/reference-selection.json` before rewriting the prompt: a panel whose omissions name
 `reference-budget` or `references-unsupported` was constrained by fewer references than
-the pack carries, which is a different repair from a prompt that contradicted them.
+the pack carries, which is a different repair from a prompt that contradicted them. Use
+the failed trait's `repair_guidance` as the single correction clause; it names the subject
+and canonical expectation without requiring a provider-specific repair API.
 
 ### 8–10. Deterministic finalization (letter, compose, export, complete)
 

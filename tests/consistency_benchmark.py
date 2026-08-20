@@ -120,6 +120,15 @@ DIMENSION_SOURCES = {
     "proportions": ("visual_fingerprint", "silhouette"),
     "signature-traits": ("visual_fingerprint", "invariants"),
 }
+QA_TRAITS_BY_DIMENSION = (
+    ("face", "face"),
+    ("hair", "hair"),
+    ("age", "age-appearance"),
+    ("clothing", "clothing"),
+    ("accessories", "accessories"),
+    ("proportions", "proportions"),
+    ("signature-traits", "immutable-traits"),
+)
 
 # Scoring is a reviewer judgement, so the scale is published with the benchmark and
 # never compared against a threshold by CI.
@@ -883,6 +892,50 @@ def summarize_scorecard(scorecard):
     }
 
 
+def panel_qa_assessments(scorecard, panel_id):
+    """Convert one scored CS-013 panel into provider-neutral QA assessments.
+
+    This repair-oriented projection does not alter the benchmark's advisory summary:
+    score 4 passes, score 3 is a warning, and scores 0-2 require regeneration.
+    """
+    validate_scorecard(scorecard)
+    panels = scorecard["panels"]
+    if panel_id not in panels:
+        raise ScorecardError(f"scorecard has no panel {panel_id!r}")
+    scores_by_character = panels[panel_id]["characters"]
+    ordered_ids = [
+        character["id"]
+        for character in CHARACTER_BIBLE["characters"]
+        if character["id"] in scores_by_character
+    ]
+    assessments = []
+    for character_id in ordered_ids:
+        scores = scores_by_character[character_id]
+        for dimension, trait in QA_TRAITS_BY_DIMENSION:
+            score = scores[dimension]
+            if score is None:
+                raise ScorecardError(
+                    f"{panel_id}/{character_id}/{dimension}: score is required for QA"
+                )
+            if score == SCORE_SCALE["max"]:
+                result, severity = "pass", "error"
+            elif score == SCORE_SCALE["max"] - 1:
+                result, severity = "warning", "warning"
+            else:
+                result, severity = "fail", "error"
+            assessments.append({
+                "character_id": character_id,
+                "evidence": (
+                    f"CS-013 score {score}/{SCORE_SCALE['max']}: "
+                    f"{SCORE_SCALE['labels'][str(score)]}"
+                ),
+                "result": result,
+                "severity": severity,
+                "trait": trait,
+            })
+    return assessments
+
+
 # --- materialization and reporting -----------------------------------------
 
 
@@ -993,6 +1046,11 @@ def main(argv=None):
     baseline.add_argument("output_path", type=Path)
     summarize = commands.add_parser("summarize", help="summarize a scored scorecard")
     summarize.add_argument("scorecard_path", type=Path)
+    qa_results = commands.add_parser(
+        "qa-results", help="emit actionable per-trait QA results for one panel"
+    )
+    qa_results.add_argument("scorecard_path", type=Path)
+    qa_results.add_argument("panel_id")
     arguments = parser.parse_args(argv)
 
     if arguments.command == "materialize":
@@ -1014,11 +1072,16 @@ def main(argv=None):
     # Reading and parsing belong inside the handled path: a missing file is a far
     # more likely failure than an invalid score, and both deserve one diagnostic.
     try:
-        summary = summarize_scorecard(load_scorecard(arguments.scorecard_path))
+        scorecard_document = load_scorecard(arguments.scorecard_path)
+        result = (
+            panel_qa_assessments(scorecard_document, arguments.panel_id)
+            if arguments.command == "qa-results"
+            else summarize_scorecard(scorecard_document)
+        )
     except ScorecardError as error:
         print(f"invalid scorecard: {error}", file=sys.stderr)
         return 1
-    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
 

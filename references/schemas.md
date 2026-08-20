@@ -373,6 +373,37 @@ Every check has `id`, `result`, `severity`, `evidence`, `method`, `reviewer`, an
 `warning`. `review` contains a non-empty `method` and `reviewer` plus UTC
 `reviewed_at`.
 
+The `character-identity` check may additionally carry `provenance`; its presence marks a
+trait-level character review. Its `regions` then contains exactly seven ordered entries
+for every character in identity-pack order: `face`, `hair`, `age-appearance`, `clothing`,
+`accessories`, `proportions`, and `immutable-traits`. Each entry contains exactly
+`character_id`, `trait`, `expected`, `result`, `severity`, `evidence`,
+`repair_guidance`. String expectations are used for face, hair, age appearance, and
+clothing; accessories and immutable traits retain their arrays; proportions retains the
+identity pack's `build` and `notes` object. Evidence is non-empty and specific. A
+non-passing or warning-severity entry has non-empty repair guidance naming the character,
+trait, canonical expectation, and observed drift; a clean pass uses `null` guidance.
+
+Trait outcomes roll up deterministically. Any `fail`/`error` entry makes the parent
+`fail`/`error` and requires `regenerate`; otherwise any warning makes the parent
+`warning`/`warning` and selects `accept-warning`; all passes make it `pass`/`error`.
+An explicit user override retains parent `result: fail`, downgrades both the parent and
+failed trait to warning severity, and follows the existing override contract.
+
+Character provenance contains exactly `panel_id`, canonical identity-pack and reference-
+plan paths plus their SHA-256 values, and one entry per reviewed character with its
+`source_fingerprint_sha256` and selected reference records. Validation rebuilds the
+expected traits from the current character bible and identity pack, rehashes both bound
+documents, and compares the panel's current reference selection. A changed bible,
+identity pack, selected reference, or reference plan makes the accepted panel stale and
+forces review on resume; unchanged inputs remain reusable.
+
+`character_quality.py PROJECT_DIR --context PANEL_ID` prints the provider-neutral review
+input. To publish normalized assessment objects into the existing panel QA record, pipe a
+JSON array on standard input to `character_quality.py PROJECT_DIR --record PANEL_ID
+--method METHOD --reviewer REVIEWER`. Publication uses `ProjectTransaction`; raw provider
+responses, credentials, endpoints, and vendor-specific model contracts are not stored.
+
 Decisions are `accept`, `accept-warning`, or `regenerate`. An error-level failed
 check requires `regenerate`; a warning result or warning severity requires
 `accept-warning` or `regenerate`. `accept-warning` records a non-empty

@@ -804,6 +804,7 @@ def _accepted_panel_problem(
 ) -> str | None:
     """Validate schema once, then verify artifacts needed for safe reuse."""
     # Import lazily because the standalone validator imports this lifecycle module.
+    from .character_quality import validate_character_quality_provenance
     from .validate_project import validate_panel_provenance, validate_panel_record
 
     schema_issues = validate_panel_record(record)
@@ -822,6 +823,9 @@ def _accepted_panel_problem(
         if provenance_issues:
             first = provenance_issues[0]
             return f"accepted panel provenance is invalid: {first.field}: {first.message}"
+        character_issues = validate_character_quality_provenance(project_dir, record)
+        if character_issues:
+            return f"accepted panel character consistency is invalid: {character_issues[0]}"
         panel_id = record.get("subject_id")
         bindings = record.get("bindings")
         if not isinstance(panel_id, str) or not isinstance(bindings, dict):
@@ -1671,6 +1675,16 @@ def _stage_override(
         warnings.append(normalized_reason)
     for check in failed_checks:
         check["severity"] = "warning"
+        if check.get("id") == "character-identity":
+            regions = check.get("regions")
+            if isinstance(regions, list):
+                for region in regions:
+                    if (
+                        isinstance(region, dict)
+                        and region.get("result") == "fail"
+                        and region.get("severity") == "error"
+                    ):
+                        region["severity"] = "warning"
     record["decision"] = "accept-warning" if is_v2 else "accept_with_warnings"
     if not is_v2:
         record["retry_reason"] = None

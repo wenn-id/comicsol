@@ -22,6 +22,10 @@ if __package__ in {None, ""}:
 
 from PIL import Image, UnidentifiedImageError
 
+from .character_quality import (
+    validate_character_identity_check,
+    validate_character_quality_provenance,
+)
 from .core_primitives import PANEL_ID_PATTERN as CORE_PANEL_ID_PATTERN
 from .project_io import contained_project_path, open_path_nofollow
 from .raster_limits import MAX_DECODED_PIXELS
@@ -735,6 +739,20 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
     checks = root.get("checks")
     for category in validate_quality_checks(checks, PANEL_CHECK_IDS):
         _add(issues, path, f"checks.{category}", category)
+    if isinstance(checks, list):
+        character_check = next(
+            (
+                check
+                for check in checks
+                if isinstance(check, dict) and check.get("id") == "character-identity"
+            ),
+            None,
+        )
+        if character_check is not None:
+            for category in validate_character_identity_check(
+                character_check, allow_override="override_reason" in root
+            ):
+                _add(issues, path, f"checks.character-identity.{category}", category)
 
     review_fields = {"method", "reviewer", "reviewed_at"}
     review = _object(root.get("review"), review_fields, review_fields, issues, path, "review")
@@ -1589,6 +1607,13 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                 )
             else:
                 issues.extend(validate_panel_provenance(project_dir, record))
+                for detail in validate_character_quality_provenance(project_dir, record):
+                    _add(
+                        issues,
+                        record_relative,
+                        "character-consistency-provenance",
+                        f"quality-record-stale: {detail}",
+                    )
             if stage in {"all", "final", "export-ready"}:
                 checks = record.get("checks")
                 has_error_failure = isinstance(checks, list) and any(
