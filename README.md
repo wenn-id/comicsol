@@ -284,7 +284,10 @@ their pages, QA records, and PDF locally with no provider call:
 
 Each build is validated at the `final` stage. Deterministic builds prove schema,
 lettering, composition, export, and validation mechanics; their placeholder panel
-artwork is not a claimed live sample. The committed
+artwork is not a claimed live sample. Because a placeholder has no artwork to
+inspect, those builds record the artwork-dependent QA checks as unreviewed
+warnings and terminate as `COMPLETE_WITH_WARNINGS` rather than claiming a visual
+review that never happened. The committed
 [one-page synthetic fixture](tests/fixtures/valid-one-page) remains available as
 minimal test data.
 
