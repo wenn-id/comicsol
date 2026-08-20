@@ -77,7 +77,7 @@ nothing to look at. Rather than record them as passing, the builder records them
 | Record | Passes | Recorded as unreviewed warning |
 |---|---|---|
 | Panel QA | `text-free`, `technical` | `character-identity`, `anatomy`, `action`, `composition`, `continuity` |
-| Page QA | the four deterministic checks, plus `bubble-tail-direction` | `face-action-obstruction`, `accidental-text-watermark` |
+| Page QA | the seven deterministic checks, plus `bubble-tail-direction` | `face-action-obstruction`, `accidental-text-watermark` |
 
 The passes are earned rather than asserted. `technical` is recorded only after the
 clean raster is opened and measured as opaque RGB at the exact storyboard

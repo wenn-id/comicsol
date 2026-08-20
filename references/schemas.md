@@ -588,14 +588,37 @@ Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-nu
 
 One schema-2.0 `page-qa` record per composed page is created from `templates/page-qa.json`
 after bounded visual inspection. It contains `schema_version: "2.0"`, `kind: "page-qa"`,
-and `subject_id: "page-{NNN}"`; seven checks in the normative page order; a review object
+and `subject_id: "page-{NNN}"`; ten checks in the normative page order; a review object
 with the fixed method `deterministic-plus-bounded-visual-review`, a non-empty reviewer, and
 an ISO-8601 UTC `reviewed_at`; `decision`; and `unresolved_warnings`.
 
+Seven of those checks are deterministic and authored by the engine with
+`method: deterministic-geometry-v1` and `reviewer: comic-sol`: `clipped-text`,
+`text-overlap`, `reading-order`, `layout-border-integrity`,
+`balloon-subject-obstruction`, `bubble-tail-geometry`, and `balloon-crowding`. The
+remaining three — `face-action-obstruction`, `bubble-tail-direction`, and
+`accidental-text-watermark` — are the bounded visual review the caller supplies.
+
+Balloon geometry is audited in each panel's own clean-raster pixel space, taken from
+`panels/{panel-id}/normalization.json` (`clean.size`), not in the storyboard page
+rectangle the panel is later fitted into. `clipped-text` regions report the offending
+`box`; `text-overlap` regions add `overlap_area` and `overlap_ratio` against the smaller
+box; `balloon-subject-obstruction` regions report the measured `clearance` and the
+`required_clearance` a balloon must keep from an authored `speaker_anchor`;
+`bubble-tail-geometry` regions report a `reason` of `missing-tail`,
+`speaker-anchor-mismatch`, `voice-source-mismatch`, or
+`tail-does-not-point-at-speaker`. `balloon-crowding` is the one warning-severity
+deterministic check: it reports `balloons`, `coverage_ratio`, `coverage_limit`,
+`required_separation`, and `tight_pairs` per crowded panel, selects `accept-warning`,
+and never blocks export on its own.
+
 `bindings` contains exactly `composition_cache_path`, `composition_cache_sha256`,
 `layout_name`, `layout_version`, ordered `lettering_sha256s` values (`panel-id:sha256`),
-`page_height`, `page_path`, `page_sha256`, `page_width`, `storyboard_path`, and
-`storyboard_sha256`. Every value is bound to the artifacts inspected by the record.
+ordered `normalization_sha256s` values (`panel-id:sha256`), `page_height`, `page_path`,
+`page_sha256`, `page_width`, `storyboard_path`, and `storyboard_sha256`. Every value is
+bound to the artifacts inspected by the record. `normalization_sha256s` is bound because
+`clean.size` defines the pixel space every balloon verdict is measured in, so
+re-normalizing a panel makes the record stale even when the page image is unchanged.
 
 An error-level failed check selects `regenerate`; otherwise any check whose result or severity
 is `warning` selects `accept-warning` and places its evidence, in check order, in

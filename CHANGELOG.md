@@ -4,6 +4,26 @@
 
 ### Added
 
+- Added deterministic speech balloon placement QA to the composed-page record: three new
+  page checks in `scripts/page_quality.py` audit balloon geometry the engine previously
+  left to the eye. `balloon-subject-obstruction` fails when a balloon comes closer to an
+  authored `speaker_anchor` than the clearance the renderer reserves for a tail, measuring
+  dialogue against the ellipse actually drawn and captions against their box, and passing
+  when a panel authors no anchor to protect. `bubble-tail-geometry` promotes the tail
+  verdict that previously existed only in the benchmark harness into the pipeline, so a
+  tail must attach to its balloon, stop short of its voice source, point at the authored
+  anchor, stay inside the panel, and still agree with the storyboard's `speaker_anchor` and
+  `voice_source`. `balloon-crowding` reports crowded layouts as an actionable
+  warning — naming the panels, their balloon coverage, and any pair closer than the
+  readable separation — selecting `accept-warning` instead of blocking export.
+- `text-overlap` regions now report `overlap_area` and `overlap_ratio` against the smaller
+  box, so a hairline touch is distinguishable from a buried balloon without weakening the
+  existing rule that any overlap fails.
+- Added named good and bad balloon layout fixtures (`tests/fixtures/balloon-layouts/`) that
+  describe a placement defect as data applied to the lettered one-page fixture, covering the
+  good baseline, out-of-bounds placement, dialogue and caption subject obstruction, stale
+  tail direction and voice source, and both crowding signals.
+
 - Added the Comic Sol benchmark framework (`scripts/benchmark.py`) with a validated
   benchmark project contract in `benchmarks/cases/`, comparable pipeline success,
   resume success, repair rate, panel acceptance, dialogue correctness, and export
@@ -100,6 +120,34 @@
   QA record still accepts the panel, and records the planned repair strategy on the
   promotion event. A repair therefore starts from a review that asked for one, and the
   previous accepted bytes are still archived before the replacement is published.
+
+### Fixed
+
+- Fixed out-of-bounds balloon detection, which measured lettering boxes against the
+  storyboard page rectangle instead of the panel's own clean raster. For a downscaled hero
+  panel that made `clipped-text` about twice as permissive as intended, so a box could run
+  well past the artwork and still pass. Page QA now reads the pixel space the geometry is
+  actually written in from `panels/{panel-id}/normalization.json`. The renderer and the
+  audit also share one clearance constant, which makes `balloon-subject-obstruction` exact
+  for the pair the renderer resolves — a dialogue balloon against the anchor it speaks
+  from — while still reporting a caption or a second balloon landing on another line's
+  speaker, which placement never considers.
+- `bubble-tail-geometry` recomputes a tail's `source_gap` from its retained tip instead of
+  trusting the recorded value, and a corrupt or non-finite `speaker_anchor` now fails the
+  check closed rather than raising out of page-QA construction.
+- Page QA records now bind ordered `normalization_sha256s`, because `clean.size` defines the
+  pixel space every balloon verdict is measured in. Re-normalizing a panel makes the record
+  stale even when the composed page image is unchanged.
+
+### Changed
+
+- **Existing `qa/pages/page-{NNN}.json` records must be re-derived.** The page check set
+  grows from seven entries to ten and `bindings` gains `normalization_sha256s`, and page QA
+  requires the exact check tuple, so a previously accepted record now reports
+  `page-quality-stale: quality-check-ids` until it is written again. The page-QA
+  `schema_version` stays `"2.0"`; these records are re-derived per page after review rather
+  than migrated in place, and `templates/page-qa.json` stubs the new checks as
+  `migration-required`. No `project.json` schema version is affected.
 
 ### Removed
 
