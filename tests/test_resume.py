@@ -591,6 +591,9 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(1, counts["visual_retries"])
         self.assertTrue(attempt.is_file())
 
+        # A visual retry replaces accepted content, so the review must already
+        # have faulted the panel before the accepted raster may be overwritten.
+        self._write_json("qa/panels/p01-01.json", self._failing_panel_record(None))
         destination = promote_attempt(self.project, "p01-01", attempt)
         self.assertEqual(self.project / "panels/raw/p01-01.png", destination)
         self.assertTrue(attempt.is_file())
@@ -602,6 +605,28 @@ class ResumeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "readable raster"):
             promote_attempt(self.project, "p01-01", broken)
         self.assertEqual(before, sha256_file(destination))
+
+    def test_accepted_panel_is_not_overwritten_before_a_new_review(self):
+        accepted = self.project / "panels/raw/p01-01.png"
+        accepted_before = accepted.read_bytes()
+        repair = self.project / "panels/raw/p01-01.repair.png"
+        Image.new("RGB", (640, 960), "green").save(repair)
+        record_generation_attempt(self.project, "p01-01", "visual_retry", repair)
+
+        with self.assertRaisesRegex(ValueError, "does not require repair"):
+            promote_attempt(self.project, "p01-01", repair)
+
+        self.assertEqual(accepted_before, accepted.read_bytes())
+        self.assertEqual([], sorted((self.project / "panels/raw").glob("*.attempt-*.png")))
+        self.assertTrue(repair.is_file())
+
+        self._write_json("qa/panels/p01-01.json", self._failing_panel_record(None))
+        promote_attempt(self.project, "p01-01", repair)
+
+        self.assertEqual(repair.read_bytes(), accepted.read_bytes())
+        archives = sorted((self.project / "panels/raw").glob("*.attempt-*.png"))
+        self.assertEqual(1, len(archives))
+        self.assertEqual(accepted_before, archives[0].read_bytes())
 
     def test_promotion_rechecks_original_relative_path_before_verification(self):
         attempt = self.project / "panels/raw/p01-01.swap-before-verify.png"
