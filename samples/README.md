@@ -68,6 +68,34 @@ placeholder cannot smuggle in glyphs. Each built project records this boundary i
 - Claim boundary: deterministic evidence proves mechanics only and does not prove live visual quality.
 ```
 
+#### Deterministic builds finish as `COMPLETE_WITH_WARNINGS`, on purpose
+
+A placeholder raster has no cast, no faces, and no staging, so most QA checks have
+nothing to look at. Rather than record them as passing, the builder records them as
+**unreviewed warnings**:
+
+| Record | Passes | Recorded as unreviewed warning |
+|---|---|---|
+| Panel QA | `text-free`, `technical` | `character-identity`, `anatomy`, `action`, `composition`, `continuity` |
+| Page QA | the four deterministic checks, plus `bubble-tail-direction` | `face-action-obstruction`, `accidental-text-watermark` |
+
+The passes are earned rather than asserted. `technical` is recorded only after the
+clean raster is opened and measured as opaque RGB at the exact storyboard
+rectangle; `text-free` follows from the generator loading no font and drawing only
+geometry; and `bubble-tail-direction` is machine-checked, because page-QA
+construction re-derives the expected tail regions from the storyboard and the
+placed lettering geometry and rejects anything stale or incomplete.
+
+Each unreviewed check carries evidence beginning `Not reviewed:` that says exactly
+what could not be assessed and why. Those reasons propagate into the panel
+decision (`accept-warning`), the manifest warnings, and the report's unresolved
+warnings section. The project still exports a verified PDF and still passes
+`--stage final`; it simply terminates as `COMPLETE_WITH_WARNINGS` instead of
+claiming a visual review nobody performed.
+
+This is also a useful thing to have published: it is the reference example of what
+an honestly accepted-with-warnings project looks like.
+
 ## Build the deterministic examples
 
 From the repository root, with Python 3.11+ and `Pillow==12.3.0` installed:
@@ -86,9 +114,12 @@ Each example is built into `build/examples/<example-id>/` (ignored by Git) and i
 validated at the `final` stage before the command reports success:
 
 ```text
-first-light-signal: COMPLETE pages=1 panels=3 pdf=exports/first-light-signal.pdf (256 KiB)
-the-quiet-ledger: COMPLETE pages=4 panels=11 pdf=exports/the-quiet-ledger.pdf (1029 KiB)
+first-light-signal: COMPLETE_WITH_WARNINGS pages=1 panels=3 pdf=exports/first-light-signal.pdf (256 KiB)
+the-quiet-ledger: COMPLETE_WITH_WARNINGS pages=4 panels=11 pdf=exports/the-quiet-ledger.pdf (1029 KiB)
 ```
+
+`COMPLETE_WITH_WARNINGS` is the expected outcome, not a defect — see the
+deterministic tier above for why.
 
 Build one example, or send the output somewhere else:
 

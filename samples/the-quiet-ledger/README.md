@@ -16,7 +16,10 @@ From the repository root:
 ```
 
 The result lands in `build/examples/the-quiet-ledger/` and is validated at the
-`final` stage before the command reports success.
+`final` stage before the command reports success. It finishes as
+`COMPLETE_WITH_WARNINGS`, which is expected: the artwork-dependent QA checks are
+recorded as unreviewed on a placeholder raster rather than passed. See
+[`../README.md`](../README.md) for the breakdown.
 
 ## Page plan
 
