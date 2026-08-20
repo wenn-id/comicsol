@@ -80,7 +80,8 @@ def write_release_metadata(
                 "artifacts": names,
                 "platform": identity.platform,
                 "product": "comic-sol",
-                "signature_status": "unsigned",
+                "signature_file": "SHA256SUMS.sigstore.json",
+                "signature_status": "sigstore",
                 "tag": identity.tag,
                 "version": identity.version,
             }
@@ -227,7 +228,8 @@ def verify_release_directory(release_dir: Path, identity: ReleaseIdentity) -> No
         "architecture": identity.architecture,
         "platform": identity.platform,
         "product": "comic-sol",
-        "signature_status": "unsigned",
+        "signature_file": "SHA256SUMS.sigstore.json",
+        "signature_status": "sigstore",
         "tag": identity.tag,
         "version": identity.version,
     }

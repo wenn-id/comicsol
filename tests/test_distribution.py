@@ -111,7 +111,8 @@ class NativeDistributionContractTests(unittest.TestCase):
             sbom = write_sbom(release, self.identity, environment, first.name)
 
             metadata_record = json.loads(metadata.read_text(encoding="utf-8"))
-            self.assertEqual("unsigned", metadata_record["signature_status"])
+            self.assertEqual("sigstore", metadata_record["signature_status"])
+            self.assertEqual("SHA256SUMS.sigstore.json", metadata_record["signature_file"])
             self.assertEqual([first.name], metadata_record["artifacts"])
             self.assertNotIn(str(release), metadata.read_text(encoding="utf-8"))
 
@@ -270,7 +271,15 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("Verify tag matches package version", workflow)
         self.assertIn("comic-sol:${{ needs.prepare.outputs.version }}", workflow)
         self.assertIn("actions/attest-build-provenance@", workflow)
+        self.assertIn("sigstore/cosign-installer@", workflow)
+        self.assertIn("SHA256SUMS.sigstore.json", workflow)
+        self.assertIn("--bundle", workflow)
         self.assertIn("mcp==2.0.0", workflow + (root / "requirements/locks/release-linux-x86_64.txt").read_text(encoding="utf-8"))
+        for installer in (root / "installers/install.sh", root / "installers/install.ps1"):
+            installer_text = installer.read_text(encoding="utf-8")
+            self.assertIn("sigstore", installer_text.lower())
+            self.assertIn("SHA256SUMS.sigstore.json", installer_text)
+            self.assertIn("signature verification", installer_text.lower())
         self.assertNotIn("mcp==1.28.1", workflow)
         self.assertIn("attestations: write", workflow)
         self.assertIn("id-token: write", workflow)
