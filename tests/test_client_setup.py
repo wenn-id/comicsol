@@ -1,4 +1,5 @@
 import contextlib
+import errno
 import json
 import os
 import stat
@@ -120,6 +121,25 @@ class ClientSetupTests(unittest.TestCase):
             saved["mcpServers"]["comic-sol"]["command"],
             str(self.launcher.resolve()),
         )
+
+    def test_unchanged_setup_does_not_require_config_lock(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        expected = {
+            "command": str(self.launcher.resolve()),
+            "args": ["mcp", "--root", str(self.output.resolve())],
+        }
+        config.write_text(
+            json.dumps({"mcpServers": {"comic-sol": expected}}),
+            encoding="utf-8",
+        )
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        with mock.patch.object(client_setup, "_ConfigLock", side_effect=PermissionError("read-only")):
+            result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+
+        self.assertEqual("unchanged", result.status)
+        self.assertIsNone(result.backup_path)
 
     def test_malformed_config_is_refused_without_backup_or_write(self):
         config = self.home / ".cursor" / "mcp.json"
@@ -282,6 +302,222 @@ class ClientSetupTests(unittest.TestCase):
         self.assertEqual(5, len(backups))
         self.assertNotIn(oldest, backups)
         self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in backups))
+
+    def test_atomic_publish_rejects_concurrent_entry_and_preserves_it(self):
+        config = self.home / "config.json"
+        original = b"original"
+        config.write_bytes(original)
+        snapshot = client_setup._read_snapshot(config)
+
+        client_setup._atomic_write(config, b"candidate", expected=snapshot)
+        self.assertEqual(b"candidate", config.read_bytes())
+
+        concurrent = b"concurrent"
+        config.write_bytes(concurrent)
+        with self.assertRaises(client_setup._ConfigChangedError):
+            client_setup._atomic_write(config, b"stale", expected=snapshot)
+        self.assertEqual(concurrent, config.read_bytes())
+
+    @unittest.skipIf(os.name == "nt", "Windows uses native ReplaceFileW publication")
+    def test_atomic_publish_fails_closed_when_exchange_is_unavailable(self):
+        config = self.home / "config.json"
+        original = b"original"
+        config.write_bytes(original)
+        snapshot = client_setup._read_snapshot(config)
+
+        with mock.patch.object(
+            client_setup,
+            "_rename_exchange",
+            side_effect=OSError(errno.ENOTSUP, "exchange unavailable"),
+        ):
+            with self.assertRaises(OSError):
+                client_setup._atomic_write(config, b"candidate", expected=snapshot)
+
+        self.assertEqual(original, config.read_bytes())
+
+    def test_adapter_detect_failure_is_per_client(self):
+        class DetectFailure:
+            name = "detect-failure"
+            config_path = self.home / "detect.conf"
+
+            def detect(self):
+                raise TypeError("detect failed")
+
+        result = setup_clients(self.output, adapters=[DetectFailure()])[0]
+        self.assertEqual("failed", result.status)
+        self.assertIn("detect failed", result.message)
+
+    def test_adapter_mutate_failure_does_not_abort_later_adapter(self):
+        class MutateFailure:
+            name = "mutate-failure"
+
+            def __init__(self, path):
+                self.config_path = path
+
+            def detect(self):
+                return True
+
+            def load(self, raw):
+                return raw
+
+            def mutate(self, config, entry):
+                raise TypeError("mutate failed")
+
+            def remove(self, config):
+                return config, False
+
+            def dump(self, config):
+                return config
+
+            def verify(self, expected=None):
+                return True
+
+        first = self.home / "first.conf"
+        first.write_bytes(b"first")
+        second = self.home / ".cursor" / "mcp.json"
+        second.parent.mkdir(parents=True)
+        second.write_text("{}\n", encoding="utf-8")
+        results = setup_clients(
+            self.output,
+            adapters=[
+                MutateFailure(first),
+                JsonClientAdapter("cursor", second, "mcpServers"),
+            ],
+            executable=self.launcher,
+        )
+
+        self.assertEqual("failed", results[0].status)
+        self.assertIn("mutate failed", results[0].message)
+        self.assertEqual("configured", results[1].status)
+
+    def test_custom_stateful_adapter_runs_load_and_mutate_once_under_lock(self):
+        class StatefulAdapter:
+            name = "stateful"
+
+            def __init__(self, path):
+                self.config_path = path
+                self.loads = 0
+                self.mutations = 0
+
+            def detect(self):
+                return True
+
+            def load(self, raw):
+                self.loads += 1
+                return raw
+
+            def mutate(self, config, entry):
+                self.mutations += 1
+                return config + b"\ncomic-sol", True
+
+            def remove(self, config):
+                return config, False
+
+            def dump(self, config):
+                return config
+
+            def verify(self, expected=None):
+                return True
+
+        config = self.home / "stateful.conf"
+        config.write_bytes(b"original")
+        adapter = StatefulAdapter(config)
+
+        result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+
+        self.assertEqual("configured", result.status)
+        self.assertEqual(1, adapter.loads)
+        self.assertEqual(1, adapter.mutations)
+
+        class DumpFailure:
+            name = "dump-failure"
+
+            def __init__(self, path):
+                self.config_path = path
+
+            def detect(self):
+                return True
+
+            def load(self, raw):
+                return raw
+
+            def mutate(self, config, entry):
+                return b"changed", True
+
+            def remove(self, config):
+                return config, False
+
+            def dump(self, config):
+                raise KeyError("dump failed")
+
+            def verify(self, expected=None):
+                return True
+
+        config = self.home / "dump.conf"
+        config.write_bytes(b"original")
+        result = setup_clients(
+            self.output,
+            adapters=[DumpFailure(config)],
+            executable=self.launcher,
+        )[0]
+
+        self.assertEqual("failed", result.status)
+        self.assertIn("dump failed", result.message)
+        self.assertEqual(b"original", config.read_bytes())
+
+    def test_setup_aborts_when_config_changes_before_publish(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = b'{"user":"before"}\n'
+        concurrent = b'{"user":"concurrent"}\n'
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+        real_backup = client_setup._write_backup
+
+        def mutate_after_snapshot(backup_path, data):
+            real_backup(backup_path, data)
+            config.write_bytes(concurrent)
+
+        with mock.patch.object(client_setup, "_write_backup", side_effect=mutate_after_snapshot):
+            result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+
+        self.assertEqual("failed", result.status)
+        self.assertEqual(concurrent, config.read_bytes())
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink semantics are unavailable on Windows")
+    def test_config_symlink_is_refused_without_following_target(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        outside = self.home / "outside-config.json"
+        original = b'{"user":"outside"}\n'
+        outside.write_bytes(original)
+        config.symlink_to(outside)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+
+        self.assertEqual("failed", result.status)
+        self.assertEqual(original, outside.read_bytes())
+        self.assertTrue(config.is_symlink())
+
+    def test_config_lock_covers_snapshot_mutation_and_publish(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.write_text("{}\n", encoding="utf-8")
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+        lock_path = config.with_name(f".{config.name}.lock")
+        observed = []
+        real_backup = client_setup._write_backup
+
+        def observe_lock(backup_path, data):
+            observed.append(lock_path.is_file())
+            real_backup(backup_path, data)
+
+        with mock.patch.object(client_setup, "_write_backup", side_effect=observe_lock):
+            result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+
+        self.assertEqual("configured", result.status)
+        self.assertEqual([True], observed)
 
     def test_json_verify_rejects_parseable_but_unsafe_comic_sol_entries(self):
         config = self.home / ".cursor" / "mcp.json"

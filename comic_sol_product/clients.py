@@ -74,6 +74,8 @@ class ClientAdapter(Protocol):
 class JsonClientAdapter:
     """Adapter for clients with a verified JSON MCP server mapping."""
 
+    read_only_preflight = True
+
     def __init__(
         self,
         name: str,
@@ -237,6 +239,7 @@ class CodexAdapter:
     """Preserving adapter for Codex ``~/.codex/config.toml``."""
 
     name = "codex"
+    read_only_preflight = True
 
     def __init__(self, config_path: Path, *, verify_hook: Callable[..., bool] | None = None):
         self.config_path = Path(config_path)
