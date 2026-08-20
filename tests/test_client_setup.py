@@ -318,6 +318,7 @@ class ClientSetupTests(unittest.TestCase):
             client_setup._atomic_write(config, b"stale", expected=snapshot)
         self.assertEqual(concurrent, config.read_bytes())
 
+    @unittest.skipIf(os.name == "nt", "Windows uses native ReplaceFileW publication")
     def test_atomic_publish_fails_closed_when_exchange_is_unavailable(self):
         config = self.home / "config.json"
         original = b"original"
