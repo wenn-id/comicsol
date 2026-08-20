@@ -241,8 +241,13 @@ its outcome.
 
 `shot_class` is derived from the authored panel `shot` text by the cue that appears
 earliest, so a description opening with its framing is not reclassified by a later
-incidental word, and a description matching no cue stays `unclassified` instead of being
-guessed into a class it never declared.
+incidental word. A cue counts only where it stands as its own word, so `overhead shot` is
+not a head shot and `profiled character` is not a profile, while hyphenated compounds and
+plurals such as `medium-wide` and `close-ups` do count. A cue is also ignored when a
+negation such as `no`, `not`, `without`, or `instead` appears within the three words before
+it, so an explicitly ruled-out framing yields to the next declared cue. A description with
+no surviving cue stays `unclassified` rather than being guessed into a class it never
+declared.
 
 The canonical view ranks first for every shot class, because it is the only view
 cross-checked against the character bible. The view named by the panel's shot class comes
@@ -251,6 +256,11 @@ breadth-first across the panel's characters, so every character receives its can
 anchor before any character receives a second view, and a limit below the cast size records
 the dropped character rather than hiding it. One path is attached at most once per panel: a
 repeated path is recorded as `duplicate-path` and does not consume the budget.
+
+The plan covers every panel or none. A page that is not an object, a page with no panel
+array, a panel that is not an object, a panel without a string ID, and a repeated panel ID
+are each rejected instead of skipped, because a silently skipped panel is exactly the panel
+whose references nobody could afterwards account for.
 
 Classification, ranking, and allocation read no clock, locale, or random seed. The rendered
 plan block emits plain text and relative paths only and names no provider, model, endpoint,
