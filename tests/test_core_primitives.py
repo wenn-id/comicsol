@@ -4,9 +4,16 @@ from scripts.core_primitives import (
     PAGE_CHECK_IDS,
     PANEL_CHECK_IDS,
     PANEL_ID_PATTERN,
+    balloon_separation_minimum,
+    balloon_subject_clearance,
     canonical_artifact_bytes,
     canonical_json_bytes,
+    is_geometry_point,
+    rectangle_overlap_area,
+    rectangle_separation,
     rectangles_overlap,
+    subject_keepout_radius,
+    tail_geometry_result,
 )
 
 
@@ -50,6 +57,108 @@ class CorePrimitiveTests(unittest.TestCase):
             PANEL_CHECK_IDS,
         )
         self.assertEqual(len(PAGE_CHECK_IDS), len(set(PAGE_CHECK_IDS)))
+
+
+class BalloonGeometryPrimitiveTests(unittest.TestCase):
+    def test_overlap_area_is_zero_for_touching_rectangles(self):
+        first = {"x": 0, "y": 0, "width": 10, "height": 10}
+        self.assertEqual(0, rectangle_overlap_area(first, {"x": 10, "y": 0, "width": 5, "height": 5}))
+        self.assertEqual(
+            4, rectangle_overlap_area(first, {"x": 8, "y": 8, "width": 5, "height": 5})
+        )
+
+    def test_separation_is_zero_when_rectangles_touch_or_overlap(self):
+        first = {"x": 0, "y": 0, "width": 10, "height": 10}
+        self.assertEqual(0.0, rectangle_separation(first, {"x": 10, "y": 0, "width": 5, "height": 5}))
+        self.assertEqual(0.0, rectangle_separation(first, {"x": 5, "y": 5, "width": 5, "height": 5}))
+        self.assertEqual(5.0, rectangle_separation(first, {"x": 15, "y": 0, "width": 5, "height": 5}))
+        self.assertEqual(
+            5.0, rectangle_separation(first, {"x": 13, "y": 14, "width": 5, "height": 5})
+        )
+
+    def test_keepout_and_separation_budgets_are_clamped(self):
+        # 0.025 of the shortest side, clamped into an 8..24 pixel band.
+        self.assertEqual(8.0, subject_keepout_radius(100, 200))
+        self.assertEqual(18.0, subject_keepout_radius(720, 1064))
+        self.assertEqual(24.0, subject_keepout_radius(4000, 4000))
+        self.assertEqual(8.0, balloon_separation_minimum(100, 200))
+        self.assertEqual(14.4, balloon_separation_minimum(720, 1064))
+
+    def test_subject_clearance_measures_the_drawn_balloon_shape(self):
+        box = {"x": 0, "y": 0, "width": 200, "height": 200}
+        # A point at the centre is buried by both shapes.
+        self.assertEqual(0.0, balloon_subject_clearance(box, (100, 100), ellipse=True))
+        self.assertEqual(0.0, balloon_subject_clearance(box, (100, 100), ellipse=False))
+        # A box corner lies outside the inscribed ellipse but inside the rectangle.
+        self.assertGreater(balloon_subject_clearance(box, (0, 0), ellipse=True), 0.0)
+        self.assertEqual(0.0, balloon_subject_clearance(box, (0, 0), ellipse=False))
+        # Straight out to the right of both shapes.
+        self.assertAlmostEqual(50.0, balloon_subject_clearance(box, (250, 100), ellipse=True))
+        self.assertEqual(50.0, balloon_subject_clearance(box, (250, 100), ellipse=False))
+
+    def test_subject_clearance_rejects_an_invalid_point(self):
+        with self.assertRaisesRegex(ValueError, "two finite coordinates"):
+            balloon_subject_clearance(
+                {"x": 0, "y": 0, "width": 10, "height": 10}, (float("nan"), 1), ellipse=True
+            )
+
+    def test_geometry_points_require_two_finite_numbers(self):
+        self.assertTrue(is_geometry_point([1, 2.5]))
+        for value in ([1], [1, 2, 3], "ab", [True, 1], [float("inf"), 1], None):
+            self.assertFalse(is_geometry_point(value), value)
+
+    def test_tail_verdict_requires_alignment_bounds_and_a_positive_gap(self):
+        # The speaker anchor [0.5, 0.1] of a 1000x1000 panel is (500, 100), so a
+        # tip at (500, 150) genuinely leaves 50 pixels of source gap.
+        tail = {
+            "attachment": [500.0, 200.0],
+            "source_gap": 50.0,
+            "tip": [500.0, 150.0],
+        }
+        self.assertEqual("pass", tail_geometry_result(tail, [0.5, 0.1], 1000, 1000))
+        # Pointing at a different speaker fails the cosine alignment floor.
+        self.assertEqual("fail", tail_geometry_result(tail, [0.02, 0.1], 1000, 1000))
+        # A tail must stop short of its voice source.
+        self.assertEqual("fail", tail_geometry_result({**tail, "source_gap": 0.0}, [0.5, 0.1], 1000, 1000))
+        # A tip outside the panel fails even when it is aimed correctly.
+        self.assertEqual(
+            "fail", tail_geometry_result({**tail, "tip": [1400.0, 100.0]}, [1.0, 0.1], 1000, 1000)
+        )
+        self.assertEqual("fail", tail_geometry_result(tail, "not-an-anchor", 1000, 1000))
+
+    def test_tail_verdict_recomputes_the_claimed_source_gap(self):
+        tail = {
+            "attachment": [500.0, 200.0],
+            "source_gap": 50.0,
+            "tip": [500.0, 150.0],
+        }
+        # A tail cannot claim clearance it does not hold: the tip is 1 pixel from
+        # the speaker anchor while the record still advertises 50.
+        self.assertEqual(
+            "fail",
+            tail_geometry_result({**tail, "tip": [500.0, 101.0]}, [0.5, 0.1], 1000, 1000),
+        )
+        # Rounding slack is tolerated, a real disagreement is not.
+        self.assertEqual(
+            "pass",
+            tail_geometry_result({**tail, "source_gap": 50.0001}, [0.5, 0.1], 1000, 1000),
+        )
+
+    def test_tail_verdict_fails_closed_on_a_corrupt_speaker_anchor(self):
+        tail = {
+            "attachment": [500.0, 200.0],
+            "source_gap": 50.0,
+            "tip": [500.0, 150.0],
+        }
+        # A corrupt anchor is a failed check, never an exception out of the record
+        # builder.
+        for anchor in (
+            ["a", "b"], [None, 1], [float("nan"), 0.5], [float("inf"), 0.5],
+            [True, 0.5], [0.5], [0.5, 0.1, 0.2],
+        ):
+            self.assertEqual(
+                "fail", tail_geometry_result(tail, anchor, 1000, 1000), anchor
+            )
 
 
 if __name__ == "__main__":

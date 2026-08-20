@@ -11,7 +11,8 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 
 from scripts.comic_sol import atomic_write_json, canonical_json_bytes, read_json  # noqa: E402
-from scripts.quality_records import PANEL_CHECK_IDS  # noqa: E402
+from scripts.page_quality import DETERMINISTIC_PAGE_CHECK_IDS  # noqa: E402
+from scripts.quality_records import PAGE_CHECK_IDS, PANEL_CHECK_IDS  # noqa: E402
 from scripts.render_report import QaSummary, main, render_report, summarize_qa  # noqa: E402
 from scripts import project_io  # noqa: E402
 
@@ -229,15 +230,8 @@ class ReportTests(unittest.TestCase):
         page_dir = self.project / "qa/pages"
         page_dir.mkdir(parents=True, exist_ok=True)
         checks = []
-        for check_id in (
-            "clipped-text", "text-overlap", "face-action-obstruction",
-            "bubble-tail-direction", "reading-order",
-            "accidental-text-watermark", "layout-border-integrity",
-        ):
-            deterministic = check_id in {
-                "clipped-text", "text-overlap", "reading-order",
-                "layout-border-integrity",
-            }
+        for check_id in PAGE_CHECK_IDS:
+            deterministic = check_id in DETERMINISTIC_PAGE_CHECK_IDS
             checks.append({
                 "id": check_id,
                 "result": "pass",

@@ -1,0 +1,20 @@
+{
+  "description": "The dialogue balloon is centred exactly on the speaker anchor it speaks from, so the balloon buries the face that is supposed to be saying the line.",
+  "expected_check": "balloon-subject-obstruction",
+  "expected_decision": "regenerate",
+  "expected_result": "fail",
+  "panels": {
+    "p01-02": {
+      "replace": {
+        "p01-02-t01": {
+          "box": {
+            "height": 200,
+            "width": 200,
+            "x": 404,
+            "y": 485
+          }
+        }
+      }
+    }
+  }
+}

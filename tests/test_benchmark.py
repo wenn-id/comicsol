@@ -227,10 +227,12 @@ class BenchmarkPrimitiveTests(unittest.TestCase):
         self.assertEqual("metric value is inconsistent: panel_acceptance", _validate_result_record(record))
 
     def test_tail_verdict_requires_an_aligned_contained_tail(self):
+        # source_gap is the real distance left between the tip and the speaker
+        # anchor at [0.5, 0.1] of a 1000x1000 panel, which is (500, 100).
         tail = {
             "attachment": [100.0, 100.0],
             "tip": [140.0, 100.0],
-            "source_gap": 20.0,
+            "source_gap": 360.0,
         }
         self.assertEqual("pass", tail_direction_result(tail, [0.5, 0.1], 1000, 1000))
         self.assertEqual(
