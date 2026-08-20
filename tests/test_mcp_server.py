@@ -337,6 +337,31 @@ class McpServerUnitTests(unittest.TestCase):
             mcp_server._resolve_project("cached-project")
         self.assertIsNot(cached, mcp_server._SYMLINK_SCAN_CACHE.get("cached-project"))
 
+    def test_symlink_scan_cache_is_bounded_lru(self):
+        for name in ("cache-lru-a", "cache-lru-b", "cache-lru-c"):
+            project = self.root / name
+            project.mkdir()
+            (project / "project.json").write_text("{}", encoding="utf-8")
+
+        self.assertEqual(128, mcp_server._SYMLINK_SCAN_CACHE_MAX_ENTRIES)
+        cache = mcp_server._SYMLINK_SCAN_CACHE
+        previous = dict(cache)
+        cache.clear()
+        try:
+            with mock.patch.object(mcp_server, "_SYMLINK_SCAN_CACHE_MAX_ENTRIES", 2):
+                mcp_server._resolve_project("cache-lru-a")
+                mcp_server._resolve_project("cache-lru-b")
+                self.assertEqual(["cache-lru-a", "cache-lru-b"], list(cache))
+
+                mcp_server._resolve_project("cache-lru-a")
+                mcp_server._resolve_project("cache-lru-c")
+
+            self.assertEqual(["cache-lru-a", "cache-lru-c"], list(cache))
+            self.assertNotIn("cache-lru-b", cache)
+        finally:
+            cache.clear()
+            cache.update(previous)
+
     @unittest.skipIf(sys.platform == "win32", "Windows requires a fresh symlink scan")
     def test_symlink_cache_hit_avoids_directory_rescan(self):
         project = self.root / "unchanged-project"
