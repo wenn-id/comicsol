@@ -17,6 +17,7 @@ SYNCHRONIZED_REFERENCES = (
 )
 BUNDLED_TEMPLATES = (
     "character-bible.json",
+    "character-identity-pack.json",
     "manifest.json",
     "page-qa.json",
     "panel-record.json",
@@ -33,6 +34,7 @@ BUNDLED_FONTS = (
 )
 BUNDLED_SCRIPTS = (
     "__init__.py",
+    "character_identity.py",
     "comic_sol.py",
     "compose_pages.py",
     "core_primitives.py",

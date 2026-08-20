@@ -74,6 +74,11 @@ Write canonical `plan/story-plan.json` and `plan/character-bible.json` using the
 and creative reference. Run `validate_project.py PROJECT_DIR --stage plan`, revise invalid
 semantic content, then `comic_sol.py transition PROJECT_DIR PLANNED`.
 
+Then publish the character identity pack with `character_identity.py PROJECT_DIR --derive`.
+The pack is the identity context every panel prompt embeds later, so deriving it once here
+keeps each panel pointing at one structured copy of the traits instead of a fresh
+paraphrase. Re-run `--derive` after any character-bible fingerprint edit.
+
 ### 3. Script and storyboard
 
 Write dialogue, captions, exact SFX, pacing, camera, light, continuity, fixed layouts,
@@ -99,13 +104,24 @@ Generate and inspect one canonical reference for each recurring character. Gener
 scene reference only at the creative threshold. Preserve prompts and transition to
 `REFERENCES_READY` only when references are usable.
 
+Record any additional usable view beyond the bible reference in the identity pack's
+`reference_views`, then re-run `character_identity.py PROJECT_DIR --derive`; authored views
+and proportion notes survive re-derivation while derived identity fields are rebuilt.
+
 ### 6. Generate panels
+
+Before the first panel, run `character_identity.py PROJECT_DIR --check`. It fails closed on
+a missing, invalid, stale, or unbacked identity pack rather than letting identity drift
+start.
 
 Write each ordered prompt, requiring the image model to integrate every exact authored
 SFX once and prohibiting generated dialogue, captions, speech bubbles, logos,
-signatures, watermarks, or un-authored SFX. Invoke the selected agent tool into an
-attempt file, then run `comic_sol.py record-attempt`. Confirm readable raster output and
-at least 512 px in both dimensions. Never promote before visual QA.
+signatures, watermarks, or un-authored SFX. Embed the `character_identity.py PROJECT_DIR
+--panel PANEL_ID` block verbatim in the prompt and attach the reference views it names, so
+a retry or a resume reuses the same identity context instead of rewording it. Invoke the
+selected agent tool into an attempt file, then run `comic_sol.py record-attempt`. Confirm
+readable raster output and at least 512 px in both dimensions. Never promote before visual
+QA.
 
 ### 7. Visual QA and selective repair
 
