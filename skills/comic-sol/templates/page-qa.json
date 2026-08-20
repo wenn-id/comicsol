@@ -112,7 +112,7 @@
     "reviewed_at": "",
     "reviewer": ""
   },
-  "schema_version": "2.0",
+  "schema_version": "2.1",
   "subject_id": "page-001",
   "unresolved_warnings": [
     "quality-migration-required"

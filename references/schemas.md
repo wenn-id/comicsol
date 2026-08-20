@@ -1,8 +1,8 @@
 # Comic Sol artifact schemas
 
 This document is the normative schema contract for Comic Sol. Most project artifacts
-remain schema version `1.0`; panel and page QA records use their documented schema
-version `2.0`. The JSON templates in `templates/` are starting shapes for the agent
+remain schema version `1.0`; the panel QA record uses its documented schema version
+`2.0` and the page QA record uses `2.1`. The JSON templates in `templates/` are starting shapes for the agent
 and deterministic scripts. A template may be structurally incomplete for a later
 pipeline stage; stage validation applies the cross-field rules in this document
 before allowing a transition.
@@ -25,8 +25,15 @@ The current project manifest schema is `1.0`. The minimum reader and writer vers
 - This release has no older manifest representation registered for automatic migration;
   an older artifact is rejected until a reviewed migration is added.
 
-The project manifest version is independent from artifact-level versions such as panel/page
-QA `2.0` and stage cache versions. Those artifacts retain their own validators.
+The project manifest version is independent from artifact-level versions such as panel QA
+`2.0`, page QA `2.1`, and stage cache versions. Those artifacts retain their own validators.
+
+An artifact-level version that has its own migrations follows the same rules through its own
+registry. The page QA record registers `PAGE_QA_MIGRATIONS` in `scripts/page_quality.py`,
+keyed by `(source_version, target_version)` exactly like `PROJECT_MIGRATIONS`: a record whose
+version has no registered hook is rejected with `UnsupportedSchemaVersionError` rather than
+being accepted, migration is published through the journal-backed project transaction, and a
+refused or interrupted migration leaves the record byte-for-byte unchanged.
 
 ## Common JSON rules
 
@@ -586,8 +593,8 @@ Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-nu
 
 ## Page QA record: `qa/pages/page-{NNN}.json`
 
-One schema-2.0 `page-qa` record per composed page is created from `templates/page-qa.json`
-after bounded visual inspection. It contains `schema_version: "2.0"`, `kind: "page-qa"`,
+One schema-2.1 `page-qa` record per composed page is created from `templates/page-qa.json`
+after bounded visual inspection. It contains `schema_version: "2.1"`, `kind: "page-qa"`,
 and `subject_id: "page-{NNN}"`; ten checks in the normative page order; a review object
 with the fixed method `deterministic-plus-bounded-visual-review`, a non-empty reviewer, and
 an ISO-8601 UTC `reviewed_at`; `decision`; and `unresolved_warnings`.
@@ -631,6 +638,23 @@ is `warning` selects `accept-warning` and places its evidence, in check order, i
 `unresolved_warnings`; all passing checks select `accept`. A legacy five-field record
 (`page`, `page_path`, `page_sha256`, `schema_version`, `status`) is schema-1.0 input only:
 it remains readable for reporting but requires migration and cannot satisfy final validation.
+
+### Version 2.1 and the 2.0 migration
+
+Version `2.1` records the check set that grew from seven entries to ten and the added
+`normalization_sha256s` binding. A `2.0` record is reported as `quality-migration-required`
+rather than as a malformed record, because a version field exists precisely to distinguish
+"this predates a check-set change" from "the reviewer supplied the wrong check IDs".
+
+`migrate_page_quality_record()` runs the registered `("2.0", "2.1")` hook inside the project
+transaction. The seven deterministic checks and all twelve bindings are re-derived from
+current artifacts; nothing is copied and no check result is ever fabricated. The three
+reviewer-supplied checks and the original `review` object — reviewer and `reviewed_at`
+included — are carried across only while the record's bound `page_sha256` still matches the
+page on disk, because that digest is the evidence the reviewer inspected those pixels. When
+the page has changed, migration is refused as stale and the page must be reviewed again.
+`decision` and `unresolved_warnings` are re-derived from the merged ten-check set, since a
+newly derived check can warn where the `2.0` record accepted.
 These records are the integrity gate on finalization. `comic_sol.py finalize` and `validate_project.py --stage final|export-ready` fail closed when a record is missing or when `page_sha256` no longer matches the page, because a terminal status must not claim visual review that did not happen. Recompose a page and its record goes stale; write it again after re-inspecting.
 
 ## Composition cache: `cache/composition.json`

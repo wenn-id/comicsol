@@ -11,7 +11,10 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 
 from scripts.comic_sol import atomic_write_json, canonical_json_bytes, read_json  # noqa: E402
-from scripts.page_quality import DETERMINISTIC_PAGE_CHECK_IDS  # noqa: E402
+from scripts.page_quality import (  # noqa: E402
+    CURRENT_PAGE_QA_SCHEMA_VERSION,
+    DETERMINISTIC_PAGE_CHECK_IDS,
+)
 from scripts.quality_records import PAGE_CHECK_IDS, PANEL_CHECK_IDS  # noqa: E402
 from scripts.render_report import QaSummary, main, render_report, summarize_qa  # noqa: E402
 from scripts import project_io  # noqa: E402
@@ -259,7 +262,7 @@ class ReportTests(unittest.TestCase):
                 "reviewed_at": "2026-08-14T01:02:03Z",
                 "reviewer": "fixture-reviewer",
             },
-            "schema_version": "2.0",
+            "schema_version": CURRENT_PAGE_QA_SCHEMA_VERSION,
             "subject_id": "page-001",
             "unresolved_warnings": [],
         })

@@ -34,7 +34,11 @@ from .repair_strategy import (
     validate_defect_regions,
     validate_repair_plan,
 )
-from .page_quality import validate_page_quality
+from .page_quality import (
+    CURRENT_PAGE_QA_SCHEMA_VERSION,
+    PAGE_QA_MIGRATION_SOURCES,
+    validate_page_quality,
+)
 from .quality_records import PANEL_CHECK_IDS, validate_quality_checks
 from .schema import (
     CURRENT_PROJECT_SCHEMA_VERSION,
@@ -1842,10 +1846,31 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
             page_qa_relative = f"qa/pages/page-{page_number:03d}.json"
             page_qa = _read_canonical_json(project_dir, page_qa_relative, issues)
             expected_page = f"pages/page-{page_number:03d}.png"
+            page_qa_version = page_qa.get("schema_version") if page_qa is not None else None
+            is_current_page_qa = page_qa_version == CURRENT_PAGE_QA_SCHEMA_VERSION
+            # A record at a version with a registered migration is reported as
+            # needing migration, not as malformed. Only a flat schema-1.0 record
+            # goes through the legacy five-field validator. The isinstance guard
+            # keeps a corrupt non-string version from failing the set lookup.
+            is_migratable_page_qa = (
+                isinstance(page_qa_version, str)
+                and page_qa_version in PAGE_QA_MIGRATION_SOURCES
+            )
+            is_legacy_flat = (
+                page_qa is not None and not is_current_page_qa and not is_migratable_page_qa
+            )
             if page_qa is not None:
-                if page_qa.get("schema_version") == "2.0":
+                if is_current_page_qa:
                     for issue in validate_page_quality(project_dir, page_number):
                         _add(issues, issue.path, issue.field, issue.message)
+                elif is_migratable_page_qa:
+                    _add(
+                        issues,
+                        page_qa_relative,
+                        "schema_version",
+                        f"quality-migration-required: schema {page_qa_version} page QA "
+                        f"must be migrated to {CURRENT_PAGE_QA_SCHEMA_VERSION}",
+                    )
                 else:
                     issues.extend(validate_page_qa_record(page_qa))
                     _add(
@@ -1863,7 +1888,7 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
             page_path = project_dir / expected_page
             if not page_path.is_file():
                 _add(issues, expected_page, "", "composed page is missing")
-            elif page_qa is not None and page_qa.get("schema_version") != "2.0":
+            elif is_legacy_flat:
                 page_hash = sha256_file(page_path)
                 if isinstance(page_qa.get("page_sha256"), str):
                     if page_qa["page_sha256"] != page_hash:

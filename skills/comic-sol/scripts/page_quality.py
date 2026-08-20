@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Schema-2.0 page QA records derived from composition and lettering evidence."""
+"""Schema-2.1 page QA records derived from composition and lettering evidence."""
 
 from __future__ import annotations
 
 import json
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ from .core_primitives import (
     balloon_outline_deviation,
     balloon_separation_minimum,
     balloon_subject_clearance,
+    canonical_artifact_bytes,
     is_geometry_point,
     is_normalized_point,
     rectangle_overlap_area,
@@ -28,9 +30,16 @@ from .core_primitives import (
     tail_geometry_result,
 )
 from .layouts import LAYOUT_VERSION, match_layout, validate_custom_layout
-from .project_io import contained_project_path, open_path_nofollow
+from .project_io import ProjectTransaction, contained_project_path, open_path_nofollow
 from .quality_records import PAGE_CHECK_IDS, validate_quality_checks
+from .schema import UnsupportedSchemaVersionError
 
+# The page-QA record carries its own artifact-level version, independent from the
+# `project.json` version owned by scripts/schema.py. It moved to 2.1 when the
+# check tuple grew to ten entries and `bindings` gained `normalization_sha256s`,
+# so a record written by the previous engine is reported as needing migration
+# rather than as malformed.
+CURRENT_PAGE_QA_SCHEMA_VERSION = "2.1"
 DETERMINISTIC_PAGE_CHECK_IDS = frozenset({
     "clipped-text",
     "text-overlap",
@@ -657,6 +666,61 @@ def _valid_timestamp(value: object) -> bool:
     return True
 
 
+def _page_bindings(context: PageContext) -> dict[str, object]:
+    """Derive every page-QA provenance binding from the artifacts on disk.
+
+    Construction, migration, and validation all read their bound values from
+    here, so a published record can never bind something the validator would not
+    re-derive for the same project.
+    """
+    return {
+        "composition_cache_path": context.cache_relative,
+        "composition_cache_sha256": sha256_file(context.cache_path),
+        "layout_name": context.declared_layout,
+        "layout_version": LAYOUT_VERSION,
+        "lettering_sha256s": [
+            f"{panel_id}:{digest}" for panel_id, digest, _ in context.lettering
+        ],
+        "normalization_sha256s": [
+            f"{panel_id}:{digest}" for panel_id, digest in context.normalization
+        ],
+        "page_height": context.page_height,
+        "page_path": context.page_relative,
+        "page_sha256": sha256_file(context.page_path),
+        "page_width": context.page_width,
+        "storyboard_path": "plan/storyboard.json",
+        "storyboard_sha256": sha256_file(context.storyboard_path),
+    }
+
+
+def _compose_page_record(
+    checks: Sequence[Mapping[str, object]],
+    *,
+    bindings: Mapping[str, object],
+    review: Mapping[str, object],
+    subject_id: str,
+) -> dict[str, object]:
+    """Assemble a current page-QA record, deriving its decision from its checks."""
+    failures = [
+        check for check in checks
+        if check.get("result") == "fail" and check.get("severity") == "error"
+    ]
+    warnings = [
+        check for check in checks
+        if check.get("result") == "warning" or check.get("severity") == "warning"
+    ]
+    return {
+        "bindings": dict(bindings),
+        "checks": [dict(check) for check in checks],
+        "decision": "regenerate" if failures else "accept-warning" if warnings else "accept",
+        "kind": "page-qa",
+        "review": dict(review),
+        "schema_version": CURRENT_PAGE_QA_SCHEMA_VERSION,
+        "subject_id": subject_id,
+        "unresolved_warnings": [check["evidence"] for check in warnings],
+    }
+
+
 def build_page_quality_record(
     project_dir: Path,
     page_number: int,
@@ -665,7 +729,7 @@ def build_page_quality_record(
     reviewer: str,
     reviewed_at: str,
 ) -> dict[str, object]:
-    """Build a current schema-2.0 page QA record without inventing visual evidence."""
+    """Build a current page QA record without inventing visual evidence."""
     project_dir = Path(project_dir)
     context = _page_context(project_dir, page_number)
     deterministic = _deterministic_checks(context)
@@ -677,43 +741,16 @@ def build_page_quality_record(
         raise ValueError("reviewed_at must be an ISO 8601 UTC timestamp")
     checks_by_id = {check["id"]: check for check in deterministic + subjective}
     checks = [checks_by_id[check_id] for check_id in PAGE_CHECK_IDS]
-    failures = [
-        check for check in checks
-        if check.get("result") == "fail" and check.get("severity") == "error"
-    ]
-    warnings = [
-        check for check in checks
-        if check.get("result") == "warning" or check.get("severity") == "warning"
-    ]
-    record: dict[str, object] = {
-        "bindings": {
-            "composition_cache_path": context.cache_relative,
-            "composition_cache_sha256": sha256_file(context.cache_path),
-            "layout_name": context.declared_layout,
-            "layout_version": LAYOUT_VERSION,
-            "lettering_sha256s": [f"{panel_id}:{digest}" for panel_id, digest, _ in context.lettering],
-            "normalization_sha256s": [
-                f"{panel_id}:{digest}" for panel_id, digest in context.normalization
-            ],
-            "page_height": context.page_height,
-            "page_path": context.page_relative,
-            "page_sha256": sha256_file(context.page_path),
-            "page_width": context.page_width,
-            "storyboard_path": "plan/storyboard.json",
-            "storyboard_sha256": sha256_file(context.storyboard_path),
-        },
-        "checks": checks,
-        "decision": "regenerate" if failures else "accept-warning" if warnings else "accept",
-        "kind": "page-qa",
-        "review": {
+    record = _compose_page_record(
+        checks,
+        bindings=_page_bindings(context),
+        review={
             "method": "deterministic-plus-bounded-visual-review",
             "reviewed_at": reviewed_at,
             "reviewer": reviewer,
         },
-        "schema_version": "2.0",
-        "subject_id": _page_id(page_number),
-        "unresolved_warnings": [check["evidence"] for check in warnings],
-    }
+        subject_id=_page_id(page_number),
+    )
     categories = validate_quality_checks(checks, PAGE_CHECK_IDS)
     if categories:
         raise ValueError(", ".join(categories))
@@ -729,6 +766,181 @@ def write_page_quality_record(
     )
     atomic_write_json(destination, dict(record))
     return destination
+
+
+class PageQualityMigrationError(ValueError):
+    """Raised when a page-QA record cannot be migrated from current evidence."""
+
+
+@dataclass(frozen=True)
+class PageQualityRebase:
+    """Current, engine-derived facts a page-QA migration may rebuild on.
+
+    A migration hook never derives evidence itself. It receives the deterministic
+    checks and provenance bindings the current engine computes for the page on
+    disk, plus whether the record's bound page raster is still that page, and
+    decides only what the old record may carry across.
+    """
+
+    deterministic_checks: tuple[Mapping[str, object], ...]
+    bindings: Mapping[str, object]
+    page_unchanged: bool
+    subject_id: str
+
+
+PageQualityMigration = Callable[
+    [Mapping[str, object], PageQualityRebase], dict[str, object]
+]
+
+
+def _carried_reviewer_checks(record: Mapping[str, object]) -> list[dict[str, object]]:
+    """Return a record's reviewer-supplied checks in canonical order."""
+    checks = record.get("checks")
+    if not isinstance(checks, list):
+        raise PageQualityMigrationError("page QA checks must be an array")
+    carried = {
+        check["id"]: dict(check)
+        for check in checks
+        if isinstance(check, dict) and check.get("id") in SUBJECTIVE_PAGE_CHECK_IDS
+    }
+    missing = [
+        check_id for check_id in SUBJECTIVE_PAGE_CHECK_IDS if check_id not in carried
+    ]
+    if missing:
+        raise PageQualityMigrationError(
+            f"page QA record is missing reviewer checks: {', '.join(missing)}"
+        )
+    try:
+        # Reuse the reviewer-check validator so a carried check must clear exactly
+        # the bar a freshly supplied one does.
+        return _reviewer_checks([carried[check_id] for check_id in SUBJECTIVE_PAGE_CHECK_IDS])
+    except ValueError as error:
+        raise PageQualityMigrationError(str(error)) from error
+
+
+def _migrate_page_qa_2_0_to_2_1(
+    record: Mapping[str, object], rebase: PageQualityRebase
+) -> dict[str, object]:
+    """Carry a schema-2.0 page-QA record onto the current ten-check set.
+
+    Every deterministic check and every binding is re-derived from current
+    artifacts, never copied and never invented. The three reviewer-supplied
+    checks are carried across only while the record's bound `page_sha256` still
+    matches the page on disk, because that digest is the evidence the reviewer
+    inspected these pixels. A page that changed makes the record genuinely stale
+    and demands a fresh review instead.
+    """
+    if not rebase.page_unchanged:
+        raise PageQualityMigrationError(
+            "page-quality-stale: bindings.page_sha256 bound artifact hash does not "
+            "match, so the recorded review is not evidence for the page on disk"
+        )
+    review = record.get("review")
+    if not isinstance(review, dict):
+        raise PageQualityMigrationError("page QA review is missing")
+    carried = _carried_reviewer_checks(record)
+    checks_by_id = {
+        check["id"]: check for check in [*rebase.deterministic_checks, *carried]
+    }
+    return _compose_page_record(
+        [checks_by_id[check_id] for check_id in PAGE_CHECK_IDS],
+        bindings=rebase.bindings,
+        review=review,
+        subject_id=rebase.subject_id,
+    )
+
+
+# Page-QA migrations are explicit and keyed by `(source_version, target_version)`,
+# mirroring PROJECT_MIGRATIONS in scripts/schema.py. A record whose version has no
+# registered hook fails closed rather than being widened into support.
+PAGE_QA_MIGRATIONS: dict[tuple[str, str], PageQualityMigration] = {
+    ("2.0", CURRENT_PAGE_QA_SCHEMA_VERSION): _migrate_page_qa_2_0_to_2_1,
+}
+PAGE_QA_MIGRATION_SOURCES = frozenset(
+    source
+    for source, target in PAGE_QA_MIGRATIONS
+    if target == CURRENT_PAGE_QA_SCHEMA_VERSION
+)
+
+
+def _require_publishable(context: PageContext, record: Mapping[str, object]) -> None:
+    """Refuse a migrated record the current validator would report as stale."""
+    if set(record) != PAGE_RECORD_FIELDS:
+        raise PageQualityMigrationError("migrated page QA record fields are invalid")
+    bindings = record.get("bindings")
+    if not isinstance(bindings, dict) or set(bindings) != PAGE_BINDING_FIELDS:
+        raise PageQualityMigrationError("migrated page QA bindings are invalid")
+    review = record.get("review")
+    if (
+        not isinstance(review, dict)
+        or set(review) != PAGE_REVIEW_FIELDS
+        or review.get("method") != "deterministic-plus-bounded-visual-review"
+        or not isinstance(review.get("reviewer"), str)
+        or not review["reviewer"].strip()
+        or not _valid_timestamp(review.get("reviewed_at"))
+    ):
+        raise PageQualityMigrationError("migrated page QA review is invalid")
+    categories = validate_quality_checks(record.get("checks"), PAGE_CHECK_IDS)
+    if categories:
+        raise PageQualityMigrationError(", ".join(categories))
+    try:
+        _validate_tail_evidence(context, record["checks"])
+    except ValueError as error:
+        raise PageQualityMigrationError(str(error)) from error
+
+
+def migrate_page_quality_record(project_dir: Path, page_number: int) -> dict[str, object]:
+    """Run a registered page-QA migration transactionally, or fail without mutation.
+
+    The record is read, rebased on current artifacts, and republished inside one
+    `ProjectTransaction`, so a refused or interrupted migration leaves the project
+    byte-for-byte unchanged. A record already at the current version is returned
+    untouched and nothing is staged.
+    """
+    project_dir = Path(project_dir)
+    subject_id = _page_id(page_number)
+    relative = f"qa/pages/{subject_id}.json"
+    with ProjectTransaction(project_dir, "page-qa-migration") as transaction:
+        record = read_json(contained_project_path(project_dir, relative, must_exist=True))
+        if not isinstance(record, dict):
+            raise PageQualityMigrationError("page QA record must contain a JSON object")
+        source_version = record.get("schema_version")
+        if record.get("kind") != "page-qa":
+            raise PageQualityMigrationError("page QA record kind is not page-qa")
+        if record.get("subject_id") != subject_id:
+            raise PageQualityMigrationError("page QA subject does not match its path")
+        if source_version == CURRENT_PAGE_QA_SCHEMA_VERSION:
+            return record
+        migration = PAGE_QA_MIGRATIONS.get(
+            (str(source_version), CURRENT_PAGE_QA_SCHEMA_VERSION)
+        )
+        if migration is None:
+            raise UnsupportedSchemaVersionError(source_version, artifact="page QA")
+        context = _page_context(project_dir, page_number)
+        bindings = _page_bindings(context)
+        recorded_bindings = record.get("bindings")
+        recorded_page_digest = (
+            recorded_bindings.get("page_sha256")
+            if isinstance(recorded_bindings, dict)
+            else None
+        )
+        migrated = migration(
+            record,
+            PageQualityRebase(
+                deterministic_checks=tuple(_deterministic_checks(context)),
+                bindings=bindings,
+                page_unchanged=recorded_page_digest == bindings["page_sha256"],
+                subject_id=subject_id,
+            ),
+        )
+        if not isinstance(migrated, dict):
+            raise PageQualityMigrationError(
+                "page QA migration must return a JSON object"
+            )
+        migrated["schema_version"] = CURRENT_PAGE_QA_SCHEMA_VERSION
+        _require_publishable(context, migrated)
+        transaction.stage_bytes(relative, canonical_artifact_bytes(migrated))
+        return migrated
 
 
 def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQualityIssue, ...]:
@@ -756,8 +968,14 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
         stale(field, "unknown page quality record field")
     for field in sorted(missing_fields):
         stale(field, "required page quality record field is missing")
-    if record.get("schema_version") != "2.0" or record.get("kind") != "page-qa":
-        stale("schema_version", "page quality record is not schema 2.0")
+    if (
+        record.get("schema_version") != CURRENT_PAGE_QA_SCHEMA_VERSION
+        or record.get("kind") != "page-qa"
+    ):
+        stale(
+            "schema_version",
+            f"page quality record is not schema {CURRENT_PAGE_QA_SCHEMA_VERSION}",
+        )
         return tuple(issues)
     if record.get("subject_id") != _page_id(page_number):
         stale("subject_id", "page subject does not match its path")
@@ -907,25 +1125,7 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
         except ValueError as error:
             stale("checks", str(error))
 
-    expected = {
-        "composition_cache_path": context.cache_relative,
-        "page_sha256": sha256_file(context.page_path),
-        "page_width": context.page_width,
-        "page_height": context.page_height,
-        "page_path": context.page_relative,
-        "composition_cache_sha256": sha256_file(context.cache_path),
-        "storyboard_sha256": sha256_file(context.storyboard_path),
-        "storyboard_path": "plan/storyboard.json",
-        "layout_name": context.declared_layout,
-        "layout_version": LAYOUT_VERSION,
-        "lettering_sha256s": [
-            f"{panel_id}:{digest}" for panel_id, digest, _ in context.lettering
-        ],
-        "normalization_sha256s": [
-            f"{panel_id}:{digest}" for panel_id, digest in context.normalization
-        ],
-    }
-    for field, current in expected.items():
+    for field, current in _page_bindings(context).items():
         if bindings.get(field) != current:
             stale(f"bindings.{field}", "bound value does not match current artifacts")
     return tuple(sorted(issues, key=lambda issue: (issue.path, issue.field, issue.message)))

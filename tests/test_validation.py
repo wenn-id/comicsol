@@ -33,7 +33,10 @@ from scripts.validate_project import (  # noqa: E402
     validate_story_plan,
     validate_storyboard,
 )
-from scripts.page_quality import PAGE_BINDING_FIELDS  # noqa: E402
+from scripts.page_quality import (  # noqa: E402
+    CURRENT_PAGE_QA_SCHEMA_VERSION,
+    PAGE_BINDING_FIELDS,
+)
 from scripts.quality_records import PANEL_CHECK_IDS, PAGE_CHECK_IDS  # noqa: E402
 from scripts.normalize_panels import normalize_panel  # noqa: E402
 
@@ -194,7 +197,7 @@ class TemplateContractTests(unittest.TestCase):
 
         page_raw = (ROOT / "templates/page-qa.json").read_bytes()
         page = json.loads(page_raw)
-        self.assertEqual("2.0", page["schema_version"])
+        self.assertEqual(CURRENT_PAGE_QA_SCHEMA_VERSION, page["schema_version"])
         self.assertEqual("page-qa", page["kind"])
         # The template and the validator must agree, or a record authored from the
         # template fails its own binding contract.

@@ -1,0 +1,103 @@
+{
+  "bindings": {
+    "composition_cache_path": "cache/composition.json",
+    "composition_cache_sha256": null,
+    "layout_name": "hero-top-two-bottom",
+    "layout_version": "1",
+    "lettering_sha256s": null,
+    "page_height": 2400,
+    "page_path": "pages/page-001.png",
+    "page_sha256": null,
+    "page_width": 1600,
+    "storyboard_path": "plan/storyboard.json",
+    "storyboard_sha256": "a8eb0768e80c39c62c5d33318ffcedf6d0d9973d7d0f27d780660e52418fddbc"
+  },
+  "checks": [
+    {
+      "evidence": "Superseded schema-2.0 engine measurement retained for migration: every lettered box sat inside its clean raster.",
+      "id": "clipped-text",
+      "method": "deterministic-geometry-v1",
+      "regions": [],
+      "result": "pass",
+      "reviewer": "comic-sol",
+      "severity": "error"
+    },
+    {
+      "evidence": "Superseded schema-2.0 engine measurement retained for migration: no two lettered boxes intersected.",
+      "id": "text-overlap",
+      "method": "deterministic-geometry-v1",
+      "regions": [],
+      "result": "pass",
+      "reviewer": "comic-sol",
+      "severity": "error"
+    },
+    {
+      "evidence": "Bounded visual review of page-001 on 2026-08-14: no balloon covers a face or the action beat in any of the three panels.",
+      "id": "face-action-obstruction",
+      "method": "bounded-visual-review",
+      "regions": [],
+      "result": "pass",
+      "reviewer": "legacy-page-reviewer",
+      "severity": "error"
+    },
+    {
+      "evidence": "Bounded visual review of page-001 on 2026-08-14: Mira's balloon tail points back at her mouth in p01-02.",
+      "id": "bubble-tail-direction",
+      "method": "bounded-visual-review",
+      "regions": [
+        {
+          "panel_id": "p01-02",
+          "result": "pass",
+          "speaker": "mira",
+          "speaker_anchor": [
+            0.7,
+            0.55
+          ],
+          "text_id": "p01-02-t01",
+          "tip": null,
+          "voice_source": "human"
+        }
+      ],
+      "result": "pass",
+      "reviewer": "legacy-page-reviewer",
+      "severity": "error"
+    },
+    {
+      "evidence": "Superseded schema-2.0 engine measurement retained for migration: boxes advanced left-to-right, top-to-bottom.",
+      "id": "reading-order",
+      "method": "deterministic-geometry-v1",
+      "regions": [],
+      "result": "pass",
+      "reviewer": "comic-sol",
+      "severity": "error"
+    },
+    {
+      "evidence": "Bounded visual review of page-001 on 2026-08-14: no signature, logo, or watermark appears in the rendered artwork.",
+      "id": "accidental-text-watermark",
+      "method": "bounded-visual-review",
+      "regions": [],
+      "result": "pass",
+      "reviewer": "legacy-page-reviewer",
+      "severity": "error"
+    },
+    {
+      "evidence": "Superseded schema-2.0 engine measurement retained for migration: no box crossed a panel border.",
+      "id": "layout-border-integrity",
+      "method": "deterministic-geometry-v1",
+      "regions": [],
+      "result": "pass",
+      "reviewer": "comic-sol",
+      "severity": "error"
+    }
+  ],
+  "decision": "accept",
+  "kind": "page-qa",
+  "review": {
+    "method": "deterministic-plus-bounded-visual-review",
+    "reviewed_at": "2026-08-14T01:02:03Z",
+    "reviewer": "legacy-page-reviewer"
+  },
+  "schema_version": "2.0",
+  "subject_id": "page-001",
+  "unresolved_warnings": []
+}

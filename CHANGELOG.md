@@ -23,6 +23,9 @@
   describe a placement defect as data applied to the lettered one-page fixture, covering the
   good baseline, out-of-bounds placement, dialogue and caption subject obstruction, stale
   tail direction and voice source, and both crowding signals.
+- Added a committed pre-change page-QA record fixture (`tests/fixtures/page-qa-2.0/`) and a
+  migration test module, so the registered `("2.0", "2.1")` page-QA migration is exercised
+  against a record in the superseded shape rather than one assembled inside a test body.
 
 - Added the Comic Sol benchmark framework (`scripts/benchmark.py`) with a validated
   benchmark project contract in `benchmarks/cases/`, comparable pipeline success,
@@ -141,13 +144,21 @@
 
 ### Changed
 
-- **Existing `qa/pages/page-{NNN}.json` records must be re-derived.** The page check set
-  grows from seven entries to ten and `bindings` gains `normalization_sha256s`, and page QA
-  requires the exact check tuple, so a previously accepted record now reports
-  `page-quality-stale: quality-check-ids` until it is written again. The page-QA
-  `schema_version` stays `"2.0"`; these records are re-derived per page after review rather
-  than migrated in place, and `templates/page-qa.json` stubs the new checks as
-  `migration-required`. No `project.json` schema version is affected.
+- **The page-QA record `schema_version` moves from `"2.0"` to `"2.1"`, and `"2.0"` records
+  migrate in place.** The page check set grows from seven entries to ten and `bindings` gains
+  `normalization_sha256s`, so the record carries a new version instead of changing shape
+  underneath one. A `"2.0"` record is now reported as
+  `quality-migration-required: schema 2.0 page QA must be migrated to 2.1` rather than as
+  `page-quality-stale: quality-check-ids`, which named the reviewer's check IDs for what was
+  really a superseded check set. `migrate_page_quality_record()` runs the registered
+  `("2.0", "2.1")` hook from `PAGE_QA_MIGRATIONS` inside the project transaction: the seven
+  deterministic checks and all bindings are re-derived from current artifacts, and the three
+  reviewer-supplied checks and the original review are preserved only while the bound
+  `page_sha256` still matches the page on disk. A record with no registered migration path
+  fails closed with `UnsupportedSchemaVersionError`, and a refused or interrupted migration
+  leaves the project byte-for-byte unchanged. `templates/page-qa.json` starts at `"2.1"` and
+  still stubs the new checks as `migration-required`. No `project.json` schema version is
+  affected. This supersedes the note that these records must simply be re-derived per page.
 
 - **The `dialogue_correctness` benchmark metric now measures a wider check set.**
   `DIALOGUE_PAGE_CHECK_IDS` in `scripts/benchmark.py` gains `balloon-subject-obstruction`

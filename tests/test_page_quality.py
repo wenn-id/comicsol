@@ -245,7 +245,7 @@ class PageQualityTests(unittest.TestCase):
     def test_record_binds_page_cache_layout_storyboard_and_ordered_lettering(self):
         record = self._build_record()
         bindings = record["bindings"]
-        self.assertEqual("2.0", record["schema_version"])
+        self.assertEqual("2.1", record["schema_version"])
         self.assertEqual("page-qa", record["kind"])
         self.assertEqual("page-001", record["subject_id"])
         self.assertEqual("hero-top-two-bottom", bindings["layout_name"])
