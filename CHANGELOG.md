@@ -149,6 +149,17 @@
   than migrated in place, and `templates/page-qa.json` stubs the new checks as
   `migration-required`. No `project.json` schema version is affected.
 
+- **The `dialogue_correctness` benchmark metric now measures a wider check set.**
+  `DIALOGUE_PAGE_CHECK_IDS` in `scripts/benchmark.py` gains `balloon-subject-obstruction`
+  and `bubble-tail-geometry`, so the metric covers every deterministic, error-severity page
+  check that verifies dialogue geometry rather than the three it counted before a tail or
+  speaker-clearance regression was enforced by the pipeline. `balloon-crowding` stays
+  excluded by design: it never fails, only warns, so counting it would conflate reading
+  comfort with correctness. Both committed cases still report `1.0`, but the denominator per
+  dialogue-bearing page grows by two, so recorded numerators and denominators — including
+  `observations.dialogue_checks_passed`/`dialogue_checks_total` — change even where the
+  ratio does not.
+
 ### Removed
 
 - Removed the unwired `comic_sol_product.providers` Python API. Integrations must

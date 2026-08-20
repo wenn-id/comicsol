@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from scripts.benchmark import (  # noqa: E402
     CASES_ROOT,
+    DIALOGUE_PAGE_CHECK_IDS,
     METRIC_DIRECTIONS,
     METRIC_IDS,
     diff_results,
@@ -155,6 +156,23 @@ class BenchmarkPrimitiveTests(unittest.TestCase):
     def test_dialogue_correctness_is_vacuously_successful_without_dialogue(self):
         metric = _metric("dialogue_correctness", 0, 0)
         self.assertEqual(1.0, metric["value"])
+
+    def test_dialogue_metric_counts_every_deterministic_geometry_check(self):
+        """The metric must cover the dialogue geometry the engine enforces."""
+        self.assertEqual(
+            {
+                "clipped-text",
+                "text-overlap",
+                "reading-order",
+                "balloon-subject-obstruction",
+                "bubble-tail-geometry",
+            },
+            set(DIALOGUE_PAGE_CHECK_IDS),
+        )
+
+    def test_dialogue_metric_excludes_the_crowding_warning(self):
+        """`balloon-crowding` warns instead of failing, so it is not a correctness signal."""
+        self.assertNotIn("balloon-crowding", DIALOGUE_PAGE_CHECK_IDS)
 
     def test_reference_rasters_are_reproducible_across_processes(self):
         code = (
@@ -499,6 +517,84 @@ class BenchmarkRunTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.assertEqual((0, 0), _dialogue_counts(project, {"page_count": 1}))
+
+    def _dialogue_page_project(self, name, checks):
+        """Write a one-page, one-dialogue project carrying the given page checks."""
+        project = self.root / name
+        (project / "plan").mkdir(parents=True)
+        (project / "qa/pages").mkdir(parents=True)
+        (project / "plan/storyboard.json").write_text(
+            json.dumps({
+                "pages": [{
+                    "number": 1,
+                    "panels": [{
+                        "id": "p01-01",
+                        "text": [{"id": "d1", "kind": "dialogue"}],
+                    }],
+                }]
+            }),
+            encoding="utf-8",
+        )
+        (project / "qa/pages/page-001.json").write_text(
+            json.dumps({"checks": checks}), encoding="utf-8"
+        )
+        return project
+
+    @staticmethod
+    def _page_checks(*, tail_region="pass", **results):
+        """Build a page record whose checks all pass unless overridden."""
+        checks = [
+            {"id": check_id, "result": results.get(check_id, "pass")}
+            for check_id in DIALOGUE_PAGE_CHECK_IDS
+        ]
+        # Warning-severity by design, and never counted; present so the fixture proves
+        # the exclusion rather than merely omitting the check.
+        checks.append({"id": "balloon-crowding", "result": "warning"})
+        checks.append({
+            "id": "bubble-tail-direction",
+            "result": "pass" if tail_region == "pass" else "fail",
+            "regions": [{"id": "d1", "result": tail_region}],
+        })
+        return checks
+
+    def test_dialogue_metric_counts_the_widened_check_set_on_a_healthy_page(self):
+        project = self._dialogue_page_project("healthy", self._page_checks())
+        # Five deterministic geometry checks plus one bounded tail region.
+        self.assertEqual((6, 6), _dialogue_counts(project, {"page_count": 1}))
+
+    def test_faulted_tail_moves_the_dialogue_metric_below_one(self):
+        project = self._dialogue_page_project(
+            "faulted-tail",
+            self._page_checks(**{"bubble-tail-geometry": "fail"}, tail_region="fail"),
+        )
+        passed, total = _dialogue_counts(project, {"page_count": 1})
+        self.assertEqual((4, 6), (passed, total))
+        self.assertLess(_metric("dialogue_correctness", passed, total)["value"], 1.0)
+
+    def test_obstructed_balloon_moves_the_dialogue_metric_below_one(self):
+        """A fault only the widened set sees must not read as perfect dialogue."""
+        project = self._dialogue_page_project(
+            "obstructed",
+            self._page_checks(**{"balloon-subject-obstruction": "fail"}),
+        )
+        passed, total = _dialogue_counts(project, {"page_count": 1})
+        self.assertEqual((5, 6), (passed, total))
+        self.assertLess(_metric("dialogue_correctness", passed, total)["value"], 1.0)
+
+    def test_crowding_warning_does_not_change_the_dialogue_denominator(self):
+        crowded = self._dialogue_page_project("crowded", self._page_checks())
+        uncrowded = self._dialogue_page_project(
+            "uncrowded",
+            [
+                check
+                for check in self._page_checks()
+                if check["id"] != "balloon-crowding"
+            ],
+        )
+        self.assertEqual(
+            _dialogue_counts(uncrowded, {"page_count": 1}),
+            _dialogue_counts(crowded, {"page_count": 1}),
+        )
 
     def test_repeated_deterministic_runs_are_byte_comparable(self):
         second = run_case(self.case, output_root=self.root / "second")

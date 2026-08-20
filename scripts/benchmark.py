@@ -168,7 +168,22 @@ METRIC_DIRECTIONS = {
 }
 METRIC_IDS = tuple(sorted(METRIC_DIRECTIONS))
 
-DIALOGUE_PAGE_CHECK_IDS = ("clipped-text", "text-overlap", "reading-order")
+# Every deterministic, error-severity page check that verifies dialogue geometry, so
+# the metric measures the dialogue correctness the engine actually enforces. Each one
+# is always emitted and is strictly pass/fail, so each contributes one unit.
+#
+# `balloon-crowding` is deliberately excluded: `_crowding_check()` never returns
+# `fail`, only `pass` or a warning-severity `warning`, because crowded lettering is a
+# reading-comfort hint rather than a defect. Counting it would score a comfortable
+# page 1/1 and a merely tight one 0/1, conflating comfort with correctness and making
+# the metric move on pages the engine still accepts.
+DIALOGUE_PAGE_CHECK_IDS = (
+    "clipped-text",
+    "text-overlap",
+    "reading-order",
+    "balloon-subject-obstruction",
+    "bubble-tail-geometry",
+)
 TAIL_CHECK_ID = "bubble-tail-direction"
 
 REVIEWER = "comic-sol-benchmark"
