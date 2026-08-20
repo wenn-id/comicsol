@@ -370,17 +370,13 @@ def _publish_expected(path: Path, temporary: Path, expected: _FileSnapshot) -> N
         return
 
     if not (sys.platform.startswith("linux") or sys.platform == "darwin"):
-        _assert_snapshot(path, expected)
-        os.replace(temporary, path)
-        return
+        raise OSError(errno.ENOTSUP, "atomic exchange is unavailable on this platform")
     try:
         _rename_exchange(temporary, path)
     except OSError as error:
         if error.errno not in {errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP}:
             raise
-        _assert_snapshot(path, expected)
-        os.replace(temporary, path)
-        return
+        raise OSError(errno.ENOTSUP, "atomic exchange is unavailable on this platform") from error
     exchanged = True
     try:
         displaced = _read_snapshot(temporary)
@@ -537,11 +533,11 @@ def _verify_persisted(
 ) -> bool:
     """Validate bytes on disk without letting adapter errors escape."""
     try:
-        persisted = adapter.load(path.read_bytes())
         if remove:
             verifier = getattr(adapter, "verify_removed", None)
             if callable(verifier):
                 return bool(verifier())
+            persisted = adapter.load(path.read_bytes())
             _, changed = adapter.remove(persisted)
             return not changed
         return bool(adapter.verify(entry))
@@ -590,24 +586,25 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
         return SetupResult(adapter.name, "skipped", str(path), None, "client config not found")
 
     try:
-        try:
-            snapshot = _read_snapshot(path)
-            config = adapter.load(snapshot.data)
-        except Exception as error:
-            return SetupResult(
-                adapter.name,
-                "failed",
-                str(path),
-                None,
-                f"malformed or unreadable config: {error}",
-            )
-        try:
-            updated, changed = adapter.remove(config) if remove else adapter.mutate(config, entry)
-        except Exception as error:
-            return SetupResult(adapter.name, "failed", str(path), None, str(error))
-        if not changed:
-            status = "unchanged" if not remove else "not-configured"
-            return SetupResult(adapter.name, status, str(path), None, "no config change required")
+        if getattr(adapter, "read_only_preflight", False):
+            try:
+                snapshot = _read_snapshot(path)
+                config = adapter.load(snapshot.data)
+            except Exception as error:
+                return SetupResult(
+                    adapter.name,
+                    "failed",
+                    str(path),
+                    None,
+                    f"malformed or unreadable config: {error}",
+                )
+            try:
+                updated, changed = adapter.remove(config) if remove else adapter.mutate(config, entry)
+            except Exception as error:
+                return SetupResult(adapter.name, "failed", str(path), None, str(error))
+            if not changed:
+                status = "unchanged" if not remove else "not-configured"
+                return SetupResult(adapter.name, status, str(path), None, "no config change required")
 
         with _ConfigLock(path):
             try:

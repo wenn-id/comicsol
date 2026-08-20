@@ -318,9 +318,10 @@ class ClientSetupTests(unittest.TestCase):
             client_setup._atomic_write(config, b"stale", expected=snapshot)
         self.assertEqual(concurrent, config.read_bytes())
 
-    def test_atomic_publish_falls_back_when_exchange_is_unavailable(self):
+    def test_atomic_publish_fails_closed_when_exchange_is_unavailable(self):
         config = self.home / "config.json"
-        config.write_bytes(b"original")
+        original = b"original"
+        config.write_bytes(original)
         snapshot = client_setup._read_snapshot(config)
 
         with mock.patch.object(
@@ -328,9 +329,10 @@ class ClientSetupTests(unittest.TestCase):
             "_rename_exchange",
             side_effect=OSError(errno.ENOTSUP, "exchange unavailable"),
         ):
-            client_setup._atomic_write(config, b"candidate", expected=snapshot)
+            with self.assertRaises(OSError):
+                client_setup._atomic_write(config, b"candidate", expected=snapshot)
 
-        self.assertEqual(b"candidate", config.read_bytes())
+        self.assertEqual(original, config.read_bytes())
 
     def test_adapter_detect_failure_is_per_client(self):
         class DetectFailure:
@@ -387,7 +389,45 @@ class ClientSetupTests(unittest.TestCase):
         self.assertIn("mutate failed", results[0].message)
         self.assertEqual("configured", results[1].status)
 
-    def test_adapter_dump_failure_is_returned_as_per_client_failure(self):
+    def test_custom_stateful_adapter_runs_load_and_mutate_once_under_lock(self):
+        class StatefulAdapter:
+            name = "stateful"
+
+            def __init__(self, path):
+                self.config_path = path
+                self.loads = 0
+                self.mutations = 0
+
+            def detect(self):
+                return True
+
+            def load(self, raw):
+                self.loads += 1
+                return raw
+
+            def mutate(self, config, entry):
+                self.mutations += 1
+                return config + b"\ncomic-sol", True
+
+            def remove(self, config):
+                return config, False
+
+            def dump(self, config):
+                return config
+
+            def verify(self, expected=None):
+                return True
+
+        config = self.home / "stateful.conf"
+        config.write_bytes(b"original")
+        adapter = StatefulAdapter(config)
+
+        result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+
+        self.assertEqual("configured", result.status)
+        self.assertEqual(1, adapter.loads)
+        self.assertEqual(1, adapter.mutations)
+
         class DumpFailure:
             name = "dump-failure"
 
