@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 from scripts.benchmark import (  # noqa: E402
     CASES_ROOT,
     DIALOGUE_PAGE_CHECK_IDS,
+    HARNESS_VERSION,
     METRIC_DIRECTIONS,
     METRIC_IDS,
     diff_results,
@@ -47,7 +48,7 @@ def _minimal_result(case_id, values, *, status="passed", revision="a" * 40):
     return {
         "case_id": case_id,
         "case_sha256": "b" * 64,
-        "harness_version": "1",
+        "harness_version": HARNESS_VERSION,
         "kind": "benchmark-result",
         "metrics": {
             metric_id: {
@@ -292,6 +293,23 @@ class BenchmarkDiffTests(unittest.TestCase):
         self.assertTrue((self.root / "diff.md").is_file())
         self.assertIn("NO REGRESSION", (self.root / "diff.md").read_text(encoding="utf-8"))
 
+    def test_a_stale_harness_baseline_cannot_be_diffed(self):
+        """A record measured by an older harness measures a different metric."""
+        stale = _minimal_result("case-one", PERFECT)
+        stale["harness_version"] = "1"
+        self._publish(self.baseline, stale)
+        self._publish(self.candidate, _minimal_result("case-one", PERFECT))
+        result = diff_results(self.baseline, self.candidate, self.root / "diff.json")
+        self.assertEqual("REGRESSION", result["decision"])
+        self.assertEqual("failed", result["status"])
+        self.assertTrue(
+            any(
+                "benchmark harness" in item and item.startswith("baseline:")
+                for item in result["exceptions"]
+            ),
+            result["exceptions"],
+        )
+
     def test_lower_quality_metrics_regress_and_fail_closed(self):
         self._publish(self.baseline, _minimal_result("case-one", PERFECT))
         degraded = {**PERFECT, "panel_acceptance": 0.5, "repair_rate": 0.75}
@@ -456,7 +474,7 @@ class BenchmarkRunTests(unittest.TestCase):
         revision = self.first["revision"]
         self.assertIn("engine_version", revision)
         self.assertIn("git_revision", revision)
-        self.assertEqual("1", revision["harness_version"])
+        self.assertEqual(HARNESS_VERSION, revision["harness_version"])
         self.assertEqual(
             {"composition", "export", "generation", "lettering", "planning", "storyboard"},
             set(revision["stage_versions"]),

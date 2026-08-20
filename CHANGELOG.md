@@ -160,6 +160,16 @@
   `observations.dialogue_checks_passed`/`dialogue_checks_total` — change even where the
   ratio does not.
 
+- **`HARNESS_VERSION` is now `"2"`, so benchmark result records produced by the previous
+  harness are no longer comparable.** The result schema is unchanged, which is exactly the
+  hazard: a harness-1 record still validates while measuring a narrower
+  `dialogue_correctness`, so pooling or diffing it against a current run would report a
+  definition change as a metric change. `summarize_results()` already rejected foreign
+  harness versions; `diff_results()` now does too, and reports the stale side as an
+  exception instead of a clean verdict. Re-run the benchmark rather than reusing archived
+  pre-bump results; `.github/workflows/benchmark.yml` already benchmarks the baseline
+  revision with the current harness, so CI needs no change.
+
 ### Removed
 
 - Removed the unwired `comic_sol_product.providers` Python API. Integrations must

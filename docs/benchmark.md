@@ -94,6 +94,14 @@ is accountable to: `engine_version`, `git_revision`, the harness version, and th
 project's `stage_versions`. A run that raises still publishes a `failed` record with
 the exception, so CI never loses evidence.
 
+The harness version identifies the measuring instrument, not the record layout. It is
+bumped whenever a metric's numerator or denominator is redefined, because such a record
+still validates against an unchanged schema while no longer meaning what it meant
+before. Both the summary and the diff refuse to mix harness versions, so a stale
+archived baseline fails closed instead of reporting a definition change as a metric
+change. Re-run the benchmark to compare across such a bump; the workflow already
+benchmarks the baseline revision with the current harness, so CI needs no action.
+
 The exit code is `0` only when every case passes.
 
 ## Optional live-provider runs

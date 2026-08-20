@@ -135,7 +135,11 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[1]
 CASES_ROOT = ROOT / "benchmarks/cases"
 
-HARNESS_VERSION = "1"
+# Bumped to "2" when `dialogue_correctness` grew to count `balloon-subject-obstruction`
+# and `bubble-tail-geometry`. The record schema is unchanged, but the metric no longer
+# means what it meant under "1", so a harness-1 record and a harness-2 record are not
+# comparable even though both validate. Summaries and diffs refuse to mix them.
+HARNESS_VERSION = "2"
 CASE_SCHEMA_VERSION = "1.0"
 RESULT_SCHEMA_VERSION = "1.0"
 DIFF_SCHEMA_VERSION = "1.0"
@@ -1351,6 +1355,20 @@ def diff_results(
     candidate_records, candidate_exceptions = load_results(candidate)
     exceptions = [f"baseline: {item}" for item in exceptions]
     exceptions += [f"candidate: {item}" for item in candidate_exceptions]
+
+    # A record only validates against the schema, which cannot tell that a metric was
+    # redefined under an older harness. Without this gate a stale archived baseline
+    # would diff cleanly against a current run and report the definition change as an
+    # improvement or as no change at all, which is the one thing a regression gate
+    # exists to prevent.
+    for label, records in (("baseline", baseline_records), ("candidate", candidate_records)):
+        for case_id in sorted(records):
+            harness = records[case_id].get("harness_version")
+            if harness != HARNESS_VERSION:
+                exceptions.append(
+                    f"{label}: {case_id}: result was produced by benchmark harness "
+                    f"{harness!r}, not {HARNESS_VERSION!r}, so it is not comparable"
+                )
 
     missing_cases = sorted(set(baseline_records) - set(candidate_records))
     new_cases = sorted(set(candidate_records) - set(baseline_records))
