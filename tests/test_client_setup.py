@@ -218,10 +218,7 @@ class ClientSetupTests(unittest.TestCase):
         )[0]
 
         self.assertEqual(0o640, stat.S_IMODE(config.stat().st_mode))
-        self.assertEqual(
-            0o640,
-            stat.S_IMODE(Path(result.backup_path).stat().st_mode),
-        )
+        self.assertEqual(0o600, stat.S_IMODE(Path(result.backup_path).stat().st_mode))
 
     @unittest.skipIf(os.name == "nt", "POSIX mode semantics are unavailable on Windows")
     def test_posix_rollback_preserves_group_read_mode(self):
@@ -240,10 +237,51 @@ class ClientSetupTests(unittest.TestCase):
 
         self.assertEqual("rolled-back", result.status)
         self.assertEqual(0o640, stat.S_IMODE(config.stat().st_mode))
-        self.assertEqual(
-            0o640,
-            stat.S_IMODE(Path(result.backup_path).stat().st_mode),
-        )
+        self.assertEqual(0o600, stat.S_IMODE(Path(result.backup_path).stat().st_mode))
+
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink semantics are unavailable on Windows")
+    def test_backup_collision_with_symlink_fails_without_following_or_overwriting_it(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = b'{"theme":"dark"}\n'
+        config.write_bytes(original)
+        outside = self.home / "outside-secret.txt"
+        outside.write_bytes(b"must-survive")
+        backup = config.with_name("mcp.json.bak-fixed")
+        backup.symlink_to(outside)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        with mock.patch.object(client_setup, "_backup_path", return_value=backup):
+            result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+
+        self.assertEqual("failed", result.status)
+        self.assertEqual(original, config.read_bytes())
+        self.assertEqual(b"must-survive", outside.read_bytes())
+        self.assertTrue(backup.is_symlink())
+        self.assertIsNone(result.backup_path)
+
+    @unittest.skipIf(os.name == "nt", "POSIX mode semantics are unavailable on Windows")
+    def test_setup_prunes_old_backups_and_keeps_the_five_newest(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.write_text("{}\n", encoding="utf-8")
+        for index in range(1, 6):
+            backup = config.with_name(f"mcp.json.bak-2026010100000{index}Z")
+            backup.write_bytes(f"old-{index}".encode())
+            backup.chmod(0o600)
+        oldest = config.with_name("mcp.json.bak-20260101000000Z")
+        oldest.write_bytes(b"oldest")
+        oldest.chmod(0o600)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+
+        self.assertEqual("configured", result.status)
+        backups = sorted(config.parent.glob("mcp.json.bak-*"))
+        self.assertEqual(5, len(backups))
+        self.assertNotIn(oldest, backups)
+        self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in backups))
 
     def test_json_verify_rejects_parseable_but_unsafe_comic_sol_entries(self):
         config = self.home / ".cursor" / "mcp.json"
