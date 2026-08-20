@@ -121,6 +121,25 @@ class ClientSetupTests(unittest.TestCase):
             str(self.launcher.resolve()),
         )
 
+    def test_unchanged_setup_does_not_require_config_lock(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        expected = {
+            "command": str(self.launcher.resolve()),
+            "args": ["mcp", "--root", str(self.output.resolve())],
+        }
+        config.write_text(
+            json.dumps({"mcpServers": {"comic-sol": expected}}),
+            encoding="utf-8",
+        )
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        with mock.patch.object(client_setup, "_ConfigLock", side_effect=PermissionError("read-only")):
+            result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+
+        self.assertEqual("unchanged", result.status)
+        self.assertIsNone(result.backup_path)
+
     def test_malformed_config_is_refused_without_backup_or_write(self):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)

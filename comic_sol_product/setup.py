@@ -524,6 +524,22 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
         return SetupResult(adapter.name, "skipped", str(path), None, "client config not found")
 
     try:
+        try:
+            snapshot = _read_snapshot(path)
+            config = adapter.load(snapshot.data)
+        except (OSError, UnicodeError, ValueError) as error:
+            return SetupResult(
+                adapter.name,
+                "failed",
+                str(path),
+                None,
+                f"malformed or unreadable config: {error}",
+            )
+        updated, changed = adapter.remove(config) if remove else adapter.mutate(config, entry)
+        if not changed:
+            status = "unchanged" if not remove else "not-configured"
+            return SetupResult(adapter.name, status, str(path), None, "no config change required")
+
         with _ConfigLock(path):
             try:
                 snapshot = _read_snapshot(path)
