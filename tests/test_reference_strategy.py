@@ -119,6 +119,17 @@ def storyboard():
     }
 
 
+def solo_storyboard():
+    """Return the same storyboard with one character in every panel.
+
+    Ranking within one character is only observable when the panel does not also
+    interleave a second character's canonical anchor ahead of it.
+    """
+    board = storyboard()
+    board["pages"][0]["panels"][0]["characters"] = ["mira"]
+    return board
+
+
 def with_views(pack, character_id, *views):
     """Append authored reference views to one pack entry, as an author would."""
     entry = next(item for item in pack["characters"] if item["id"] == character_id)
@@ -188,6 +199,7 @@ class SelectionRuleTests(unittest.TestCase):
 
     def test_shot_aligned_view_follows_the_canonical_anchor(self):
         with_views(self.pack, "mira", "close-up", "full-body", "profile")
+        board = solo_storyboard()
 
         aligned = {
             "p01-01": "close-up",
@@ -196,8 +208,9 @@ class SelectionRuleTests(unittest.TestCase):
         }
         for panel_id, view in aligned.items():
             with self.subTest(panel=panel_id):
-                plan = panel_reference_plan(self.pack, self.storyboard, panel_id)
+                plan = panel_reference_plan(self.pack, board, panel_id)
 
+                self.assertEqual("canonical", plan.selected[0].view)
                 self.assertEqual(view, plan.selected[1].view)
                 self.assertEqual(SHOT_ALIGNED, plan.selected[1].reason)
 
@@ -242,13 +255,12 @@ class SelectionRuleTests(unittest.TestCase):
     def test_selection_order_follows_the_pack_not_the_panel(self):
         plan = panel_reference_plan(self.pack, self.storyboard, "p01-01")
 
-        self.assertEqual(["ren", "mira"], self.storyboard["pages"][0]["panels"][0]["characters"])
+        self.assertEqual(
+            ["ren", "mira"], self.storyboard["pages"][0]["panels"][0]["characters"]
+        )
         self.assertEqual(("mira", "ren"), plan.character_ids)
         self.assertEqual(
-            (
-                "references/characters/mira.png",
-                "references/characters/ren.png",
-            ),
+            ("references/characters/mira.png", "references/characters/ren.png"),
             plan.attachment_paths,
         )
 
@@ -294,7 +306,6 @@ class BudgetTests(unittest.TestCase):
             self.pack, self.storyboard, "p01-01", reference_budget=2
         )
 
-        self.assertEqual([shared], [item.path for item in plan.selected][:1])
         self.assertIn(("ren", "canonical", DUPLICATE_PATH), omissions_of(plan))
         # The duplicate did not consume the budget, so mira's second view still fits.
         self.assertEqual(
@@ -303,6 +314,10 @@ class BudgetTests(unittest.TestCase):
                 ("mira", "profile", IDENTITY_SUPPLEMENT),
             ],
             views_of(plan),
+        )
+        self.assertEqual(
+            (shared, "references/characters/mira-profile.png"),
+            plan.attachment_paths,
         )
 
     def test_a_zero_budget_records_every_reference_as_unsupported(self):
@@ -331,13 +346,13 @@ class BudgetTests(unittest.TestCase):
 
 class ProvenanceTests(unittest.TestCase):
     def setUp(self):
-        self.pack = with_views(derive_identity_pack(character_bible()), "mira", "profile")
+        self.pack = with_views(
+            derive_identity_pack(character_bible()), "mira", "profile"
+        )
         self.storyboard = storyboard()
 
     def test_document_records_every_panel_in_storyboard_order(self):
-        document = project_reference_plan(
-            self.pack, self.storyboard, reference_budget=2
-        )
+        document = project_reference_plan(self.pack, self.storyboard, reference_budget=2)
 
         self.assertEqual(REFERENCE_PLAN_SCHEMA_VERSION, document["schema_version"])
         self.assertEqual(
@@ -346,9 +361,7 @@ class ProvenanceTests(unittest.TestCase):
         )
 
     def test_panel_record_names_the_shot_budget_and_every_reason(self):
-        document = project_reference_plan(
-            self.pack, self.storyboard, reference_budget=2
-        )
+        document = project_reference_plan(self.pack, self.storyboard, reference_budget=2)
         record = document["panels"][0]
 
         self.assertEqual(
@@ -469,7 +482,7 @@ class ProvenanceTests(unittest.TestCase):
             self.assertNotIn(forbidden, block)
 
 
-class PersistenceTests(unittest.TestCase):
+class ReferencePlanProjectHarness(unittest.TestCase):
     def setUp(self):
         self._temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporary.cleanup)
@@ -489,6 +502,8 @@ class PersistenceTests(unittest.TestCase):
                 b"\x89PNG\r\n\x1a\n"
             )
 
+
+class PersistenceTests(ReferencePlanProjectHarness):
     def test_plan_publishes_a_canonical_artifact(self):
         derive_and_write_identity_pack(self.project)
 
@@ -541,16 +556,17 @@ class PersistenceTests(unittest.TestCase):
             plan_and_write_reference_plan(self.project)
 
 
-class CommandLineTests(PersistenceTests):
+class CommandLineTests(ReferencePlanProjectHarness):
     def test_plan_and_panel_exit_zero_on_a_valid_project(self):
-        self.assertEqual(0, main([str(self.project), "--plan", "--budget", "3"]))
-        # The identity pack gate runs first, so planning fails before it exists.
         derive_and_write_identity_pack(self.project)
+
         self.assertEqual(0, main([str(self.project), "--plan", "--budget", "3"]))
         self.assertEqual(0, main([str(self.project), "--panel", "p01-01"]))
+        self.assertTrue((self.project / REFERENCE_PLAN_PATH).is_file())
 
     def test_plan_fails_before_the_identity_pack_exists(self):
         self.assertEqual(1, main([str(self.project), "--plan"]))
+        self.assertEqual(1, main([str(self.project), "--panel", "p01-01"]))
         self.assertFalse((self.project / REFERENCE_PLAN_PATH).exists())
 
     def test_unknown_panel_exits_nonzero(self):
@@ -562,6 +578,7 @@ class CommandLineTests(PersistenceTests):
         derive_and_write_identity_pack(self.project)
 
         self.assertEqual(1, main([str(self.project), "--plan", "--budget", "-1"]))
+        self.assertFalse((self.project / REFERENCE_PLAN_PATH).exists())
 
 
 if __name__ == "__main__":
