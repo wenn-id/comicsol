@@ -49,6 +49,7 @@ BUNDLED_SCRIPTS = (
     "quality_records.py",
     "quality_sample.py",
     "raster_limits.py",
+    "reference_strategy.py",
     "render_report.py",
     "schema.py",
     "stage_registry.py",
