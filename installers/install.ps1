@@ -15,7 +15,7 @@ $InstallMarkerName = ".comic-sol-install"
 $InstallMarkerMagic = "comic-sol-install-v1"
 $CosignCommand = if ($env:COMIC_SOL_COSIGN) { $env:COMIC_SOL_COSIGN } else { "cosign" }
 $CosignOidcIssuer = "https://token.actions.githubusercontent.com"
-$CosignIdentityRegexp = '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$'
+$CosignIdentityRegexp = '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?|heads/main)$'
 function Encode-MarkerRoot {
     param([string]$Path)
     $normalized = $Path.Replace('\', '/')

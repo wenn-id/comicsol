@@ -267,6 +267,11 @@ class PublicInstallerContractTests(unittest.TestCase):
         self.assertIn("Scheme", self.powershell)
         self.assertIn("https", self.powershell.lower())
 
+    def test_installers_accept_tag_and_workflow_dispatch_sigstore_identities(self):
+        expected = "refs/(tags/v[0-9]+\\.[0-9]+\\.[0-9]+(rc[0-9]+)?|heads/main)"
+        self.assertIn(expected, self.posix)
+        self.assertIn(expected, self.powershell)
+
     @unittest.skipUnless(os.name != "nt", "POSIX installer test")
     def test_posix_rejects_http_url_before_request(self):
         server, thread = self.start_installer_server()
