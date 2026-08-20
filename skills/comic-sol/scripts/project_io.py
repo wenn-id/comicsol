@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import errno
 import json
 import os
@@ -522,6 +523,11 @@ class ProjectTransaction:
         if resolved.resolve() == self.project_dir.resolve():
             raise ValueError(f"path '{relative}' resolves to the project root")
         relative = resolved.relative_to(self.project_dir.resolve()).as_posix()
+        if any(
+            entry.get("operation") == "append" and entry.get("path") == relative
+            for entry in self._journal
+        ):
+            raise ValueError("cannot mix append and replacement for one path")
         dest = resolved
         index = len(self._journal) + 1
         backup_name = f"backup-{index:03d}-{path.name}"
@@ -544,6 +550,147 @@ class ProjectTransaction:
         }
         self._journal.append(entry)
 
+    @staticmethod
+    def _jsonl_append_position(handle: BinaryIO) -> tuple[int, int, bytes]:
+        """Return ``(original_size, safe_append_offset, torn_tail)``.
+
+        Only bytes after the final newline are inspected. A valid unterminated
+        final JSON object gets a separator; an invalid tail is discarded on
+        publish. The common case reads one byte, not the whole log.
+        """
+        handle.seek(0, os.SEEK_END)
+        original_size = handle.tell()
+        if original_size == 0:
+            return 0, 0, b""
+        handle.seek(-1, os.SEEK_END)
+        if handle.read(1) == b"\n":
+            return original_size, original_size, b""
+        cursor = original_size
+        later_chunks: list[bytes] = []
+        while cursor:
+            size = min(64 * 1024, cursor)
+            cursor -= size
+            handle.seek(cursor)
+            chunk = handle.read(size)
+            newline = chunk.rfind(b"\n")
+            if newline >= 0:
+                tail = chunk[newline + 1 :] + b"".join(reversed(later_chunks))
+                safe_offset = cursor + newline + 1
+                try:
+                    json.loads(tail)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    return original_size, safe_offset, tail
+                return original_size, original_size, b""
+            later_chunks.append(chunk)
+        tail = b"".join(reversed(later_chunks))
+        try:
+            json.loads(tail)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return original_size, 0, tail
+        return original_size, original_size, b""
+
+    def append_bytes(
+        self,
+        relative: str,
+        payload: bytes,
+        *,
+        repair_torn_jsonl: bool = False,
+    ) -> None:
+        """Journal an append without copying the existing destination."""
+        if self._dir is None:
+            raise RuntimeError("transaction not started")
+        if not isinstance(payload, bytes):
+            raise TypeError("append_bytes payload must be bytes")
+        path = Path(relative)
+        if path.is_absolute():
+            raise ValueError("append_bytes requires a relative path")
+        resolved = contained_project_path(self.project_dir, relative)
+        if resolved.resolve() == self.project_dir.resolve():
+            raise ValueError(f"path '{relative}' resolves to the project root")
+        relative = resolved.relative_to(self.project_dir.resolve()).as_posix()
+        existing = next(
+            (
+                entry
+                for entry in self._journal
+                if entry.get("operation") == "append" and entry.get("path") == relative
+            ),
+            None,
+        )
+        if existing is not None:
+            existing["payload"] = base64.b64encode(
+                base64.b64decode(existing["payload"], validate=True) + payload
+            ).decode("ascii")
+            return
+        if any(entry.get("path") == relative for entry in self._journal):
+            raise ValueError("cannot mix append and replacement for one path")
+        exists = resolved.is_file()
+        original_size = 0
+        repair_size = 0
+        append_payload = payload
+        original_tail = b""
+        if exists:
+            flags = os.O_RDONLY
+            with open_contained(self.project_dir, relative, flags=flags) as handle:
+                original_size = handle.seek(0, os.SEEK_END)
+                repair_size = original_size
+                if repair_torn_jsonl:
+                    original_size, repair_size, original_tail = self._jsonl_append_position(handle)
+                    if repair_size == original_size and original_size:
+                        handle.seek(-1, os.SEEK_END)
+                        if handle.read(1) != b"\n":
+                            append_payload = b"\n" + payload
+        self._journal.append(
+            {
+                "operation": "append",
+                "path": relative,
+                "original_exists": exists,
+                "original_size": original_size,
+                "repair_size": repair_size,
+                "original_tail": base64.b64encode(original_tail).decode("ascii"),
+                "payload": base64.b64encode(append_payload).decode("ascii"),
+            }
+        )
+
+    def _apply_append(self, entry: dict) -> None:
+        """Apply one journalled append and persist its bytes."""
+        destination = contained_project_path(self.project_dir, entry["path"])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        payload = base64.b64decode(entry["payload"], validate=True)
+        with open_contained(
+            self.project_dir,
+            entry["path"],
+            flags=os.O_RDWR | os.O_CREAT,
+            mode=0o600,
+        ) as handle:
+            handle.seek(entry["repair_size"])
+            handle.truncate()
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        fsync_directory(destination.parent)
+
+    def _rollback_append(self, entry: dict) -> None:
+        """Restore one append target to its exact pre-transaction bytes."""
+        destination = contained_project_path(self.project_dir, entry["path"])
+        if entry["original_exists"]:
+            original_tail = base64.b64decode(entry.get("original_tail", ""), validate=True)
+            with open_contained(
+                self.project_dir,
+                entry["path"],
+                flags=os.O_RDWR | os.O_CREAT,
+                mode=0o600,
+            ) as handle:
+                handle.truncate(entry["repair_size"])
+                handle.seek(entry["repair_size"])
+                handle.write(original_tail)
+                handle.truncate(entry["original_size"])
+                handle.flush()
+                os.fsync(handle.fileno())
+        else:
+            remove_contained(self.project_dir, entry["path"])
+        if destination.parent.is_dir():
+            fsync_directory(destination.parent)
+
     def commit(self) -> None:
         """Durably write the canonical journal, then atomically replace each
         target. On any replace failure, restore backups in reverse order."""
@@ -556,6 +703,11 @@ class ProjectTransaction:
         published: list[tuple[Path, dict]] = []
         try:
             for entry in self._journal:
+                if entry.get("operation") == "append":
+                    dest = contained_project_path(self.project_dir, entry["path"])
+                    published.append((dest, entry))
+                    self._apply_append(entry)
+                    continue
                 dest = contained_project_path(self.project_dir, entry["path"])
                 staged = contained_project_path(
                     self.project_dir, entry["staged"], must_exist=True
@@ -572,6 +724,9 @@ class ProjectTransaction:
             self._cleanup()
         except BaseException:
             for dest, entry in reversed(published):
+                if entry.get("operation") == "append":
+                    self._rollback_append(entry)
+                    continue
                 if entry.get("backup"):
                     backup = contained_project_path(self.project_dir, entry["backup"])
                     if backup.is_file():
@@ -663,6 +818,9 @@ class ProjectTransaction:
                     continue
                 if phase in ("staging", "publishing", "rolled_back"):
                     for entry in reversed(targets):
+                        if entry.get("operation") == "append":
+                            ProjectTransaction(project_dir, "recovery")._rollback_append(entry)
+                            continue
                         dest = contained_project_path(project_dir, entry["path"])
                         backup_path = entry.get("backup")
                         if backup_path:

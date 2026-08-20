@@ -380,38 +380,18 @@ def canonical_event_record(event: str, details: dict[str, object]) -> bytes:
     return canonical_json_bytes(event_record) + b"\n"
 
 
-def _event_log_with(project_dir: Path, event: str, details: dict[str, object]) -> bytes:
-    """Return the whole event log plus one record, repairing a torn tail.
-
-    ``append_event`` writes without a transaction, so an interrupted append can
-    leave a partial final line. Republishing it verbatim would embed the tear
-    permanently, so drop an unparsable trailing record instead.
-    """
-    event_path = contained_project_path(project_dir, "logs/events.jsonl")
-    prior = event_path.read_bytes() if event_path.is_file() else b""
-    if prior and not prior.endswith(b"\n"):
-        head, _, tail = prior.rpartition(b"\n")
-        try:
-            json.loads(tail)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            prior = head + b"\n" if head else b""
-        else:
-            prior = prior + b"\n"
-    return prior + canonical_event_record(event, details)
-
-
 def append_event(
     project_dir: Path,
     event: str,
     details: dict[str, object],
 ) -> None:
-    """Append one sanitized canonical JSON object to the project event log."""
-    event_path = Path(project_dir) / "logs/events.jsonl"
-    event_path.parent.mkdir(parents=True, exist_ok=True)
-    with event_path.open("ab") as handle:
-        handle.write(canonical_event_record(event, details))
-        handle.flush()
-        os.fsync(handle.fileno())
+    """Append one sanitized canonical JSON object transactionally."""
+    with ProjectTransaction(Path(project_dir), "event-appended") as transaction:
+        transaction.append_bytes(
+            "logs/events.jsonl",
+            canonical_event_record(event, details),
+            repair_torn_jsonl=True,
+        )
 
 
 def _allowed_transition(current: str, target: str) -> bool:
@@ -463,12 +443,14 @@ def transition(
             warnings.append(warning)
         manifest["status"] = target
         manifest["updated_at"] = _utc_now()
-        events = _event_log_with(
-            project_dir,
-            "project.transitioned",
-            {"from": current, "to": target, "warning_present": warning is not None},
+        tx.append_bytes(
+            "logs/events.jsonl",
+            canonical_event_record(
+                "project.transitioned",
+                {"from": current, "to": target, "warning_present": warning is not None},
+            ),
+            repair_torn_jsonl=True,
         )
-        tx.stage_bytes("logs/events.jsonl", events)
         tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
     return manifest
 
@@ -808,9 +790,10 @@ def record_stage(project_dir: Path, stage: str) -> dict[str, object]:
         assert isinstance(stages, dict)
         stages[stage] = {"artifacts": artifacts, "key": key}
         tx.stage_bytes(str(STAGE_CACHE_PATH), canonical_artifact_bytes(cache))
-        tx.stage_bytes(
+        tx.append_bytes(
             "logs/events.jsonl",
-            _event_log_with(project_dir, "stage.recorded", {"action": stage}),
+            canonical_event_record("stage.recorded", {"action": stage}),
+            repair_torn_jsonl=True,
         )
     return {"artifacts": len(artifacts), "stage": stage}
 
@@ -1071,12 +1054,14 @@ def block_project(project_dir: Path, reason: str, warning: str) -> dict[str, obj
             "status": "BLOCKED",
             "updated_at": _utc_now(),
         })
-        events = _event_log_with(
-            project_dir,
-            "project.transitioned",
-            {"from": current, "to": "BLOCKED", "warning_present": True},
+        transaction.append_bytes(
+            "logs/events.jsonl",
+            canonical_event_record(
+                "project.transitioned",
+                {"from": current, "to": "BLOCKED", "warning_present": True},
+            ),
+            repair_torn_jsonl=True,
         )
-        transaction.stage_bytes("logs/events.jsonl", events)
         transaction.stage_bytes("project.json", canonical_artifact_bytes(manifest))
         return manifest
 
@@ -1420,10 +1405,9 @@ def _stage_generation_accounting(
     transaction.stage_bytes(
         GENERATION_COUNTERS_PATH.as_posix(), canonical_artifact_bytes(counters)
     )
-    transaction.stage_bytes(
+    transaction.append_bytes(
         "logs/events.jsonl",
-        _event_log_with(
-            project_dir,
+        canonical_event_record(
             "generation.attempt-recorded",
             {
                 "attempt_path": attempt_relative,
@@ -1431,6 +1415,7 @@ def _stage_generation_accounting(
                 "panel_id": panel_id,
             },
         ),
+        repair_torn_jsonl=True,
     )
 
 
@@ -1584,8 +1569,8 @@ def promote_attempt(project_dir: Path, panel_id: str, attempt_path: Path) -> Pat
                     break
                 number += 1
         transaction.stage_bytes(destination_relative.as_posix(), new_bytes)
-        events = _event_log_with(
-            project_dir, "generation.attempt-promoted", event_details
+        events = canonical_event_record(
+            "generation.attempt-promoted", event_details
         )
         if replaced:
             events += canonical_event_record(
@@ -1595,7 +1580,9 @@ def promote_attempt(project_dir: Path, panel_id: str, attempt_path: Path) -> Pat
                     "reused": False,
                 },
             )
-        transaction.stage_bytes("logs/events.jsonl", events)
+        transaction.append_bytes(
+            "logs/events.jsonl", events, repair_torn_jsonl=True
+        )
     return destination
 
 
@@ -1695,13 +1682,12 @@ def _stage_override(
 
     tx.stage_bytes(f"qa/panels/{panel_id}.json", canonical_artifact_bytes(record))
     tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
-    tx.stage_bytes(
+    tx.append_bytes(
         "logs/events.jsonl",
-        _event_log_with(
-            project_dir,
-            "panel.overridden",
-            {"panel_id": panel_id, "action": "accepted"},
+        canonical_event_record(
+            "panel.overridden", {"panel_id": panel_id, "action": "accepted"}
         ),
+        repair_torn_jsonl=True,
     )
 
 

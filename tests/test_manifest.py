@@ -323,6 +323,65 @@ class ManifestTests(unittest.TestCase):
         self.assertNotIn("do-not-log", lines[-1])
         self.assertEqual(canonical_json_bytes(event), lines[-1].encode("utf-8"))
 
+    def test_transaction_append_publishes_without_staging_whole_event_log(self):
+        project = init_project(
+            self.root,
+            "Transactional Events",
+            b"Story",
+            {"mode": "short_prompt", "language": "en"},
+        )
+        event_path = project / "logs/events.jsonl"
+        prior = event_path.read_bytes()
+        payload = b'{"event":"tool.finished"}\n'
+
+        with ProjectTransaction(project, "append-event") as transaction:
+            transaction.append_bytes("logs/events.jsonl", payload)
+            entry = transaction._journal[0]
+            self.assertEqual("append", entry["operation"])
+            self.assertIsNone(entry.get("staged"))
+            self.assertIsNotNone(entry.get("payload"))
+            self.assertEqual(len(prior), entry["original_size"])
+
+        self.assertEqual(prior + payload, event_path.read_bytes())
+
+    def test_transaction_append_rolls_back_to_original_bytes(self):
+        project = init_project(
+            self.root,
+            "Transactional Rollback",
+            b"Story",
+            {"mode": "short_prompt", "language": "en"},
+        )
+        event_path = project / "logs/events.jsonl"
+        prior = event_path.read_bytes()
+
+        with self.assertRaisesRegex(RuntimeError, "abort append"):
+            with ProjectTransaction(project, "append-event") as transaction:
+                transaction.append_bytes("logs/events.jsonl", b"partial\n")
+                raise RuntimeError("abort append")
+
+        self.assertEqual(prior, event_path.read_bytes())
+
+    def test_transaction_append_repairs_only_a_torn_tail_before_appending(self):
+        project = init_project(
+            self.root,
+            "Torn Event Tail",
+            b"Story",
+            {"mode": "short_prompt", "language": "en"},
+        )
+        event_path = project / "logs/events.jsonl"
+        valid = event_path.read_bytes()
+        torn = b'{"event":"interrupted"'
+        event_path.write_bytes(valid + torn)
+
+        with ProjectTransaction(project, "append-event") as transaction:
+            transaction.append_bytes(
+                "logs/events.jsonl",
+                b'{"event":"recovered"}\n',
+                repair_torn_jsonl=True,
+            )
+
+        self.assertEqual(valid + b'{"event":"recovered"}\n', event_path.read_bytes())
+
     def test_append_event_rejects_raw_payloads_and_absolute_paths(self):
         project = init_project(
             self.root,
