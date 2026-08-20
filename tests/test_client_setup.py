@@ -283,6 +283,60 @@ class ClientSetupTests(unittest.TestCase):
         self.assertNotIn(oldest, backups)
         self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in backups))
 
+    def test_setup_aborts_when_config_changes_before_publish(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = b'{"user":"before"}\n'
+        concurrent = b'{"user":"concurrent"}\n'
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+        real_backup = client_setup._write_backup
+
+        def mutate_after_snapshot(backup_path, data):
+            real_backup(backup_path, data)
+            config.write_bytes(concurrent)
+
+        with mock.patch.object(client_setup, "_write_backup", side_effect=mutate_after_snapshot):
+            result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+
+        self.assertEqual("failed", result.status)
+        self.assertEqual(concurrent, config.read_bytes())
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink semantics are unavailable on Windows")
+    def test_config_symlink_is_refused_without_following_target(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        outside = self.home / "outside-config.json"
+        original = b'{"user":"outside"}\n'
+        outside.write_bytes(original)
+        config.symlink_to(outside)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+
+        self.assertEqual("failed", result.status)
+        self.assertEqual(original, outside.read_bytes())
+        self.assertTrue(config.is_symlink())
+
+    def test_config_lock_covers_snapshot_mutation_and_publish(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.write_text("{}\n", encoding="utf-8")
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+        lock_path = config.with_name(f".{config.name}.lock")
+        observed = []
+        real_backup = client_setup._write_backup
+
+        def observe_lock(backup_path, data):
+            observed.append(lock_path.is_file())
+            real_backup(backup_path, data)
+
+        with mock.patch.object(client_setup, "_write_backup", side_effect=observe_lock):
+            result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+
+        self.assertEqual("configured", result.status)
+        self.assertEqual([True], observed)
+
     def test_json_verify_rejects_parseable_but_unsafe_comic_sol_entries(self):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)
