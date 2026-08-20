@@ -172,8 +172,8 @@ Speaker-aware balloon-tail prerelease.
 
 ### Distribution and limitations
 
-- Linux, macOS, and Windows x86_64 bundles, CycloneDX SBOMs, and SHA-256 manifests remain available.
-- Native archives and installers remain unsigned; verify them against `SHA256SUMS`.
+- Linux, macOS, and Windows x86_64 bundles, CycloneDX SBOMs, SHA-256 manifests, and a keyless Sigstore bundle for `SHA256SUMS` remain available.
+- Native archives use keyless Sigstore verification but are not Authenticode-signed or Apple-notarized; verify `SHA256SUMS.sigstore.json` and the archive digest before use.
 
 ## 2.0.0rc3 — 2026-07-30
 

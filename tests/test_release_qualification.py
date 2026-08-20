@@ -126,7 +126,8 @@ class ReleaseQualificationContractTests(unittest.TestCase):
                         "architecture": "x86_64",
                         "tag": "v2.0.0rc4",
                         "version": "2.0.0rc4",
-                        "signature_status": "unsigned",
+                        "signature_file": "SHA256SUMS.sigstore.json",
+                        "signature_status": "sigstore",
                         "artifacts": ["runtime.zip"],
                     }
                 ),

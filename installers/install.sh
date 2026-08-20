@@ -1,11 +1,17 @@
 #!/usr/bin/env sh
+# Install: sh install.sh --archive comic-sol.zip --sha256 <digest> --checksums SHA256SUMS --signature SHA256SUMS.sigstore.json
 set -eu
 
 INSTALL_ROOT="${COMIC_SOL_INSTALL_ROOT:-$HOME/.local/share/comic-sol}"
 ARCHIVE=""
 SHA256=""
+CHECKSUMS=""
+SIGNATURE=""
 URL=""
 UNINSTALL=0
+COSIGN_BIN="${COMIC_SOL_COSIGN:-cosign}"
+COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
+COSIGN_IDENTITY_REGEXP='^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?|heads/main)$'
 INSTALL_LOCK_DIR=""
 LOCK_HELD=0
 SECURE_HANDOFF=0
@@ -67,7 +73,7 @@ secure_root_handoff() {
       or die "refusing install root: cannot open caller directory: $!\n";
     for (my $i = 0; $i + 1 < @ARGV; $i++) {
       $root = $ARGV[$i + 1] if $ARGV[$i] eq "--install-root";
-      if ($ARGV[$i] eq "--archive" && defined $ARGV[$i + 1]) {
+      if (($ARGV[$i] eq "--archive" || $ARGV[$i] eq "--checksums" || $ARGV[$i] eq "--signature") && defined $ARGV[$i + 1]) {
         $ARGV[$i + 1] = File::Spec->rel2abs($ARGV[$i + 1], $caller);
       }
     }
@@ -223,6 +229,8 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --archive) ARCHIVE=$2; shift 2 ;;
     --sha256) SHA256=$2; shift 2 ;;
+    --checksums) CHECKSUMS=$2; shift 2 ;;
+    --signature) SIGNATURE=$2; shift 2 ;;
     --url) URL=$2; shift 2 ;;
     --install-root) INSTALL_ROOT=$2; shift 2 ;;
     --uninstall) UNINSTALL=1; shift ;;
@@ -238,8 +246,8 @@ else
       echo "refusing to uninstall: install root is not a directory" >&2
       exit 1
     fi
-  elif [ -z "$SHA256" ]; then
-    echo "--sha256 is required for this unsigned prerelease" >&2
+  elif [ -z "$SHA256" ] || [ -z "$CHECKSUMS" ] || [ -z "$SIGNATURE" ]; then
+    echo "--sha256, --checksums, and --signature are required for a signed release" >&2
     exit 2
   fi
   reject_symlink_path "$INSTALL_ROOT"
@@ -373,18 +381,47 @@ trap 'cleanup_install' EXIT
 trap 'abort_install' INT TERM
 
 if [ -n "$URL" ]; then
-  ARCHIVE="$TMP/comic-sol.zip"
+  URL_PATH=${URL%%\?*}
+  URL_PATH=${URL_PATH%%\#*}
+  ARCHIVE_NAME=$(basename -- "$URL_PATH")
+  case "$ARCHIVE_NAME" in
+    ''|.|..|*[!A-Za-z0-9._-]*)
+      echo "HTTPS URL must end with a safe release asset name" >&2
+      exit 2
+      ;;
+  esac
+  ARCHIVE="$TMP/$ARCHIVE_NAME"
   curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 "$URL" -o "$ARCHIVE"
 fi
 if [ -z "$ARCHIVE" ] || [ ! -f "$ARCHIVE" ]; then
   echo "Provide --archive PATH or --url HTTPS_URL" >&2
   exit 2
 fi
+if ! command -v "$COSIGN_BIN" >/dev/null 2>&1; then
+  echo "cosign is required for signature verification" >&2
+  exit 1
+fi
+if [ ! -f "$CHECKSUMS" ] || [ ! -f "$SIGNATURE" ]; then
+  echo "checksum manifest and Sigstore bundle are required for signature verification" >&2
+  exit 1
+fi
+if ! "$COSIGN_BIN" verify-blob \
+  --bundle "$SIGNATURE" \
+  --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
+  --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
+  "$CHECKSUMS" >/dev/null; then
+  echo "signature verification failed" >&2
+  exit 1
+fi
 
 ACTUAL=$(sha256sum "$ARCHIVE" | cut -d ' ' -f 1 | tr '[:upper:]' '[:lower:]')
+MANIFEST_DIGEST=$(awk -v name="$(basename -- "$ARCHIVE")" '$2 == name { print tolower($1); found = 1 } END { if (!found) exit 1 }' "$CHECKSUMS") || {
+  echo "signed checksum manifest has no entry for archive" >&2
+  exit 1
+}
 EXPECTED=$(printf '%s' "$SHA256" | tr '[:upper:]' '[:lower:]')
-if [ "$ACTUAL" != "$EXPECTED" ]; then
-  echo "SHA256 mismatch" >&2
+if [ "$ACTUAL" != "$MANIFEST_DIGEST" ] || [ "$ACTUAL" != "$EXPECTED" ]; then
+  echo "SHA256 does not match signed checksum manifest" >&2
   exit 1
 fi
 
@@ -466,5 +503,5 @@ for backup in "$STABLE_BACKUP" "$TARGET_BACKUP"; do
   fi
 done
 
-echo "Installed unsigned Comic Sol $VERSION at $INSTALL_ROOT"
+echo "Installed signed Comic Sol $VERSION at $INSTALL_ROOT"
 echo "Add $INSTALL_ROOT/bin to PATH. User projects are outside this directory."
