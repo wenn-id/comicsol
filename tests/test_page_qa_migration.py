@@ -200,14 +200,25 @@ class PageQaMigrationTests(unittest.TestCase):
         self.assertEqual("2.0", json.loads(
             self.record_path.read_text("utf-8"))["schema_version"])
 
-    def test_migrating_a_current_record_publishes_nothing(self):
+    def test_migrating_a_current_record_neither_publishes_nor_journals(self):
         migrate_page_quality_record(self.project, 1)
         published = self.record_path.read_bytes()
+        transactions = self.project / "logs/transactions"
+        before = self._transaction_names(transactions)
 
         again = migrate_page_quality_record(self.project, 1)
 
         self.assertEqual(CURRENT_PAGE_QA_SCHEMA_VERSION, again["schema_version"])
         self.assertEqual(published, self.record_path.read_bytes())
+        # Reading a record that needs no migration never opens a transaction, so
+        # no journal directory appears for the no-op.
+        self.assertEqual(before, self._transaction_names(transactions))
+
+    @staticmethod
+    def _transaction_names(transactions):
+        if not transactions.is_dir():
+            return []
+        return sorted(entry.name for entry in transactions.iterdir())
 
     def test_pre_change_record_is_reported_as_migration_required_not_malformed(self):
         issues = [

@@ -289,6 +289,19 @@ class ReportTests(unittest.TestCase):
 
         self.assertIn("quality-migration-required", text)
 
+    def test_report_refuses_a_page_record_that_is_not_a_json_object(self):
+        # The disclosure path below assumes a mapping. read_json is what makes
+        # that safe: a readable non-object fails closed naming the file, rather
+        # than being reported as a review.
+        page_dir = self.project / "qa/pages"
+        page_dir.mkdir(parents=True, exist_ok=True)
+        for payload in ("null", '"reviewed"', "[]", "7"):
+            with self.subTest(payload=payload):
+                (page_dir / "page-001.json").write_text(payload + "\n", "utf-8")
+
+                with self.assertRaisesRegex(ValueError, "expected a JSON object"):
+                    render_report(self.project)
+
     def test_report_retains_superseded_and_unrecognizable_page_records(self):
         # A record this reader cannot accept as a current review is disclosed
         # rather than dropped, so the Page QA table can never read as complete

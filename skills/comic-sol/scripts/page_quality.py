@@ -913,26 +913,38 @@ def _require_publishable(context: PageContext, record: Mapping[str, object]) -> 
         raise PageQualityMigrationError(str(error)) from error
 
 
+def _read_migratable_page_record(project_dir: Path, relative: str, subject_id: str) -> dict:
+    """Read a page-QA record and reject one no migration could ever republish."""
+    record = read_json(contained_project_path(project_dir, relative, must_exist=True))
+    if not isinstance(record, dict):
+        raise PageQualityMigrationError("page QA record must contain a JSON object")
+    if record.get("kind") != "page-qa":
+        raise PageQualityMigrationError("page QA record kind is not page-qa")
+    if record.get("subject_id") != subject_id:
+        raise PageQualityMigrationError("page QA subject does not match its path")
+    return record
+
+
 def migrate_page_quality_record(project_dir: Path, page_number: int) -> dict[str, object]:
     """Run a registered page-QA migration transactionally, or fail without mutation.
 
-    The record is read, rebased on current artifacts, and republished inside one
-    `ProjectTransaction`, so a refused or interrupted migration leaves the project
-    byte-for-byte unchanged. A record already at the current version is returned
-    untouched and nothing is staged.
+    A record already at the current version is returned without opening a
+    transaction, so reading one never leaves a lock file or journal directory
+    behind. Otherwise the record is re-read, rebased on current artifacts, and
+    republished inside one `ProjectTransaction`, so a refused or interrupted
+    migration leaves the project byte-for-byte unchanged.
     """
     project_dir = Path(project_dir)
     subject_id = _page_id(page_number)
     relative = f"qa/pages/{subject_id}.json"
+    current = _read_migratable_page_record(project_dir, relative, subject_id)
+    if current.get("schema_version") == CURRENT_PAGE_QA_SCHEMA_VERSION:
+        return current
     with ProjectTransaction(project_dir, "page-qa-migration") as transaction:
-        record = read_json(contained_project_path(project_dir, relative, must_exist=True))
-        if not isinstance(record, dict):
-            raise PageQualityMigrationError("page QA record must contain a JSON object")
+        # The check above is advisory and unlocked. The record on disk now, under
+        # the lock, is the only one that may be rebased and republished.
+        record = _read_migratable_page_record(project_dir, relative, subject_id)
         source_version = record.get("schema_version")
-        if record.get("kind") != "page-qa":
-            raise PageQualityMigrationError("page QA record kind is not page-qa")
-        if record.get("subject_id") != subject_id:
-            raise PageQualityMigrationError("page QA subject does not match its path")
         if source_version == CURRENT_PAGE_QA_SCHEMA_VERSION:
             return record
         migration = PAGE_QA_MIGRATIONS.get(

@@ -128,6 +128,8 @@ def _load_page_records(project_dir: Path) -> list[dict[str, object]]:
     if not page_dir.is_dir():
         return records
     for path in page_dir.glob("page-*.json"):
+        # read_json enforces the JSON-object invariant, raising for a readable
+        # non-object, so every record below is a mapping.
         record = read_json(path)
         if (
             record.get("schema_version") == CURRENT_PAGE_QA_SCHEMA_VERSION
