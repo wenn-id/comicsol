@@ -145,6 +145,58 @@ Top-level fields are `schema_version` and `characters`. `characters` is an array
 
 Contains exactly `silhouette`, `face`, `hair`, `wardrobe`, `palette`, `signature_props`, `invariants`, and `avoid`. The first four are concrete non-empty visible descriptions. `palette`, `signature_props`, and `avoid` are arrays of non-empty strings. `invariants` contains 2–5 panel-checkable facts. Fingerprint strings are reused verbatim in dependent prompts.
 
+## Character identity pack: `plan/character-identity-pack.json`
+
+The identity pack is an opt-in companion plan artifact that carries each character's stable
+visual identity in one structured place, so panel prompts embed a single fixed copy of the
+identity instead of a freshly reworded description per panel. Its `schema_version` is `1.0`
+and is independent of the project manifest version; `SUPPORTED_IDENTITY_PACK_SCHEMA_VERSIONS`
+in `scripts/character_identity.py` is its compatibility gate. Top-level fields are exactly
+`schema_version` and `characters`, an array of unique entries in character-bible order.
+
+The pack is derived from `plan/character-bible.json` rather than authored from scratch.
+`character_identity.py PROJECT_DIR --derive` publishes it atomically through the project
+transaction, and re-running it on an unchanged project rewrites byte-identical content. It
+is not a manifest `artifacts` descriptor, so `project.json` keeps schema version `1.0`; the
+pack is validated by its own gate instead.
+
+### Character entry
+
+| Field | Type | Rules |
+|---|---|---|
+| `id` | ID | A character ID present in the character bible |
+| `immutable_traits` | object | Exactly `silhouette`, `face`, `hair`, and `invariants`, verbatim from `visual_fingerprint` |
+| `wardrobe` | object | Exactly `base`, `accessories`, and `palette` |
+| `proportions` | object | Exactly `build` and `notes` |
+| `reference_views` | array[view] | One or more unique views; must include `canonical` |
+| `avoid` | array[string] | Non-empty prohibition strings; may be empty |
+| `source_fingerprint_sha256` | SHA-256 | Canonical digest of the `visual_fingerprint` the entry was derived from |
+
+`immutable_traits.invariants` repeats the same 2–5 panel-checkable facts as the bible.
+`wardrobe.base` is the fingerprint wardrobe, `wardrobe.accessories` the signature props, and
+`wardrobe.palette` holds at least one palette entry. `proportions.build` defaults to the
+fingerprint silhouette and may be overridden; `proportions.notes` carries additional
+non-derivable proportion facts and may be empty.
+
+A view contains exactly `view` and `path`. `view` is a unique ID, and the required
+`canonical` view equals the character's bible `reference_path`. `path` is a POSIX-style
+relative project path. Extra views such as `three-quarter` or `profile` are authored
+additions and survive re-derivation, as does `proportions.notes`; every other field is
+always rebuilt from the bible, so a pack can never quietly disagree with it.
+
+### Validation and prompt use
+
+`character_identity.py PROJECT_DIR --check` fails closed before generation when the pack is
+missing, structurally invalid, inconsistent with the bible, stale relative to
+`source_fingerprint_sha256`, or backed by a reference view whose file is missing or escapes
+the project boundary. Every path resolves through `contained_project_path()`.
+
+`character_identity.py PROJECT_DIR --panel PANEL_ID` renders the deterministic `IDENTITY
+LOCK` block for the characters that storyboard panel uses, ordered by the pack rather than
+the panel so one character's clause is byte-stable project-wide. That block and
+`identity_reference_paths()` emit plain text and relative paths only; they name no provider,
+model, endpoint, or credential, so an adapter decides how to transmit them.
+
 ## Story plan: `plan/story-plan.json`
 
 | Field | Type | Rules |
@@ -304,6 +356,8 @@ output is UTF-8 with exactly one trailing newline.
 
 The version 1.0 project boundary contains `project.json`; exact source/request copies; the three plan JSON files; character/scene reference PNGs; preserved reference/panel prompt text; raw `panels/raw/{panel-id}.png`, clean `panels/clean/{panel-id}.png`, and lettered `panels/{panel-id}/lettered.png` panel images; per-panel QA JSON; per-page QA JSON `qa/pages/page-{NNN}.json`; `qa/report.md`; zero-padded `pages/page-001.png` files; the composition cache `cache/composition.json`; `exports/{project-id}.pdf`; the resume cache `logs/stage-cache.json`; and append-only `logs/events.jsonl`.
 
+The opt-in `plan/character-identity-pack.json` companion artifact also lives inside this boundary.
+
 Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-number}.png`; only the accepted attempt occupies `panels/raw/{panel-id}.png`. Generated images intentionally contain no dialogue, captions, speech bubbles, signatures, logos, or watermarks. Exact storyboard-authored SFX is instead allowed and required in generated artwork; generated SFX is forbidden when the storyboard has none.
 
 ## Page QA record: `qa/pages/page-{NNN}.json`
@@ -345,6 +399,7 @@ These records are the integrity gate on finalization. `comic_sol.py finalize` an
 - Storyboard scene, character, speaker, and continuity references resolve to the story plan and character bible.
 - Character fingerprints and canonical reference images are immutable after the first dependent panel is accepted.
 - Changing a fingerprint or reference invalidates dependent panels, pages, PDF, and QA outputs.
+- The character identity pack is re-derived from the character bible, so changing a fingerprint or a canonical reference changes the pack, changes every panel prompt that embeds it, and invalidates generation and every downstream artifact.
 - Changing dialogue or captions alone invalidates lettered panels, pages, PDF, and the final report; raw and clean panels remain reusable. Changing authored SFX invalidates generation and every downstream artifact because SFX belongs to the artwork.
 - Artifact reuse requires file existence, matching recorded hash, schema validity, valid dependencies, and a matching stage cache key.
 - Deterministic writes use a sibling temporary file, flush and `fsync`, then `os.replace`; the manifest transition is last.
