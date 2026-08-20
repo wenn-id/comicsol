@@ -53,6 +53,24 @@
   score report only what a reviewer actually scored, an unscored dimension is never
   averaged in as a zero, and an unattributable score or a scorecard from another
   definition is refused rather than summarized.
+- Added a shot-aware character reference strategy (`scripts/reference_strategy.py`) that
+  classifies each storyboard panel's authored `shot` into close-up, profile,
+  three-quarter, full-body, or unclassified by its earliest framing cue, then selects the
+  identity pack's reference views for that framing instead of attaching one canonical
+  reference to every panel regardless of camera setup.
+- Reference selection anchors identity before detail: the canonical view leads every shot
+  class because it is the only view cross-checked against the character bible, the view
+  matching the panel's shot follows, the remaining identity views come next, and
+  scene-specific views rank last.
+- A caller-supplied reference budget is spent breadth-first across a panel's characters,
+  so every character receives its canonical anchor before any character receives a second
+  view; one path is attached at most once per panel, and a limit below the cast size is
+  recorded rather than hidden.
+- Every panel's selections and omissions are published with their reasons at
+  `logs/reference-selection.json` through the project transaction and are byte-identical
+  on resume, so a panel that drifts can be reviewed against the references it actually
+  received. The engine still names no provider, model, endpoint, or credential, and takes
+  the reference limit from the caller rather than inferring one.
 
 ### Removed
 
