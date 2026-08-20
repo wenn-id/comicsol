@@ -24,7 +24,7 @@ from .comic_sol import (
     read_json,
     sha256_file,
 )
-from .page_quality import CURRENT_PAGE_QA_SCHEMA_VERSION, PAGE_QA_MIGRATION_SOURCES
+from .page_quality import CURRENT_PAGE_QA_SCHEMA_VERSION
 from .project_io import ProjectLock, contained_project_path, open_path_nofollow
 from .quality_records import PANEL_CHECK_IDS
 from .schema import read_project_manifest
@@ -129,16 +129,17 @@ def _load_page_records(project_dir: Path) -> list[dict[str, object]]:
         return records
     for path in page_dir.glob("page-*.json"):
         record = read_json(path)
-        version = record.get("schema_version")
-        is_page_qa = record.get("kind") == "page-qa"
-        if version == CURRENT_PAGE_QA_SCHEMA_VERSION and is_page_qa:
+        if (
+            record.get("schema_version") == CURRENT_PAGE_QA_SCHEMA_VERSION
+            and record.get("kind") == "page-qa"
+        ):
             records.append(record)
-        elif is_page_qa and isinstance(version, str) and version in PAGE_QA_MIGRATION_SOURCES:
-            # Readable, but written against a superseded check set: report it as
-            # awaiting migration rather than as a current review.
-            record["quality-migration-required"] = True
-            records.append(record)
-        elif version == "1.0":
+        else:
+            # Every other readable record here is disclosed rather than dropped:
+            # a superseded check set, a legacy five-field record, and a record
+            # this reader cannot recognize at all are all reported as awaiting
+            # migration. Silently omitting one would let the Page QA table read
+            # as complete for a page whose review the validator rejects.
             record["quality-migration-required"] = True
             records.append(record)
     def sort_key(record: dict[str, object]) -> tuple[str, str]:

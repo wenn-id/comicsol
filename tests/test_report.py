@@ -289,6 +289,38 @@ class ReportTests(unittest.TestCase):
 
         self.assertIn("quality-migration-required", text)
 
+    def test_report_retains_superseded_and_unrecognizable_page_records(self):
+        # A record this reader cannot accept as a current review is disclosed
+        # rather than dropped, so the Page QA table can never read as complete
+        # for a page whose record validation rejects.
+        page_dir = self.project / "qa/pages"
+        page_dir.mkdir(parents=True, exist_ok=True)
+        cases = {
+            "superseded check set": {
+                "kind": "page-qa", "schema_version": "2.0", "subject_id": "page-001",
+            },
+            "wrong kind at the current version": {
+                "kind": "panel-qa",
+                "schema_version": CURRENT_PAGE_QA_SCHEMA_VERSION,
+                "subject_id": "page-001",
+            },
+            "missing kind at the current version": {
+                "schema_version": CURRENT_PAGE_QA_SCHEMA_VERSION,
+                "subject_id": "page-001",
+            },
+            "unknown version": {
+                "kind": "page-qa", "schema_version": "9.9", "subject_id": "page-001",
+            },
+        }
+        for label, record in cases.items():
+            with self.subTest(record=label):
+                atomic_write_json(page_dir / "page-001.json", record)
+
+                text = render_report(self.project).read_text("utf-8")
+
+                self.assertIn("quality-migration-required", text)
+                self.assertIn("page-001", text)
+
     def test_report_retains_malformed_legacy_page_as_migration_required(self):
         page_dir = self.project / "qa/pages"
         page_dir.mkdir(parents=True, exist_ok=True)
