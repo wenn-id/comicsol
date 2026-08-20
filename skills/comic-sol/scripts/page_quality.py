@@ -290,9 +290,14 @@ def _attached_to_balloon(attachment: object, box: object) -> bool:
     """
     if not is_geometry_point(attachment) or not isinstance(box, Mapping):
         return False
+    # This box comes straight from the retained placement rather than from the
+    # bounds-checked list, so it is arbitrary JSON. A malformed rectangle raises
+    # ValueError, and an absurdly large integer overflows the float conversion;
+    # either way an unverifiable attachment is a failed check, never an exception
+    # escaping page-QA construction.
     try:
         deviation = balloon_outline_deviation(box, attachment)  # type: ignore[arg-type]
-    except ValueError:
+    except (ValueError, TypeError, ArithmeticError):
         return False
     return deviation <= TAIL_ATTACHMENT_TOLERANCE
 

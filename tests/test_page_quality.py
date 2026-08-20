@@ -651,6 +651,32 @@ class BalloonPlacementQualityTests(unittest.TestCase):
             check["regions"],
         )
 
+    def test_corrupt_balloon_box_fails_the_tail_check_closed(self):
+        # The placement box reaching the attachment check is arbitrary retained
+        # JSON, so every malformed shape must produce a failed check rather than
+        # an exception out of record construction.
+        cases = (
+            ("missing-dimensions", {"x": 10, "y": 20}),
+            ("non-numeric", {"x": 10, "y": 20, "width": "wide", "height": 5}),
+            ("float-dimensions", {"x": 10, "y": 20, "width": 5.5, "height": 5.5}),
+            ("null-dimensions", {"x": 10, "y": 20, "width": None, "height": 5}),
+            # Large enough to overflow the float conversion inside the primitive.
+            ("overflowing-dimensions", {"x": 0, "y": 0, "width": 10**400, "height": 10**400}),
+        )
+        for name, box in cases:
+            with self.subTest(box=name):
+                project = self._fresh_project()
+                apply_balloon_layout(project, {
+                    "panels": {"p01-02": {"replace": {"p01-02-t01": {"box": box}}}}
+                })
+                check = self._checks(project)["bubble-tail-geometry"]
+
+                self.assertEqual("fail", check["result"])
+                self.assertEqual(
+                    ["detached-tail"],
+                    [region["reason"] for region in check["regions"]],
+                )
+
     def test_tail_on_a_non_dialogue_placement_is_rejected(self):
         project = self._fresh_project()
         apply_balloon_layout(project, {
