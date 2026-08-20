@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,9 +65,11 @@ SHOT_CLASSES = (CLOSE_UP, PROFILE, THREE_QUARTER, FULL_BODY, UNCLASSIFIED)
 # Cues are matched against the storyboard panel's free-text `shot` field. The cue
 # that appears earliest wins, so a description that opens with its framing is not
 # reclassified by a later incidental word; an equal position prefers the longer
-# cue, then the class order below. A panel whose shot matches no cue stays
-# `unclassified` and is served the plain identity order instead of being guessed
-# into a class it never declared.
+# cue, then the class order below. A cue counts only at word boundaries and only
+# when no negation governs it, so `profiled character` and `not a close-up` do not
+# declare a framing. A panel whose shot matches no cue stays `unclassified` and is
+# served the plain identity order instead of being guessed into a class it never
+# declared.
 SHOT_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         CLOSE_UP,
@@ -129,6 +132,41 @@ SHOT_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
 )
+
+# A framing word inside a longer word is a different word, so a cue must begin and
+# end on a word boundary. Hyphens stay allowed on both sides because authored prose
+# compounds framing words (`medium-wide shot`), and a trailing plural is allowed
+# because `a series of close-ups` still declares close framing.
+def _cue_matcher(cue: str) -> re.Pattern[str]:
+    """Compile one shot cue into a word-boundary matcher."""
+    return re.compile(rf"(?<!\w){re.escape(cue)}s?(?!\w)")
+
+
+SHOT_CUE_MATCHERS: tuple[tuple[str, tuple[tuple[str, re.Pattern[str]], ...]], ...] = tuple(
+    (shot_class, tuple((cue, _cue_matcher(cue)) for cue in cues))
+    for shot_class, cues in SHOT_CUES
+)
+
+# A cue the author explicitly rules out is not the panel's framing. Only the words
+# immediately before a cue can govern it, so the window is small and fixed rather
+# than a scan of the whole sentence.
+NEGATION_TOKENS = frozenset(
+    {
+        "avoid",
+        "avoiding",
+        "except",
+        "instead",
+        "never",
+        "no",
+        "none",
+        "nor",
+        "not",
+        "rather",
+        "without",
+    }
+)
+NEGATION_LOOKBEHIND_WORDS = 3
+_TOKEN_EDGE_CHARACTERS = "\"'(),.;:!?-"
 
 IDENTITY_VIEWS = (CANONICAL_VIEW, CLOSE_UP, PROFILE, THREE_QUARTER, FULL_BODY)
 
@@ -241,25 +279,35 @@ class PanelReferencePlan:
 # --------------------------------------------------------------------------- #
 
 
+def _negated(text: str, position: int) -> bool:
+    """Report whether a negation word governs the cue found at ``position``."""
+    preceding = text[:position].split()[-NEGATION_LOOKBEHIND_WORDS:]
+    return any(
+        token.strip(_TOKEN_EDGE_CHARACTERS) in NEGATION_TOKENS for token in preceding
+    )
+
+
 def classify_shot(shot: object) -> tuple[str, str | None]:
     """Return the closed shot class for a panel shot, and the cue that chose it.
 
     Classification is a pure function of the authored text: the same `shot`
-    string always produces the same class, and an unrecognized description is
+    string always produces the same class. A cue counts only when it stands as a
+    word and is not governed by a negation, and an unrecognized description is
     reported as ``unclassified`` with no cue rather than being guessed.
     """
     if not isinstance(shot, str):
         return UNCLASSIFIED, None
     text = shot.casefold()
     best: tuple[int, int, int, str, str] | None = None
-    for class_index, (shot_class, cues) in enumerate(SHOT_CUES):
-        for cue in cues:
-            position = text.find(cue)
-            if position < 0:
-                continue
-            candidate = (position, -len(cue), class_index, shot_class, cue)
-            if best is None or candidate < best:
-                best = candidate
+    for class_index, (shot_class, matchers) in enumerate(SHOT_CUE_MATCHERS):
+        for cue, matcher in matchers:
+            for match in matcher.finditer(text):
+                if _negated(text, match.start()):
+                    continue
+                candidate = (match.start(), -len(cue), class_index, shot_class, cue)
+                if best is None or candidate < best:
+                    best = candidate
+                break
     if best is None:
         return UNCLASSIFIED, None
     return best[3], best[4]
@@ -425,19 +473,38 @@ def _plan_panel(
 
 
 def _storyboard_panels(storyboard: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    """Return every storyboard panel in page and reading order."""
+    """Return every storyboard panel in page and reading order.
+
+    A malformed page, panel list, panel, or panel ID is rejected rather than
+    skipped. Skipping one would publish a plan that silently covers fewer panels
+    than the storyboard has, and a panel with no recorded plan is exactly the
+    panel whose references nobody can later account for.
+    """
     if not isinstance(storyboard, Mapping):
         raise ReferenceStrategyError("storyboard must be a JSON object")
     pages = storyboard.get("pages")
     if not isinstance(pages, list):
         raise ReferenceStrategyError("storyboard pages must be a list")
+
     panels: list[Mapping[str, Any]] = []
-    for page in pages:
+    for page_index, page in enumerate(pages):
+        prefix = f"storyboard pages[{page_index}]"
         if not isinstance(page, Mapping):
-            continue
-        for panel in page.get("panels", []) or []:
-            if isinstance(panel, Mapping) and isinstance(panel.get("id"), str):
-                panels.append(panel)
+            raise ReferenceStrategyError(f"{prefix} must be an object")
+        page_panels = page.get("panels")
+        if not isinstance(page_panels, list):
+            raise ReferenceStrategyError(f"{prefix}.panels must be an array")
+        for panel_index, panel in enumerate(page_panels):
+            panel_prefix = f"{prefix}.panels[{panel_index}]"
+            if not isinstance(panel, Mapping):
+                raise ReferenceStrategyError(f"{panel_prefix} must be an object")
+            if not isinstance(panel.get("id"), str):
+                raise ReferenceStrategyError(f"{panel_prefix}.id must be a string")
+            panels.append(panel)
+
+    identifiers = [str(panel["id"]) for panel in panels]
+    if len(set(identifiers)) != len(identifiers):
+        raise ReferenceStrategyError("storyboard must not repeat a panel id")
     return panels
 
 
