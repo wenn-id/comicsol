@@ -13,16 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "samples/sunlight-courier"
 MATERIALIZER = ROOT / "scripts/materialize_sample.py"
 MAX_TRACKED_RASTER_BYTES = 22 * 1024 * 1024
-DERIVED_RASTERS = (
-    "samples/sunlight-courier/pages/page-001.png",
-    "samples/sunlight-courier/pages/page-002.png",
-    "samples/sunlight-courier/panels/p01-01/lettered.png",
-    "samples/sunlight-courier/panels/p01-02/lettered.png",
-    "samples/sunlight-courier/panels/p02-01/lettered.png",
-    "samples/sunlight-courier/panels/p02-02/lettered.png",
-)
-
-
 def tracked_sample_rasters() -> tuple[Path, ...]:
     compatibility = {
         SAMPLE / "panels/raw",
@@ -35,6 +25,17 @@ def tracked_sample_rasters() -> tuple[Path, ...]:
             if path.parent not in compatibility
         )
     )
+
+
+def expected_sample_raster_size(path: Path) -> tuple[int, int]:
+    relative = path.relative_to(SAMPLE)
+    if relative.parts[0] == "pages":
+        return (1600, 2400)
+    if relative.parts[0] == "panels" and relative.name in {"clean.png", "lettered.png"}:
+        return (1024, 779)
+    if relative == Path("references/characters/mira.png"):
+        return (1024, 1536)
+    raise AssertionError(f"unclassified tracked sample raster: {relative}")
 
 
 from tests.support import make_symlink  # noqa: E402
@@ -63,12 +64,11 @@ class SampleAssetTests(unittest.TestCase):
         total = sum(path.stat().st_size for path in tracked_sample_rasters())
 
         self.assertLessEqual(total, MAX_TRACKED_RASTER_BYTES)
-        for relative in DERIVED_RASTERS:
-            expected_size = (1600, 2400) if "/pages/" in relative else (1024, 779)
-            with Image.open(ROOT / relative) as image:
+        for path in tracked_sample_rasters():
+            with Image.open(path) as image:
                 self.assertEqual("PNG", image.format)
                 self.assertEqual("RGB", image.mode)
-                self.assertEqual(expected_size, image.size)
+                self.assertEqual(expected_sample_raster_size(path), image.size)
                 self.assertNotIn("transparency", image.info)
 
     def test_cli_materializes_byte_identical_compatibility_panels(self):
