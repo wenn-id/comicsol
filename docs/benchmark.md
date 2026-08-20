@@ -196,6 +196,13 @@ every gating metric is at `1.0`. `repair_rate` is not a gating metric: a case th
 declares a scripted repair is supposed to record one, so a non-zero repair rate is
 evidence rather than a failure.
 
+`repair_rate` counts extra generation calls, not repair strategies. A selective repair and
+a full regeneration each consume one call from the same budget, so the metric measures how
+often a panel needed a second attempt, and `panel_acceptance` measures whether that attempt
+worked. Which strategy a repair used is recorded per panel in `logs/repair-plan.json`
+rather than aggregated here, because the deterministic corpus accepts every panel on its
+scripted attempt and would report the same trivial strategy mix for every revision.
+
 ### Character consistency metrics
 
 `--consistency-baseline` folds the character consistency baseline

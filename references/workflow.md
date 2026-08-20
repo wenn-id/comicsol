@@ -147,8 +147,9 @@ Never promote before visual QA.
 ### 7. Visual QA and selective repair
 
 Apply all seven checks from the QA reference with evidence, including exact SFX spelling,
-count, and authorization. Retry only failed panels, retain every attempt, and use one
-correction clause. Use `comic_sol.py promote-attempt` for accepted images. Use
+count, and authorization. Retry only failed panels and retain every attempt. Use
+`comic_sol.py promote-attempt` for accepted images; it refuses to overwrite a panel whose
+record still accepts it, so record the new review before promoting a repair. Use
 `comic_sol.py override-panel` only for an explicit allowed user override: it downgrades
 the failed error-level checks to warning severity, records the reason on the panel and
 manifest, and the run continues toward `COMPLETE_WITH_WARNINGS` at the final transition.
@@ -169,6 +170,17 @@ When a panel fails `character-identity`, read its entry in
 the pack carries, which is a different repair from a prompt that contradicted them. Use
 the failed trait's `repair_guidance` as the single correction clause; it names the subject
 and canonical expectation without requiring a provider-specific repair API.
+
+Before repairing any faulted panel, run `repair_strategy.py PROJECT_DIR --panel PANEL_ID`,
+adding `--localized-edit` only when the detected capability can edit a bounded part of an
+existing raster. A `selective-repair` block lists the subjects and areas you may touch and
+the accepted content you must leave alone; a `full-regeneration` block states which of
+`stale-bindings`, `editing-unsupported`, `panel-wide-check`, or `unlocalized-evidence`
+withdrew the narrower option. To locate a non-identity defect for the planner, record
+bounded defect regions on `anatomy` or `text-free` when the review can name a character or
+an anchor area. Publish the project-wide record with `repair_strategy.py PROJECT_DIR --plan
+[--localized-edit]` after each review so `logs/repair-plan.json` matches the current
+records; validation reports a plan that no longer does.
 
 ### 8–10. Deterministic finalization (letter, compose, export, complete)
 
@@ -237,7 +249,8 @@ closed. The QA report reads `qa/evidence.json` and displays the claim boundary.
 - Quota/transient failure: permit one bounded repeat, then preserve and block.
 - Invalid image: retain the attempt and selectively retry within budget.
 - Visual QA failure, including missing, misspelled, duplicated, or unauthorized SFX:
-  repair only the failed panel; passing hashes remain unchanged.
+  repair only the failed panel; passing hashes remain unchanged. Prefer the narrowest
+  repair the plan allows, and fall back to full regeneration with the recorded reason.
 - Lettering/glyph overflow: preserve images and revise supported text downstream only.
 - Missing/stale/corrupt artifact: invalidate its earliest owning stage and downstream.
 - Composition/PDF failure: retain lettered panels and rerun only deterministic outputs.

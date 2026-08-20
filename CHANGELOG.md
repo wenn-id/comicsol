@@ -80,6 +80,26 @@
   bible, identity pack, and reference plan remain current. The CS-013 scorecard can emit
   the same seven per-trait assessment records with `qa-results`, while its aggregate
   visual score remains advisory and provider-independent.
+- Added targeted panel repair planning (`scripts/repair_strategy.py`) that classifies every
+  non-passing check into the narrowest scope its evidence supports — one reviewed subject
+  from a character trait region, one bounded anchor area from an `anatomy` or `text-free`
+  defect region, or the whole panel — and selects `selective-repair` so a localized defect
+  no longer re-rolls an accepted panel.
+- Repair falls back to a full regeneration whenever the narrower option is unsafe, and
+  records exactly one reason: `stale-bindings` when a bound artifact no longer matches the
+  review, `editing-unsupported` when the detected capability cannot edit in place,
+  `panel-wide-check` for camera framing, the scripted beat, continuity, or whole-raster
+  faults, and `unlocalized-evidence` when nothing located the defect. Every defect is
+  recorded whether or not it can be repaired in place.
+- Added the `logs/repair-plan.json` provenance record, published atomically with its own
+  schema version, carrying each panel's strategy, ordered repair targets, the accepted
+  raster the repair must preserve, and the checks and subjects that reviewed clean.
+  Validation re-derives every entry from the current QA record, so a plan cannot outlive
+  the review it describes.
+- `comic_sol.py promote-attempt` now refuses to overwrite an accepted panel raster while its
+  QA record still accepts the panel, and records the planned repair strategy on the
+  promotion event. A repair therefore starts from a review that asked for one, and the
+  previous accepted bytes are still archived before the replacement is published.
 
 ### Removed
 

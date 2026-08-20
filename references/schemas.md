@@ -404,6 +404,102 @@ JSON array on standard input to `character_quality.py PROJECT_DIR --record PANEL
 --method METHOD --reviewer REVIEWER`. Publication uses `ProjectTransaction`; raw provider
 responses, credentials, endpoints, and vendor-specific model contracts are not stored.
 
+### Bounded defect regions
+
+`anatomy` and `text-free` may additionally carry bounded defect regions, which is the
+evidence a selective repair needs to touch part of a panel instead of all of it. `regions`
+stays `[]` when a reviewer records no bounded evidence. Each entry contains exactly `area`,
+`character_id`, `evidence`, `repair_guidance`, `result`, and `severity`. Exactly one of
+`area` and `character_id` is non-null: `character_id` names a reviewed character, and
+`area` is one of the eight storyboard anchors, so a defect is located by the vocabulary the
+storyboard already uses rather than by pixel rectangles. Evidence is non-empty and
+specific, a non-passing or warning-severity entry carries non-empty repair guidance, and a
+clean pass uses `null` guidance, exactly as trait regions do. One `(scope, target)` pair
+appears at most once per check.
+
+`action`, `composition`, `continuity`, and `technical` must keep `regions: []`. Faulting
+camera framing, the scripted beat, a cross-panel anchor, or a whole-raster property is a
+statement about the panel rather than about a patch of it, so bounded regions on those
+checks are rejected instead of inviting a localized repair that cannot work.
+
+## Repair plan: `logs/repair-plan.json`
+
+The repair plan records how each reviewed panel should be repaired, which accepted content
+the repair must leave alone, and why a repair could not be narrowed when it could not. It
+exists because regenerating a whole accepted panel for one localized defect spends a scarce
+retry budget and re-rolls detail the review already accepted. Its `schema_version` is `1.0`
+and is independent of the project manifest version. Top-level fields are exactly
+`schema_version` and `panels`.
+
+`repair_strategy.py PROJECT_DIR --plan [--localized-edit]` derives the plan from
+`plan/storyboard.json` and the published panel QA records and publishes it atomically
+through the project transaction. `--localized-edit` states that the detected capability can
+edit a bounded part of an existing raster; omitting it plans a full regeneration for every
+repair. `--panel PANEL_ID` prints the same decision for one panel as provider-neutral plain
+text. Re-running `--plan` on an unchanged project rewrites byte-identical content. The plan
+is provenance rather than a manifest `artifacts` descriptor, so `project.json` keeps schema
+version `1.0`.
+
+`panels` carries one entry per reviewed panel, in storyboard page and reading order. A
+panel with no QA record has not been reviewed and therefore carries no entry; a record that
+exists but cannot be classified fails closed rather than being skipped.
+
+### Panel entry
+
+| Field | Type | Rules |
+|---|---|---|
+| `panel_id` | ID | A storyboard panel ID |
+| `decision` | enum | The QA decision the plan was derived from |
+| `strategy` | enum | `no-repair`, `selective-repair`, or `full-regeneration` |
+| `fallback_reason` | enum \| null | Non-null only for `full-regeneration` |
+| `localized_edit_supported` | boolean | The capability flag the caller supplied |
+| `accepted_raw_path` | path | The bound accepted raster a repair must archive |
+| `accepted_raw_sha256` | SHA-256 | That raster's reviewed hash |
+| `targets` | array[target] | Repair targets in repair order; empty unless `selective-repair` |
+| `defects` | array[defect] | Every non-passing check, repairable or not |
+| `unaffected` | object | Exactly `checks` and `subjects` that recorded a clean pass |
+
+A target contains exactly `scope`, `target`, `guidance`, and `rank`, where `rank` is the
+1-based repair order, `scope` is `subject` or `area`, and `guidance` is the ordered
+correction text for that target. A defect contains exactly `check_id`, `scope`, `target`,
+`result`, `severity`, `evidence`, `guidance`, and `fallback_reason`, where `scope` is
+`subject`, `area`, or `panel`, and `target` is `null` for panel scope. Every non-passing
+check appears in `defects`, and every clean check appears in `unaffected.checks`, so the
+record accounts for the whole review rather than only the part it repairs.
+
+### Repair rules
+
+A panel whose decision is not `regenerate` selects `no-repair`: the review accepted it, so
+its warnings are recorded but not repaired. Otherwise the scope of each defect decides the
+strategy. `character-identity` is subject-scoped through its trait regions; `anatomy` and
+`text-free` are localized through their bounded defect regions; the four panel-wide checks
+are never localized. A failing check with no usable region evidence, including a
+`character-identity` check with no trait regions and a failing parent whose every trait
+passed, is `unlocalized-evidence`, because a defect nobody located is a defect nobody can
+repair in place.
+
+`selective-repair` is selected only when every defect is localized, the accepted artifacts
+still hash to their bindings, and the caller reports localized-editing support. Anything
+else selects `full-regeneration` and records exactly one reason: `stale-bindings` when a
+bound raw, clean, or normalization artifact is missing, unreadable, or changed;
+`editing-unsupported` when the capability cannot edit in place; `panel-wide-check` when a
+panel-wide check failed; and `unlocalized-evidence` otherwise. That precedence is fixed, so
+one record and one capability flag always report the same reason, and every defect also
+keeps the reason it could not be localized.
+
+Warnings are repairable defects, not decoration: a warning region contributes its guidance
+to its target so a repair does not fix the failure and leave the warning behind.
+
+Classification reads no clock, locale, or random seed, and the module plans repairs without
+performing one: it edits no raster and names no provider, model, endpoint, or credential.
+
+Validation re-derives every published entry from the current QA record using the recorded
+capability flag. A panel whose review still says `regenerate` must carry a matching entry,
+or the plan reports `repair-plan-stale`; an entry for a panel the review has since accepted
+describes a repair that already succeeded and is kept as history. A plan naming a panel the
+storyboard does not have, repeating a panel, departing from storyboard order, referring to a
+missing record, or carrying an unknown schema version is reported instead of read.
+
 Decisions are `accept`, `accept-warning`, or `regenerate`. An error-level failed
 check requires `regenerate`; a warning result or warning severity requires
 `accept-warning` or `regenerate`. `accept-warning` records a non-empty
@@ -460,9 +556,9 @@ output is UTF-8 with exactly one trailing newline.
 
 The version 1.0 project boundary contains `project.json`; exact source/request copies; the three plan JSON files; character/scene reference PNGs; preserved reference/panel prompt text; raw `panels/raw/{panel-id}.png`, clean `panels/clean/{panel-id}.png`, and lettered `panels/{panel-id}/lettered.png` panel images; per-panel QA JSON; per-page QA JSON `qa/pages/page-{NNN}.json`; `qa/report.md`; zero-padded `pages/page-001.png` files; the composition cache `cache/composition.json`; `exports/{project-id}.pdf`; the resume cache `logs/stage-cache.json`; and append-only `logs/events.jsonl`.
 
-The opt-in `plan/character-identity-pack.json` companion artifact also lives inside this boundary, as does the `logs/reference-selection.json` provenance record derived from it.
+The opt-in `plan/character-identity-pack.json` companion artifact also lives inside this boundary, as does the `logs/reference-selection.json` provenance record derived from it and the `logs/repair-plan.json` record derived from the panel QA records.
 
-Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-number}.png`; only the accepted attempt occupies `panels/raw/{panel-id}.png`. Generated images intentionally contain no dialogue, captions, speech bubbles, signatures, logos, or watermarks. Exact storyboard-authored SFX is instead allowed and required in generated artwork; generated SFX is forbidden when the storyboard has none.
+Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-number}.png`; only the accepted attempt occupies `panels/raw/{panel-id}.png`. An accepted raster is replaced only while its QA record asks for a repair: promotion verifies the new raster, refuses to overwrite a panel the review still accepts, and archives the previous accepted bytes before publishing the replacement. Generated images intentionally contain no dialogue, captions, speech bubbles, signatures, logos, or watermarks. Exact storyboard-authored SFX is instead allowed and required in generated artwork; generated SFX is forbidden when the storyboard has none.
 
 ## Page QA record: `qa/pages/page-{NNN}.json`
 

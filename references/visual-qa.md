@@ -38,13 +38,28 @@ provenance, derives the panel decision, and generates subject-specific repair gu
 every warning or failure. The review method may be human, model-assisted, or another
 bounded visual process; core names no required provider or model.
 
+To locate a defect that is not a character trait, record bounded defect regions on
+`anatomy` or `text-free`: each entry names exactly one reviewed `character_id` or one of the
+eight storyboard anchor `area` values, with specific evidence and repair guidance. Leave
+`regions` empty when the evidence is not bounded, and never attach regions to `action`,
+`composition`, `continuity`, or `technical`; those checks describe the whole panel.
+
 ## Selective repair budgets
 
 - Initial generation permits at most 2 regenerations per panel.
 - Visual retries and transient repeats share 8 extra calls project-wide.
-- A retry appends exactly one correction clause for observed failures while preserving
-  every canonical anchor, reference, and other prompt content.
+- Plan every repair with `repair_strategy.py PROJECT_DIR --panel PANEL_ID
+  [--localized-edit]`, then record the project-wide decision with `--plan`.
+- A `selective-repair` edits only the listed subjects and areas, carries one correction
+  clause per target, and leaves every other pixel of the accepted raster unchanged.
+- A `full-regeneration` appends exactly one correction clause for observed failures while
+  preserving every canonical anchor, reference, and other prompt content.
+- Fall back to `full-regeneration` whenever the plan says so. It is chosen for
+  `stale-bindings`, `editing-unsupported`, `panel-wide-check`, or `unlocalized-evidence`,
+  and the reason is recorded rather than argued.
 - Retain all attempt images. Do not touch passing panels or their hashes.
+- Promotion replaces an accepted raster only while its QA record asks for a repair. Record
+  the new review first; the previous accepted bytes are archived automatically.
 - Permit one immediate transient repeat; it consumes the global budget but not the
   per-panel visual retry budget.
 - After exhaustion, an error-level panel is `BLOCKED` and cannot reach lettering/export.
