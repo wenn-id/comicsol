@@ -179,9 +179,9 @@ cryptography==50.0.0 \
 cyclonedx-bom==7.3.1 \
     --hash=sha256:8c5adccefd593e89c0500463649c232625cee8e38dae1a433e057dfa495eff08 \
     --hash=sha256:ebd99dc2cf62a7067e327bef2b2ffada99d57ed3fda2db6c4c8f3004e5bfd3cf
-cyclonedx-python-lib==11.11.1 \
-    --hash=sha256:a93a8288e90a55c7c7c578559a0f5fdd8b9318c59ddde1c7a9ac67ad6f36e354 \
-    --hash=sha256:e41f52bf399fc6346accd520a2b9a6e5a48b59f4dc27a471cd536c8d621d99f4
+cyclonedx-python-lib==11.12.0 \
+    --hash=sha256:0e807521a921a5c3cb8ce1153f8a61d29eedfe76a46aac2796b7c6b573391a54 \
+    --hash=sha256:16767c4039de90c04e9f03348f8f0ed4b8ff842eaa7eefcad3a95685f970dacf
 defusedxml==0.7.1 \
     --hash=sha256:1bb3032db185915b62d7c6209c5a8792be6a32ab2fedacc84e01b52c51aa3e69 \
     --hash=sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
