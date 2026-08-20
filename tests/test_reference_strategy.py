@@ -180,12 +180,13 @@ class ShotClassificationTests(unittest.TestCase):
         )
 
     def test_a_cue_inside_a_longer_word_is_not_a_framing(self):
-        # `profiled` and `closeness` are different words, not declared framings.
+        # `profiled` is not the profile cue, and an overhead shot looking down at
+        # the room is emphatically not the `head shot` it contains.
         self.assertEqual(
             (UNCLASSIFIED, None), classify_shot("profiled character against the wall")
         )
         self.assertEqual(
-            (UNCLASSIFIED, None), classify_shot("closeness between the two figures")
+            (UNCLASSIFIED, None), classify_shot("overhead shot from the rafters")
         )
 
     def test_a_compound_or_plural_cue_still_counts(self):
