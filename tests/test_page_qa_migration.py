@@ -229,19 +229,60 @@ class PageQaMigrationTests(unittest.TestCase):
             "quality-check-ids", " ".join(issue.message for issue in issues)
         )
 
-    def test_non_string_version_is_reported_without_raising(self):
-        corrupt = json.loads(self.before.decode("utf-8"))
-        corrupt["schema_version"] = {"unexpected": "object"}
-        atomic_write_json(self.record_path, corrupt)
+    def test_unsupported_version_is_not_diagnosed_as_a_legacy_record(self):
+        # An unknown version is neither current, migratable, nor a flat
+        # schema-1.0 record, so it must not collect five-field legacy
+        # diagnostics. A non-string version must not raise on the lookup either.
+        for version in ("9.9", {"unexpected": "object"}, None):
+            with self.subTest(version=version):
+                corrupt = json.loads(self.before.decode("utf-8"))
+                corrupt["schema_version"] = version
+                atomic_write_json(self.record_path, corrupt)
 
-        issues = [
-            issue for issue in validate_project(self.project, "export-ready")
-            if issue.path == RECORD_RELATIVE
+                issues = [
+                    issue for issue in validate_project(self.project, "export-ready")
+                    if issue.path == RECORD_RELATIVE
+                ]
+
+                self.assertEqual(
+                    [(
+                        "schema_version",
+                        "quality-migration-required: unsupported page QA schema; no "
+                        f"migration path to {CURRENT_PAGE_QA_SCHEMA_VERSION} is registered",
+                    )],
+                    [(issue.field, issue.message) for issue in issues],
+                )
+
+    def test_migration_refuses_a_record_malformed_for_its_own_version(self):
+        malformed = json.loads(self.before.decode("utf-8"))
+        duplicate = next(
+            check for check in malformed["checks"]
+            if check["id"] == "face-action-obstruction"
+        )
+        malformed["checks"].append(dict(duplicate))
+        atomic_write_json(self.record_path, malformed)
+        before = self.record_path.read_bytes()
+
+        with self.assertRaisesRegex(
+            PageQualityMigrationError, "not a valid schema-2.0 record"
+        ):
+            migrate_page_quality_record(self.project, 1)
+
+        self.assertEqual(before, self.record_path.read_bytes())
+
+    def test_migration_refuses_a_record_missing_a_reviewer_check(self):
+        incomplete = json.loads(self.before.decode("utf-8"))
+        incomplete["checks"] = [
+            check for check in incomplete["checks"]
+            if check["id"] != "accidental-text-watermark"
         ]
+        atomic_write_json(self.record_path, incomplete)
+        before = self.record_path.read_bytes()
 
-        self.assertTrue(any(
-            "quality-migration-required" in issue.message for issue in issues
-        ), issues)
+        with self.assertRaises(PageQualityMigrationError):
+            migrate_page_quality_record(self.project, 1)
+
+        self.assertEqual(before, self.record_path.read_bytes())
 
     def test_migrated_record_satisfies_the_export_ready_gate(self):
         migrate_page_quality_record(self.project, 1)

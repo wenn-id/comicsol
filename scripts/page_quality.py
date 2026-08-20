@@ -791,6 +791,19 @@ class PageQualityRebase:
 PageQualityMigration = Callable[
     [Mapping[str, object], PageQualityRebase], dict[str, object]
 ]
+# The ordered check tuple a schema-2.0 record was written against, before CS-023
+# added the three deterministic balloon checks. A migration verifies its input
+# against the shape of its own source version, so a record that was already
+# malformed for that version is refused rather than normalized into a current one.
+PAGE_QA_2_0_CHECK_IDS = (
+    "clipped-text",
+    "text-overlap",
+    "face-action-obstruction",
+    "bubble-tail-direction",
+    "reading-order",
+    "accidental-text-watermark",
+    "layout-border-integrity",
+)
 
 
 def _carried_reviewer_checks(record: Mapping[str, object]) -> list[dict[str, object]]:
@@ -798,11 +811,15 @@ def _carried_reviewer_checks(record: Mapping[str, object]) -> list[dict[str, obj
     checks = record.get("checks")
     if not isinstance(checks, list):
         raise PageQualityMigrationError("page QA checks must be an array")
-    carried = {
-        check["id"]: dict(check)
-        for check in checks
+    present = [
+        check for check in checks
         if isinstance(check, dict) and check.get("id") in SUBJECTIVE_PAGE_CHECK_IDS
-    }
+    ]
+    carried = {check["id"]: dict(check) for check in present}
+    # Building the mapping would otherwise keep the last of a repeated ID and
+    # silently normalize a non-canonical tuple into a valid record.
+    if len(carried) != len(present):
+        raise PageQualityMigrationError("page QA record repeats a reviewer check")
     missing = [
         check_id for check_id in SUBJECTIVE_PAGE_CHECK_IDS if check_id not in carried
     ]
@@ -838,6 +855,13 @@ def _migrate_page_qa_2_0_to_2_1(
     review = record.get("review")
     if not isinstance(review, dict):
         raise PageQualityMigrationError("page QA review is missing")
+    # Refuse a record that is not a well-formed record of the version it claims.
+    # Migrating one would launder a malformed artifact into a valid current one.
+    categories = validate_quality_checks(record.get("checks"), PAGE_QA_2_0_CHECK_IDS)
+    if categories:
+        raise PageQualityMigrationError(
+            f"page QA record is not a valid schema-2.0 record: {', '.join(categories)}"
+        )
     carried = _carried_reviewer_checks(record)
     checks_by_id = {
         check["id"]: check for check in [*rebase.deterministic_checks, *carried]
