@@ -283,6 +283,21 @@ class ClientSetupTests(unittest.TestCase):
         self.assertNotIn(oldest, backups)
         self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in backups))
 
+    def test_atomic_publish_rejects_concurrent_entry_and_preserves_it(self):
+        config = self.home / "config.json"
+        original = b"original"
+        config.write_bytes(original)
+        snapshot = client_setup._read_snapshot(config)
+
+        client_setup._atomic_write(config, b"candidate", expected=snapshot)
+        self.assertEqual(b"candidate", config.read_bytes())
+
+        concurrent = b"concurrent"
+        config.write_bytes(concurrent)
+        with self.assertRaises(client_setup._ConfigChangedError):
+            client_setup._atomic_write(config, b"stale", expected=snapshot)
+        self.assertEqual(concurrent, config.read_bytes())
+
     def test_setup_aborts_when_config_changes_before_publish(self):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)

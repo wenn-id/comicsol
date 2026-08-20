@@ -26,6 +26,7 @@ SUPPORTED_CLIENT_NAMES = (
     "windsurf",
 )
 MAX_CONFIG_BACKUPS = 5
+_REPARSE_POINT = 0x400
 
 
 @dataclass(frozen=True)
@@ -225,9 +226,10 @@ def _atomic_write(
             if mode is not None:
                 os.fchmod(stream.fileno(), mode)
             os.fsync(stream.fileno())
-        if expected is not None:
-            _assert_snapshot(path, expected)
-        os.replace(temporary, path)
+        if expected is None:
+            os.replace(temporary, path)
+        else:
+            _publish_expected(path, temporary, expected)
         if os.name != "nt":
             directory = os.open(path.parent, os.O_RDONLY)
             try:
@@ -238,10 +240,171 @@ def _atomic_write(
         temporary.unlink(missing_ok=True)
 
 
+def _rename_exchange(source: Path, destination: Path) -> None:
+    """Atomically exchange two entries where the host exposes that primitive."""
+    import ctypes
+    import errno
+
+    library = ctypes.CDLL(None, use_errno=True)
+    if sys.platform.startswith("linux"):
+        function = getattr(library, "renameat2", None)
+        flags = 0x2  # RENAME_EXCHANGE
+        at_fdcwd = -100
+    elif sys.platform == "darwin":
+        function = getattr(library, "renameatx_np", None)
+        flags = 0x2  # RENAME_SWAP
+        at_fdcwd = -2
+    else:
+        function = None
+        at_fdcwd = 0
+        flags = 0
+    if function is None:
+        raise OSError(errno.ENOTSUP, "atomic exchange is unavailable on this platform")
+    function.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    function.restype = ctypes.c_int
+    result = function(
+        at_fdcwd,
+        os.fsencode(source),
+        at_fdcwd,
+        os.fsencode(destination),
+        flags,
+    )
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+
+
+def _publish_expected(path: Path, temporary: Path, expected: _FileSnapshot) -> None:
+    """Publish a replacement while retaining and validating the displaced entry."""
+    if os.name == "nt":
+        import ctypes
+
+        backup = temporary.with_name(f"{temporary.name}.old")
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        replace_file = kernel32.ReplaceFileW
+        replace_file.argtypes = [
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
+        replace_file.restype = ctypes.c_int
+        if not replace_file(str(path), str(temporary), str(backup), 0, None, None):
+            error_number = ctypes.get_last_error()
+            raise OSError(error_number, ctypes.FormatError(error_number))
+        try:
+            displaced = _read_snapshot(backup)
+            if displaced.data != expected.data or displaced.size != expected.size:
+                os.replace(backup, path)
+                raise _ConfigChangedError("client config changed during publish")
+            backup.unlink(missing_ok=True)
+        except BaseException:
+            if backup.exists():
+                try:
+                    os.replace(backup, path)
+                except OSError:
+                    pass
+            raise
+        return
+
+    if not (sys.platform.startswith("linux") or sys.platform == "darwin"):
+        raise OSError("atomic compare-and-publish is unavailable on this platform")
+    exchanged = False
+    try:
+        _rename_exchange(temporary, path)
+        exchanged = True
+        displaced = _read_snapshot(temporary)
+        if (
+            displaced.data != expected.data
+            or displaced.mode != expected.mode
+            or displaced.device != expected.device
+            or displaced.inode != expected.inode
+            or displaced.mtime_ns != expected.mtime_ns
+        ):
+            _rename_exchange(temporary, path)
+            exchanged = False
+            raise _ConfigChangedError("client config changed during publish")
+    except BaseException:
+        if exchanged:
+            try:
+                _rename_exchange(temporary, path)
+            except OSError:
+                pass
+        raise
+
+
+def _open_snapshot_descriptor(path: Path) -> int:
+    """Open a config without following symlinks or Windows reparse points."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow:
+        return os.open(path, os.O_RDONLY | nofollow)
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        class _ByHandleFileInformation(ctypes.Structure):
+            _fields_ = [
+                ("attributes", wintypes.DWORD),
+                ("creation_time", wintypes.FILETIME),
+                ("access_time", wintypes.FILETIME),
+                ("write_time", wintypes.FILETIME),
+                ("volume", wintypes.DWORD),
+                ("size_high", wintypes.DWORD),
+                ("size_low", wintypes.DWORD),
+                ("links", wintypes.DWORD),
+                ("index_high", wintypes.DWORD),
+                ("index_low", wintypes.DWORD),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        handle = kernel32.CreateFileW(
+            str(path),
+            0x80000000,  # GENERIC_READ
+            0x00000001 | 0x00000002 | 0x00000004,  # share read/write/delete
+            None,
+            3,  # OPEN_EXISTING
+            0x00200000,  # FILE_FLAG_OPEN_REPARSE_POINT
+            None,
+        )
+        invalid = ctypes.c_void_p(-1).value
+        handle_value = getattr(handle, "value", handle)
+        if handle_value == invalid:
+            error_number = ctypes.get_last_error()
+            raise OSError(error_number, ctypes.FormatError(error_number))
+        information = _ByHandleFileInformation()
+        kernel32.GetFileInformationByHandle.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(_ByHandleFileInformation),
+        ]
+        kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+        if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(information)):
+            error_number = ctypes.get_last_error()
+            kernel32.CloseHandle(handle)
+            raise OSError(error_number, ctypes.FormatError(error_number))
+        if information.attributes & _REPARSE_POINT:
+            kernel32.CloseHandle(handle)
+            raise OSError("client config must not be a symlink or reparse point")
+        try:
+            return msvcrt.open_osfhandle(handle_value, os.O_RDONLY)
+        except BaseException:
+            kernel32.CloseHandle(handle)
+            raise
+    try:
+        metadata = path.stat(follow_symlinks=False)
+    except OSError as error:
+        raise OSError("client config could not be inspected without following links") from error
+    if path.is_symlink() or getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT:
+        raise OSError("client config must not be a symlink or reparse point")
+    return os.open(path, os.O_RDONLY)
+
+
 def _read_snapshot(path: Path) -> _FileSnapshot:
     """Read bytes and metadata from one no-follow file descriptor."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
+    descriptor = _open_snapshot_descriptor(path)
     try:
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
@@ -258,11 +421,13 @@ def _read_snapshot(path: Path) -> _FileSnapshot:
             metadata.st_ino,
             metadata.st_mtime_ns,
             metadata.st_size,
+            stat.S_IMODE(metadata.st_mode),
         ) != (
             after.st_dev,
             after.st_ino,
             after.st_mtime_ns,
             after.st_size,
+            stat.S_IMODE(after.st_mode),
         ):
             raise _ConfigChangedError("client config changed while being read")
         return _FileSnapshot(
@@ -288,8 +453,15 @@ def _assert_snapshot(path: Path, snapshot: _FileSnapshot) -> None:
         metadata.st_ino,
         metadata.st_mtime_ns,
         metadata.st_size,
+        stat.S_IMODE(metadata.st_mode) if snapshot.mode is not None else None,
     )
-    expected = (snapshot.device, snapshot.inode, snapshot.mtime_ns, snapshot.size)
+    expected = (
+        snapshot.device,
+        snapshot.inode,
+        snapshot.mtime_ns,
+        snapshot.size,
+        snapshot.mode,
+    )
     if current != expected:
         raise _ConfigChangedError("client config changed before publish")
 
