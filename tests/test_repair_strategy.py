@@ -44,13 +44,24 @@ CHARACTER_TRAITS = (
 )
 
 
+EXPECTED_TRAIT_VALUES = {
+    "face": "round face with wide dark eyes",
+    "hair": "chin-length black bob",
+    "age-appearance": "young-adult",
+    "clothing": "cream courier jacket and dark trousers",
+    "accessories": ["rectangular courier case"],
+    "proportions": {"build": "short compact build", "notes": ["even head-to-body ratio"]},
+    "immutable-traits": ["amber scarf", "circular brass bag clasp"],
+}
+
+
 def trait_region(character_id, trait, *, result="pass", severity="error"):
     """Return one character-identity trait region in the CS-021 shape."""
     failing = result != "pass" or severity == "warning"
     return {
         "character_id": character_id,
         "evidence": f"{character_id} {trait} observed as flat grey",
-        "expected": f"canonical {trait}",
+        "expected": deepcopy(EXPECTED_TRAIT_VALUES[trait]),
         "repair_guidance": (
             f"Repair {character_id} {trait} to match canonical {trait}; "
             f"observed: flat grey"
@@ -59,6 +70,7 @@ def trait_region(character_id, trait, *, result="pass", severity="error"):
         ),
         "result": result,
         "severity": severity,
+        "trait": trait,
     }
 
 
@@ -153,7 +165,12 @@ def panel_record(
     checks = []
     for check_id in PANEL_CHECK_IDS:
         if check_id == "character-identity":
-            checks.append(identity if identity is not None else identity_check())
+            resolved = deepcopy(identity) if identity is not None else identity_check()
+            # Trait provenance names the panel it reviewed, so a fixture for
+            # another panel stays self-consistent instead of being rejected.
+            if isinstance(resolved.get("provenance"), dict):
+                resolved["provenance"]["panel_id"] = panel_id
+            checks.append(resolved)
         else:
             checks.append(check(check_id, **faults.get(check_id, {})))
     return {
@@ -365,16 +382,6 @@ class FallbackTests(unittest.TestCase):
         self.assertEqual(UNLOCALIZED_EVIDENCE, plan.fallback_reason)
         self.assertEqual((), plan.unaffected_subjects)
 
-    def test_a_failing_parent_whose_traits_all_pass_cannot_be_localized(self):
-        identity = identity_check()
-        identity.update({"result": "fail", "severity": "error"})
-        record = failing_record(identity=identity)
-
-        plan = panel_repair_plan(record, localized_edit_supported=True)
-
-        self.assertEqual(FULL_REGENERATION, plan.strategy)
-        self.assertEqual(UNLOCALIZED_EVIDENCE, plan.fallback_reason)
-
     def test_a_localizable_check_without_regions_cannot_be_localized(self):
         for check_id in ("anatomy", "text-free"):
             with self.subTest(check=check_id):
@@ -497,6 +504,55 @@ class AccountingTests(unittest.TestCase):
     def test_a_panel_requiring_regeneration_must_name_a_defect(self):
         with self.assertRaisesRegex(RepairStrategyError, "non-passing check"):
             panel_repair_plan(failing_record(), localized_edit_supported=True)
+
+
+class TrustedIdentityEvidenceTests(unittest.TestCase):
+    """A localized edit may only follow a trait review its own gate accepts."""
+
+    def test_a_self_contradicting_identity_outcome_is_refused(self):
+        identity = identity_check()
+        identity.update({"result": "fail", "severity": "error"})
+
+        with self.assertRaisesRegex(RepairStrategyError, "character-check-outcome"):
+            panel_repair_plan(
+                failing_record(identity=identity), localized_edit_supported=True
+            )
+
+    def test_a_malformed_trait_region_is_refused(self):
+        identity = identity_check(failures={("ren", "hair")})
+        del identity["regions"][0]["expected"]
+
+        with self.assertRaisesRegex(RepairStrategyError, "cannot be trusted"):
+            panel_repair_plan(
+                failing_record(identity=identity), localized_edit_supported=True
+            )
+
+    def test_an_invalid_trait_severity_is_refused(self):
+        identity = identity_check(failures={("ren", "hair")})
+        identity["regions"][0]["severity"] = "info"
+
+        with self.assertRaisesRegex(RepairStrategyError, "cannot be trusted"):
+            panel_repair_plan(
+                failing_record(identity=identity), localized_edit_supported=True
+            )
+
+    def test_provenance_for_another_panel_is_refused(self):
+        record = failing_record(identity=identity_check(failures={("ren", "hair")}))
+        record["checks"][0]["provenance"]["panel_id"] = "p02-04"
+
+        with self.assertRaisesRegex(RepairStrategyError, "different panel"):
+            panel_repair_plan(record, localized_edit_supported=True)
+
+    def test_a_region_naming_an_unreviewed_character_is_refused(self):
+        record = failing_record(identity=identity_check(failures={("ren", "hair")}))
+        record["checks"][0]["provenance"]["characters"] = [
+            entry
+            for entry in record["checks"][0]["provenance"]["characters"]
+            if entry["character_id"] != "ren"
+        ]
+
+        with self.assertRaisesRegex(RepairStrategyError, "unreviewed character: 'ren'"):
+            panel_repair_plan(record, localized_edit_supported=True)
 
 
 class UntrustedInputTests(unittest.TestCase):
@@ -816,6 +872,36 @@ class PersistenceTests(RepairPlanProjectHarness):
 
         self.assertEqual(first, path.read_bytes())
 
+    def test_an_inaccessible_review_is_not_mistaken_for_an_absent_one(self):
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
+        # A directory where a review belongs is present but unreadable, which is
+        # a different thing from a panel nobody has reviewed yet.
+        (self.project / "qa/panels/p01-02.json").mkdir()
+
+        with self.assertRaises(RepairStrategyError):
+            plan_and_write_repair_plan(self.project, localized_edit_supported=True)
+
+        self.assertFalse((self.project / REPAIR_PLAN_PATH).exists())
+
+    def test_a_symlinked_review_fails_before_publication(self):
+        record = self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
+        target = self.project / "qa/panels/p01-01.json"
+        link = self.project / "qa/panels/p01-02.json"
+        try:
+            link.symlink_to(target)
+        except OSError as error:  # pragma: no cover - unprivileged Windows only
+            self.skipTest(f"symlink unavailable: {error}")
+        self.assertIsNotNone(record)
+
+        with self.assertRaises(RepairStrategyError):
+            plan_and_write_repair_plan(self.project, localized_edit_supported=True)
+
+        self.assertFalse((self.project / REPAIR_PLAN_PATH).exists())
+
     def test_an_unreadable_review_fails_before_publication(self):
         self._publish_record(
             failing_record(identity=identity_check(failures={("ren", "hair")}))
@@ -933,6 +1019,60 @@ class RepairPlanValidationTests(RepairPlanProjectHarness):
         self._write(REPAIR_PLAN_PATH, document)
 
         self.assertIn("repair-plan-panel-duplicate", validate_repair_plan(self.project))
+
+    def test_a_plan_omitting_a_panel_awaiting_repair_is_reported(self):
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
+        self._publish_record(
+            failing_record(
+                panel_id="p01-02", identity=identity_check(failures={("mira", "face")})
+            )
+        )
+        self._publish_plan()
+        document = json.loads((self.project / REPAIR_PLAN_PATH).read_text("utf-8"))
+        document["panels"] = [
+            entry for entry in document["panels"] if entry["panel_id"] != "p01-02"
+        ]
+        self._write(REPAIR_PLAN_PATH, document)
+
+        self.assertIn("repair-plan-incomplete", validate_repair_plan(self.project))
+
+    def test_a_plan_omitting_an_accepted_panel_stays_valid(self):
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
+        self._publish_record(panel_record(panel_id="p01-02"))
+        self._publish_plan()
+        document = json.loads((self.project / REPAIR_PLAN_PATH).read_text("utf-8"))
+        document["panels"] = [
+            entry for entry in document["panels"] if entry["panel_id"] != "p01-02"
+        ]
+        self._write(REPAIR_PLAN_PATH, document)
+
+        self.assertEqual((), validate_repair_plan(self.project))
+
+    def test_an_uncoverable_review_outside_the_plan_is_reported(self):
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
+        self._publish_plan()
+        (self.project / "qa/panels/p01-02.json").write_text("not json", encoding="utf-8")
+
+        self.assertIn("repair-plan-incomplete", validate_repair_plan(self.project))
+
+    def test_an_untrusted_review_is_reported_as_invalid_not_stale(self):
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
+        self._publish_plan()
+        record = json.loads((self.project / "qa/panels/p01-01.json").read_text("utf-8"))
+        record["checks"][0]["regions"][1]["severity"] = "info"
+        self._publish_record(record)
+
+        self.assertEqual(
+            ("repair-plan-record-invalid",), validate_repair_plan(self.project)
+        )
 
     def test_an_unknown_schema_version_is_reported(self):
         self._publish_record(

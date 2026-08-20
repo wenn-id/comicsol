@@ -493,12 +493,26 @@ to its target so a repair does not fix the failure and leave the warning behind.
 Classification reads no clock, locale, or random seed, and the module plans repairs without
 performing one: it edits no raster and names no provider, model, endpoint, or credential.
 
+A subject-scoped repair is planned only from a trait review its own gate accepts. The
+`character-identity` check is validated before classification, its provenance must name the
+panel under review, and no region may fault a character the review did not cover, so a
+malformed region cannot aim a localized edit at an arbitrary character.
+
 Validation re-derives every published entry from the current QA record using the recorded
 capability flag. A panel whose review still says `regenerate` must carry a matching entry,
 or the plan reports `repair-plan-stale`; an entry for a panel the review has since accepted
-describes a repair that already succeeded and is kept as history. A plan naming a panel the
-storyboard does not have, repeating a panel, departing from storyboard order, referring to a
-missing record, or carrying an unknown schema version is reported instead of read.
+describes a repair that already succeeded and is kept as history. Coverage is checked in
+both directions: a reviewed panel that still requires regeneration but has no entry reports
+`repair-plan-incomplete`, so a truncated plan cannot validate while omitting a repair. A
+plan naming a panel the storyboard does not have, repeating a panel, departing from
+storyboard order, referring to a missing record, describing a record that cannot be trusted
+(`repair-plan-record-invalid`), or carrying an unknown schema version is reported instead of
+read.
+
+Planning distinguishes a review that was never written from one that cannot be trusted. A
+panel with no record is skipped as unreviewed, while a refused path, a symlink, a directory,
+or an unreadable entry fails closed, because treating an unreadable review as an absent one
+would publish a plan that quietly omits a panel awaiting repair.
 
 Decisions are `accept`, `accept-warning`, or `regenerate`. An error-level failed
 check requires `regenerate`; a warning result or warning severity requires

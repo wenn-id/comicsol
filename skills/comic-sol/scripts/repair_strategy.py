@@ -52,12 +52,17 @@ if __package__ in {None, ""}:
     __package__ = "scripts"
 
 from .character_identity import STORYBOARD_PATH
+from .character_quality import validate_character_identity_check
 from .core_primitives import (
     PANEL_CHECK_IDS,
     PANEL_ID_PATTERN,
     canonical_artifact_bytes,
 )
-from .project_io import ProjectTransaction, read_contained_bytes
+from .project_io import (
+    ProjectTransaction,
+    contained_project_path,
+    read_contained_bytes,
+)
 from .quality_records import GENERIC_EVIDENCE
 
 
@@ -384,6 +389,56 @@ def _check_defects(check: Mapping[str, Any]) -> list[RepairDefect]:
     return _localized_defects(check, str(check_id), evidence)
 
 
+def _validated_identity_check(
+    record: Mapping[str, Any], checks: list[Mapping[str, Any]], panel_id: str
+) -> Mapping[str, Any]:
+    """Return the panel's ``character-identity`` check once it can be trusted.
+
+    A subject-scoped repair edits accepted artwork, so the region that names the
+    subject has to be the region the character-quality gate would accept. The
+    trait contract is validated by its owner rather than re-implemented here, and
+    the record must also agree with itself: provenance names this panel, and no
+    region faults a character the review never covered. Without those checks a
+    malformed region could aim a localized edit at an arbitrary character.
+    """
+    identity = next(check for check in checks if check.get("id") == IDENTITY_CHECK)
+    issues = validate_character_identity_check(
+        identity,
+        allow_override=(
+            "override_reason" in record
+            and identity.get("result") == "fail"
+            and identity.get("severity") == "warning"
+        ),
+    )
+    if issues:
+        raise RepairStrategyError(
+            f"character-identity check cannot be trusted: {issues[0]}"
+        )
+    provenance = identity.get("provenance")
+    if isinstance(provenance, Mapping):
+        if provenance.get("panel_id") != panel_id:
+            raise RepairStrategyError(
+                "character-identity provenance names a different panel"
+            )
+        reviewed = {
+            entry.get("character_id")
+            for entry in provenance.get("characters") or []
+            if isinstance(entry, Mapping)
+        }
+        faulted = {
+            region["character_id"]
+            for region in identity.get("regions") or []
+            if isinstance(region, Mapping)
+        }
+        unreviewed = sorted(faulted - reviewed)
+        if unreviewed:
+            raise RepairStrategyError(
+                "character-identity region names an unreviewed character: "
+                f"{unreviewed[0]!r}"
+            )
+    return identity
+
+
 def _ordered_checks(record: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     """Return a record's seven checks in normative order, or fail closed."""
     checks = record.get("checks")
@@ -457,6 +512,7 @@ def panel_repair_plan(
         raise RepairStrategyError("panel QA bindings must bind the accepted raster")
 
     checks = _ordered_checks(record)
+    _validated_identity_check(record, checks, panel_id)
     defects: list[RepairDefect] = []
     for check in checks:
         defects.extend(_check_defects(check))
@@ -558,6 +614,31 @@ def _read_document(project_dir: Path, relative: str) -> Mapping[str, Any]:
     return value
 
 
+def _review_exists(project_dir: Path, relative: str) -> bool:
+    """Report whether a panel QA record is present, or fail closed.
+
+    ``lstat`` distinguishes the two cases that must not be confused: a review
+    that was never written, which simply has no plan yet, and a review that
+    exists but cannot be trusted — a refused path, a symlink, a directory, or an
+    unreadable entry. Only the first is a skip; the second is an error, because a
+    silently skipped panel is exactly the panel whose repair nobody would notice
+    was missing.
+    """
+    try:
+        path = contained_project_path(Path(project_dir), relative)
+    except ValueError as error:
+        raise RepairStrategyError(f"{relative} is not a contained path: {error}") from error
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise RepairStrategyError(
+            f"{relative} cannot be inspected: {type(error).__name__}"
+        ) from error
+    return True
+
+
 def storyboard_panel_ids(storyboard: Mapping[str, Any]) -> tuple[str, ...]:
     """Return every storyboard panel ID in page and reading order.
 
@@ -595,18 +676,17 @@ def panel_repair_plans(
     """Return a repair plan for every reviewed panel, in storyboard order.
 
     A panel with no QA record has not been reviewed yet and therefore carries no
-    repair decision. A record that exists but cannot be classified fails closed,
-    because publishing a plan that quietly omits a reviewed panel would hide the
-    one panel whose repair strategy matters.
+    repair decision. Only a genuinely absent record is skipped: a record that
+    exists but cannot be resolved, read, or classified fails closed, because
+    treating an unreadable review as an absent one would publish a plan that
+    quietly omits the one panel whose repair strategy matters.
     """
     project_dir = Path(project_dir)
     storyboard = _read_document(project_dir, STORYBOARD_PATH)
     plans: list[PanelRepairPlan] = []
     for panel_id in storyboard_panel_ids(storyboard):
         relative = f"qa/panels/{panel_id}.json"
-        try:
-            read_contained_bytes(project_dir, relative)
-        except (OSError, ValueError):
+        if not _review_exists(project_dir, relative):
             continue
         record = _read_document(project_dir, relative)
         plans.append(
@@ -798,7 +878,7 @@ def validate_repair_plan(project_dir: Path) -> tuple[str, ...]:
                 accepted_content_stale=accepted_content_is_stale(project_dir, record),
             ).as_record()
         except RepairStrategyError:
-            issues.add("repair-plan-stale")
+            issues.add("repair-plan-record-invalid")
             continue
         if dict(entry) != expected and record.get("decision") == "regenerate":
             # A panel still awaiting repair must carry a current plan. An entry
@@ -810,7 +890,32 @@ def validate_repair_plan(project_dir: Path) -> tuple[str, ...]:
     expected_order = [panel_id for panel_id in ordering if panel_id in set(recorded_ids)]
     if recorded_ids != expected_order:
         issues.add("repair-plan-panel-order")
+    if _unplanned_repairs(project_dir, ordering, set(recorded_ids)):
+        # Checking only the entries that are present would let a truncated plan
+        # validate while omitting a panel that still has to be repaired.
+        issues.add("repair-plan-incomplete")
     return tuple(sorted(issues))
+
+
+def _unplanned_repairs(
+    project_dir: Path, ordering: tuple[str, ...], recorded: set[str]
+) -> tuple[str, ...]:
+    """Return reviewed panels awaiting repair that the plan does not cover."""
+    unplanned: list[str] = []
+    for panel_id in ordering:
+        if panel_id in recorded:
+            continue
+        relative = f"qa/panels/{panel_id}.json"
+        try:
+            if not _review_exists(project_dir, relative):
+                continue
+            record = _read_document(project_dir, relative)
+        except RepairStrategyError:
+            unplanned.append(panel_id)
+            continue
+        if record.get("decision") == "regenerate":
+            unplanned.append(panel_id)
+    return tuple(unplanned)
 
 
 # --------------------------------------------------------------------------- #
