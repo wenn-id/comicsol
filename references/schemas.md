@@ -184,6 +184,10 @@ relative project path. Extra views such as `three-quarter` or `profile` are auth
 additions and survive re-derivation, as does `proportions.notes`; every other field is
 always rebuilt from the bible, so a pack can never quietly disagree with it.
 
+Authored view names taken from the shot classes below — `close-up`, `profile`,
+`three-quarter`, and `full-body` — are matched by the reference selection plan and attached
+ahead of other supplementary views. Any other view name is treated as scene-specific.
+
 ### Validation and prompt use
 
 `character_identity.py PROJECT_DIR --check` fails closed before generation when the pack is
@@ -196,6 +200,62 @@ LOCK` block for the characters that storyboard panel uses, ordered by the pack r
 the panel so one character's clause is byte-stable project-wide. That block and
 `identity_reference_paths()` emit plain text and relative paths only; they name no provider,
 model, endpoint, or credential, so an adapter decides how to transmit them.
+
+## Reference selection plan: `logs/reference-selection.json`
+
+The reference selection plan records which character references each panel receives, in
+which order, and why. It exists because a single reference does not constrain a character
+equally well across every camera setup, and because a drifted panel cannot be debugged
+without knowing the references it was actually given. Its `schema_version` is `1.0` and is
+independent of the project manifest version. Top-level fields are exactly `schema_version`
+and `panels`, one entry per storyboard panel in page and reading order.
+
+`reference_strategy.py PROJECT_DIR --plan [--budget COUNT]` derives the plan from
+`plan/character-identity-pack.json` and `plan/storyboard.json` and publishes it atomically
+through the project transaction. It refuses to publish while the identity pack gate reports
+an issue, and re-running it on an unchanged project rewrites byte-identical content. The
+plan is provenance rather than a manifest `artifacts` descriptor, so `project.json` keeps
+schema version `1.0`.
+
+### Panel entry
+
+| Field | Type | Rules |
+|---|---|---|
+| `panel_id` | ID | A storyboard panel ID |
+| `shot_class` | enum | `close-up`, `profile`, `three-quarter`, `full-body`, or `unclassified` |
+| `shot_cue` | string \| null | The cue matched inside the panel `shot` text; `null` when unclassified |
+| `reference_budget` | integer \| null | Maximum references one panel may carry; `null` when unlimited and `0` when the capability supports none |
+| `characters` | array[ID] | The panel's characters in identity-pack order |
+| `selected` | array[selection] | Attachments in attachment order |
+| `omitted` | array[omission] | Views deliberately not attached |
+
+A selection contains exactly `character_id`, `view`, `path`, `reason`, and `rank`, where
+`rank` is the 1-based attachment order and `reason` is `canonical-anchor`, `shot-aligned`,
+`identity-supplement`, or `scene-specific`. An omission contains exactly `character_id`,
+`view`, `path`, and `reason`, where `reason` is `duplicate-path`, `reference-budget`, or
+`references-unsupported`. Every view a panel's characters carry appears exactly once across
+`selected` and `omitted`, so the record accounts for the whole decision rather than only
+its outcome.
+
+### Selection rules
+
+`shot_class` is derived from the authored panel `shot` text by the cue that appears
+earliest, so a description opening with its framing is not reclassified by a later
+incidental word, and a description matching no cue stays `unclassified` instead of being
+guessed into a class it never declared.
+
+The canonical view ranks first for every shot class, because it is the only view
+cross-checked against the character bible. The view named by the panel's shot class comes
+next, then the remaining identity views, then scene-specific views. A budget is spent
+breadth-first across the panel's characters, so every character receives its canonical
+anchor before any character receives a second view, and a limit below the cast size records
+the dropped character rather than hiding it. One path is attached at most once per panel: a
+repeated path is recorded as `duplicate-path` and does not consume the budget.
+
+Classification, ranking, and allocation read no clock, locale, or random seed. The rendered
+plan block emits plain text and relative paths only and names no provider, model, endpoint,
+or credential, so the caller supplies the reference limit and decides how to transmit the
+attachments.
 
 ## Story plan: `plan/story-plan.json`
 
@@ -252,6 +312,9 @@ Layout enums are `full-page`, `two-horizontal`, `three-horizontal`, `hero-top-tw
 There are at most 12 panels project-wide. Every panel scene and character must exist. Dialogue speakers must both exist in the character bible and appear in the panel.
 
 Each `continuity` entry is `<owner-id>:<fact>`, where `owner-id` is a character or scene ID used by the panel and `fact` string-equals one of that character's `visual_fingerprint.invariants` entries or that scene's `continuity_anchor`, verbatim. Write `mira:amber scarf`, not `amber scarf`.
+
+`shot` is free text and stays authored prose; the reference selection plan classifies it
+rather than constraining it, and reports `unclassified` when it recognizes no framing cue.
 
 ### Text item
 
@@ -356,7 +419,7 @@ output is UTF-8 with exactly one trailing newline.
 
 The version 1.0 project boundary contains `project.json`; exact source/request copies; the three plan JSON files; character/scene reference PNGs; preserved reference/panel prompt text; raw `panels/raw/{panel-id}.png`, clean `panels/clean/{panel-id}.png`, and lettered `panels/{panel-id}/lettered.png` panel images; per-panel QA JSON; per-page QA JSON `qa/pages/page-{NNN}.json`; `qa/report.md`; zero-padded `pages/page-001.png` files; the composition cache `cache/composition.json`; `exports/{project-id}.pdf`; the resume cache `logs/stage-cache.json`; and append-only `logs/events.jsonl`.
 
-The opt-in `plan/character-identity-pack.json` companion artifact also lives inside this boundary.
+The opt-in `plan/character-identity-pack.json` companion artifact also lives inside this boundary, as does the `logs/reference-selection.json` provenance record derived from it.
 
 Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-number}.png`; only the accepted attempt occupies `panels/raw/{panel-id}.png`. Generated images intentionally contain no dialogue, captions, speech bubbles, signatures, logos, or watermarks. Exact storyboard-authored SFX is instead allowed and required in generated artwork; generated SFX is forbidden when the storyboard has none.
 
@@ -400,6 +463,7 @@ These records are the integrity gate on finalization. `comic_sol.py finalize` an
 - Character fingerprints and canonical reference images are immutable after the first dependent panel is accepted.
 - Changing a fingerprint or reference invalidates dependent panels, pages, PDF, and QA outputs.
 - The character identity pack is re-derived from the character bible, so changing a fingerprint or a canonical reference changes the pack, changes every panel prompt that embeds it, and invalidates generation and every downstream artifact.
+- The reference selection plan is derived from the identity pack and the storyboard, so adding a reference view, changing a canonical reference, or rewriting a panel's `shot` changes which references that panel receives and is republished with the plan.
 - Changing dialogue or captions alone invalidates lettered panels, pages, PDF, and the final report; raw and clean panels remain reusable. Changing authored SFX invalidates generation and every downstream artifact because SFX belongs to the artwork.
 - Artifact reuse requires file existence, matching recorded hash, schema validity, valid dependencies, and a matching stage cache key.
 - Deterministic writes use a sibling temporary file, flush and `fsync`, then `os.replace`; the manifest transition is last.

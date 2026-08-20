@@ -98,6 +98,10 @@ Follow the capability reference. Record neutral feature flags in `project.json`.
 is available, transition to `BLOCKED` with the exact preservation error. Do not create
 empty image files.
 
+Note the capability's documented maximum number of reference images per request. That
+count is the `--budget` value the reference plan spends in stage 5; the engine never
+infers it.
+
 ### 5. Generate canonical references
 
 Generate and inspect one canonical reference for each recurring character. Generate a
@@ -106,7 +110,17 @@ scene reference only at the creative threshold. Preserve prompts and transition 
 
 Record any additional usable view beyond the bible reference in the identity pack's
 `reference_views`, then re-run `character_identity.py PROJECT_DIR --derive`; authored views
-and proportion notes survive re-derivation while derived identity fields are rebuilt.
+and proportion notes survive re-derivation while derived identity fields are rebuilt. Name
+a view `close-up`, `profile`, `three-quarter`, or `full-body` when it is that framing of
+the character, so panels of that shot receive it; any other name is treated as
+scene-specific and ranked after the identity views.
+
+Then publish the reference plan with `reference_strategy.py PROJECT_DIR --plan [--budget
+COUNT]`. Pass the capability's reference limit from stage 4 as `--budget`, omit it when
+there is no limit, and pass `0` when `supports_reference_images` is false. The plan is
+recorded at `logs/reference-selection.json`, so a panel that drifts can be reviewed
+against the references it was actually given. Re-run `--plan` after changing a reference
+view or a panel's `shot`.
 
 ### 6. Generate panels
 
@@ -117,11 +131,18 @@ start.
 Write each ordered prompt, requiring the image model to integrate every exact authored
 SFX once and prohibiting generated dialogue, captions, speech bubbles, logos,
 signatures, watermarks, or un-authored SFX. Embed the `character_identity.py PROJECT_DIR
---panel PANEL_ID` block verbatim in the prompt and attach the reference views it names, so
-a retry or a resume reuses the same identity context instead of rewording it. Invoke the
-selected agent tool into an attempt file, then run `comic_sol.py record-attempt`. Confirm
-readable raster output and at least 512 px in both dimensions. Never promote before visual
-QA.
+--panel PANEL_ID` block verbatim in the prompt, so a retry or a resume reuses the same
+identity context instead of rewording it.
+
+Attach exactly the references named by `reference_strategy.py PROJECT_DIR --panel PANEL_ID
+[--budget COUNT]`, in the order it lists: the canonical view leads, the view matching the
+panel's shot follows, and scene-specific views come last. Do not re-add a view the block
+records as omitted; each omission states its reason, and a reference path shared by two
+characters is deliberately attached once rather than spending the limit twice.
+
+Invoke the selected agent tool into an attempt file, then run `comic_sol.py
+record-attempt`. Confirm readable raster output and at least 512 px in both dimensions.
+Never promote before visual QA.
 
 ### 7. Visual QA and selective repair
 
@@ -133,6 +154,11 @@ the failed error-level checks to warning severity, records the reason on the pan
 manifest, and the run continues toward `COMPLETE_WITH_WARNINGS` at the final transition.
 Validate with `validate_project.py PROJECT_DIR --stage panels`, then transition through
 `PANELS_READY` and `QA_READY`.
+
+When a panel fails `character-identity`, read its entry in
+`logs/reference-selection.json` before rewriting the prompt: a panel whose omissions name
+`reference-budget` or `references-unsupported` was constrained by fewer references than
+the pack carries, which is a different repair from a prompt that contradicted them.
 
 ### 8–10. Deterministic finalization (letter, compose, export, complete)
 
