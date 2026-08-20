@@ -22,7 +22,7 @@ if __package__ in {None, ""}:
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from .comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json, sha256_file
-from .core_primitives import rectangles_overlap
+from .core_primitives import rectangles_overlap, subject_keepout_radius
 from .project_io import ProjectTransaction, contained_project_path, open_path_nofollow, read_contained_bytes
 from .raster_limits import MAX_DECODED_PIXELS
 from .typography import (
@@ -440,9 +440,11 @@ def _organic_tail_geometry(
     source_distance = math.hypot(
         target_x - attachment_x, target_y - attachment_y
     )
-    minimum_source_gap = max(
-        8.0, min(24.0, min(image_width, image_height) * 0.025)
-    )
+    # The gap reserved here is the same clearance page QA requires between a
+    # balloon and a protected subject anchor, so this balloon can never fail the
+    # balloon-subject-obstruction audit against the anchor it speaks from. Other
+    # lines' anchors are not considered during placement and are audited there.
+    minimum_source_gap = subject_keepout_radius(image_width, image_height)
     available_length = source_distance - minimum_source_gap
     maximum_length = min(
         min(radius_x, radius_y) * 0.9,
