@@ -103,8 +103,24 @@ class PublicInstallerContractTests(unittest.TestCase):
             package.writestr(member, executable)
         return archive
 
+    @staticmethod
+    def write_signature_fixture(root, archive_name, digest):
+        checksums = root / "SHA256SUMS"
+        signature = root / "SHA256SUMS.sigstore.json"
+        checksums.write_text(f"{digest.lower()}  {archive_name}\n", encoding="utf-8")
+        signature.write_text("{}\n", encoding="utf-8")
+        cosign = root / "cosign"
+        cosign.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        cosign.chmod(0o755)
+        return checksums, signature, cosign
+
     def run_posix_archive_install(self, archive, install_root, *, env=None):
         environment = os.environ.copy()
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        checksums, signature, cosign = self.write_signature_fixture(
+            archive.parent, archive.name, digest
+        )
+        environment["COMIC_SOL_COSIGN"] = str(cosign)
         if env:
             environment.update(env)
         return subprocess.run(
@@ -114,7 +130,11 @@ class PublicInstallerContractTests(unittest.TestCase):
                 "--archive",
                 str(archive),
                 "--sha256",
-                hashlib.sha256(archive.read_bytes()).hexdigest(),
+                digest,
+                "--checksums",
+                str(checksums),
+                "--signature",
+                str(signature),
                 "--install-root",
                 str(install_root),
             ],
@@ -177,6 +197,11 @@ class PublicInstallerContractTests(unittest.TestCase):
 
     def run_posix_url_install(self, install_root, url, sha256, env=None):
         environment = os.environ.copy()
+        archive_name = Path(url.split("?", 1)[0].split("#", 1)[0]).name
+        checksums, signature, cosign = self.write_signature_fixture(
+            install_root.parent, archive_name, sha256
+        )
+        environment["COMIC_SOL_COSIGN"] = str(cosign)
         if env:
             environment.update(env)
         return subprocess.run(
@@ -187,6 +212,10 @@ class PublicInstallerContractTests(unittest.TestCase):
                 url,
                 "--sha256",
                 sha256,
+                "--checksums",
+                str(checksums),
+                "--signature",
+                str(signature),
                 "--install-root",
                 str(install_root),
             ],
@@ -216,7 +245,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertIn("SHA256", script.upper())
             self.assertIn("doctor", script)
             self.assertIn("active-version", script)
-            self.assertIn("unsigned", script.lower())
+            self.assertIn("signature verification", script.lower())
             self.assertNotIn("Comic Sol Projects", script)
         self.assertIn("command -v perl", self.posix)
         self.assertIn("sha256sum", self.posix)
@@ -306,11 +335,72 @@ class PublicInstallerContractTests(unittest.TestCase):
                 self.stop_installer_server(server, thread)
 
     @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_url_preserves_release_asset_name_for_signed_manifest(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            archive = self.write_runtime_archive(
+                root, filename="comic-sol-2.0.0rc5-linux-x86_64.zip"
+            )
+            server, thread = self.start_installer_server(
+                tls=True, payload=archive.read_bytes()
+            )
+            try:
+                install_root = root / "runtime"
+                url = f"https://127.0.0.1:{server.server_address[1]}/{archive.name}"
+                result = self.run_posix_url_install(
+                    install_root,
+                    url,
+                    hashlib.sha256(archive.read_bytes()).hexdigest(),
+                    {"CURL_CA_BUNDLE": str(cast(Path, server.certificate_path))},
+                )
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertEqual("2.0.0rc5", (install_root / "active-version").read_text().strip())
+            finally:
+                self.stop_installer_server(server, thread)
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_rejects_archive_when_signed_manifest_digest_differs(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            archive = self.write_runtime_archive(root)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            checksums, signature, cosign = self.write_signature_fixture(
+                root, archive.name, digest
+            )
+            checksums.write_text(f"{'0' * 64}  {archive.name}\n", encoding="utf-8")
+            result = subprocess.run(
+                [
+                    "sh",
+                    str(self.root / "installers/install.sh"),
+                    "--archive",
+                    str(archive),
+                    "--sha256",
+                    digest,
+                    "--checksums",
+                    str(checksums),
+                    "--signature",
+                    str(signature),
+                    "--install-root",
+                    str(root / "runtime"),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={**os.environ, "COMIC_SOL_COSIGN": str(cosign)},
+            )
+            self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertIn("manifest", result.stderr.lower())
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
     def test_posix_rejects_archive_when_member_listing_fails(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             archive = self.write_runtime_archive(root)
             install_root = root / "runtime"
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            checksums, signature, cosign = self.write_signature_fixture(
+                root, archive.name, digest
+            )
             shim = root / "shim"
             shim.mkdir()
             real_unzip = shutil.which("unzip")
@@ -331,6 +421,7 @@ class PublicInstallerContractTests(unittest.TestCase):
                 {
                     "PATH": f"{shim}{os.pathsep}{environment['PATH']}",
                     "REAL_UNZIP": cast(str, real_unzip),
+                    "COMIC_SOL_COSIGN": str(cosign),
                 }
             )
             result = subprocess.run(
@@ -340,7 +431,11 @@ class PublicInstallerContractTests(unittest.TestCase):
                     "--archive",
                     str(archive),
                     "--sha256",
-                    hashlib.sha256(archive.read_bytes()).hexdigest(),
+                    digest,
+                    "--checksums",
+                    str(checksums),
+                    "--signature",
+                    str(signature),
                     "--install-root",
                     str(install_root),
                 ],
@@ -509,12 +604,15 @@ class PublicInstallerContractTests(unittest.TestCase):
                 self.assertFalse((install_root / name).exists(), name)
 
     @unittest.skipUnless(os.name != "nt", "POSIX installer test")
-    def test_posix_relative_archive_persists_display_root_and_uninstalls_root(self):
+    def test_posix_relative_checksum_paths_survive_secure_handoff(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             archive = self.write_runtime_archive(root)
             install_root = root / "runtime"
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            checksums, signature, cosign = self.write_signature_fixture(
+                root, archive.name, digest
+            )
 
             result = subprocess.run(
                 [
@@ -524,6 +622,10 @@ class PublicInstallerContractTests(unittest.TestCase):
                     archive.name,
                     "--sha256",
                     digest,
+                    "--checksums",
+                    checksums.name,
+                    "--signature",
+                    signature.name,
                     "--install-root",
                     install_root.name,
                 ],
@@ -531,6 +633,48 @@ class PublicInstallerContractTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 check=False,
+                env={**os.environ, "COMIC_SOL_COSIGN": str(cosign)},
+            )
+
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            marker_lines = (install_root / ".comic-sol-install").read_text("utf-8").splitlines()
+            self.assertEqual(str(install_root.resolve()).encode().hex(), marker_lines[2])
+
+            uninstall = self.run_uninstall(install_root)
+            self.assertEqual(0, uninstall.returncode, uninstall.stdout + uninstall.stderr)
+            self.assertFalse(install_root.exists())
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_relative_archive_persists_display_root_and_uninstalls_root(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            archive = self.write_runtime_archive(root)
+            install_root = root / "runtime"
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            checksums, signature, cosign = self.write_signature_fixture(
+                root, archive.name, digest
+            )
+
+            result = subprocess.run(
+                [
+                    "sh",
+                    str(self.root / "installers/install.sh"),
+                    "--archive",
+                    archive.name,
+                    "--sha256",
+                    digest,
+                    "--checksums",
+                    str(checksums),
+                    "--signature",
+                    str(signature),
+                    "--install-root",
+                    install_root.name,
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+                env={**os.environ, "COMIC_SOL_COSIGN": str(cosign)},
             )
 
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
@@ -819,6 +963,9 @@ class PublicInstallerContractTests(unittest.TestCase):
             with zipfile.ZipFile(archive, "w") as package:
                 package.writestr(member, executable)
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            checksums, signature, cosign = self.write_signature_fixture(
+                root, archive.name, digest
+            )
 
             shim = root / "shim"
             shim.mkdir()
@@ -844,6 +991,7 @@ class PublicInstallerContractTests(unittest.TestCase):
                     "PATH": f"{shim}{os.pathsep}{environment['PATH']}",
                     "REAL_RM": real_rm,
                     "TEST_INSTALL_ROOT": str(install_root),
+                    "COMIC_SOL_COSIGN": str(cosign),
                 }
             )
 
@@ -855,6 +1003,10 @@ class PublicInstallerContractTests(unittest.TestCase):
                     str(archive),
                     "--sha256",
                     digest,
+                    "--checksums",
+                    str(checksums),
+                    "--signature",
+                    str(signature),
                     "--install-root",
                     str(install_root),
                 ],
@@ -879,6 +1031,9 @@ class PublicInstallerContractTests(unittest.TestCase):
             archive = self.write_runtime_archive(root)
             install_root = root / "runtime\nname"
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            checksums, signature, cosign = self.write_signature_fixture(
+                root, archive.name, digest
+            )
             result = subprocess.run(
                 [
                     "sh",
@@ -887,6 +1042,10 @@ class PublicInstallerContractTests(unittest.TestCase):
                     archive.name,
                     "--sha256",
                     digest,
+                    "--checksums",
+                    str(checksums),
+                    "--signature",
+                    str(signature),
                     "--install-root",
                     install_root.name,
                 ],
@@ -894,6 +1053,7 @@ class PublicInstallerContractTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 check=False,
+                env={**os.environ, "COMIC_SOL_COSIGN": str(cosign)},
             )
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
             uninstall = self.run_uninstall(install_root)

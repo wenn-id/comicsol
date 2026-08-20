@@ -39,7 +39,7 @@ class ReleaseDocumentationTests(unittest.TestCase):
         self.assertIn("MCP trust boundary", self.readme)
         self.assertIn("v2.0.0rc4", self.readme)
         self.assertIn("SHA256SUMS", self.readme)
-        self.assertIn("unsigned", self.readme.lower())
+        self.assertIn("sigstore", self.readme.lower())
         self.assertIn("docker compose", self.install)
 
     def test_v2_stable_criteria_is_authoritative_and_complete(self):
@@ -99,8 +99,13 @@ class ReleaseDocumentationTests(unittest.TestCase):
             "comic-sol --version",
             "comic-sol doctor",
             "SHA256SUMS",
+            "SHA256SUMS.sigstore.json",
+            "-Checksums",
+            "-Signature",
+            "--checksums",
+            "--signature",
             "CycloneDX",
-            "unsigned",
+            "sigstore",
         ):
             self.assertIn(phrase, self.install)
         self.assertIn("$HOME/.local/share/comic-sol", self.install)
@@ -111,7 +116,7 @@ class ReleaseDocumentationTests(unittest.TestCase):
     def test_release_notes_and_changelog_identify_rc_limitations(self):
         for document in (self.changelog, self.notes):
             self.assertIn("2.0.0rc4", document)
-            self.assertIn("unsigned", document.lower())
+            self.assertIn("sigstore", document.lower())
             self.assertIn("Linux", document)
             self.assertIn("macOS", document)
             self.assertIn("Windows", document)

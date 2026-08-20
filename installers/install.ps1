@@ -1,9 +1,11 @@
-# Install:   .\install.ps1 -Archive .\comic-sol.zip -SHA256 <digest>
+# Install:   .\install.ps1 -Archive .\comic-sol.zip -SHA256 <digest> -Checksums .\SHA256SUMS -Signature .\SHA256SUMS.sigstore.json
 # Uninstall: .\install.ps1 -Uninstall
 param(
     [string]$Archive,
     [string]$Url,
     [Parameter(Mandatory=$false)][string]$SHA256,
+    [Parameter(Mandatory=$false)][string]$Checksums,
+    [Parameter(Mandatory=$false)][string]$Signature,
     [string]$InstallRoot = "$HOME\AppData\Local\ComicSol",
     [switch]$Uninstall
 )
@@ -11,6 +13,9 @@ $ErrorActionPreference = "Stop"
 $InstallMutex = $null
 $InstallMarkerName = ".comic-sol-install"
 $InstallMarkerMagic = "comic-sol-install-v1"
+$CosignCommand = if ($env:COMIC_SOL_COSIGN) { $env:COMIC_SOL_COSIGN } else { "cosign" }
+$CosignOidcIssuer = "https://token.actions.githubusercontent.com"
+$CosignIdentityRegexp = '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$'
 function Encode-MarkerRoot {
     param([string]$Path)
     $normalized = $Path.Replace('\', '/')
@@ -115,7 +120,13 @@ if ($Uninstall) {
     }
     exit 0
 }
-if (-not $SHA256) { throw "-SHA256 is required for this unsigned prerelease" }
+if (-not $SHA256 -or -not $Checksums -or -not $Signature) { throw "-SHA256, -Checksums, and -Signature are required for a signed release" }
+if (-not (Get-Command $CosignCommand -ErrorAction SilentlyContinue)) { throw "cosign is required for signature verification" }
+if (-not (Test-Path -LiteralPath $Checksums -PathType Leaf) -or -not (Test-Path -LiteralPath $Signature -PathType Leaf)) {
+    throw "checksum manifest and Sigstore bundle are required for signature verification"
+}
+& $CosignCommand verify-blob --bundle $Signature --certificate-identity-regexp $CosignIdentityRegexp --certificate-oidc-issuer $CosignOidcIssuer $Checksums | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "signature verification failed" }
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 $InstallRoot = Resolve-CanonicalInstallRoot -Path $InstallRoot
 Acquire-InstallMutex
@@ -161,12 +172,27 @@ try {
         if (-not $parsedUrl.IsAbsoluteUri -or $parsedUrl.Scheme -ne "https") {
             throw "-Url must be an absolute HTTPS URL"
         }
-        $Archive = Join-Path $Temp "comic-sol.zip"
+        $archivePath = $parsedUrl.AbsolutePath
+        $archiveName = [System.IO.Path]::GetFileName($archivePath)
+        if (-not $archiveName -or $archiveName -in @('.', '..') -or $archiveName -notmatch '^[A-Za-z0-9._-]+$') {
+            throw "-Url must end with a safe release asset name"
+        }
+        $Archive = Join-Path $Temp $archiveName
         Invoke-WebRequest -Uri $parsedUrl -OutFile $Archive -UseBasicParsing -MaximumRedirection 0
     }
     if (-not $Archive -or -not (Test-Path -LiteralPath $Archive)) { throw "Provide -Archive PATH or -Url HTTPS_URL" }
     $Actual = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($Actual -ne $SHA256.ToLowerInvariant()) { throw "SHA256 mismatch" }
+    $ArchiveName = [System.IO.Path]::GetFileName($Archive)
+    $ManifestDigest = $null
+    foreach ($Line in Get-Content -LiteralPath $Checksums) {
+        $Parts = $Line -split "  ", 2
+        if ($Parts.Count -eq 2 -and [System.IO.Path]::GetFileName($Parts[1]) -eq $ArchiveName) {
+            if ($ManifestDigest -and $ManifestDigest -ne $Parts[0].ToLowerInvariant()) { throw "signed checksum manifest has duplicate archive entries" }
+            $ManifestDigest = $Parts[0].ToLowerInvariant()
+        }
+    }
+    if (-not $ManifestDigest) { throw "signed checksum manifest has no entry for archive" }
+    if ($Actual -ne $ManifestDigest -or $Actual -ne $SHA256.ToLowerInvariant()) { throw "SHA256 does not match signed checksum manifest" }
     if (-not $Archive.EndsWith(".zip")) { throw "Unsupported archive; the PowerShell installer requires .zip" }
 
     function Test-UnsafeArchive {
@@ -228,7 +254,7 @@ try {
             catch { Write-Warning "Could not remove rollback backup '$Path': $($_.Exception.Message)" }
         }
     }
-    Write-Output "Installed unsigned Comic Sol $Version at $InstallRoot"
+    Write-Output "Installed signed Comic Sol $Version at $InstallRoot"
     Write-Output "User projects are outside this directory."
 } catch {
     $originalError = $_

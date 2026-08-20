@@ -103,6 +103,8 @@ def install(
     installer: Path,
     archive: Path,
     digest: str,
+    checksums: Path,
+    signature: Path,
     install_root: Path,
     cwd: Path,
     env: dict[str, str],
@@ -117,6 +119,10 @@ def install(
                 str(archive),
                 "--sha256",
                 digest,
+                "--checksums",
+                str(checksums),
+                "--signature",
+                str(signature),
                 "--install-root",
                 str(install_root),
             ],
@@ -135,6 +141,10 @@ def install(
                 str(archive),
                 "-SHA256",
                 digest,
+                "-Checksums",
+                str(checksums),
+                "-Signature",
+                str(signature),
                 "-InstallRoot",
                 str(install_root),
             ],
@@ -265,7 +275,8 @@ def validate_published_metadata(
         "architecture": "x86_64",
         "tag": f"v{version}",
         "version": version,
-        "signature_status": "unsigned",
+        "signature_file": "SHA256SUMS.sigstore.json",
+        "signature_status": "sigstore",
     }
     for key, expected in expected_metadata.items():
         if metadata_record.get(key) != expected:
@@ -431,6 +442,7 @@ def qualify(
     archive: Path,
     installer: Path,
     checksums: Path,
+    signature: Path,
     summary: Path,
     version: str,
     metadata: Path | None = None,
@@ -442,6 +454,7 @@ def qualify(
     archive = archive.resolve(strict=True)
     installer = installer.resolve(strict=True)
     checksums = checksums.resolve(strict=True)
+    signature = signature.resolve(strict=True)
     if metadata is not None or sbom is not None:
         if metadata is None or sbom is None:
             raise RuntimeError("published metadata and SBOM must be supplied together")
@@ -493,6 +506,8 @@ def qualify(
             installer=installer,
             archive=archive,
             digest=digest,
+            checksums=checksums,
+            signature=signature,
             install_root=install_root,
             cwd=root,
             env=env,
@@ -580,6 +595,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--installer", type=Path)
     parser.add_argument("--sha256", type=Path)
+    parser.add_argument("--signature", type=Path)
     parser.add_argument("--platform", choices=sorted(PLATFORMS))
     parser.add_argument("--summary", type=Path)
     parser.add_argument("--version")
@@ -604,13 +620,14 @@ def main(argv: list[str] | None = None) -> int:
         arguments.archive,
         arguments.installer,
         arguments.sha256,
+        arguments.signature,
         arguments.platform,
         arguments.summary,
         arguments.version,
     )
     if any(value is None for value in required):
         parser.error(
-            "artifact qualification requires --archive, --installer, --sha256, --platform, --summary, and --version"
+            "artifact qualification requires --archive, --installer, --sha256, --signature, --platform, --summary, and --version"
         )
     try:
         record = qualify(
@@ -618,6 +635,7 @@ def main(argv: list[str] | None = None) -> int:
             archive=arguments.archive,
             installer=arguments.installer,
             checksums=arguments.sha256,
+            signature=arguments.signature,
             summary=arguments.summary,
             version=arguments.version,
             metadata=arguments.metadata,
