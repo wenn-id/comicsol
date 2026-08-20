@@ -6,15 +6,50 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from PIL import Image
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "samples/sunlight-courier"
 MATERIALIZER = ROOT / "scripts/materialize_sample.py"
+MAX_TRACKED_RASTER_BYTES = 22 * 1024 * 1024
+DERIVED_RASTERS = (
+    "samples/sunlight-courier/pages/page-001.png",
+    "samples/sunlight-courier/pages/page-002.png",
+    "samples/sunlight-courier/panels/p01-01/lettered.png",
+    "samples/sunlight-courier/panels/p01-02/lettered.png",
+    "samples/sunlight-courier/panels/p02-01/lettered.png",
+    "samples/sunlight-courier/panels/p02-02/lettered.png",
+)
+
+
+def tracked_rasters() -> tuple[Path, ...]:
+    compatibility = {
+        SAMPLE / "panels/raw",
+        SAMPLE / "panels/clean",
+    }
+    return tuple(
+        sorted(
+            path
+            for path in (*ROOT.glob("samples/**/*.png"), *ROOT.glob("assets/*.png"))
+            if path.parent not in compatibility
+        )
+    )
+
 
 from tests.support import make_symlink  # noqa: E402
 
 
 class SampleAssetTests(unittest.TestCase):
+    def run_materializer(self) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(MATERIALIZER), str(self.project)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
@@ -24,14 +59,17 @@ class SampleAssetTests(unittest.TestCase):
         for relative in ("panels/raw", "panels/clean"):
             shutil.rmtree(self.project / relative, ignore_errors=True)
 
-    def run_materializer(self) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, str(MATERIALIZER), str(self.project)],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+    def test_tracked_rasters_stay_within_sample_weight_budget(self):
+        total = sum(path.stat().st_size for path in tracked_rasters())
+
+        self.assertLessEqual(total, MAX_TRACKED_RASTER_BYTES)
+        for relative in DERIVED_RASTERS:
+            expected_size = (1600, 2400) if "/pages/" in relative else (1024, 779)
+            with Image.open(ROOT / relative) as image:
+                self.assertEqual("PNG", image.format)
+                self.assertEqual("RGB", image.mode)
+                self.assertEqual(expected_size, image.size)
+                self.assertNotIn("transparency", image.info)
 
     def test_cli_materializes_byte_identical_compatibility_panels(self):
         result = self.run_materializer()

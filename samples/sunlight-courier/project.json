@@ -10,7 +10,7 @@
     },
     "qa_report": {
       "path": "qa/report.md",
-      "sha256": "77739987a1a09559df7b31e4aa66d4e4617fd0e1310128c35b56f22fca8e1270"
+      "sha256": "38f5595cc915756ed65947ad291054d84f29ebac321998f11f2a82b9098d8fdd"
     },
     "story_plan": {
       "path": "plan/story-plan.json",
