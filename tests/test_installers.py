@@ -2,6 +2,7 @@ import hashlib
 import http.server
 import os
 import re
+import shlex
 import shutil
 import ssl
 import subprocess
@@ -11,6 +12,9 @@ import unittest
 import zipfile
 from pathlib import Path
 from typing import cast
+
+
+_TEST_SIGSTORE_BUNDLE = '{"mediaType":"application/vnd.dev.sigstore.bundle+json","verification":"test-fixture"}\n'
 
 
 class _InstallerHTTPServer(http.server.ThreadingHTTPServer):
@@ -104,21 +108,69 @@ class PublicInstallerContractTests(unittest.TestCase):
         return archive
 
     @staticmethod
-    def write_signature_fixture(root, archive_name, digest):
+    def write_signature_fixture(
+        root,
+        archive_name,
+        digest,
+        *,
+        bundle_payload=_TEST_SIGSTORE_BUNDLE,
+        expected_identity=(
+            r"^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@"
+            r"refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?|heads/main)$"
+        ),
+        expected_issuer="https://token.actions.githubusercontent.com",
+        expected_bundle_payload=None,
+    ):
         checksums = root / "SHA256SUMS"
         signature = root / "SHA256SUMS.sigstore.json"
         checksums.write_text(f"{digest.lower()}  {archive_name}\n", encoding="utf-8")
-        signature.write_text("{}\n", encoding="utf-8")
+        signature.write_text(bundle_payload, encoding="utf-8")
+        if expected_bundle_payload is None:
+            expected_bundle_payload = bundle_payload
         cosign = root / "cosign"
-        cosign.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        cosign.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "if [ \"${1-}\" != verify-blob ] ||\n"
+            "   [ \"${2-}\" != --bundle ] ||\n"
+            f"   [ \"${{3-}}\" != {shlex.quote(str(signature))} ] ||\n"
+            "   [ \"${4-}\" != --certificate-identity-regexp ] ||\n"
+            f"   [ \"${{5-}}\" != {shlex.quote(expected_identity)} ] ||\n"
+            "   [ \"${6-}\" != --certificate-oidc-issuer ] ||\n"
+            f"   [ \"${{7-}}\" != {shlex.quote(expected_issuer)} ] ||\n"
+            f"   [ \"${{8-}}\" != {shlex.quote(str(checksums))} ]; then\n"
+            "  exit 90\n"
+            "fi\n"
+            f"printf %s {shlex.quote(expected_bundle_payload)} | cmp -s - \"$3\"\n",
+            encoding="utf-8",
+        )
         cosign.chmod(0o755)
         return checksums, signature, cosign
 
-    def run_posix_archive_install(self, archive, install_root, *, env=None):
+    def run_posix_archive_install(
+        self,
+        archive,
+        install_root,
+        *,
+        env=None,
+        bundle_payload=None,
+        expected_identity=None,
+        expected_issuer=None,
+        expected_bundle_payload=None,
+    ):
         environment = os.environ.copy()
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        fixture_options = {}
+        if bundle_payload is not None:
+            fixture_options["bundle_payload"] = bundle_payload
+        if expected_identity is not None:
+            fixture_options["expected_identity"] = expected_identity
+        if expected_issuer is not None:
+            fixture_options["expected_issuer"] = expected_issuer
+        if expected_bundle_payload is not None:
+            fixture_options["expected_bundle_payload"] = expected_bundle_payload
         checksums, signature, cosign = self.write_signature_fixture(
-            archive.parent, archive.name, digest
+            archive.parent, archive.name, digest, **fixture_options
         )
         environment["COMIC_SOL_COSIGN"] = str(cosign)
         if env:
@@ -271,6 +323,26 @@ class PublicInstallerContractTests(unittest.TestCase):
         expected = "refs/(tags/v[0-9]+\\.[0-9]+\\.[0-9]+(rc[0-9]+)?|heads/main)"
         self.assertIn(expected, self.posix)
         self.assertIn(expected, self.powershell)
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    def test_posix_sigstore_verifier_checks_bundle_and_claim_arguments(self):
+        scenarios = (
+            {"bundle_payload": "{}\n", "expected_bundle_payload": _TEST_SIGSTORE_BUNDLE},
+            {"expected_identity": "wrong-identity"},
+            {"expected_issuer": "https://issuer.invalid"},
+        )
+        for fixture_options in scenarios:
+            with self.subTest(fixture_options=fixture_options), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                archive = self.write_runtime_archive(root)
+                install_root = root / "runtime"
+                result = self.run_posix_archive_install(
+                    archive, install_root, **fixture_options
+                )
+
+                self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertIn("signature verification failed", result.stderr)
+                self.assertFalse((install_root / ".comic-sol-install").exists())
 
     @unittest.skipUnless(os.name != "nt", "POSIX installer test")
     def test_posix_rejects_http_url_before_request(self):
