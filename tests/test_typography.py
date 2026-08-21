@@ -653,6 +653,81 @@ class LetteringProvenanceTests(unittest.TestCase):
             (), validate_lettering_provenance(self.project, self.panel_id)
         )
 
+    def _rewrite_typography(self, mutate):
+        """Apply one edit to the panel's preflight record on disk."""
+        path = self.project / f"panels/{self.panel_id}/typography.json"
+        record = json.loads(path.read_text("utf-8"))
+        mutate(record)
+        path.write_text(
+            json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            "utf-8",
+        )
+        return validate_lettering_provenance(self.project, self.panel_id)
+
+    def test_glyph_script_and_shaping_are_recomputed_not_trusted(self):
+        """A record must not be able to assert a refused script is letterable.
+
+        Every other verdict in this record is recomputed, so the script and its
+        shaping class are too: otherwise a stale or hand-edited record could
+        label a Hebrew or Devanagari glyph as a linear script and carry that
+        claim past the export gate.
+        """
+        hebrew = {
+            "character": "\u05d0",
+            "codepoint": "U+05D0",
+            "coverage": "supported",
+            "font_id": "NotoSans-Regular.ttf",
+            "item_id": f"{self.panel_id}-t01",
+            "script": "latin",
+            "shaping": "supported",
+            "style": "regular",
+        }
+        cases = (
+            ("glyphs.script", lambda r: r["glyphs"].append(hebrew)),
+            ("glyphs.script", lambda r: r["glyphs"][0].update({"script": "han"})),
+            (
+                "glyphs.character",
+                lambda r: r["glyphs"][0].update({"character": "\u05d0"}),
+            ),
+            ("glyphs.codepoint", lambda r: r["glyphs"][0].update({"codepoint": "0x41"})),
+        )
+        for field, mutate in cases:
+            with self.subTest(field=field):
+                self.assert_stale(self._rewrite_typography(mutate), field)
+
+    def test_preflight_check_records_must_be_complete_and_unique(self):
+        """Passing IDs alone are not evidence that the checks actually ran."""
+        cases = (
+            lambda r: r["checks"].append(dict(r["checks"][0])),
+            lambda r: r.update({
+                "checks": [
+                    {"id": check["id"], "result": "pass"} for check in r["checks"]
+                ]
+            }),
+            lambda r: r["checks"][0].update({"method": "trust-me"}),
+            lambda r: r["checks"][0].update({"reviewer": "someone-else"}),
+            lambda r: r["checks"][0].update({"severity": "warning"}),
+            lambda r: r["checks"][0].update({"evidence": "   "}),
+            lambda r: r["checks"][0].update({"result": "fail"}),
+            lambda r: r.update({"checks": []}),
+        )
+        for index, mutate in enumerate(cases):
+            with self.subTest(case=index):
+                self.assert_stale(
+                    self._rewrite_typography(mutate), "typography.checks"
+                )
+
+    def test_unhashable_check_id_is_reported_rather_than_raised(self):
+        """Malformed JSON must produce an issue, not a TypeError."""
+        for identifier in (["a"], {"a": 1}, None, 42):
+            with self.subTest(identifier=identifier):
+                self.assert_stale(
+                    self._rewrite_typography(
+                        lambda r: r["checks"][0].update({"id": identifier})
+                    ),
+                    "typography.checks",
+                )
+
     def test_missing_or_changed_bound_artifacts_are_stale(self):
         cases = (
             ("panels/p01-02/typography.json", "typography.path", "delete"),

@@ -43,6 +43,10 @@ PREFLIGHT_CHECKS = (
     "typography-shaping-policy",
     "typography-glyph-coverage",
 )
+# Named so that `validate_project` can require the exact values lettering writes
+# rather than accept any record that merely reports a passing result.
+TYPOGRAPHY_CHECK_METHOD = "font-cmap-policy-v1"
+TYPOGRAPHY_CHECK_REVIEWER = "comic-sol"
 TYPOGRAPHY_SCHEMA_VERSION = "1.1"
 
 
@@ -430,9 +434,9 @@ def _preflight_checks(glyphs: Sequence[Mapping[str, object]]) -> list[dict[str, 
         {
             "evidence": evidence[check_id],
             "id": check_id,
-            "method": "font-cmap-policy-v1",
+            "method": TYPOGRAPHY_CHECK_METHOD,
             "result": "pass",
-            "reviewer": "comic-sol",
+            "reviewer": TYPOGRAPHY_CHECK_REVIEWER,
             "severity": "error",
         }
         for check_id in PREFLIGHT_CHECKS

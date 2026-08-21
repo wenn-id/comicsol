@@ -46,9 +46,12 @@ from .schema import (
     MIN_READER_PROJECT_SCHEMA_VERSION,
     SUPPORTED_PROJECT_SCHEMA_VERSIONS,
 )
+from .font_coverage import SHAPING_LINEAR, script_for_codepoint, shaping_policy
 from .typography import (
     LETTERING_GEOMETRY_SCHEMA_VERSION,
     PREFLIGHT_CHECKS,
+    TYPOGRAPHY_CHECK_METHOD,
+    TYPOGRAPHY_CHECK_REVIEWER,
     TYPOGRAPHY_SCHEMA_VERSION,
     lettering_geometry_hash,
 )
@@ -1285,22 +1288,39 @@ def validate_lettering_provenance(
                 "and must be lettered again",
             )
         checks = typography.get("checks")
-        # Check IDs are compared as a set, so they are confirmed to be strings
-        # first: an array or object arriving here from a hand-edited record is
-        # unhashable and would raise instead of being reported as an issue.
+        # IDs are confirmed to be strings before being compared, because an array
+        # or object arriving here from a hand-edited record would raise rather
+        # than be reported. The comparison is against a sorted list rather than a
+        # set so a duplicated entry cannot stand in for a distinct check.
         if (
             not isinstance(checks, list)
             or any(not isinstance(check, dict) for check in checks)
             or any(not isinstance(check.get("id"), str) for check in checks)
         ):
             stale("typography.checks", "typography preflight checks are missing")
-        elif {check["id"] for check in checks} != set(PREFLIGHT_CHECKS):
+        elif sorted(check["id"] for check in checks) != sorted(PREFLIGHT_CHECKS):
             stale(
                 "typography.checks",
                 "typography preflight check set does not match the current policy",
             )
-        elif any(check.get("result") != "pass" for check in checks):
-            stale("typography.checks", "typography preflight check did not pass")
+        else:
+            # Every generated field is verified, so a record stripped down to
+            # passing IDs cannot pose as evidence that the checks ran.
+            for check in checks:
+                evidence = check.get("evidence")
+                if (
+                    check.get("result") != "pass"
+                    or check.get("severity") != "error"
+                    or check.get("reviewer") != TYPOGRAPHY_CHECK_REVIEWER
+                    or check.get("method") != TYPOGRAPHY_CHECK_METHOD
+                    or not isinstance(evidence, str)
+                    or not evidence.strip()
+                ):
+                    stale(
+                        "typography.checks",
+                        "typography preflight check is incomplete or did not pass",
+                    )
+                    break
         glyphs = typography.get("glyphs")
         if not isinstance(glyphs, list):
             stale("glyphs", "typography glyph list is missing")
@@ -1322,11 +1342,39 @@ def validate_lettering_provenance(
                 if glyph.get("coverage") != "supported" or glyph.get("shaping") != "supported":
                     stale("glyphs", "glyph coverage or shaping is unsupported")
                     break
-                script = glyph.get("script")
-                if not isinstance(script, str) or not script:
+                # The script and shaping verdict are recomputed from the recorded
+                # codepoint rather than read back. A record that simply asserted
+                # them could label a Hebrew or Devanagari glyph as a linear
+                # script and carry that claim past this gate.
+                codepoint = glyph.get("codepoint")
+                if (
+                    not isinstance(codepoint, str)
+                    or re.fullmatch(r"U\+[0-9A-F]{4,6}", codepoint) is None
+                ):
+                    stale("glyphs.codepoint", "glyph codepoint is missing or malformed")
+                    break
+                value = int(codepoint[2:], 16)
+                character = glyph.get("character")
+                if (
+                    not isinstance(character, str)
+                    or len(character) != 1
+                    or ord(character) != value
+                ):
+                    stale(
+                        "glyphs.character",
+                        "glyph character does not match its recorded codepoint",
+                    )
+                    break
+                if glyph.get("script") != script_for_codepoint(value):
                     stale(
                         "glyphs.script",
-                        "glyph does not record the script it was checked as",
+                        "glyph script does not match its recorded codepoint",
+                    )
+                    break
+                if shaping_policy(value)[0] != SHAPING_LINEAR:
+                    stale(
+                        "glyphs.shaping",
+                        "glyph codepoint is not letterable under the current policy",
                     )
                     break
 

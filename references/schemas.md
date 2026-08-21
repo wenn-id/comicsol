@@ -627,7 +627,7 @@ migrated.
 | `schema_version` | Always `1.1`. Version `1.0` records predate the script coverage policy and are reported stale. |
 | `status` | Always `pass`. Preflight raises instead of persisting a failing record. |
 | `issues` | Always `[]`, for the same reason. |
-| `checks` | One entry per performed check, currently `typography-shaping-policy` and `typography-glyph-coverage`. Each carries `id`, `result` (`pass`), `severity` (`error`), `method` (`font-cmap-policy-v1`), `reviewer`, and `evidence`. |
+| `checks` | Exactly one entry per performed check, currently `typography-shaping-policy` and `typography-glyph-coverage`. Each carries `id`, `result` (`pass`), `severity` (`error`), `method` (`font-cmap-policy-v1`), `reviewer` (`comic-sol`), and non-empty `evidence`. Duplicated IDs and omitted fields are rejected, so a record reduced to passing IDs cannot pose as evidence the checks ran. |
 | `glyphs` | One entry per visible character: `character`, `codepoint` (`U+XXXX`), `coverage` (`supported`), `shaping` (`supported`), `script`, `style` (`regular` or `bold`), `font_id`, and `item_id`. `font_id` is a bare file name, never a path and never `.notdef`. |
 | `non_glyphs` | One entry per character with no drawn glyph: `codepoint`, `item_id`, and `policy` (`line-break` or `normalized-space`). |
 | `scripts` | Roll-up of which faces served which script: `script`, `codepoints`, and sorted `font_ids`. Its `codepoints` total equals the length of `glyphs`. |
@@ -638,6 +638,11 @@ migrated.
 Characters are checked as the renderer will draw them: normalized to NFC, and
 uppercased for `dialogue`. Uppercasing can move a character into a different Unicode
 block, so `script` reflects the displayed form.
+
+Validation recomputes rather than reads back. `character` must agree with `codepoint`,
+`script` must be the script that codepoint actually belongs to, and that codepoint must
+still be letterable under the current policy. A record therefore cannot assert that a
+bidirectional or reordering script is fine and carry the claim past the export gate.
 
 Script names, block ranges, and shaping classification come from
 `scripts/font_coverage.py`, whose `main()` prints the coverage inventory. A script is

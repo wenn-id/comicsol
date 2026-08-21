@@ -26,7 +26,12 @@
 - Typography preflight records the checks it performed — `typography-shaping-policy` and
   `typography-glyph-coverage` — and rolls up which face served which script, so an
   unintended font substitution is visible in the record instead of only on the page.
-  `validate_lettering_provenance` verifies both, plus each glyph's recorded script.
+  `validate_lettering_provenance` recomputes rather than reads back: each glyph's
+  `character` must agree with its `codepoint`, its `script` must be the script that
+  codepoint belongs to, and that codepoint must still be letterable, so a stale or edited
+  record cannot label a bidirectional or reordering script as linear and carry the claim
+  past the export gate. Check records are verified field by field and rejected when
+  duplicated, so a record reduced to passing IDs cannot pose as evidence the checks ran.
 - Added `tests/fixtures/typography-scripts/`: 17 fixtures that drive the supported set
   from data, so declaring a script means adding a file rather than editing a test body.
   Lettering integration coverage now renders the newly declared scripts and asserts every
