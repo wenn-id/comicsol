@@ -170,12 +170,35 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
     )
     RECORD = "docs/releases/milestone-delivery.md"
 
+    # The first released heading below the Unreleased section. Splitting on it is
+    # how the delivered-but-unreleased scope is isolated, so its absence has to be
+    # a failure rather than a silently wider search.
+    RELEASE_BOUNDARY = "## 2.0.0rc4"
+
     @classmethod
     def setUpClass(cls):
         cls.root = Path(__file__).resolve().parents[1]
         cls.record = (cls.root / cls.RECORD).read_text(encoding="utf-8")
         cls.changelog = (cls.root / "CHANGELOG.md").read_text(encoding="utf-8")
+        cls.readme = (cls.root / "README.md").read_text(encoding="utf-8")
         cls.sections = cls._sections(cls.record)
+
+    def _unreleased_changelog(self):
+        """Return only the Unreleased section, refusing to guess its extent.
+
+        Without the boundary check a renamed or deleted `2.0.0rc4` heading would
+        make every assertion below search the whole changelog, so four shipped
+        releases' worth of prose could satisfy a claim about unreleased work. That
+        fails open in exactly the direction this suite exists to prevent.
+        """
+        self.assertIn("## Unreleased", self.changelog)
+        self.assertIn(
+            self.RELEASE_BOUNDARY,
+            self.changelog,
+            "the first released heading is missing, so the Unreleased section "
+            "cannot be isolated",
+        )
+        return self.changelog.split(self.RELEASE_BOUNDARY, 1)[0]
 
     @staticmethod
     def _sections(text):
@@ -272,11 +295,18 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
             self.assertIn(phrase, self.record)
 
     def test_changelog_points_at_the_record_and_states_the_release_status(self):
-        unreleased = self.changelog.split("## 2.0.0rc4", 1)[0]
+        unreleased = self._unreleased_changelog()
         self.assertIn(self.RECORD, unreleased)
         self.assertIn("unreleased", unreleased.lower())
         for milestone in ("v2.1", "v2.2"):
             self.assertIn(milestone, unreleased)
+
+    def test_readme_points_at_the_record_and_states_the_release_status(self):
+        """A record nobody can find from the README is a record nobody reads."""
+        self.assertIn(self.RECORD, self.readme)
+        self.assertIn("unreleased", self.readme.lower())
+        for milestone in ("v2.1", "v2.2"):
+            self.assertIn(milestone, self.readme)
 
     def test_delivered_v2_1_and_v2_2_work_is_described_in_the_changelog(self):
         """Each delivered issue's headline artifact must appear in the CHANGELOG.
@@ -286,7 +316,7 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         mentioned them. Each probe is an identifier the change introduced, so it
         cannot be satisfied by unrelated prose.
         """
-        unreleased = self.changelog.split("## 2.0.0rc4", 1)[0].lower()
+        unreleased = self._unreleased_changelog().lower()
         evidence = {
             "CS-011": "scripts/benchmark.py",
             "CS-012": "benchmark corpus",
