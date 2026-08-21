@@ -35,6 +35,7 @@ and 720x1064 for `p01-02` and `p01-03`.
 | `bad-tail-voice-source.json` | Tail voice source that disagrees with the storyboard. |
 | `bad-tail-detached.json` | An attachment inside the bounding box but off the drawn ellipse. |
 | `bad-swapped-speaker-attribution.json` | Attribution naming a different character than the storyboard, as swapped speakers leave behind. |
+| `bad-canonical-speaker-drift.json` | Only the canonical speaker ID is wrong; the authored echo still matches. |
 | `bad-missing-speaker-attribution.json` | A balloon retained with no attribution to verify at all. |
 | `bad-attribution-anchor-drift.json` | Attribution bound to a voice source the tail was not drawn toward. |
 | `warn-crowded-coverage.json` | One balloon covering more of the panel than the reading budget allows. |

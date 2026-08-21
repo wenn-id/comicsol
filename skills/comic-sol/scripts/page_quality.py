@@ -357,12 +357,22 @@ def _tail_geometry_regions(
             reason = "missing-tail"
         elif not _attribution_is_complete(attribution):
             reason = "missing-attribution"
-        elif attribution["speaker"] != item.get("speaker") and (  # type: ignore[index]
-            attribution["authored_speaker"] != item.get("speaker")  # type: ignore[index]
+        elif any(
+            attribution[field] != item.get("speaker")  # type: ignore[index]
+            for field in ("authored_speaker", "speaker")
         ):
             # A balloon retained against a different character than the storyboard
             # gives it is the exact defect a swapped pair of speakers produces, and
             # neither balloon's geometry looks wrong on its own.
+            #
+            # Both retained fields must agree, not just one: the canonical
+            # `speaker` is the identity every consumer reads, so accepting a
+            # record whose authored echo still matched would let that field be
+            # wrong silently. Requiring both is exact here because a validated
+            # storyboard authors a character-bible ID, which is what the renderer
+            # resolves and stores in both fields. An `inferred` record — which
+            # only a storyboard that failed validation by authoring a display name
+            # could produce — therefore fails closed rather than being trusted.
             reason = "speaker-mismatch"
         elif tail.get("speaker_anchor") != anchor:
             reason = "speaker-anchor-mismatch"

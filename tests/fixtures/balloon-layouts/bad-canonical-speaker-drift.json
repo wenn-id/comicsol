@@ -1,0 +1,26 @@
+{
+  "description": "Only the canonical speaker ID is wrong while the authored echo still matches the storyboard. The canonical field is the identity every consumer reads, so agreeing on one field is not enough to trust the record.",
+  "expected_check": "bubble-tail-geometry",
+  "expected_decision": "regenerate",
+  "expected_reasons": [
+    "speaker-mismatch"
+  ],
+  "expected_result": "fail",
+  "panels": {
+    "p01-02": {
+      "replace": {
+        "p01-02-t01": {
+          "attribution": {
+            "authored_speaker": "mira",
+            "resolution": "declared",
+            "speaker": "ren",
+            "speaker_anchor": [
+              0.7,
+              0.55
+            ]
+          }
+        }
+      }
+    }
+  }
+}

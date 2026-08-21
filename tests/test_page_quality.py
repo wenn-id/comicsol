@@ -434,7 +434,7 @@ class BalloonPlacementQualityTests(unittest.TestCase):
 
     def test_named_balloon_layouts_reach_their_expected_verdict(self):
         paths = sorted(BALLOON_LAYOUTS.glob("*.json"))
-        self.assertEqual(12, len(paths))
+        self.assertEqual(13, len(paths))
         for path in paths:
             layout = json.loads(path.read_text("utf-8"))
             with self.subTest(layout=path.stem):
@@ -994,6 +994,36 @@ class MultiSpeakerAttributionQualityTests(unittest.TestCase):
             ],
             checks["bubble-tail-geometry"]["regions"],
         )
+
+    def test_either_retained_identity_field_disagreeing_is_detected(self):
+        # Corrupting one field while the other still matches must not pass. The
+        # canonical `speaker` is the identity consumers read, so a record that
+        # agrees only on the authored echo is not trustworthy.
+        for field in ("speaker", "authored_speaker"):
+            with self.subTest(field=field):
+                project = self._fresh_project()
+                path = self._geometry_path(project)
+                geometry = json.loads(path.read_text("utf-8"))
+                items = {item["id"]: item for item in geometry["items"]}
+                attribution = items[self.text_ids[0]]["attribution"]
+                self.assertEqual("mira", attribution[field])
+                attribution[field] = "ren"
+                path.write_text(
+                    json.dumps(geometry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                    "utf-8",
+                )
+
+                record, checks = self._checks(project)
+
+                self.assertEqual("regenerate", record["decision"])
+                self.assertEqual(
+                    [{
+                        "panel_id": "p01-02",
+                        "reason": "speaker-mismatch",
+                        "text_id": self.text_ids[0],
+                    }],
+                    checks["bubble-tail-geometry"]["regions"],
+                )
 
     def test_lettering_provenance_stays_current_for_both_speakers(self):
         project = self._fresh_project()

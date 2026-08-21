@@ -651,7 +651,13 @@ box; `balloon-subject-obstruction` regions report the measured `clearance` and t
 `missing-attribution` and `speaker-mismatch` audit identity rather than shape:
 they compare the placement's retained `attribution` against the speaker the
 storyboard authored, which is how a swapped pair of speakers is caught when both
-tails are drawn correctly. `attribution-anchor-mismatch` is checked last and
+tails are drawn correctly. `speaker-mismatch` requires *both* `speaker` and
+`authored_speaker` to equal the storyboard's `speaker`, because the canonical
+`speaker` is the identity consumers read and a record agreeing on only the
+authored echo would leave it wrong silently. This is exact for a validated
+storyboard, which authors a character-bible ID; an `inferred` record therefore
+fails closed here, and only a storyboard that failed validation by authoring a
+display name could produce one. `attribution-anchor-mismatch` is checked last and
 against the drawn tail, so a storyboard edit is still reported as an anchor
 mismatch and what remains here is attribution naming a voice source the tail was
 never aimed at. `detached-tail` is measured against the ellipse
