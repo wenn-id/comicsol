@@ -38,7 +38,9 @@ class ReleaseDocumentationTests(unittest.TestCase):
         self.assertIn("docs/releases/v2.0-stable-criteria.md", self.readme)
         self.assertIn("MCP trust boundary", self.install)
         self.assertIn("MCP trust boundary", self.readme)
-        self.assertIn("v2.0.0rc4", self.readme)
+        # Pinned to the current version rather than a literal, so a release bump
+        # cannot leave the README advertising the previous distribution.
+        self.assertIn(f"v{__version__}", self.readme)
         self.assertIn("SHA256SUMS", self.readme)
         self.assertIn("sigstore", self.readme.lower())
         self.assertIn("docker compose", self.install)
@@ -187,6 +189,59 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         cls.readme = (cls.root / "README.md").read_text(encoding="utf-8")
         cls.sections = cls._sections(cls.record)
 
+    def _changelog_sections(self):
+        """Return `{heading: body}` for every `## ` section of the changelog."""
+        headings = list(
+            re.finditer(r"(?m)^##[ \t]+(?P<name>\S.*?)[ \t]*$", self.changelog)
+        )
+        self.assertTrue(headings, "the changelog has no section headings")
+        sections = {}
+        for index, match in enumerate(headings):
+            end = (
+                headings[index + 1].start()
+                if index + 1 < len(headings)
+                else len(self.changelog)
+            )
+            sections[match.group("name")] = self.changelog[match.end():end]
+        return sections
+
+    def _carrying_section(self, released):
+        """Return the changelog heading that must describe a milestone's work.
+
+        Delivered work moves out of `Unreleased` and into a version section the
+        moment a tag is prepared, so the evidence check follows it rather than
+        assuming one location. The record's own `Released` cell decides where to
+        look, which keeps the two documents from drifting apart: a milestone marked
+        released in a tag whose section does not exist fails here.
+        """
+        sections = self._changelog_sections()
+        if released.startswith("No"):
+            self.assertIn("Unreleased", sections)
+            return sections["Unreleased"]
+        cited = re.findall(r"\d+\.\d+\.\d+rc\d+", released)
+        self.assertTrue(cited, f"{released!r} names no tag")
+        matches = [
+            body
+            for heading, body in sections.items()
+            if any(heading.startswith(tag) for tag in cited)
+        ]
+        self.assertTrue(
+            matches,
+            f"no changelog section for {cited}; a milestone cannot be released by a "
+            "tag the changelog never describes",
+        )
+        return "\n".join(matches)
+
+    def _released_by_milestone(self):
+        """Return `{milestone: released cell}` from the status summary."""
+        return {
+            name.strip(): released.strip()
+            for name, _, released in re.findall(
+                r"\|\s*(v\d+\.\d+ — [^|]+?)\s*\|\s*(\d+)\s*\|\s*[^|]+?\s*\|\s*([^|]+?)\s*\|",
+                self.record,
+            )
+        }
+
     def _unreleased_changelog(self):
         """Return only the Unreleased section, refusing to guess its extent.
 
@@ -318,7 +373,14 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         merged, published = self._timeline()
         for milestone in self.DELIVERED:
             self.assertIn(milestone, merged, f"{milestone} has no recorded merge window")
-        self.assertEqual(4, len(published), published)
+        # Counted against the current version rather than a literal, so preparing a
+        # release cannot leave the timeline a tag behind.
+        self.assertIn(
+            __version__,
+            published,
+            f"the tag table has no row for the current version {__version__}",
+        )
+        self.assertGreaterEqual(len(published), len(self.DELIVERED))
 
     def test_no_milestone_claims_a_release_it_merged_after(self):
         """A `Released` cell must be `No`, or name a tag published after the work.
@@ -341,6 +403,12 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         self.assertEqual(len(self.MILESTONES), len(summary), summary)
         for milestone, status, released in summary:
             with self.subTest(milestone=milestone):
+                # Without this, a delivered milestone could carry any status word and
+                # skip every check below by simply not saying `Planned`.
+                self.assertEqual(
+                    "Delivered" if milestone in self.DELIVERED else "Planned",
+                    status,
+                )
                 if status == "Planned":
                     self.assertEqual("—", released)
                     continue
@@ -380,12 +448,17 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
             self.assertIn(phrase, self.record)
         self.assertIn("unreleased", self.record.lower())
 
-    def test_changelog_points_at_the_record_and_states_the_release_status(self):
-        unreleased = self._unreleased_changelog()
-        self.assertIn(self.RECORD, unreleased)
-        self.assertIn("unreleased", unreleased.lower())
-        for milestone in ("v2.1", "v2.2"):
-            self.assertIn(milestone, unreleased)
+    def test_changelog_points_at_the_record_and_names_its_milestones(self):
+        """The section carrying the work must cite the record and name what it carries."""
+        released = self._released_by_milestone()
+        for milestone in self.DELIVERED:
+            body = self._carrying_section(released[milestone])
+            label = milestone.split(" — ", 1)[0]
+            with self.subTest(milestone=milestone):
+                self.assertIn(self.RECORD, body)
+                self.assertIn(label, body)
+        # Whatever it carries, the changelog must still say where the record lives.
+        self.assertIn(self.RECORD, self._unreleased_changelog())
 
     def test_unreleased_slice_excludes_a_newly_cut_release_section(self):
         """The slice must not widen the moment the next tag is cut.
@@ -460,19 +533,15 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         restated here — adding a delivered milestone without extending `evidence`
         fails instead of silently narrowing the check.
         """
-        # Whitespace is collapsed so a probe cannot be defeated by where a line
-        # happens to wrap. `clean-install verification` spanning two lines is a
-        # formatting detail, not a missing entry.
-        unreleased = " ".join(self._unreleased_changelog().lower().split())
         evidence = {
             "CS-001": "v2.0-stable-criteria",
             "CS-002": "tests/golden/mini-comic",
             "CS-003": "resume requires a blocked project",
-            "CS-004": "test_lifecycle_failures.py",
-            "CS-005": "clean-install verification",
+            "CS-004": "lifecycle failure-injection suite",
+            "CS-005": "clean-install verification across the supported platforms",
             "CS-006": "doctor_report()",
             "CS-007": "supported_project_schema_versions",
-            "CS-008": "failure-injection",
+            "CS-008": "audited installer lifecycle safety",
             "CS-009": "comic_sol_product.errors",
             "CS-010": "release_qualification.py",
             "CS-011": "scripts/benchmark.py",
@@ -505,14 +574,84 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
             "the delivered set and this test's evidence map disagree; a milestone "
             "marked delivered must have one evidence probe per issue",
         )
+        # Whitespace is collapsed so a probe cannot be defeated by where a line
+        # happens to wrap. `clean-install verification` spanning two lines is a
+        # formatting detail, not a missing entry.
+        released = self._released_by_milestone()
+        bodies = {
+            milestone: " ".join(
+                self._carrying_section(released[milestone]).lower().split()
+            )
+            for milestone in self.DELIVERED
+        }
+        owner = {
+            identifier: milestone
+            for milestone in self.DELIVERED
+            for _, identifier, _ in self._issue_rows(self.sections[milestone])
+        }
         for identifier, phrase in sorted(evidence.items()):
-            with self.subTest(identifier=identifier):
+            milestone = owner[identifier]
+            with self.subTest(identifier=identifier, milestone=milestone):
                 self.assertIn(
                     phrase.lower(),
-                    unreleased,
-                    f"{identifier} is recorded as delivered but the CHANGELOG never "
+                    bodies[milestone],
+                    f"{identifier} is recorded as delivered by {milestone} "
+                    f"({released[milestone]}) but that CHANGELOG section never "
                     f"mentions {phrase!r}",
                 )
+        self._assert_each_issue_owns_a_distinct_entry(evidence, owner, released)
+
+    def _assert_each_issue_owns_a_distinct_entry(self, evidence, owner, released):
+        """Every delivered issue must be evidenced by an entry of its own.
+
+        A phrase that appears somewhere in the section is not enough. Twice now a
+        probe passed by matching *another* issue's entry: `CS-007` matched
+        `UnsupportedSchemaVersionError` inside the page-QA migration bullet that
+        belongs to `CS-035`, and `CS-008` matched the `failure-injection` bullet that
+        belongs to `CS-004` — so both were undocumented while appearing covered.
+
+        Requiring a distinct owning bullet per issue closes that whole class rather
+        than the two instances. It is a bipartite matching: if no assignment of
+        issues to distinct bullets exists, at least two issues are leaning on one
+        entry, and the smallest such group is reported.
+        """
+        for milestone in self.DELIVERED:
+            bullets = [
+                " ".join(bullet.lower().split())
+                for bullet in re.split(
+                    r"\n(?=- )", self._carrying_section(released[milestone])
+                )
+            ]
+            candidates = {
+                identifier: {
+                    index
+                    for index, bullet in enumerate(bullets)
+                    if evidence[identifier].lower() in bullet
+                }
+                for identifier in sorted(evidence)
+                if owner[identifier] == milestone
+            }
+            assigned: dict[int, str] = {}
+
+            def claim(identifier, seen):
+                for index in sorted(candidates[identifier]):
+                    if index in seen:
+                        continue
+                    seen.add(index)
+                    holder = assigned.get(index)
+                    if holder is None or claim(holder, seen):
+                        assigned[index] = identifier
+                        return True
+                return False
+
+            for identifier in candidates:
+                with self.subTest(milestone=milestone, identifier=identifier):
+                    self.assertTrue(
+                        claim(identifier, set()),
+                        f"{identifier} has no CHANGELOG entry of its own in "
+                        f"{milestone}; its probe {evidence[identifier]!r} only "
+                        "matches an entry another issue already accounts for",
+                    )
 
 
 if __name__ == "__main__":
