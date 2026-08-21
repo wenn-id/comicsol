@@ -121,6 +121,11 @@ manifest signature and archive digest before execution. Exact install, upgrade, 
 uninstall, and security instructions are in [`docs/install.md`](docs/install.md). The authoritative
 stable-release checklist is [`docs/releases/v2.0-stable-criteria.md`](docs/releases/v2.0-stable-criteria.md).
 
+What each milestone delivered, and which issue and pull request delivered it, is recorded in
+[`docs/releases/milestone-delivery.md`](docs/releases/milestone-delivery.md). Milestones v2.1
+and v2.2 are complete and unreleased; their changes ship in the first tag after `2.0.0rc4`
+and are listed under Unreleased in [`CHANGELOG.md`](CHANGELOG.md).
+
 Container and Compose deployment commands are documented in
 [`docs/install.md`](docs/install.md); they are optional and are not required for
 the normal local CLI workflow.

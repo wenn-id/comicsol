@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Milestones v2.1 — Reliability & DX and v2.2 — Comic Quality are delivered in full and are
+unreleased: every change below ships in the next tag after `2.0.0rc4`.
+`docs/releases/milestone-delivery.md` records which issue and pull request delivered each
+one.
+
 ### Added
 
 - Made SFX handling explicit enough to verify or replace. SFX was the one text kind Comic
@@ -158,6 +163,57 @@
   score report only what a reviewer actually scored, an unscored dimension is never
   averaged in as a zero, and an unattributable score or a scorecard from another
   definition is refused rather than summarized.
+- Human lifecycle commands now report stage-aware progress. `resume` and `finalize` emit
+  `WORKING`, `BLOCKED`, `FAILED`, and `COMPLETE` lines naming the current stage and the
+  completed/remaining counts, so a long run is legible instead of silent. Progress goes to
+  `stderr` only and results stay on `stdout`, so a script consuming output is unaffected;
+  `--json` remains exactly one parseable envelope with no progress on either stream. An
+  intermediate resume result no longer prints as though the project had completed, and a
+  progress stream that cannot be written cannot change the lifecycle result.
+- Added `docs/onboarding.md`: one linear path from install to a first finished comic, linked
+  from the README introduction and the top of `docs/install.md`. A first run previously had
+  to be assembled from four documents, none of which said what to do first or that `doctor`
+  exists before any story is written. The page carries the shortest supported install per
+  platform, runs `doctor` before authoring, states in plain language that Comic Sol does not
+  generate images itself, gives one example prompt with the per-platform output root, and
+  maps every failing `doctor` check id to its recovery — while release archives, checksum
+  verification, MCP setup, non-Codex providers, and containers stay linked rather than
+  inlined so the happy path stays short.
+- Published official example projects: `samples/README.md` indexes them with explicit
+  evidence tiers, and two new projects join the existing `sunlight-courier` —
+  `first-light-signal` (one page, three panels) and `the-quiet-ledger` (four pages, eleven
+  panels, four distinct layouts, two recurring characters, and one authored SFX, which sits
+  deliberately at the supported ceiling). `scripts/build_examples.py` replays the
+  deterministic half of the pipeline over an example's committed inputs through the exported
+  PDF and validates it at the `final` stage, synthesizing panel artwork locally so no
+  provider, credential, or downloaded asset is involved. Exports are reproduced on demand
+  rather than tracked, so the examples add zero new binaries and no placeholder geometry is
+  presented as finished artwork; `tests/test_examples.py` keeps them honest.
+- Added `AGENTS.md`, a development constitution for agents changing engine code, tests,
+  packaging, CI, or docs. Its eight articles — schema change safety, project-data
+  preservation, the provider credential boundary, path containment, regression-test
+  requirements, deterministic and atomic writes, resumability and public JSON
+  compatibility, and full verification before claiming completion — are each grounded in a
+  gate that already exists rather than in invented policy. It defers to human review,
+  `CONTRIBUTING.md`, `SECURITY.md`, `PRIVACY.md`, and the v2.0 stable criteria, with the
+  stricter policy winning any conflict, and it separates its own scope from `SKILL.md`,
+  which governs the production agent rather than repository development. A waiver requires a
+  recorded maintainer decision. `tests/test_agent_constitution.py` derives the resume-stage
+  list from `scripts.stage_registry.RESUME_STAGES`, so adding a stage without updating the
+  constitution fails.
+- Added the Character Identity Pack at `plan/character-identity-pack.json`: one versioned
+  artifact per project holding every character's stable visual identity, which panel prompts
+  now embed instead of paraphrasing the character bible again per panel. Nothing previously
+  bound one panel's wording to the next, so identity drift was the expected outcome rather
+  than an anomaly. The pack is *derived* rather than hand-authored, which is what makes it
+  deterministic: `scripts/character_identity.py --derive` derives, validates, and publishes
+  atomically through the project transaction, and re-running it on an unchanged project
+  rewrites byte-identical content, so a resume or a retry embeds the same identity clause the
+  accepted panels were generated against. `--check` fails closed before generation on a
+  missing, invalid, stale, unbacked, or tampered pack, and `--panel PANEL_ID` prints the
+  deterministic, provider-neutral `IDENTITY LOCK` block. Authored additions survive
+  re-derivation — extra reference views and `proportions.notes` are preserved while every
+  bible-derived field is rebuilt — so a pack can never quietly disagree with the bible.
 - Added a shot-aware character reference strategy (`scripts/reference_strategy.py`) that
   classifies each storyboard panel's authored `shot` into close-up, profile,
   three-quarter, full-body, or unclassified by its earliest framing cue, then selects the

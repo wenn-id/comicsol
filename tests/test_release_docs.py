@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -145,6 +146,185 @@ class ReleaseDocumentationTests(unittest.TestCase):
         self.assertNotIn("fal_ge...mage", provider_setup)
         self.assertIn("`pdf_verification` at `exports/pdf-verification.json`", workflow)
         self.assertIn("no Comic Sol account or demo credentials", public_docs)
+
+
+class MilestoneDeliveryRecordTests(unittest.TestCase):
+    """Keep the milestone delivery record from silently omitting a delivered change.
+
+    The record exists because a completed milestone was previously auditable only by
+    reading the commit history, and five delivered issues had reached `main` with no
+    entry in `CHANGELOG.md` at all. These checks are what make "nothing was missed" a
+    property the suite enforces rather than a claim someone made once.
+
+    Everything here is derived from the document itself, so the suite stays offline.
+    Whether an issue is genuinely closed on GitHub is not checkable here; what is
+    checkable is that the record is internally consistent, cites a pull request for
+    every delivered issue, and never lists one issue twice.
+    """
+
+    MILESTONES = (
+        "v2.0 — Stability",
+        "v2.1 — Reliability & DX",
+        "v2.2 — Comic Quality",
+        "v2.3 — User Experience",
+    )
+    RECORD = "docs/releases/milestone-delivery.md"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(__file__).resolve().parents[1]
+        cls.record = (cls.root / cls.RECORD).read_text(encoding="utf-8")
+        cls.changelog = (cls.root / "CHANGELOG.md").read_text(encoding="utf-8")
+        cls.sections = cls._sections(cls.record)
+
+    @staticmethod
+    def _sections(text):
+        """Split the record into `{milestone heading: body}`."""
+        sections = {}
+        heading = None
+        for line in text.splitlines():
+            if line.startswith("## "):
+                heading = line[3:].strip()
+                sections[heading] = []
+            elif heading is not None:
+                sections[heading].append(line)
+        return {name: "\n".join(body) for name, body in sections.items()}
+
+    @classmethod
+    def _issue_rows(cls, body):
+        """Return `[(issue, cs_id, pr_or_None)]` for one milestone table."""
+        rows = []
+        for line in body.splitlines():
+            issue = re.match(r"\|\s*\[#(\d+)\]\(", line)
+            if issue is None:
+                continue
+            identifier = re.search(r"`(CS-\d+)`", line)
+            pull = re.findall(r"\[#(\d+)\]\(\S+/pull/\d+\)", line)
+            rows.append((
+                int(issue.group(1)),
+                identifier.group(1) if identifier else None,
+                int(pull[0]) if pull else None,
+            ))
+        return rows
+
+    def test_every_milestone_has_a_section(self):
+        for milestone in self.MILESTONES:
+            self.assertIn(milestone, self.sections, milestone)
+
+    def test_summary_counts_match_the_listed_issues(self):
+        summary = dict(
+            (name.strip(), int(count))
+            for name, count in re.findall(
+                r"\|\s*(v\d+\.\d+ — [^|]+?)\s*\|\s*(\d+)\s*\|", self.record
+            )
+        )
+        self.assertEqual(set(self.MILESTONES), set(summary))
+        for milestone in self.MILESTONES:
+            listed = self._issue_rows(self.sections[milestone])
+            self.assertEqual(
+                summary[milestone],
+                len(listed),
+                f"{milestone}: summary says {summary[milestone]}, "
+                f"table lists {len(listed)}",
+            )
+
+    def test_no_issue_is_recorded_twice(self):
+        issues = [
+            issue
+            for milestone in self.MILESTONES
+            for issue, _, _ in self._issue_rows(self.sections[milestone])
+        ]
+        duplicated = sorted({n for n in issues if issues.count(n) > 1})
+        self.assertEqual([], duplicated, f"issues listed more than once: {duplicated}")
+        self.assertEqual(len(issues), len(set(issues)))
+
+    def test_every_delivered_issue_cites_a_closing_pull_request(self):
+        for milestone in self.MILESTONES:
+            delivered = "Delivered" in self.sections[milestone] or milestone.startswith(
+                ("v2.0", "v2.1", "v2.2")
+            )
+            for issue, identifier, pull in self._issue_rows(self.sections[milestone]):
+                with self.subTest(milestone=milestone, issue=issue):
+                    self.assertIsNotNone(identifier, f"#{issue} has no CS identifier")
+                    if delivered:
+                        self.assertIsNotNone(
+                            pull, f"#{issue} is delivered but cites no pull request"
+                        )
+
+    def test_identifiers_are_unique_and_well_formed(self):
+        identifiers = [
+            identifier
+            for milestone in self.MILESTONES
+            for _, identifier, _ in self._issue_rows(self.sections[milestone])
+            if identifier
+        ]
+        self.assertEqual(len(identifiers), len(set(identifiers)))
+
+    def test_record_is_not_mistaken_for_a_release_announcement(self):
+        # The milestone labels are planning names. Presenting them as tags would imply
+        # releases that do not exist, and the published version is still a prerelease.
+        for phrase in (
+            "not** version tags",
+            "The published version is `2.0.0rc4`",
+            "unreleased",
+            "docs/releases/v2.0-stable-criteria.md",
+        ):
+            self.assertIn(phrase, self.record)
+
+    def test_changelog_points_at_the_record_and_states_the_release_status(self):
+        unreleased = self.changelog.split("## 2.0.0rc4", 1)[0]
+        self.assertIn(self.RECORD, unreleased)
+        self.assertIn("unreleased", unreleased.lower())
+        for milestone in ("v2.1", "v2.2"):
+            self.assertIn(milestone, unreleased)
+
+    def test_delivered_v2_1_and_v2_2_work_is_described_in_the_changelog(self):
+        """Each delivered issue's headline artifact must appear in the CHANGELOG.
+
+        This is the check that would have caught the original omission: `CS-015`
+        through `CS-019` were delivered and closed while the CHANGELOG never
+        mentioned them. Each probe is an identifier the change introduced, so it
+        cannot be satisfied by unrelated prose.
+        """
+        unreleased = self.changelog.split("## 2.0.0rc4", 1)[0].lower()
+        evidence = {
+            "CS-011": "scripts/benchmark.py",
+            "CS-012": "benchmark corpus",
+            "CS-013": "consistency_benchmark",
+            "CS-014": "benchmark_summary.py",
+            "CS-015": "`blocked`, `failed`, and `complete`",
+            "CS-016": "docs/onboarding.md",
+            "CS-017": "scripts/build_examples.py",
+            "CS-018": "agents.md",
+            "CS-019": "plan/character-identity-pack.json",
+            "CS-020": "scripts/reference_strategy.py",
+            "CS-021": "character-consistency qa",
+            "CS-022": "scripts/repair_strategy.py",
+            "CS-023": "balloon-crowding",
+            "CS-024": "dialogue-attribution-ambiguous",
+            "CS-025": "scripts/font_coverage.py",
+            "CS-026": "scripts/sfx_verification.py",
+            "CS-034": "dialogue_correctness",
+            "CS-035": "page_qa_migrations",
+        }
+        recorded = {
+            identifier
+            for milestone in ("v2.1 — Reliability & DX", "v2.2 — Comic Quality")
+            for _, identifier, _ in self._issue_rows(self.sections[milestone])
+        }
+        self.assertEqual(
+            recorded,
+            set(evidence),
+            "the delivered set and this test's evidence map disagree",
+        )
+        for identifier, phrase in sorted(evidence.items()):
+            with self.subTest(identifier=identifier):
+                self.assertIn(
+                    phrase.lower(),
+                    unreleased,
+                    f"{identifier} is recorded as delivered but the CHANGELOG never "
+                    f"mentions {phrase!r}",
+                )
 
 
 if __name__ == "__main__":
