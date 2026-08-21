@@ -46,7 +46,12 @@ from .schema import (
     MIN_READER_PROJECT_SCHEMA_VERSION,
     SUPPORTED_PROJECT_SCHEMA_VERSIONS,
 )
-from .typography import LETTERING_GEOMETRY_SCHEMA_VERSION, lettering_geometry_hash
+from .typography import (
+    LETTERING_GEOMETRY_SCHEMA_VERSION,
+    PREFLIGHT_CHECKS,
+    TYPOGRAPHY_SCHEMA_VERSION,
+    lettering_geometry_hash,
+)
 
 from .comic_sol import (
     ALL_STATUSES,
@@ -1270,6 +1275,27 @@ def validate_lettering_provenance(
     if isinstance(typography, dict):
         if typography.get("status") != "pass" or typography.get("issues") != []:
             stale("typography.status", "typography preflight is not a clean pass")
+        if typography.get("schema_version") != TYPOGRAPHY_SCHEMA_VERSION:
+            # The preflight record is fully derived from the storyboard text and
+            # the font policy, so an older record is re-lettered under the
+            # current script policy rather than migrated in place.
+            stale(
+                "typography.schema_version",
+                "typography preflight predates the script coverage policy "
+                "and must be lettered again",
+            )
+        checks = typography.get("checks")
+        if not isinstance(checks, list) or any(
+            not isinstance(check, dict) for check in checks
+        ):
+            stale("typography.checks", "typography preflight checks are missing")
+        elif {check.get("id") for check in checks} != set(PREFLIGHT_CHECKS):
+            stale(
+                "typography.checks",
+                "typography preflight check set does not match the current policy",
+            )
+        elif any(check.get("result") != "pass" for check in checks):
+            stale("typography.checks", "typography preflight check did not pass")
         glyphs = typography.get("glyphs")
         if not isinstance(glyphs, list):
             stale("glyphs", "typography glyph list is missing")
@@ -1290,6 +1316,13 @@ def validate_lettering_provenance(
                     break
                 if glyph.get("coverage") != "supported" or glyph.get("shaping") != "supported":
                     stale("glyphs", "glyph coverage or shaping is unsupported")
+                    break
+                script = glyph.get("script")
+                if not isinstance(script, str) or not script:
+                    stale(
+                        "glyphs.script",
+                        "glyph does not record the script it was checked as",
+                    )
                     break
 
     bindings = geometry.get("bindings")

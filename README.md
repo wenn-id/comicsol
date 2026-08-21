@@ -308,9 +308,16 @@ Dialogue is rendered in uppercase, while authored caption casing is preserved.
 Dialogue uses bundled Comic Neue Regular, and inline `**bold**` emphasis uses Comic
 Neue Bold with wrapping and centering measured across the mixed runs. Font selection
 is per-character: bundled Noto Sans covers Greek and Cyrillic when Comic Neue does not,
-while a character absent from both fonts is preserved as Noto Sans `.notdef` rather
-than silently dropped. The `--font` option still overrides the regular dialogue font;
-its bold counterpart may fall back to Comic Neue Bold.
+and an optional per-script face given as `--font-script SCRIPT=PATH` is consulted last,
+which is how CJK, kana, Hangul syllables, Armenian, Georgian, and Ethiopic letter
+without bundling their fonts. Typography preflight refuses text that no configured face
+covers before any panel is written, so `.notdef` fallback boxes are not a pipeline
+outcome; `letter_panel()` called directly still preserves a character absent from every
+face as a Noto Sans `.notdef` rather than silently dropping it. The `--font` option
+still overrides the regular dialogue font; its bold counterpart may fall back to
+Comic Neue Bold. Run `scripts/font_coverage.py` for the coverage inventory, and see
+[`docs/typography.md`](docs/typography.md) for the supported scripts, the selected
+extension fonts, and the fallback order.
 
 Pillow fits dialogue into adaptive oval balloons, attaches each tail at the nearest
 oval boundary toward a validated speaker or device anchor, and renders a tapered
@@ -389,9 +396,11 @@ than raw credentials or story content.
 Comic Sol requests original manga/anime direction and translates disallowed artist
 or franchise imitation into high-level visual traits. It does not promise perfect
 character continuity: results depend on the available image capability, especially
-its reference-image and dimension support. The bundled font set does not cover CJK;
-characters absent from both bundled fonts are preserved as visible `.notdef` fallback boxes
-unless a compatible regular `--font` override covers them. Image-model SFX
+its reference-image and dimension support. Lettering places glyphs by nominal advance
+without a shaping engine, so it refuses scripts that need contextual joining, cluster
+reordering, mark stacking, or bidirectional runs — Arabic, Hebrew, the Indic scripts,
+and Thai among them — because no font choice renders them correctly; see
+[`docs/typography.md`](docs/typography.md). Image-model SFX
 spelling is not deterministic, so visual QA and bounded retries remain required.
 Offline fixtures prove deterministic stages, not live image quality. Large projects
 beyond four pages or twelve panels require an explicit scope decision.

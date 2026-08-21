@@ -1,7 +1,9 @@
+import io
 import json
 import shutil
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -11,12 +13,18 @@ from scripts import typography  # noqa: E402
 
 from scripts.typography import (  # noqa: E402
     LETTERING_GEOMETRY_SCHEMA_VERSION,
+    PREFLIGHT_CHECKS,
+    SCRIPT_EXTENSION_KEY,
+    TYPOGRAPHY_SCHEMA_VERSION,
     TypographyPreflightError,
     lettering_geometry_hash,
     preflight_text_items,
     write_typography_preflight,
 )
+from scripts import letter_panels  # noqa: E402
+from scripts.font_cmap import font_supports  # noqa: E402
 from scripts.letter_panels import letter_project  # noqa: E402
+from scripts.letter_panels import main as letter_main  # noqa: E402
 from scripts.validate_project import validate_lettering_provenance, validate_project  # noqa: E402
 
 
@@ -112,18 +120,220 @@ class TypographyPreflightTests(unittest.TestCase):
         self.assertNotIn(str(ROOT), message)
         self.assertEqual("missing-glyph", raised.exception.issues[0].category)
 
-    def test_arabic_cjk_and_emoji_are_distinct_unsupported_shaping_failures(self):
-        cases = (("ش", "U+0634"), ("漢", "U+6F22"), ("😀", "U+1F600"))
-        for character, codepoint in cases:
+    def test_shaping_dependent_scripts_are_refused_with_a_reason(self):
+        """Refuse only what no font could fix, and say which property forbids it.
+
+        Arabic and emoji were already refused. Hebrew, Devanagari, Thai, and
+        conjoining jamo were not: the previous policy matched character names, so
+        it caught the scripts someone had named and passed the rest through to a
+        coverage check that cannot see reordering or joining at all.
+        """
+        cases = (
+            ("ش", "U+0634", "arabic", "contextual joining"),
+            ("א", "U+05D0", "hebrew", "bidirectional reordering"),
+            ("क", "U+0915", "devanagari", "cluster reordering"),
+            ("ก", "U+0E01", "thai", "mark stacking"),
+            ("ᄀ", "U+1100", "hangul", "syllable composition"),
+            ("😀", "U+1F600", "unassigned", "basic multilingual plane"),
+        )
+        for character, codepoint, script, reason in cases:
             with self.subTest(character=character):
                 with self.assertRaises(TypographyPreflightError) as raised:
                     preflight_text_items([item(character)], FONT_POLICY)
                 issue = raised.exception.issues[0]
                 self.assertEqual("unsupported-shaping", issue.category)
                 self.assertEqual(codepoint, issue.codepoint)
+                self.assertEqual(script, issue.script)
+                self.assertIn(reason, issue.reason)
                 self.assertEqual("dialogue-1", issue.item_id)
                 self.assertIn("unsupported shaping policy", str(raised.exception))
+                self.assertIn(reason, str(raised.exception))
                 self.assertNotIn(str(ROOT), str(raised.exception))
+
+    def test_linear_scripts_without_a_bundled_face_are_coverage_failures(self):
+        """CJK, kana, and Hangul syllables need a font, not a shaping engine.
+
+        They were previously refused as unshapeable, which told an author the text
+        was impossible when it was merely unbundled. They are now coverage
+        failures that name the vetted face which resolves them.
+        """
+        cases = (
+            ("漢", "U+6F22", "han", "Noto Sans SC"),
+            ("あ", "U+3042", "kana", "Noto Sans JP"),
+            ("한", "U+D55C", "hangul", "Noto Sans KR"),
+            ("ա", "U+0531", "armenian", "Noto Sans Armenian"),
+            ("ა", "U+1C90", "georgian", "Noto Sans Georgian"),
+        )
+        for character, codepoint, script, family in cases:
+            with self.subTest(character=character):
+                with self.assertRaises(TypographyPreflightError) as raised:
+                    preflight_text_items([item(character)], FONT_POLICY)
+                issue = raised.exception.issues[0]
+                self.assertEqual("missing-glyph", issue.category)
+                self.assertEqual(codepoint, issue.codepoint)
+                self.assertEqual(script, issue.script)
+                self.assertEqual("", issue.reason)
+                self.assertIn(family, issue.remediation)
+                self.assertIn(script, issue.remediation)
+                self.assertNotIn("unsupported shaping policy", str(raised.exception))
+                self.assertNotIn(str(ROOT), str(raised.exception))
+
+    def test_declared_script_fixtures_behave_as_documented(self):
+        """Drive the supported set from fixtures so adding a script adds a file."""
+        fixtures = sorted((FIXTURES / "typography-scripts").glob("*.json"))
+        self.assertEqual(17, len(fixtures))
+        for path in fixtures:
+            scenario = json.loads(path.read_text("utf-8"))
+            with self.subTest(fixture=path.name):
+                self.assertTrue(scenario["description"])
+                text = [item(scenario["content"], kind=scenario["kind"])]
+                if scenario["expected_status"] == "pass":
+                    result = preflight_text_items(text, FONT_POLICY)
+                    self.assertEqual("pass", result["status"])
+                    self.assertEqual([], result["issues"])
+                    self.assertEqual(
+                        scenario["expected_scripts"],
+                        {
+                            entry["script"]: entry["font_ids"]
+                            for entry in result["scripts"]
+                        },
+                    )
+                    continue
+                self.assertEqual("fail", scenario["expected_status"])
+                with self.assertRaises(TypographyPreflightError) as raised:
+                    preflight_text_items(text, FONT_POLICY)
+                issue = raised.exception.issues[0]
+                self.assertEqual(scenario["expected_category"], issue.category)
+                self.assertEqual(scenario["expected_codepoint"], issue.codepoint)
+                if scenario["expected_reason_contains"]:
+                    self.assertIn(scenario["expected_reason_contains"], issue.reason)
+                if scenario["expected_remediation_contains"]:
+                    self.assertIn(
+                        scenario["expected_remediation_contains"], issue.remediation
+                    )
+
+    def test_record_reports_the_checks_that_ran_and_the_scripts_served(self):
+        result = preflight_text_items([item("Stay **LOUD** Ω Ж")], FONT_POLICY)
+
+        self.assertEqual(TYPOGRAPHY_SCHEMA_VERSION, result["schema_version"])
+        self.assertEqual(
+            sorted(PREFLIGHT_CHECKS),
+            sorted(check["id"] for check in result["checks"]),
+        )
+        for check in result["checks"]:
+            self.assertEqual("pass", check["result"])
+            self.assertEqual("error", check["severity"])
+            self.assertEqual("comic-sol", check["reviewer"])
+            self.assertTrue(check["evidence"])
+        self.assertEqual(
+            {
+                "cyrillic": ["NotoSans-Regular.ttf"],
+                "greek": ["NotoSans-Regular.ttf"],
+                "latin": ["ComicNeue-Bold.ttf", "ComicNeue-Regular.ttf"],
+            },
+            {entry["script"]: entry["font_ids"] for entry in result["scripts"]},
+        )
+        self.assertEqual(
+            sum(entry["codepoints"] for entry in result["scripts"]),
+            len(result["glyphs"]),
+        )
+
+
+class ScriptExtensionPolicyTests(unittest.TestCase):
+    """A policy may add one face per script without disturbing existing records."""
+
+    def test_absent_and_empty_extensions_leave_the_policy_digest_unchanged(self):
+        """Projects lettered before script extensions existed stay current.
+
+        `font_policy_sha256` is bound into every panel's lettering record, so a
+        policy shape that hashed differently would mark every existing project
+        stale and force a needless re-letter.
+        """
+        without = preflight_text_items([item("Safe text")], FONT_POLICY)
+        empty = preflight_text_items(
+            [item("Safe text")], {**FONT_POLICY, SCRIPT_EXTENSION_KEY: {}}
+        )
+
+        self.assertEqual(without, empty)
+        self.assertEqual(
+            ["bold", "fallback", "regular"], sorted(without["font_policy"])
+        )
+
+    def test_extension_face_serves_the_glyphs_the_base_policy_lacks(self):
+        # U+2215 DIVISION SLASH is carried by Comic Neue and absent from Noto
+        # Sans, so it isolates the extension lookup using only bundled faces.
+        base = {
+            "regular": FONT_POLICY["fallback"],
+            "bold": FONT_POLICY["fallback"],
+            "fallback": FONT_POLICY["fallback"],
+        }
+        with self.assertRaises(TypographyPreflightError) as raised:
+            preflight_text_items([item("a\u2215b", kind="caption")], base)
+        self.assertEqual("missing-glyph", raised.exception.issues[0].category)
+
+        extended = preflight_text_items(
+            [item("a\u2215b", kind="caption")],
+            {**base, SCRIPT_EXTENSION_KEY: {"common": FONT_POLICY["regular"]}},
+        )
+
+        self.assertEqual("pass", extended["status"])
+        self.assertEqual(
+            ["bold", "fallback", "regular", "script:common"],
+            sorted(extended["font_policy"]),
+        )
+        self.assertEqual(
+            {
+                "common": ["ComicNeue-Regular.ttf"],
+                "latin": ["NotoSans-Regular.ttf"],
+            },
+            {entry["script"]: entry["font_ids"] for entry in extended["scripts"]},
+        )
+        self.assertNotEqual(
+            extended["font_policy_sha256"],
+            preflight_text_items([item("ab", kind="caption")], base)[
+                "font_policy_sha256"
+            ],
+        )
+
+    def test_styled_face_outranks_the_extension_for_glyphs_it_already_has(self):
+        """A Japanese page keeps its Latin interjections in the comic voice."""
+        result = preflight_text_items(
+            [item("AB", kind="caption")],
+            {**FONT_POLICY, SCRIPT_EXTENSION_KEY: {"latin": FONT_POLICY["fallback"]}},
+        )
+
+        self.assertEqual(
+            {"latin": ["ComicNeue-Regular.ttf"]},
+            {entry["script"]: entry["font_ids"] for entry in result["scripts"]},
+        )
+
+    def test_extension_is_refused_for_a_script_no_font_could_rescue(self):
+        for script in ("arabic", "devanagari", "hebrew", "thai", "not-a-script"):
+            with self.subTest(script=script):
+                with self.assertRaisesRegex(ValueError, "cannot be lettered"):
+                    preflight_text_items(
+                        [item("Safe text")],
+                        {
+                            **FONT_POLICY,
+                            SCRIPT_EXTENSION_KEY: {script: FONT_POLICY["fallback"]},
+                        },
+                    )
+
+    def test_unusable_extension_declarations_are_refused(self):
+        for extensions, expected in (
+            ({"han": ROOT / "assets/fonts/missing.ttf"}, "is unavailable"),
+            ({"han": 42}, "requires a path"),
+        ):
+            with self.subTest(extensions=extensions):
+                with self.assertRaisesRegex(ValueError, expected):
+                    preflight_text_items(
+                        [item("Safe text")],
+                        {**FONT_POLICY, SCRIPT_EXTENSION_KEY: extensions},
+                    )
+        with self.assertRaisesRegex(ValueError, "must be a mapping"):
+            preflight_text_items(
+                [item("Safe text")], {**FONT_POLICY, SCRIPT_EXTENSION_KEY: ["han"]}
+            )
 
     def test_successful_result_records_stable_policy_and_input_hashes(self):
         first = preflight_text_items([item("Safe text")], FONT_POLICY)
@@ -178,6 +388,111 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary_directory.cleanup()
+
+    def _write_panel_text(self, panel_id, content, kind="caption"):
+        """Replace one fixture panel's text with authored content."""
+        storyboard_path = self.project / "plan/storyboard.json"
+        storyboard = json.loads(storyboard_path.read_text("utf-8"))
+        for page in storyboard["pages"]:
+            for panel in page["panels"]:
+                if panel["id"] == panel_id:
+                    panel["text"] = [{
+                        "anchor": "top-left",
+                        "content": content,
+                        "id": f"{panel_id}-t01",
+                        "kind": kind,
+                    }]
+        storyboard_path.write_text(
+            json.dumps(storyboard, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            "utf-8",
+        )
+
+    def test_newly_declared_scripts_letter_without_missing_glyph_boxes(self):
+        """Render the expanded scripts and prove no run drew a `.notdef` box.
+
+        A passing preflight only promises some face maps every character. This
+        checks the faces the renderer actually reached for, so a divergence
+        between what preflight authorized and what lettering drew would surface
+        as a missing glyph here rather than as a row of boxes on the page.
+        """
+        contents = {
+            "p01-01": "Chào bạn, ế mới",
+            "p01-02": "ᾰᾳῆῥὥ",
+            "p01-03": "Ⱡꝺꞅ Ꙁꙋ",
+        }
+        for panel_id, content in contents.items():
+            self._write_panel_text(panel_id, content)
+
+        outputs = letter_project(self.project)
+
+        self.assertEqual(3, len(outputs))
+        for panel_id, content in contents.items():
+            with self.subTest(panel_id=panel_id):
+                geometry = json.loads(
+                    (self.project / f"panels/{panel_id}/lettering.json").read_text("utf-8")
+                )
+                runs = geometry["items"][0]["font_runs"]
+                self.assertEqual(content, "".join(run["text"] for run in runs))
+                for run in runs:
+                    face = ROOT / "assets/fonts" / run["font_id"]
+                    self.assertTrue(face.is_file(), run["font_id"])
+                    for character in run["text"]:
+                        self.assertTrue(
+                            font_supports(face, character),
+                            f"{run['font_id']} drew U+{ord(character):04X} as .notdef",
+                        )
+                self.assertEqual((), validate_lettering_provenance(self.project, panel_id))
+
+    def test_script_extension_renders_and_is_bound_into_provenance(self):
+        """An extension face must reach the page and the provenance record."""
+        self._write_panel_text("p01-01", "Ratio 1\u22152 now")
+        self._write_panel_text("p01-02", "Plain text")
+        self._write_panel_text("p01-03", "Plain text")
+
+        with redirect_stdout(io.StringIO()):
+            code = letter_main([
+                str(self.project),
+                "--font", str(FONT_POLICY["fallback"]),
+                "--font-script", f"common={FONT_POLICY['regular']}",
+            ])
+
+        self.assertEqual(0, code)
+        record = json.loads(
+            (self.project / "panels/p01-01/typography.json").read_text("utf-8")
+        )
+        self.assertEqual("pass", record["status"])
+        self.assertEqual(
+            ["bold", "fallback", "regular", "script:common"],
+            sorted(record["font_policy"]),
+        )
+        geometry = json.loads(
+            (self.project / "panels/p01-01/lettering.json").read_text("utf-8")
+        )
+        self.assertEqual(
+            record["font_policy_sha256"], geometry["bindings"]["font_policy_sha256"]
+        )
+        self.assertIn(
+            "ComicNeue-Regular.ttf",
+            {run["font_id"] for run in geometry["items"][0]["font_runs"]},
+        )
+        self.assertEqual((), validate_lettering_provenance(self.project, "p01-01"))
+
+    def test_script_extension_module_state_is_restored_after_a_run(self):
+        """The renderer's extension mapping is a module global; leaking it would
+        make one lettering run silently change the next one's font policy."""
+        self._write_panel_text("p01-01", "Plain text")
+        self._write_panel_text("p01-02", "Plain text")
+        self._write_panel_text("p01-03", "Plain text")
+
+        with redirect_stdout(io.StringIO()):
+            code = letter_main([
+                str(self.project),
+                "--font-script", f"common={FONT_POLICY['regular']}",
+            ])
+        self.assertEqual(0, code)
+
+        self.assertEqual({}, letter_panels.SCRIPT_FONT_EXTENSIONS)
+        self.assertEqual(letter_panels.DEFAULT_FONT_PATH, letter_panels.FONT_PATH)
 
     def test_unsupported_codepoint_blocks_entire_batch_before_output_mutation(self):
         retained = {}

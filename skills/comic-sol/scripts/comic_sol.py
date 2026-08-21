@@ -1837,6 +1837,52 @@ def doctor_report(output_root: Path) -> dict[str, object]:
     else:
         add_check("fonts", "pass", "Bundled fonts load at 42px.", "No action required.")
 
+    # Loading a face proves the file is readable, not that it still carries the
+    # scripts lettering promises. This reads the bundled cmaps so a font swap that
+    # quietly drops a script is reported here instead of at lettering time.
+    try:
+        from .font_coverage import BUNDLED_TARGET_SCRIPTS, coverage_inventory
+
+        inventory = coverage_inventory({
+            "regular": FONT_PATH_COMIC_REGULAR,
+            "bold": FONT_PATH_COMIC_BOLD,
+            "fallback": FONT_PATH_FALLBACK,
+        })
+        scripts = {
+            str(entry["script"]): entry
+            for entry in inventory["scripts"]  # type: ignore[union-attr]
+            if isinstance(entry, dict)
+        }
+        uncovered = sorted(
+            script
+            for script in BUNDLED_TARGET_SCRIPTS
+            if int(scripts.get(script, {}).get("covered", 0)) == 0
+        )
+        covered_total = int(inventory["summary"]["covered_codepoints"])  # type: ignore[index]
+        if uncovered:
+            add_check(
+                "typography",
+                "fail",
+                "Bundled fonts no longer cover required scripts: " + ", ".join(uncovered),
+                "Restore the bundled assets/fonts directory so the documented scripts letter again.",
+                uncovered_scripts=uncovered,
+            )
+        else:
+            add_check(
+                "typography",
+                "pass",
+                f"Bundled fonts cover {', '.join(BUNDLED_TARGET_SCRIPTS)} "
+                f"({covered_total} codepoints).",
+                "No action required.",
+            )
+    except Exception as error:
+        add_check(
+            "typography",
+            "fail",
+            f"Typography coverage inventory failed: {type(error).__name__}: {error}",
+            "Restore the bundled assets/fonts directory and rerun doctor.",
+        )
+
     template_names = (
         "manifest.json", "character-bible.json", "story-plan.json",
         "storyboard.json", "panel-record.json", "qa-report.md.tmpl",

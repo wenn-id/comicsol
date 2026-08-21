@@ -1,0 +1,12 @@
+{
+  "content": "あ",
+  "description": "kana places linearly, so policy admits it, but no bundled face carries the glyph; preflight must name Noto Sans JP.",
+  "expected_category": "missing-glyph",
+  "expected_codepoint": "U+3042",
+  "expected_font_ids": null,
+  "expected_reason_contains": null,
+  "expected_remediation_contains": "Noto Sans JP",
+  "expected_scripts": null,
+  "expected_status": "fail",
+  "kind": "dialogue"
+}
