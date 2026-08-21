@@ -793,6 +793,18 @@ class BenchmarkIntegrationTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, workflow)
 
+    def test_cross_revision_harness_uses_stable_page_quality_api(self):
+        source = (ROOT / "scripts/benchmark.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("publish_page_quality_record", source)
+        for token in (
+            "build_page_quality_record",
+            "write_page_quality_record",
+            "with ProjectLock(",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, source)
+
     def test_benchmark_harness_is_not_shipped_in_the_plugin_bundle(self):
         from scripts.sync_plugin_bundle import BUNDLED_SCRIPTS
 
