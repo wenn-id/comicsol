@@ -8,6 +8,8 @@ import zipfile
 import uuid
 from pathlib import Path
 
+from comic_sol_product import __version__ as RELEASE_VERSION
+
 from comic_sol_product.distribution import (
     ReleaseIdentity,
     artifact_name,
@@ -26,17 +28,17 @@ from comic_sol_product.portable import (
 class NativeDistributionContractTests(unittest.TestCase):
     def setUp(self):
         self.identity = ReleaseIdentity(
-            version="2.0.0rc4", platform="linux", architecture="x86_64"
+            version=RELEASE_VERSION, platform="linux", architecture="x86_64"
         )
 
     def _write_environment_sbom(self, release: Path) -> Path:
         components = [
             {
-                "bom-ref": "comic-sol==2.0.0rc4",
+                "bom-ref": f"comic-sol=={RELEASE_VERSION}",
                 "name": "comic-sol",
-                "purl": "pkg:pypi/comic-sol@2.0.0rc4",
+                "purl": f"pkg:pypi/comic-sol@{RELEASE_VERSION}",
                 "type": "application",
-                "version": "2.0.0rc4",
+                "version": RELEASE_VERSION,
             },
             {"bom-ref": "Pillow==12.3.0", "name": "Pillow", "purl": "pkg:pypi/pillow@12.3.0", "type": "library", "version": "12.3.0"},
             {"bom-ref": "mcp==2.0.0", "name": "mcp", "purl": "pkg:pypi/mcp@2.0.0", "type": "library", "version": "2.0.0"},
@@ -73,15 +75,15 @@ class NativeDistributionContractTests(unittest.TestCase):
         return destination
 
     def test_identity_and_artifact_names_are_canonical(self):
-        self.assertEqual("v2.0.0rc4", self.identity.tag)
+        self.assertEqual(f"v{RELEASE_VERSION}", self.identity.tag)
         self.assertEqual(
-            "comic-sol-2.0.0rc4-linux-x86_64.tar.gz",
+            f"comic-sol-{RELEASE_VERSION}-linux-x86_64.tar.gz",
             artifact_name(self.identity, "tar.gz"),
         )
         with self.assertRaises(ValueError):
             ReleaseIdentity("2.0.0-rc2", "linux", "x86_64")
         with self.assertRaises(ValueError):
-            ReleaseIdentity("2.0.0rc4", "Linux", "amd64")
+            ReleaseIdentity(RELEASE_VERSION, "Linux", "amd64")
 
     def test_plugin_manifest_has_public_legal_urls(self):
         root = Path(__file__).resolve().parents[1]
@@ -101,7 +103,7 @@ class NativeDistributionContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             release = Path(temporary_directory)
             first = release / artifact_name(self.identity, "tar.gz")
-            second = release / "comic-sol-2.0.0rc4-linux-x86_64.sbom.json"
+            second = release / f"comic-sol-{RELEASE_VERSION}-linux-x86_64.sbom.json"
             first.write_bytes(b"portable-runtime")
             second.write_text("{}\n", encoding="utf-8")
             environment = self._write_environment_sbom(release)
@@ -125,9 +127,9 @@ class NativeDistributionContractTests(unittest.TestCase):
             self.assertEqual("CycloneDX", sbom_record["bomFormat"])
             self.assertEqual("1.6", sbom_record["specVersion"])
             self.assertEqual("comic-sol", sbom_record["metadata"]["component"]["name"])
-            self.assertEqual("2.0.0rc4", sbom_record["metadata"]["component"]["version"])
+            self.assertEqual(RELEASE_VERSION, sbom_record["metadata"]["component"]["version"])
             self.assertEqual("application", sbom_record["metadata"]["component"]["type"])
-            self.assertEqual("pkg:pypi/comic-sol@2.0.0rc4", sbom_record["metadata"]["component"]["purl"])
+            self.assertEqual(f"pkg:pypi/comic-sol@{RELEASE_VERSION}", sbom_record["metadata"]["component"]["purl"])
             uuid.UUID(sbom_record["serialNumber"].removeprefix("urn:uuid:"))
             self.assertEqual(
                 first.name,
@@ -163,7 +165,7 @@ class NativeDistributionContractTests(unittest.TestCase):
             write_sbom(release, self.identity, environment, artifact.name)
             write_checksums(
                 release,
-                [artifact, release / "comic-sol-2.0.0rc4-linux-x86_64.sbom.json"],
+                [artifact, release / f"comic-sol-{RELEASE_VERSION}-linux-x86_64.sbom.json"],
             )
             verify_release_directory(release, self.identity)
 
@@ -247,7 +249,7 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("python:3.11.15-slim@sha256:", dockerfile)
         self.assertIn("requirements/locks/runtime-linux-x86_64.txt", dockerfile)
 
-        self.assertNotIn("refs/tags/v2.0.0rc4", workflow)
+        self.assertNotIn(f"refs/tags/v{RELEASE_VERSION}", workflow)
         for runner in ("ubuntu-latest", "macos-26-intel", "windows-latest"):
             self.assertIn(runner, workflow)
         self.assertIn("scripts/build_portable.py", workflow)
@@ -283,8 +285,8 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertNotIn("mcp==1.28.1", workflow)
         self.assertIn("attestations: write", workflow)
         self.assertIn("id-token: write", workflow)
-        self.assertNotIn("v2.0.0rc4", workflow)
-        self.assertNotIn("refs/tags/v2.0.0rc4", workflow)
+        self.assertNotIn(f"v{RELEASE_VERSION}", workflow)
+        self.assertNotIn(f"refs/tags/v{RELEASE_VERSION}", workflow)
         self.assertNotIn("refs/tags/v2.0.0rc1", workflow)
         for line in workflow.splitlines():
             if "uses:" in line:
@@ -349,10 +351,10 @@ class NativeDistributionContractTests(unittest.TestCase):
         version = (root / "comic_sol_product/version.py").read_text(encoding="utf-8")
         self.assertIn('dynamic = ["version"]', pyproject)
         self.assertIn("from .version import VERSION", package)
-        self.assertIn('VERSION = "2.0.0rc4"', version)
+        self.assertIn(f'VERSION = "{RELEASE_VERSION}"', version)
         self.assertIn("__version__", distribution)
         self.assertIn("__version__", assembler)
-        self.assertIn("comic-sol:2.0.0rc4", compose)
+        self.assertIn(f"comic-sol:{RELEASE_VERSION}", compose)
         for module in (
             "normalize_panels.py", "typography.py", "layouts.py", "page_quality.py",
             "pdf_quality.py", "quality_sample.py",

@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 import tempfile
 
+from comic_sol_product import __version__ as _V
+
 from scripts.release_qualification import aggregate_summaries
 from scripts.release_qualification import validate_published_metadata
 from scripts.release_qualification import verify_payload_checksums
@@ -124,8 +126,8 @@ class ReleaseQualificationContractTests(unittest.TestCase):
                         "product": "comic-sol",
                         "platform": "linux",
                         "architecture": "x86_64",
-                        "tag": "v2.0.0rc4",
-                        "version": "2.0.0rc4",
+                        "tag": f"v{_V}",
+                        "version": _V,
                         "signature_file": "SHA256SUMS.sigstore.json",
                         "signature_status": "sigstore",
                         "artifacts": ["runtime.zip"],
@@ -163,7 +165,7 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             sbom.write_text(json.dumps(sbom_record), encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "collection types"):
                 validate_published_metadata(
-                    metadata, sbom, artifact="runtime.zip", platform="linux", version="2.0.0rc4"
+                    metadata, sbom, artifact="runtime.zip", platform="linux", version=_V
                 )
 
             sbom_record["components"] = components
@@ -175,7 +177,7 @@ class ReleaseQualificationContractTests(unittest.TestCase):
                     sbom,
                     artifact="runtime.zip",
                     platform="linux",
-                    version="2.0.0rc4",
+                    version=_V,
                 )
             for field, value in (
                 ("architecture", "arm64"),
@@ -191,12 +193,12 @@ class ReleaseQualificationContractTests(unittest.TestCase):
                         sbom,
                         artifact="runtime.zip",
                         platform="linux",
-                        version="2.0.0rc4",
+                        version=_V,
                     )
                 metadata_record[field] = {
                     "architecture": "x86_64",
-                    "tag": "v2.0.0rc4",
-                    "version": "2.0.0rc4",
+                    "tag": f"v{_V}",
+                    "version": _V,
                 }[field]
                 metadata.write_text(json.dumps(metadata_record), encoding="utf-8")
 

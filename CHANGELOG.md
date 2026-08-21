@@ -2,12 +2,21 @@
 
 ## Unreleased
 
-Milestones v2.0 — Stability, v2.1 — Reliability & DX, and v2.2 — Comic Quality are delivered
-in full and are unreleased: every change below ships in the next tag after `2.0.0rc4`. The
-v2.0 milestone is included here deliberately — the `2.0.0rc*` prereleases shipped the v2.0
-product line on 2026-07-29/30, but the milestone that hardened it merged on 2026-08-18/19,
-after `rc4` was published. `docs/releases/milestone-delivery.md` records which issue and pull
-request delivered each change.
+No changes yet. `docs/releases/milestone-delivery.md` records what each milestone delivered
+and which tag carries it.
+
+## 2.0.0rc5 — 2026-08-21
+
+Prerelease carrying milestones v2.0 — Stability, v2.1 — Reliability & DX, and v2.2 — Comic
+Quality in full: 28 issues, none of which had shipped before. The v2.0 milestone belongs here
+rather than in the earlier prereleases — those shipped the v2.0 product line on 2026-07-29/30,
+but the milestone that hardened and qualified it merged on 2026-08-18/19, after `2.0.0rc4` was
+published. `docs/releases/milestone-delivery.md` records which issue and pull request
+delivered each change.
+
+This remains a **prerelease**. `docs/releases/v2.0-stable-criteria.md` is the authoritative
+gate for a stable `2.0.0` tag: it requires per-platform qualification from the release
+artifacts themselves plus a recorded maintainer decision, and it is not yet satisfied.
 
 ### Added
 

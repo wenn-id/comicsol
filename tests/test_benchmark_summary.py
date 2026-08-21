@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from comic_sol_product import __version__ as RELEASE_VERSION
+
 from comic_sol_product import __version__
 from tests.consistency_benchmark import definition_digest
 
@@ -66,7 +68,7 @@ def _result(
     metrics=None,
     *,
     status="passed",
-    engine="2.0.0rc4",
+    engine=RELEASE_VERSION,
     git="a" * 40,
     harness=HARNESS_VERSION,
     proves_visual_quality=False,
@@ -119,7 +121,7 @@ def _baseline(**overrides):
     return baseline
 
 
-def _scorecard(scores, *, engine_version="2.0.0rc4"):
+def _scorecard(scores, *, engine_version=RELEASE_VERSION):
     """Build one attributable character consistency scorecard."""
     from tests.consistency_benchmark import scorecard_template
 
@@ -230,7 +232,7 @@ class ConsistencyPlaneTests(TemporaryRootTestCase):
             load_consistency_scorecard(self._json(unattributed, "unattributed.json"))
         with self.assertRaisesRegex(ValueError, "review.engine_version"):
             invalid_type = _scorecard({"face": 4})
-            invalid_type["review"]["engine_version"] = ["2.0.0rc4"]
+            invalid_type["review"]["engine_version"] = [RELEASE_VERSION]
             load_consistency_scorecard(self._json(invalid_type, "invalid-type.json"))
         with self.assertRaisesRegex(ValueError, "outside the published scale"):
             load_consistency_scorecard(self._json(_scorecard({"face": 9}), "high.json"))
@@ -314,8 +316,8 @@ class SummaryTests(TemporaryRootTestCase):
         second = summarize_results(self.results)
         self.assertEqual("passed", first["status"])
         self.assertEqual(SUMMARY_KIND, first["kind"])
-        self.assertEqual(f"v2.0.0rc4+{'a' * 12}", first["version_tag"])
-        self.assertEqual("2.0.0rc4", first["revision"]["engine_version"])
+        self.assertEqual(f"v{RELEASE_VERSION}+{'a' * 12}", first["version_tag"])
+        self.assertEqual(RELEASE_VERSION, first["revision"]["engine_version"])
         first_path, first_markdown = write_summary(first, self.root / "first/summary.json")
         second_path, _ = write_summary(second, self.root / "second/summary.json")
         self.assertEqual(
@@ -328,7 +330,7 @@ class SummaryTests(TemporaryRootTestCase):
 
     def test_version_tag_falls_back_to_the_engine_version_outside_a_worktree(self):
         self._publish(_result("case-one", git="unknown"))
-        self.assertEqual("v2.0.0rc4", summarize_results(self.results)["version_tag"])
+        self.assertEqual(f"v{RELEASE_VERSION}", summarize_results(self.results)["version_tag"])
 
     def test_mixed_revisions_fail_closed(self):
         self._publish(_result("case-one"), _result("case-two", git="c" * 40))
@@ -450,7 +452,7 @@ class SummaryTests(TemporaryRootTestCase):
                 self.results, consistency_baseline=self._json(_baseline(), "baseline.json")
             )
         )
-        self.assertIn("v2.0.0rc4", rendered)
+        self.assertIn(f"v{RELEASE_VERSION}", rendered)
         for metric_id in METRIC_IDS:
             with self.subTest(metric=metric_id):
                 self.assertIn(f"`{metric_id}`", rendered)
@@ -573,7 +575,7 @@ class SummaryDeltaTests(TemporaryRootTestCase):
 
     def test_different_engine_revisions_are_comparable(self):
         baseline = self._summary("baseline", [_result("case-one", engine="2.0.0rc3")])
-        candidate = self._summary("candidate", [_result("case-one", engine="2.0.0rc4")])
+        candidate = self._summary("candidate", [_result("case-one", engine=RELEASE_VERSION)])
         delta = diff_summaries(baseline, candidate, self.root / "delta.json")
         self.assertEqual("NO REGRESSION", delta["decision"])
         self.assertEqual("passed", delta["status"])

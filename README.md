@@ -107,9 +107,9 @@ completed/remaining counts. Progress is written to `stderr`, so scripts can cons
 `stdout` safely. With `--json`, `stdout` remains one parseable JSON envelope and both
 human progress and error details stay out of the machine stream.
 
-## Native Distribution (`v2.0.0rc4`)
+## Native Distribution (`v2.0.0rc5`)
 
-The `v2.0.0rc4` prerelease provides bundled portable archives for Linux, macOS,
+The `v2.0.0rc5` prerelease provides bundled portable archives for Linux, macOS,
 and Windows x86_64, plus transactional user-local installers and a non-root OCI
 image. Native archives include Python, Pillow, MCP, fonts, templates, the Skill,
 and references, so installed execution does not require a system Python.
@@ -124,7 +124,7 @@ stable-release checklist is [`docs/releases/v2.0-stable-criteria.md`](docs/relea
 What each milestone delivered, and which issue and pull request delivered it, is recorded in
 [`docs/releases/milestone-delivery.md`](docs/releases/milestone-delivery.md). Milestones v2.0,
 v2.1, and v2.2 are complete and unreleased; their changes ship in the first tag after
-`2.0.0rc4` and are listed under Unreleased in [`CHANGELOG.md`](CHANGELOG.md). The `2.0.0rc*`
+`2.0.0rc5` and are listed under Unreleased in [`CHANGELOG.md`](CHANGELOG.md). The `2.0.0rc*`
 prereleases shipped the v2.0 product line, not the v2.0 milestone, which merged afterwards.
 
 Container and Compose deployment commands are documented in
