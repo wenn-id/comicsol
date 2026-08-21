@@ -1,0 +1,12 @@
+{
+  "content": "ࡠ",
+  "description": "Syriac Supplement belongs to no classified block; refusing the unknown keeps a joining script from a false pass.",
+  "expected_category": "unsupported-shaping",
+  "expected_codepoint": "U+0860",
+  "expected_font_ids": null,
+  "expected_reason_contains": "no block the lettering policy has classified",
+  "expected_remediation_contains": null,
+  "expected_scripts": null,
+  "expected_status": "fail",
+  "kind": "caption"
+}

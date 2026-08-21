@@ -1,0 +1,12 @@
+{
+  "content": "😀",
+  "description": "Refused because basic multilingual plane is required, which nominal advances cannot express.",
+  "expected_category": "unsupported-shaping",
+  "expected_codepoint": "U+1F600",
+  "expected_font_ids": null,
+  "expected_reason_contains": "basic multilingual plane",
+  "expected_remediation_contains": null,
+  "expected_scripts": null,
+  "expected_status": "fail",
+  "kind": "dialogue"
+}

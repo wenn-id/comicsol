@@ -1837,6 +1837,54 @@ def doctor_report(output_root: Path) -> dict[str, object]:
     else:
         add_check("fonts", "pass", "Bundled fonts load at 42px.", "No action required.")
 
+    # Loading a face proves the file is readable, not that it still carries the
+    # scripts lettering promises. This reads the bundled cmaps so a font swap that
+    # quietly drops a script is reported here instead of at lettering time.
+    try:
+        from .font_coverage import (
+            BUNDLED_COVERAGE_PROBES,
+            BUNDLED_TARGET_SCRIPTS,
+            missing_coverage_probes,
+        )
+
+        policy = {
+            "regular": FONT_PATH_COMIC_REGULAR,
+            "bold": FONT_PATH_COMIC_BOLD,
+            "fallback": FONT_PATH_FALLBACK,
+        }
+        missing = missing_coverage_probes(policy)
+        probe_total = sum(len(BUNDLED_COVERAGE_PROBES[s]) for s in BUNDLED_TARGET_SCRIPTS)
+        if missing:
+            failures = [
+                f"{script} is missing "
+                + ", ".join(f"U+{codepoint:04X}" for codepoint in codepoints[:8])
+                + (" and more" if len(codepoints) > 8 else "")
+                for script, codepoints in sorted(missing.items())
+            ]
+            add_check(
+                "typography",
+                "fail",
+                "Bundled fonts no longer letter required scripts: "
+                + ", ".join(sorted(missing)),
+                "Restore the bundled assets/fonts directory so the documented scripts letter again.",
+                failures=failures,
+            )
+        else:
+            add_check(
+                "typography",
+                "pass",
+                f"Bundled fonts map all {probe_total} required "
+                f"{'/'.join(BUNDLED_TARGET_SCRIPTS)} codepoints.",
+                "No action required.",
+            )
+    except Exception as error:
+        add_check(
+            "typography",
+            "fail",
+            f"Typography coverage inventory failed: {type(error).__name__}: {error}",
+            "Restore the bundled assets/fonts directory and rerun doctor.",
+        )
+
     template_names = (
         "manifest.json", "character-bible.json", "story-plan.json",
         "storyboard.json", "panel-record.json", "qa-report.md.tmpl",
