@@ -1,0 +1,12 @@
+{
+  "content": "q́̈",
+  "description": "Refused because stacked combining marks cannot be positioned by nominal advances, and no font choice changes that.",
+  "expected_category": "unsupported-shaping",
+  "expected_codepoint": "U+0308",
+  "expected_font_ids": null,
+  "expected_reason_contains": "stacked combining marks",
+  "expected_remediation_contains": null,
+  "expected_scripts": null,
+  "expected_status": "fail",
+  "kind": "caption"
+}
