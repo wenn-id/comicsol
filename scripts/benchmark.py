@@ -61,8 +61,7 @@ from .core_primitives import (
 from .normalize_panels import normalize_panel
 from .page_quality import (
     SUBJECTIVE_PAGE_CHECK_IDS,
-    build_page_quality_record,
-    write_page_quality_record,
+    publish_page_quality_record,
 )
 from .pdf_quality import (
     MAX_GRID_REGION_ERROR,
@@ -852,18 +851,14 @@ def _write_page_records(
                 "reviewer": REVIEWER,
                 "severity": "error" if proven else "warning",
             }
-        # build_page_quality_record requires the reviewer checks in canonical order.
+        # publish_page_quality_record requires the reviewer checks in canonical order.
         checks = [by_id[check_id] for check_id in SUBJECTIVE_PAGE_CHECK_IDS]
-        write_page_quality_record(
+        publish_page_quality_record(
             project,
             page_number,
-            build_page_quality_record(
-                project,
-                page_number,
-                checks,
-                reviewer=REVIEWER,
-                reviewed_at=REVIEW_TIMESTAMP,
-            ),
+            checks,
+            reviewer=REVIEWER,
+            reviewed_at=REVIEW_TIMESTAMP,
         )
     return dialogue_count
 

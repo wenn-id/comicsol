@@ -180,6 +180,14 @@
 
 ### Fixed
 
+- Page-QA verdicts and provenance can no longer come from different artifact
+  generations. JSON digests now cover the exact bytes parsed, page dimensions and the page
+  digest come from one raster buffer, and bindings are projected from that captured
+  snapshot without re-reading the filesystem. `publish_page_quality_record()` holds the
+  reentrant project lock across derivation and atomic publication; construction and direct
+  writes are independently lock-covered, migration retains its transaction-wide lock, and
+  unlocked validation is explicitly advisory rather than silently implying serialization.
+
 - Typography preflight no longer decides shaping support by matching character names,
   which only recognized scripts someone had thought to spell out. Arabic and CJK were
   caught while Hebrew, Devanagari, Thai, Bengali, Tamil, Khmer, Myanmar, and conjoining

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import math
 import re
@@ -30,7 +32,13 @@ from .core_primitives import (
     tail_geometry_result,
 )
 from .layouts import LAYOUT_VERSION, match_layout, validate_custom_layout
-from .project_io import ProjectTransaction, contained_project_path, open_path_nofollow
+from .project_io import (
+    PROJECT_OPERATION_LOCK_TIMEOUT,
+    ProjectLock,
+    ProjectTransaction,
+    contained_project_path,
+    open_path_nofollow,
+)
 from .quality_records import PAGE_CHECK_IDS, validate_quality_checks
 from .schema import UnsupportedSchemaVersionError
 
@@ -79,17 +87,29 @@ class PageQualityIssue:
 
 @dataclass(frozen=True)
 class PageContext:
+    """One pass over the artifacts that define a page's QA context.
+
+    Every digest here is captured in the same read as the value it describes.
+    With `ProjectLock` held, the collection therefore describes one serialized
+    project generation. Without the lock, each value/digest pair is internally
+    consistent but the cross-artifact view remains advisory because a writer may
+    publish between reads. `_page_bindings()` never re-reads these artifacts.
+    """
+
     storyboard_path: Path
+    storyboard_sha256: str
     panels: tuple[dict[str, object], ...]
     rectangles: tuple[tuple[int, int, int, int], ...]
     declared_layout: str
     matched_layout: str
     page_relative: str
     page_path: Path
+    page_sha256: str
     page_width: int
     page_height: int
     cache_relative: str
     cache_path: Path
+    cache_sha256: str
     lettering: tuple[tuple[str, str, dict[str, object]], ...]
     # Lettering boxes and tails are expressed in each panel's own clean-raster
     # pixel space, which is not the storyboard page rectangle the panel is later
@@ -127,6 +147,21 @@ def _rect_tuple(panel: Mapping[str, object]) -> tuple[int, int, int, int]:
     return values  # type: ignore[return-value]
 
 
+def _json_snapshot(path: Path) -> tuple[dict[str, object], str]:
+    """Read one JSON artifact and digest the exact bytes that were parsed.
+
+    `read_json()` followed by `sha256_file()` opens the file twice, so the digest
+    can describe a generation the parsed value never came from. Hashing the single
+    buffer the parse consumed is what makes the resulting binding provable.
+    """
+    with open_path_nofollow(Path(path)) as stream:
+        payload = stream.read()
+    value = json.loads(payload)
+    if not isinstance(value, dict):
+        raise ValueError(f"expected a JSON object: {path}")
+    return value, hashlib.sha256(payload).hexdigest()
+
+
 def _clean_raster(project_dir: Path, panel_id: str) -> tuple[tuple[int, int], str]:
     """Return the pixel space one panel's lettering geometry is expressed in.
 
@@ -140,7 +175,7 @@ def _clean_raster(project_dir: Path, panel_id: str) -> tuple[tuple[int, int], st
         raise ValueError(
             f"normalization record is missing for panel {panel_id}"
         ) from error
-    normalization = read_json(path)
+    normalization, digest = _json_snapshot(path)
     clean = normalization.get("clean") if isinstance(normalization, dict) else None
     size = clean.get("size") if isinstance(clean, dict) else None
     if (
@@ -152,13 +187,19 @@ def _clean_raster(project_dir: Path, panel_id: str) -> tuple[tuple[int, int], st
         )
     ):
         raise ValueError(f"normalization record is invalid for panel {panel_id}")
-    return (size[0], size[1]), sha256_file(path)
+    return (size[0], size[1]), digest
 
 
 def _page_context(project_dir: Path, page_number: int) -> PageContext:
-    """Build deterministic quality-check context for one page."""
+    """Collect one page's artifacts and build its deterministic check context.
+
+    This is the single collection point used to derive page-QA bindings. Callers
+    that need a cross-artifact view serialized against a concurrent compose or
+    lettering run must hold `ProjectLock`. Without it, each parsed value and its
+    digest still come from one read, but the collection may span writer generations.
+    """
     storyboard_path = contained_project_path(project_dir, "plan/storyboard.json", must_exist=True)
-    storyboard = read_json(storyboard_path)
+    storyboard, storyboard_sha256 = _json_snapshot(storyboard_path)
     page = _storyboard_page(storyboard, page_number)
     panels = page.get("panels")
     if not isinstance(panels, list) or not panels:
@@ -176,12 +217,19 @@ def _page_context(project_dir: Path, page_number: int) -> PageContext:
     page_id = _page_id(page_number)
     page_relative = f"pages/{page_id}.png"
     page_path = contained_project_path(project_dir, page_relative, must_exist=True)
-    with open_path_nofollow(page_path) as stream, Image.open(stream) as image:
+    # Decode the dimensions from the same bytes the digest covers. Hashing the
+    # page separately from the decode lets a record bind one raster while the
+    # pixel space its balloon verdicts were measured against came from another.
+    with open_path_nofollow(page_path) as stream:
+        page_payload = stream.read()
+    page_sha256 = hashlib.sha256(page_payload).hexdigest()
+    with Image.open(io.BytesIO(page_payload)) as image:
         image.load()
         page_width, page_height = image.size
 
     cache_relative = "cache/composition.json"
     cache_path = contained_project_path(project_dir, cache_relative, must_exist=True)
+    cache_sha256 = sha256_file(cache_path)
     lettering: list[tuple[str, str, dict[str, object]]] = []
     clean_sizes: list[tuple[int, int]] = []
     normalization: list[tuple[str, str]] = []
@@ -196,26 +244,32 @@ def _page_context(project_dir: Path, page_number: int) -> PageContext:
             raise ValueError(
                 f"lettering geometry is missing for panel {panel_id}"
             ) from error
-        geometry = read_json(path)
-        if not isinstance(geometry, dict):
-            raise ValueError(f"lettering geometry is invalid for panel {panel_id}")
-        lettering.append((panel_id, sha256_file(path), geometry))
+        try:
+            geometry, geometry_digest = _json_snapshot(path)
+        except ValueError as error:
+            raise ValueError(
+                f"lettering geometry is invalid for panel {panel_id}"
+            ) from error
+        lettering.append((panel_id, geometry_digest, geometry))
         clean_size, normalization_digest = _clean_raster(project_dir, panel_id)
         clean_sizes.append(clean_size)
         normalization.append((panel_id, normalization_digest))
 
     return PageContext(
         storyboard_path=storyboard_path,
+        storyboard_sha256=storyboard_sha256,
         panels=typed_panels,
         rectangles=rectangles,
         declared_layout=declared_layout,
         matched_layout=matched_layout,
         page_relative=page_relative,
         page_path=page_path,
+        page_sha256=page_sha256,
         page_width=page_width,
         page_height=page_height,
         cache_relative=cache_relative,
         cache_path=cache_path,
+        cache_sha256=cache_sha256,
         lettering=tuple(lettering),
         clean_sizes=tuple(clean_sizes),
         normalization=tuple(normalization),
@@ -712,15 +766,20 @@ def _valid_timestamp(value: object) -> bool:
 
 
 def _page_bindings(context: PageContext) -> dict[str, object]:
-    """Derive every page-QA provenance binding from the artifacts on disk.
+    """Project one page snapshot onto its twelve provenance bindings.
 
     Construction, migration, and validation all read their bound values from
     here, so a published record can never bind something the validator would not
     re-derive for the same project.
+
+    This function performs no I/O. Every digest it returns was captured by
+    `_page_context()` in the same pass that produced the values the deterministic
+    checks were measured against, so a record cannot bind one generation of an
+    artifact while reporting verdicts about another.
     """
     return {
         "composition_cache_path": context.cache_relative,
-        "composition_cache_sha256": sha256_file(context.cache_path),
+        "composition_cache_sha256": context.cache_sha256,
         "layout_name": context.declared_layout,
         "layout_version": LAYOUT_VERSION,
         "lettering_sha256s": [
@@ -731,10 +790,10 @@ def _page_bindings(context: PageContext) -> dict[str, object]:
         ],
         "page_height": context.page_height,
         "page_path": context.page_relative,
-        "page_sha256": sha256_file(context.page_path),
+        "page_sha256": context.page_sha256,
         "page_width": context.page_width,
         "storyboard_path": "plan/storyboard.json",
-        "storyboard_sha256": sha256_file(context.storyboard_path),
+        "storyboard_sha256": context.storyboard_sha256,
     }
 
 
@@ -774,8 +833,35 @@ def build_page_quality_record(
     reviewer: str,
     reviewed_at: str,
 ) -> dict[str, object]:
-    """Build a current page QA record without inventing visual evidence."""
+    """Build a current page QA record without inventing visual evidence.
+
+    The derivation runs under `ProjectLock`, so no compose or lettering run can
+    replace an artifact while the page is being measured. Use
+    `publish_page_quality_record()` when the record is also being written: this
+    function releases the lock before returning, so a separate
+    `write_page_quality_record()` call publishes under a second acquisition and
+    leaves a window in which the record can go stale before it lands.
+    """
     project_dir = Path(project_dir)
+    with ProjectLock(project_dir, timeout=PROJECT_OPERATION_LOCK_TIMEOUT):
+        return _build_page_quality_record_locked(
+            project_dir,
+            page_number,
+            visual_checks,
+            reviewer=reviewer,
+            reviewed_at=reviewed_at,
+        )
+
+
+def _build_page_quality_record_locked(
+    project_dir: Path,
+    page_number: int,
+    visual_checks: Sequence[Mapping[str, object]],
+    *,
+    reviewer: str,
+    reviewed_at: str,
+) -> dict[str, object]:
+    """Derive a page QA record from one snapshot, with the project lock held."""
     context = _page_context(project_dir, page_number)
     deterministic = _deterministic_checks(context)
     subjective = _reviewer_checks(visual_checks)
@@ -805,12 +891,58 @@ def build_page_quality_record(
 def write_page_quality_record(
     project_dir: Path, page_number: int, record: Mapping[str, object]
 ) -> Path:
-    """Write an authoritative page-QA record."""
+    """Write an authoritative page-QA record.
+
+    Publication runs under `ProjectLock` so it is serialized against every other
+    project operation. `durable_atomic_write()` alone makes the replacement atomic
+    but takes no lock, so an unlocked publish could land a record between two
+    steps of a concurrent compose run.
+    """
+    project_dir = Path(project_dir)
+    with ProjectLock(project_dir, timeout=PROJECT_OPERATION_LOCK_TIMEOUT):
+        return _write_page_quality_record_locked(project_dir, page_number, record)
+
+
+def _write_page_quality_record_locked(
+    project_dir: Path, page_number: int, record: Mapping[str, object]
+) -> Path:
+    """Publish a page-QA record with the project lock held."""
     destination = contained_project_path(
-        Path(project_dir), f"qa/pages/{_page_id(page_number)}.json"
+        project_dir, f"qa/pages/{_page_id(page_number)}.json"
     )
     atomic_write_json(destination, dict(record))
     return destination
+
+
+def publish_page_quality_record(
+    project_dir: Path,
+    page_number: int,
+    visual_checks: Sequence[Mapping[str, object]],
+    *,
+    reviewer: str,
+    reviewed_at: str,
+) -> Path:
+    """Derive and publish one page-QA record under a single lock acquisition.
+
+    This is the entry point for producing a record. Deriving and publishing in one
+    critical section is what makes the published provenance authoritative: calling
+    `build_page_quality_record()` and `write_page_quality_record()` separately
+    releases the lock in between, so a compose or lettering run can replace an
+    artifact after the record is measured but before it is published, landing a
+    record that was already stale the moment it appeared.
+
+    Returns the path the record was written to.
+    """
+    project_dir = Path(project_dir)
+    with ProjectLock(project_dir, timeout=PROJECT_OPERATION_LOCK_TIMEOUT):
+        record = _build_page_quality_record_locked(
+            project_dir,
+            page_number,
+            visual_checks,
+            reviewer=reviewer,
+            reviewed_at=reviewed_at,
+        )
+        return _write_page_quality_record_locked(project_dir, page_number, record)
 
 
 class PageQualityMigrationError(ValueError):
@@ -1025,7 +1157,29 @@ def migrate_page_quality_record(project_dir: Path, page_number: int) -> dict[str
 
 
 def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQualityIssue, ...]:
-    """Fail closed when page QA or any of its provenance bindings is stale."""
+    """Fail closed when page QA or any of its provenance bindings is stale.
+
+    This validator deliberately does not acquire `ProjectLock`. It is a read-only
+    diagnostic, and taking the exclusive write lock would make it block on — and
+    block — the very compose or lettering run it exists to report on. The contract
+    is therefore advisory: run concurrently with a writer, it may report a binding
+    as stale that the writer was mid-way through making current again, and the
+    remedy is to re-run it once the project is quiet. That is a deliberate choice,
+    not an oversight.
+
+    The finalization gate does not rely on that advisory contract:
+    `finalize_project()` reaches this function from inside `ProjectLock`. A caller
+    that already holds the lock likewise gives the reads below one serialized
+    view, and the lock's per-thread reentrancy means the page-QA helpers can be
+    used safely in that critical section. The standalone `validate_project.py`
+    command remains deliberately advisory and should be re-run after concurrent
+    project work finishes.
+
+    `_page_context()` pairs each semantic value with a digest from the same read,
+    and `_page_bindings()` performs no further I/O. Without an outer lock, the
+    complete set may still span writer generations; the advisory re-run contract
+    above applies to that cross-artifact view as well.
+    """
     project_dir = Path(project_dir)
     relative = f"qa/pages/{_page_id(page_number)}.json"
     issues: list[PageQualityIssue] = []

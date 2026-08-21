@@ -51,7 +51,7 @@ from .core_primitives import PANEL_CHECK_IDS
 from .layouts import match_layout
 from .letter_panels import letter_project
 from .normalize_panels import NormalizationSpec, normalize_panels
-from .page_quality import build_page_quality_record, write_page_quality_record
+from .page_quality import publish_page_quality_record
 from .project_io import ProjectTransaction
 from .quality_sample import build_evidence_record
 from .validate_project import ProjectValidationError, require_valid_project
@@ -462,16 +462,12 @@ def _write_page_records(project: Path, page_numbers: Iterable[int]) -> None:
                 "accidental-text-watermark",
             )
         ]
-        write_page_quality_record(
+        publish_page_quality_record(
             project,
             page_number,
-            build_page_quality_record(
-                project,
-                page_number,
-                checks,
-                reviewer=REVIEWER,
-                reviewed_at=REVIEWED_AT,
-            ),
+            checks,
+            reviewer=REVIEWER,
+            reviewed_at=REVIEWED_AT,
         )
 
 

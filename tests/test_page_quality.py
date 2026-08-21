@@ -5,18 +5,24 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 
+from scripts import page_quality  # noqa: E402
 from scripts.compose_pages import compose_all_pages  # noqa: E402
 from scripts.letter_panels import letter_project  # noqa: E402
 from scripts.page_quality import (  # noqa: E402
     DETERMINISTIC_PAGE_CHECK_IDS,
     PAGE_CHECK_IDS,
     build_page_quality_record,
+    publish_page_quality_record,
     validate_page_quality,
     write_page_quality_record,
 )
+from scripts.project_io import ProjectLock  # noqa: E402
 from scripts.validate_project import (  # noqa: E402
     validate_lettering_provenance,
     validate_project,
@@ -372,6 +378,83 @@ class PageQualityTests(unittest.TestCase):
             and issue.message.startswith("page-quality-stale:")
             for issue in stale
         ), stale)
+
+    def test_publish_uses_one_snapshot_when_page_changes_after_checks(self):
+        page_path = self.project / "pages/page-001.png"
+        old_payload = page_path.read_bytes()
+        old_digest = hashlib.sha256(old_payload).hexdigest()
+        with Image.open(page_path) as image:
+            old_size = image.size
+
+        real_checks = page_quality._deterministic_checks
+        real_write = page_quality._write_page_quality_record_locked
+        held_handles = []
+
+        def replace_page_after_checks(context):
+            held = ProjectLock(self.project)._held_locks().get(self.project.resolve())
+            held_handles.append(held[0] if held is not None else None)
+            checks = real_checks(context)
+            Image.new("RGB", (17, 13), "red").save(page_path)
+            return checks
+
+        def observe_write(project_dir, page_number, record):
+            held = ProjectLock(self.project)._held_locks().get(self.project.resolve())
+            held_handles.append(held[0] if held is not None else None)
+            return real_write(project_dir, page_number, record)
+
+        with (
+            patch.object(
+                page_quality,
+                "_deterministic_checks",
+                side_effect=replace_page_after_checks,
+            ),
+            patch.object(
+                page_quality,
+                "_write_page_quality_record_locked",
+                side_effect=observe_write,
+            ),
+        ):
+            record_path = publish_page_quality_record(
+                self.project,
+                1,
+                reviewer_checks(self.project),
+                reviewer="fixture-reviewer",
+                reviewed_at="2026-08-14T01:02:03Z",
+            )
+
+        record = json.loads(record_path.read_text("utf-8"))
+        current_digest = hashlib.sha256(page_path.read_bytes()).hexdigest()
+        self.assertEqual(
+            old_size,
+            (
+                record["bindings"]["page_width"],
+                record["bindings"]["page_height"],
+            ),
+        )
+        self.assertEqual(old_digest, record["bindings"]["page_sha256"])
+        self.assertNotEqual(current_digest, record["bindings"]["page_sha256"])
+        self.assertEqual(2, len(held_handles))
+        self.assertIsNotNone(held_handles[0])
+        self.assertIs(held_handles[0], held_handles[1])
+
+    def test_page_quality_operations_are_reentrant_under_project_lock(self):
+        with ProjectLock(self.project, timeout=1.0):
+            record = self._build_record()
+            write_page_quality_record(self.project, 1, record)
+            self.assertEqual((), validate_page_quality(self.project, 1))
+            self.assertIsNotNone(
+                ProjectLock(self.project)._held_locks().get(self.project.resolve())
+            )
+
+    def test_advisory_validation_does_not_acquire_project_lock(self):
+        write_page_quality_record(self.project, 1, self._build_record())
+
+        with patch.object(
+            page_quality,
+            "ProjectLock",
+            side_effect=AssertionError("read-only validation must not lock"),
+        ):
+            self.assertEqual((), validate_page_quality(self.project, 1))
 
 
 BALLOON_LAYOUTS = ROOT / "tests/fixtures/balloon-layouts"

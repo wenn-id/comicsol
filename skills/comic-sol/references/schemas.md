@@ -714,6 +714,31 @@ bound to the artifacts inspected by the record. `normalization_sha256s` is bound
 `clean.size` defines the pixel space every balloon verdict is measured in, so
 re-normalizing a panel makes the record stale even when the page image is unchanged.
 
+Page-QA construction snapshots every bound artifact exactly once: JSON digests cover the
+same bytes that were parsed, and the page digest and dimensions come from the same raster
+buffer. `_page_bindings()` only projects that snapshot and performs no later filesystem
+reads. `publish_page_quality_record()` holds `ProjectLock` across both derivation and
+atomic publication, so no serialized composition or lettering operation can replace an
+artifact between the verdicts and the record that binds them. Callers that intentionally
+separate `build_page_quality_record()` from `write_page_quality_record()` get a lock around
+each call, not across the gap; they must instead use the combined publisher or hold an
+outer `ProjectLock`. `migrate_page_quality_record()` provides the same guarantee through
+its `ProjectTransaction`. All of these lock acquisitions are safe inside an existing
+project operation because `ProjectLock` is reentrant per thread.
+
+`validate_page_quality()` is deliberately a lock-free, read-only diagnostic. For semantic
+comparisons it collects each parsed value and its digest from the same artifact read, but
+it does not contend for the write lock with the operation it may be diagnosing. Without
+an outer lock, the complete cross-artifact view may span writer generations and the
+earlier field-specific digest checks may observe a different moment than the semantic
+pass. A standalone validation run concurrent with composition or lettering is therefore
+advisory and must be re-run after that operation finishes. Finalization is authoritative
+because `finalize_project()` invokes page-QA validation while already holding
+`ProjectLock`; any other caller may establish the same serialized guarantee with an outer
+lock. Per-artifact failures remain field-specific, so stale page, composition-cache,
+storyboard, lettering, and normalization bindings identify the exact evidence that must
+be regenerated.
+
 An error-level failed check selects `regenerate`; otherwise any check whose result or severity
 is `warning` selects `accept-warning` and places its evidence, in check order, in
 `unresolved_warnings`; all passing checks select `accept`. A legacy five-field record
