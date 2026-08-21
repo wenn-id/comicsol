@@ -170,9 +170,10 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
     )
     RECORD = "docs/releases/milestone-delivery.md"
 
-    # The first released heading below the Unreleased section. Splitting on it is
-    # how the delivered-but-unreleased scope is isolated, so its absence has to be
-    # a failure rather than a silently wider search.
+    # A released heading that must remain below the Unreleased section. It is a
+    # prefix rather than a whole line because the real heading carries a date
+    # (`## 2.0.0rc4 — 2026-07-30`), and it is only an existence check: the slice
+    # itself ends at the next `## ` heading, whatever it is called.
     RELEASE_BOUNDARY = "## 2.0.0rc4"
 
     @classmethod
@@ -186,19 +187,43 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
     def _unreleased_changelog(self):
         """Return only the Unreleased section, refusing to guess its extent.
 
-        Without the boundary check a renamed or deleted `2.0.0rc4` heading would
-        make every assertion below search the whole changelog, so four shipped
-        releases' worth of prose could satisfy a claim about unreleased work. That
-        fails open in exactly the direction this suite exists to prevent.
+        Every assertion about unreleased work is scoped by this slice, so a loose
+        slice fails open in exactly the direction this suite exists to prevent.
+        Three ways it could leak, all closed here:
+
+        - A substring test for `## Unreleased` also matches a demoted `###
+          Unreleased`, so the heading is matched as a whole line.
+        - Splitting on the first released heading returns *everything* above it. The
+          moment the next tag is cut, a `## 2.1.0` section lands between Unreleased
+          and that heading, and its released prose would satisfy assertions about
+          unreleased work — silently, and precisely when this suite matters most.
+          The slice therefore ends at the next `## ` heading of any kind rather than
+          at one named release.
+        - Deleting the released history entirely would leave a single section that
+          looks self-consistent, so `RELEASE_BOUNDARY` is still required to appear
+          *below* the slice.
         """
-        self.assertIn("## Unreleased", self.changelog)
+        headings = list(re.finditer(r"(?m)^##[ \t]+(?P<name>\S.*?)[ \t]*$", self.changelog))
+        names = [match.group("name") for match in headings]
+        self.assertIn(
+            "Unreleased",
+            names,
+            f"no `## Unreleased` section heading; found {names[:5]}",
+        )
+        index = names.index("Unreleased")
+        start = headings[index].end()
+        end = (
+            headings[index + 1].start()
+            if index + 1 < len(headings)
+            else len(self.changelog)
+        )
         self.assertIn(
             self.RELEASE_BOUNDARY,
-            self.changelog,
-            "the first released heading is missing, so the Unreleased section "
-            "cannot be isolated",
+            self.changelog[end:],
+            "the released history is missing below the Unreleased section, so an "
+            "unreleased claim cannot be distinguished from a shipped one",
         )
-        return self.changelog.split(self.RELEASE_BOUNDARY, 1)[0]
+        return self.changelog[start:end]
 
     @staticmethod
     def _sections(text):
@@ -300,6 +325,57 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         self.assertIn("unreleased", unreleased.lower())
         for milestone in ("v2.1", "v2.2"):
             self.assertIn(milestone, unreleased)
+
+    def test_unreleased_slice_excludes_a_newly_cut_release_section(self):
+        """The slice must not widen the moment the next tag is cut.
+
+        This is the failure mode that matters. Eighteen delivered issues are waiting
+        on a tag, so a `## 2.1.0` section landing above `## 2.0.0rc4` is the next
+        expected edit to this file. A slice that ended at one named release would
+        swallow it and let shipped prose answer for unreleased work.
+        """
+        released = (
+            "\n## 2.1.0 — 2026-09-01\n\n### Added\n\n"
+            "- A shipped entry that must not count as unreleased.\n\n"
+        )
+        future = self.changelog.replace(
+            f"\n{self.RELEASE_BOUNDARY}", f"{released}\n{self.RELEASE_BOUNDARY}", 1
+        )
+        self.assertIn("## 2.1.0", future, "the fixture did not insert a release")
+
+        original, type(self).changelog = self.changelog, future
+        try:
+            sliced = self._unreleased_changelog()
+        finally:
+            type(self).changelog = original
+
+        self.assertNotIn("## 2.1.0", sliced)
+        self.assertNotIn("must not count as unreleased", sliced)
+        # The real Unreleased content is still there, so the slice narrowed rather
+        # than collapsed.
+        self.assertIn("milestone-delivery.md", sliced)
+
+    def test_unreleased_slice_rejects_a_demoted_or_missing_heading(self):
+        for broken, reason in (
+            (self.changelog.replace("## Unreleased", "### Unreleased", 1), "demoted"),
+            (self.changelog.replace("## Unreleased", "## Unreleased notes", 1), "renamed"),
+        ):
+            with self.subTest(reason=reason):
+                original, type(self).changelog = self.changelog, broken
+                try:
+                    with self.assertRaises(AssertionError):
+                        self._unreleased_changelog()
+                finally:
+                    type(self).changelog = original
+
+    def test_unreleased_slice_requires_released_history_below_it(self):
+        truncated = self.changelog.split(f"\n{self.RELEASE_BOUNDARY}", 1)[0] + "\n"
+        original, type(self).changelog = self.changelog, truncated
+        try:
+            with self.assertRaisesRegex(AssertionError, "released history is missing"):
+                self._unreleased_changelog()
+        finally:
+            type(self).changelog = original
 
     def test_readme_points_at_the_record_and_states_the_release_status(self):
         """A record nobody can find from the README is a record nobody reads."""
