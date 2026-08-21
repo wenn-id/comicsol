@@ -1,3 +1,4 @@
+import contextlib
 import re
 import unittest
 from pathlib import Path
@@ -511,6 +512,88 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         finally:
             type(self).changelog = original
 
+    @contextlib.contextmanager
+    def _changelog(self, text):
+        """Drive the helpers against a fixture instead of the real changelog."""
+        original = type(self).changelog
+        type(self).changelog = text
+        try:
+            yield
+        finally:
+            type(self).changelog = original
+
+    def test_carrying_section_resolves_a_released_milestone_to_its_tag(self):
+        """The released branch is unreachable from the current documents.
+
+        Every milestone is `Released = No` here, so that branch would ship untested
+        until the first tag is prepared — exactly when it starts deciding where the
+        evidence check looks. It is driven directly instead.
+        """
+        fixture = (
+            "# Changelog\n\n"
+            "## Unreleased\n\n- Pending work.\n\n"
+            "## 9.9.9rc1 — 2026-01-01\n\n- Shipped work.\n\n"
+            "## 2.0.0rc4 — 2026-07-30\n\n- Older work.\n"
+        )
+        with self._changelog(fixture):
+            self.assertIn("Shipped work", self._carrying_section("Yes — `9.9.9rc1`"))
+            self.assertNotIn("Pending work", self._carrying_section("Yes — `9.9.9rc1`"))
+            self.assertIn("Pending work", self._carrying_section("No — under Unreleased"))
+            # A milestone cannot be released by a tag the changelog never describes.
+            with self.assertRaisesRegex(AssertionError, "no changelog section for"):
+                self._carrying_section("Yes — `9.9.9rc2`")
+
+    def test_distinct_entry_matching_rejects_two_issues_sharing_one_entry(self):
+        """Pin the rejection path, not only the happy path.
+
+        The real documents satisfy the matching, so without this the check could be
+        weakened to always pass and the suite would stay green.
+        """
+        milestone = self.DELIVERED[0]
+        evidence = {"CS-901": "alpha", "CS-902": "beta"}
+        owner = dict.fromkeys(evidence, milestone)
+        released = dict.fromkeys(self.DELIVERED, "No — under Unreleased")
+        tail = "\n## 2.0.0rc4 — 2026-07-30\n\n- Older work.\n"
+
+        shared = f"# Changelog\n\n## Unreleased\n\n- One entry naming alpha and beta.\n{tail}"
+        with self._changelog(shared):
+            unmatched = self._unmatched_issues(evidence, owner, released)
+            self.assertEqual(1, len(unmatched), unmatched)
+            self.assertIn(unmatched[0][0], evidence)
+            with self.assertRaisesRegex(
+                AssertionError, "has no CHANGELOG entry of its own"
+            ):
+                self._assert_each_issue_owns_a_distinct_entry(evidence, owner, released)
+
+        separate = (
+            "# Changelog\n\n## Unreleased\n\n"
+            f"- An entry naming alpha.\n- An entry naming beta.\n{tail}"
+        )
+        with self._changelog(separate):
+            self.assertEqual([], self._unmatched_issues(evidence, owner, released))
+            self._assert_each_issue_owns_a_distinct_entry(evidence, owner, released)
+
+    def test_distinct_entry_matching_reassigns_rather_than_failing_greedily(self):
+        """One shared entry plus one exclusive entry is satisfiable, and accepted.
+
+        A greedy first-come assignment would fail this: `CS-901` matches both
+        bullets, and taking the shared one first would starve `CS-902`. The
+        augmenting-path matching reassigns instead, so the check rejects only
+        genuinely unsatisfiable evidence rather than unlucky ordering.
+        """
+        milestone = self.DELIVERED[0]
+        evidence = {"CS-901": "alpha", "CS-902": "beta"}
+        owner = dict.fromkeys(evidence, milestone)
+        released = dict.fromkeys(self.DELIVERED, "No — under Unreleased")
+        fixture = (
+            "# Changelog\n\n## Unreleased\n\n"
+            "- An entry naming alpha and beta.\n"
+            "- An entry naming alpha only.\n"
+            "\n## 2.0.0rc4 — 2026-07-30\n\n- Older work.\n"
+        )
+        with self._changelog(fixture):
+            self.assertEqual([], self._unmatched_issues(evidence, owner, released))
+
     def test_readme_points_at_the_record_and_states_the_release_status(self):
         """A record nobody can find from the README is a record nobody reads."""
         self.assertIn(self.RECORD, self.readme)
@@ -601,8 +684,10 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
                 )
         self._assert_each_issue_owns_a_distinct_entry(evidence, owner, released)
 
-    def _assert_each_issue_owns_a_distinct_entry(self, evidence, owner, released):
-        """Every delivered issue must be evidenced by an entry of its own.
+    def _unmatched_issues(self, evidence, owner, released):
+        """Return `[(identifier, milestone, probe)]` for issues with no own entry.
+
+        Every delivered issue must be evidenced by an entry of its own.
 
         A phrase that appears somewhere in the section is not enough. Twice now a
         probe passed by matching *another* issue's entry: `CS-007` matched
@@ -613,8 +698,13 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         Requiring a distinct owning bullet per issue closes that whole class rather
         than the two instances. It is a bipartite matching: if no assignment of
         issues to distinct bullets exists, at least two issues are leaning on one
-        entry, and the smallest such group is reported.
+        entry.
+
+        Returning the unmatched set rather than asserting keeps the rejection path
+        testable — an assertion inside `subTest` is recorded rather than raised, so
+        a caller could not observe it.
         """
+        unmatched: list[tuple[str, str, str]] = []
         for milestone in self.DELIVERED:
             bullets = [
                 " ".join(bullet.lower().split())
@@ -645,13 +735,23 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
                 return False
 
             for identifier in candidates:
-                with self.subTest(milestone=milestone, identifier=identifier):
-                    self.assertTrue(
-                        claim(identifier, set()),
-                        f"{identifier} has no CHANGELOG entry of its own in "
-                        f"{milestone}; its probe {evidence[identifier]!r} only "
-                        "matches an entry another issue already accounts for",
-                    )
+                if not claim(identifier, set()):
+                    unmatched.append((identifier, milestone, evidence[identifier]))
+        return unmatched
+
+    def _assert_each_issue_owns_a_distinct_entry(self, evidence, owner, released):
+        """Fail when any delivered issue lacks an entry of its own."""
+        unmatched = self._unmatched_issues(evidence, owner, released)
+        self.assertEqual(
+            [],
+            unmatched,
+            "; ".join(
+                f"{identifier} has no CHANGELOG entry of its own in {milestone}: "
+                f"its probe {probe!r} only matches an entry another issue already "
+                "accounts for"
+                for identifier, milestone, probe in unmatched
+            ),
+        )
 
 
 if __name__ == "__main__":
