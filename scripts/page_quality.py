@@ -16,7 +16,7 @@ from typing import Mapping, Sequence
 
 from PIL import Image
 
-from .comic_sol import atomic_write_json, read_json, sha256_file
+from .comic_sol import atomic_write_json, read_json
 from .core_primitives import (
     BALLOON_COVERAGE_WARNING_RATIO,
     TAIL_ATTACHMENT_TOLERANCE,
@@ -85,6 +85,61 @@ class PageQualityIssue:
     message: str
 
 
+def _read_and_digest(path: Path) -> tuple[bytes, str]:
+    """Read one artifact and digest exactly the bytes that were read.
+
+    Every digest this module derives comes from here, so the cost of one page
+    validation is countable: a test can assert how many times each artifact was
+    read instead of inspecting the call sites.
+    """
+    with open_path_nofollow(Path(path)) as stream:
+        payload = stream.read()
+    return payload, hashlib.sha256(payload).hexdigest()
+
+
+class _ArtifactSnapshots:
+    """Read and digest each distinct artifact at most once per operation.
+
+    Page validation reaches for the same artifact twice on purpose. The
+    recorded-path pass digests whatever a record's own `bindings` point at, so it
+    can tell a missing bound artifact from one whose bytes changed. The
+    re-derived pass rebuilds every binding from the current storyboard, so it can
+    also catch a binding that is well-formed and current but simply wrong. Both
+    verdicts are needed; reading the bytes behind them twice is not.
+
+    Memoizing on the fully resolved path is what keeps the two passes
+    independent. Each still chooses its own path and its own comparison, so a
+    record binding `pages/page-002.png` while the page is `page-001.png` digests
+    both files and reports both verdicts. Only a second read of one identical
+    path is elided.
+
+    The payload is held alongside the digest because a caller that parses an
+    artifact must parse the bytes that were digested. Handing back a digest from
+    an earlier read and letting the caller reopen the file is exactly the split
+    generation `_json_snapshot()` exists to prevent. One instance therefore holds
+    one page's artifacts — including its raster, which `_page_context()` already
+    reads whole — and is discarded when the operation returns.
+    """
+
+    __slots__ = ("_snapshots",)
+
+    def __init__(self) -> None:
+        self._snapshots: dict[Path, tuple[bytes, str]] = {}
+
+    def snapshot(self, path: Path) -> tuple[bytes, str]:
+        """Return one artifact's bytes with the digest of exactly those bytes."""
+        key = Path(path)
+        snapshot = self._snapshots.get(key)
+        if snapshot is None:
+            snapshot = _read_and_digest(key)
+            self._snapshots[key] = snapshot
+        return snapshot
+
+    def digest(self, path: Path) -> str:
+        """Return one artifact's digest, reading it only if it is not held yet."""
+        return self.snapshot(path)[1]
+
+
 @dataclass(frozen=True)
 class PageContext:
     """One pass over the artifacts that define a page's QA context.
@@ -94,6 +149,10 @@ class PageContext:
     project generation. Without the lock, each value/digest pair is internally
     consistent but the cross-artifact view remains advisory because a writer may
     publish between reads. `_page_bindings()` never re-reads these artifacts.
+
+    The reads flow through an `_ArtifactSnapshots` cache, so an artifact another
+    pass of the same operation already read is not read again and the whole
+    operation observes one set of bytes per file.
     """
 
     storyboard_path: Path
@@ -147,22 +206,30 @@ def _rect_tuple(panel: Mapping[str, object]) -> tuple[int, int, int, int]:
     return values  # type: ignore[return-value]
 
 
-def _json_snapshot(path: Path) -> tuple[dict[str, object], str]:
+def _json_snapshot(
+    path: Path, artifacts: _ArtifactSnapshots
+) -> tuple[dict[str, object], str]:
     """Read one JSON artifact and digest the exact bytes that were parsed.
 
-    `read_json()` followed by `sha256_file()` opens the file twice, so the digest
-    can describe a generation the parsed value never came from. Hashing the single
-    buffer the parse consumed is what makes the resulting binding provable.
+    A separate read for the value and the digest opens the file twice, so the
+    digest can describe a generation the parsed value never came from. Parsing the
+    single buffer that was digested is what makes the resulting binding provable,
+    and `artifacts` supplies that buffer whether this is the first pass of the
+    operation to ask for the file or a later one.
+
+    The parse is repeated for each call rather than cached with the bytes, so no
+    two callers share a mutable value.
     """
-    with open_path_nofollow(Path(path)) as stream:
-        payload = stream.read()
+    payload, digest = artifacts.snapshot(Path(path))
     value = json.loads(payload)
     if not isinstance(value, dict):
         raise ValueError(f"expected a JSON object: {path}")
-    return value, hashlib.sha256(payload).hexdigest()
+    return value, digest
 
 
-def _clean_raster(project_dir: Path, panel_id: str) -> tuple[tuple[int, int], str]:
+def _clean_raster(
+    project_dir: Path, panel_id: str, artifacts: _ArtifactSnapshots
+) -> tuple[tuple[int, int], str]:
     """Return the pixel space one panel's lettering geometry is expressed in.
 
     The digest travels with the size because every balloon verdict is measured in
@@ -175,7 +242,7 @@ def _clean_raster(project_dir: Path, panel_id: str) -> tuple[tuple[int, int], st
         raise ValueError(
             f"normalization record is missing for panel {panel_id}"
         ) from error
-    normalization, digest = _json_snapshot(path)
+    normalization, digest = _json_snapshot(path, artifacts)
     clean = normalization.get("clean") if isinstance(normalization, dict) else None
     size = clean.get("size") if isinstance(clean, dict) else None
     if (
@@ -190,16 +257,24 @@ def _clean_raster(project_dir: Path, panel_id: str) -> tuple[tuple[int, int], st
     return (size[0], size[1]), digest
 
 
-def _page_context(project_dir: Path, page_number: int) -> PageContext:
+def _page_context(
+    project_dir: Path, page_number: int, artifacts: _ArtifactSnapshots
+) -> PageContext:
     """Collect one page's artifacts and build its deterministic check context.
 
     This is the single collection point used to derive page-QA bindings. Callers
     that need a cross-artifact view serialized against a concurrent compose or
     lettering run must hold `ProjectLock`. Without it, each parsed value and its
     digest still come from one read, but the collection may span writer generations.
+
+    `artifacts` is required rather than defaulted so every caller reads through
+    the same mechanism. Construction and migration pass a cache used by nothing
+    else, which changes nothing for them; validation passes the one its
+    recorded-path passes already populated, which is what removes the second read
+    of every bound artifact.
     """
     storyboard_path = contained_project_path(project_dir, "plan/storyboard.json", must_exist=True)
-    storyboard, storyboard_sha256 = _json_snapshot(storyboard_path)
+    storyboard, storyboard_sha256 = _json_snapshot(storyboard_path, artifacts)
     page = _storyboard_page(storyboard, page_number)
     panels = page.get("panels")
     if not isinstance(panels, list) or not panels:
@@ -220,16 +295,14 @@ def _page_context(project_dir: Path, page_number: int) -> PageContext:
     # Decode the dimensions from the same bytes the digest covers. Hashing the
     # page separately from the decode lets a record bind one raster while the
     # pixel space its balloon verdicts were measured against came from another.
-    with open_path_nofollow(page_path) as stream:
-        page_payload = stream.read()
-    page_sha256 = hashlib.sha256(page_payload).hexdigest()
+    page_payload, page_sha256 = artifacts.snapshot(page_path)
     with Image.open(io.BytesIO(page_payload)) as image:
         image.load()
         page_width, page_height = image.size
 
     cache_relative = "cache/composition.json"
     cache_path = contained_project_path(project_dir, cache_relative, must_exist=True)
-    cache_sha256 = sha256_file(cache_path)
+    cache_sha256 = artifacts.digest(cache_path)
     lettering: list[tuple[str, str, dict[str, object]]] = []
     clean_sizes: list[tuple[int, int]] = []
     normalization: list[tuple[str, str]] = []
@@ -245,13 +318,15 @@ def _page_context(project_dir: Path, page_number: int) -> PageContext:
                 f"lettering geometry is missing for panel {panel_id}"
             ) from error
         try:
-            geometry, geometry_digest = _json_snapshot(path)
+            geometry, geometry_digest = _json_snapshot(path, artifacts)
         except ValueError as error:
             raise ValueError(
                 f"lettering geometry is invalid for panel {panel_id}"
             ) from error
         lettering.append((panel_id, geometry_digest, geometry))
-        clean_size, normalization_digest = _clean_raster(project_dir, panel_id)
+        clean_size, normalization_digest = _clean_raster(
+            project_dir, panel_id, artifacts
+        )
         clean_sizes.append(clean_size)
         normalization.append((panel_id, normalization_digest))
 
@@ -862,7 +937,7 @@ def _build_page_quality_record_locked(
     reviewed_at: str,
 ) -> dict[str, object]:
     """Derive a page QA record from one snapshot, with the project lock held."""
-    context = _page_context(project_dir, page_number)
+    context = _page_context(project_dir, page_number, _ArtifactSnapshots())
     deterministic = _deterministic_checks(context)
     subjective = _reviewer_checks(visual_checks)
     _validate_tail_evidence(context, subjective)
@@ -1129,7 +1204,7 @@ def migrate_page_quality_record(project_dir: Path, page_number: int) -> dict[str
         )
         if migration is None:
             raise UnsupportedSchemaVersionError(source_version, artifact="page QA")
-        context = _page_context(project_dir, page_number)
+        context = _page_context(project_dir, page_number, _ArtifactSnapshots())
         bindings = _page_bindings(context)
         recorded_bindings = record.get("bindings")
         recorded_page_digest = (
@@ -1179,10 +1254,24 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
     and `_page_bindings()` performs no further I/O. Without an outer lock, the
     complete set may still span writer generations; the advisory re-run contract
     above applies to that cross-artifact view as well.
+
+    Each distinct artifact is read and digested once per call. The two passes that
+    need those bytes stay separate and keep reporting separately: the
+    recorded-path passes below distinguish a bound artifact that is missing from
+    one whose bytes changed, and the final comparison against `_page_bindings()`
+    reports a binding that is well-formed and current but wrong. Sharing the reads
+    also narrows the advisory window above, because the passes can no longer
+    observe two generations of one file within a single call.
     """
     project_dir = Path(project_dir)
     relative = f"qa/pages/{_page_id(page_number)}.json"
     issues: list[PageQualityIssue] = []
+    # The recorded-path passes below and the re-derived pass at the end both need
+    # the bytes of every bound artifact, and the page raster is expensive. Sharing
+    # one cache reads and digests each file once for the whole validation without
+    # merging the two verdicts: each pass still resolves its own paths and makes
+    # its own comparison.
+    artifacts = _ArtifactSnapshots()
 
     def stale(field: str, detail: str) -> None:
         """Report whether a page-QA record is stale for current artifacts."""
@@ -1313,11 +1402,17 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
             artifact = None
         if artifact is None or not artifact.is_file():
             stale(f"bindings.{digest_field}", "bound artifact is missing")
-        elif bindings.get(digest_field) != sha256_file(artifact):
+        elif bindings.get(digest_field) != artifacts.digest(artifact):
             stale(f"bindings.{digest_field}", "bound artifact hash does not match")
 
     def verify_per_panel_bindings(field: str, artifact: str, label: str) -> None:
-        """Re-derive one ordered `panel-id:sha256` binding list from disk."""
+        """Re-derive one ordered `panel-id:sha256` binding list from disk.
+
+        This walks the panel IDs the record names, while `_page_context()` walks
+        the panels the storyboard declares. The two traversals differ on purpose,
+        so a record naming the wrong panel set is caught by the difference. They
+        share the digest cache, not the traversal.
+        """
         recorded = bindings.get(field)
         if not isinstance(recorded, list):
             stale(f"bindings.{field}", f"ordered {label} bindings are missing")
@@ -1336,7 +1431,7 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
             except (OSError, ValueError):
                 readable = False
                 break
-            current.append(f"{panel_id}:{sha256_file(path)}")
+            current.append(f"{panel_id}:{artifacts.digest(path)}")
         if not readable or current != recorded:
             stale(
                 f"bindings.{field}",
@@ -1348,7 +1443,7 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
         "normalization_sha256s", "normalization.json", "normalization"
     )
     try:
-        context = _page_context(project_dir, page_number)
+        context = _page_context(project_dir, page_number, artifacts)
     except (OSError, ValueError, json.JSONDecodeError):
         if not issues:
             stale("bindings", "current page provenance is missing or unreadable")

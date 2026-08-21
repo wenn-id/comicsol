@@ -281,6 +281,27 @@
   pre-bump results; `.github/workflows/benchmark.yml` already benchmarks the baseline
   revision with the current harness, so CI needs no change.
 
+- **One page validation now reads and digests each bound artifact once instead of twice,
+  with no change to the issues it reports.** `validate_page_quality()` deliberately checks
+  provenance twice: once at the path the record itself names, to separate a missing bound
+  artifact from one whose bytes changed, and once re-derived from the current storyboard, to
+  catch a binding that is well-formed and current but wrong. Both passes hashed every
+  artifact independently, so validating the three-panel one-page fixture performed 18 hash
+  computations over 9 distinct files, including the 1600x2400 page raster twice. The reads
+  now flow through one `_ArtifactSnapshots` cache per operation, memoized on the resolved
+  path, which drops that to 9 — one per file — and halves the bytes read on the two-page
+  benchmark case from 1642.9 KiB to 821.5 KiB. Wall time is unchanged within measurement
+  noise on that project, because hashing was never the dominant cost of validation; the
+  saving is in reads and digests, and it scales with page and panel count. The two passes
+  are untouched: each still resolves its own paths and makes its own comparison, so a
+  record binding a decoy raster whose digest matches is still reported only by the
+  re-derived pass, and the per-panel traversal still walks the record's panel IDs while
+  `_page_context()` walks the storyboard's, which is what catches a record naming the wrong
+  panel set. `_page_bindings()` keeps its single I/O-free derivation path shared by
+  construction, migration, and validation. Because a parse now consumes the same buffer
+  that was digested even across passes, a validation can also no longer observe two
+  generations of one file; the advisory unlocked contract is otherwise unchanged.
+
 ### Removed
 
 - Removed the unwired `comic_sol_product.providers` Python API. Integrations must

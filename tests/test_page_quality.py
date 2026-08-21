@@ -331,6 +331,141 @@ class PageQualityTests(unittest.TestCase):
         issues = validate_page_quality(self.project, 1)
         self.assertTrue(any(issue.field == "bindings.layout_name" for issue in issues), issues)
 
+    def _count_artifact_reads(self, page_number=1):
+        """Return one validation's issues with a read count per bound artifact."""
+        reads = {}
+        real_read = page_quality._read_and_digest
+
+        def counted_read(path):
+            key = Path(path).resolve()
+            reads[key] = reads.get(key, 0) + 1
+            return real_read(path)
+
+        def counted_digest(path):
+            return counted_read(path)[1]
+
+        # `_read_and_digest()` is the only digest primitive the module has today.
+        # `sha256_file` is patched in as well so a regression that reintroduces a
+        # second hashing pass through the shared helper is counted here instead of
+        # escaping the assertion unnoticed.
+        with (
+            patch.object(page_quality, "_read_and_digest", counted_read),
+            patch.object(page_quality, "sha256_file", counted_digest, create=True),
+        ):
+            issues = validate_page_quality(self.project, page_number)
+        root = self.project.resolve()
+        return issues, {
+            path.relative_to(root).as_posix(): count for path, count in reads.items()
+        }
+
+    def test_one_validation_reads_each_bound_artifact_exactly_once(self):
+        write_page_quality_record(self.project, 1, self._build_record())
+
+        issues, reads = self._count_artifact_reads()
+
+        self.assertEqual((), issues)
+        # Counted rather than inspected: the recorded-path passes and the
+        # re-derived pass both need these bytes, and the page raster is the
+        # expensive one. Any reintroduced second read fails this outright.
+        self.assertEqual(
+            {
+                "cache/composition.json": 1,
+                "pages/page-001.png": 1,
+                "panels/p01-01/lettering.json": 1,
+                "panels/p01-01/normalization.json": 1,
+                "panels/p01-02/lettering.json": 1,
+                "panels/p01-02/normalization.json": 1,
+                "panels/p01-03/lettering.json": 1,
+                "panels/p01-03/normalization.json": 1,
+                "plan/storyboard.json": 1,
+            },
+            reads,
+        )
+
+    def test_missing_and_changed_bound_artifacts_report_separately(self):
+        write_page_quality_record(self.project, 1, self._build_record())
+        page = self.project / "pages/page-001.png"
+        payload = page.read_bytes()
+
+        page.unlink()
+        missing = validate_page_quality(self.project, 1)
+        self.assertEqual(
+            ["page-quality-stale: bound artifact is missing"],
+            [
+                issue.message for issue in missing
+                if issue.field == "bindings.page_sha256"
+            ],
+            missing,
+        )
+
+        # A page whose bytes changed is a different verdict from a page that is
+        # gone, and the re-derived pass adds its own. Sharing one read of the
+        # raster must not merge them.
+        page.write_bytes(payload + b"changed")
+        changed = validate_page_quality(self.project, 1)
+        self.assertEqual(
+            [
+                "page-quality-stale: bound artifact hash does not match",
+                "page-quality-stale: bound value does not match current artifacts",
+            ],
+            sorted(
+                issue.message for issue in changed
+                if issue.field == "bindings.page_sha256"
+            ),
+            changed,
+        )
+
+    def test_current_but_wrong_binding_is_caught_by_the_re_derived_pass(self):
+        decoy = self.project / "pages/page-002.png"
+        Image.new("RGB", (12, 9), "white").save(decoy)
+        record = self._build_record()
+        record["bindings"]["page_path"] = "pages/page-002.png"
+        record["bindings"]["page_sha256"] = hashlib.sha256(
+            decoy.read_bytes()
+        ).hexdigest()
+        write_page_quality_record(self.project, 1, record)
+
+        issues, reads = self._count_artifact_reads()
+
+        # The recorded path resolves and its digest matches the bytes there, so
+        # the recorded-path pass is satisfied. Only re-deriving the binding from
+        # the storyboard reports a binding that is well-formed but wrong.
+        self.assertEqual(
+            ["page-quality-stale: bound value does not match current artifacts"],
+            [issue.message for issue in issues if issue.field == "bindings.page_sha256"],
+            issues,
+        )
+        self.assertIn("bindings.page_path", {issue.field for issue in issues})
+        # Two different rasters stand behind one field, and each is read once:
+        # memoizing on the resolved path shares reads without merging passes.
+        self.assertEqual(1, reads["pages/page-001.png"])
+        self.assertEqual(1, reads["pages/page-002.png"])
+
+    def test_recorded_panel_set_disagreeing_with_the_storyboard_is_reported(self):
+        undeclared = self.project / "panels/p01-99"
+        undeclared.mkdir()
+        lettering = undeclared / "lettering.json"
+        shutil.copyfile(self.project / "panels/p01-03/lettering.json", lettering)
+        record = self._build_record()
+        recorded = record["bindings"]["lettering_sha256s"][:2]
+        recorded.append("p01-99:" + hashlib.sha256(lettering.read_bytes()).hexdigest())
+        record["bindings"]["lettering_sha256s"] = recorded
+        write_page_quality_record(self.project, 1, record)
+
+        issues = validate_page_quality(self.project, 1)
+
+        # Every recorded hash is current, so the traversal over the record's own
+        # panel IDs agrees with disk. The disagreement exists only against the
+        # panel set the storyboard declares, which the other traversal walks.
+        self.assertEqual(
+            ["page-quality-stale: bound value does not match current artifacts"],
+            [
+                issue.message for issue in issues
+                if issue.field == "bindings.lettering_sha256s"
+            ],
+            issues,
+        )
+
     def test_geometry_detects_clipping_overlap_and_bad_reading_order(self):
         geometry_path = self.project / "panels/p01-01/lettering.json"
         geometry = json.loads(geometry_path.read_text("utf-8"))
