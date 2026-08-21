@@ -31,6 +31,7 @@ from scripts.project_io import ProjectTransaction  # noqa: E402
 from scripts.schema import (  # noqa: E402
     CURRENT_PROJECT_SCHEMA_VERSION,
     MIN_READER_PROJECT_SCHEMA_VERSION,
+    PROJECT_MIGRATIONS,
     UnsupportedSchemaVersionError,
     migrate_project_manifest,
     read_project_manifest,
@@ -93,6 +94,97 @@ class ManifestTests(unittest.TestCase):
         migrated = migrate_project_manifest(project)
         self.assertEqual(CURRENT_PROJECT_SCHEMA_VERSION, migrated["schema_version"])
         self.assertEqual(before, manifest_path.read_bytes())
+
+    def test_migrating_a_current_manifest_neither_publishes_nor_journals(self):
+        project = init_project(
+            self.root,
+            "No Op Migration",
+            b"Schema contract source",
+            {"mode": "short_prompt", "language": "en"},
+        )
+        manifest_path = project / "project.json"
+        published = manifest_path.read_bytes()
+        transactions = project / "logs/transactions"
+        before = self._transaction_names(transactions)
+
+        def refuse_to_start(transaction):
+            raise AssertionError("opened a transaction for a no-op migration")
+
+        # A committed transaction removes its own numbered directory, so the
+        # journal snapshot below cannot see one that opened and closed. Refusing
+        # to start is what pins that none is opened at all.
+        with mock.patch.object(ProjectTransaction, "__enter__", refuse_to_start):
+            migrated = migrate_project_manifest(project)
+
+        self.assertEqual(CURRENT_PROJECT_SCHEMA_VERSION, migrated["schema_version"])
+        self.assertEqual(published, manifest_path.read_bytes())
+        self.assertEqual(before, self._transaction_names(transactions))
+
+    @staticmethod
+    def _transaction_names(transactions):
+        if not transactions.is_dir():
+            return []
+        return sorted(entry.name for entry in transactions.iterdir())
+
+    def test_no_op_migration_does_not_lock_a_never_locked_project(self):
+        project = self.root / "never-locked"
+        manifest_path = project / "project.json"
+        atomic_write_json(
+            manifest_path,
+            {"schema_version": CURRENT_PROJECT_SCHEMA_VERSION, "status": "INIT"},
+        )
+        before = sorted(entry.name for entry in project.iterdir())
+
+        migrated = migrate_project_manifest(project)
+
+        self.assertEqual(CURRENT_PROJECT_SCHEMA_VERSION, migrated["schema_version"])
+        # The no-op acquires no lock and creates no journal, so a project that
+        # has never been written to gains no product-owned state from a read.
+        self.assertFalse((project / ".comic-sol.lock").exists())
+        self.assertFalse((project / "logs").exists())
+        self.assertEqual(before, sorted(entry.name for entry in project.iterdir()))
+
+    def test_migration_rechecks_the_manifest_version_under_the_lock(self):
+        project = init_project(
+            self.root,
+            "Raced Migration",
+            b"Schema contract source",
+            {"mode": "short_prompt", "language": "en"},
+        )
+        manifest_path = project / "project.json"
+        stale = read_json(manifest_path)
+        stale["schema_version"] = "0.9"
+        atomic_write_json(manifest_path, stale)
+        hook_calls = []
+
+        def refuse_to_migrate(manifest):
+            hook_calls.append(manifest)
+            raise AssertionError("migrated a manifest already at the current version")
+
+        enter_transaction = ProjectTransaction.__enter__
+
+        def migrate_concurrently(transaction):
+            started = enter_transaction(transaction)
+            # A writer that migrated the manifest between the unlocked pre-check
+            # and the lock. Only the bytes on disk now may be republished.
+            winner = read_json(manifest_path)
+            winner["schema_version"] = CURRENT_PROJECT_SCHEMA_VERSION
+            atomic_write_json(manifest_path, winner)
+            return started
+
+        with (
+            mock.patch.dict(
+                PROJECT_MIGRATIONS,
+                {("0.9", CURRENT_PROJECT_SCHEMA_VERSION): refuse_to_migrate},
+            ),
+            mock.patch.object(ProjectTransaction, "__enter__", migrate_concurrently),
+        ):
+            migrated = migrate_project_manifest(project)
+            published = manifest_path.read_bytes()
+
+        self.assertEqual([], hook_calls)
+        self.assertEqual(CURRENT_PROJECT_SCHEMA_VERSION, migrated["schema_version"])
+        self.assertEqual(json.loads(published.decode("utf-8")), migrated)
 
     def test_unsupported_project_schema_is_rejected_without_mutation(self):
         project = init_project(

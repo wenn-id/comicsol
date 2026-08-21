@@ -100,15 +100,27 @@ def read_project_manifest(
 def migrate_project_manifest(project_dir: Path) -> Manifest:
     """Run a registered migration transactionally, or fail without mutation.
 
-    A migration receives an in-memory manifest and must return a complete
-    manifest for ``CURRENT_PROJECT_SCHEMA_VERSION``. The project file is only
-    staged after the hook returns successfully, then published through the
+    A manifest already at ``CURRENT_PROJECT_SCHEMA_VERSION`` — including a
+    pre-schema manifest, which is the legacy representation of that version — is
+    normalized in memory and returned without opening a transaction, so reading
+    one never leaves a lock file or journal directory behind.
+
+    Otherwise a migration receives an in-memory manifest and must return a
+    complete manifest for ``CURRENT_PROJECT_SCHEMA_VERSION``. The project file is
+    only staged after the hook returns successfully, then published through the
     existing journal-backed transaction.
     """
     project_dir = Path(project_dir)
-    manifest_path = project_dir / "project.json"
+    manifest_path = (project_dir / "project.json").absolute()
+    current = _read_manifest(manifest_path)
+    current_version = current.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
+    if current_version == CURRENT_PROJECT_SCHEMA_VERSION:
+        current.setdefault("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
+        return current
     with ProjectTransaction(project_dir, "schema-migration") as transaction:
-        manifest = _read_manifest(manifest_path.absolute())
+        # The check above is advisory and unlocked. The manifest on disk now,
+        # under the lock, is the only one that may be migrated and republished.
+        manifest = _read_manifest(manifest_path)
         source_version = manifest.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
         if source_version == CURRENT_PROJECT_SCHEMA_VERSION:
             manifest.setdefault("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)

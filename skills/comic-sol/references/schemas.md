@@ -22,6 +22,13 @@ The current project manifest schema is `1.0`. The minimum reader and writer vers
 - Migration stages the complete replacement through the journal-backed project transaction.
   If validation or migration fails, `project.json`, source files, logs, and user artifacts
   remain byte-for-byte unchanged.
+- A manifest that needs no migration is returned without opening that transaction, so
+  `migrate_project_manifest()` creates no `.comic-sol.lock` and no `logs/transactions/<id>/`
+  directory for a no-op. A manifest with no `schema_version` is the legacy representation of
+  the current version: it is normalized in memory only and the file on disk is untouched.
+- That unlocked version check is advisory. The manifest is re-read and its version
+  re-checked inside the transaction, so a writer that migrates the project between the two
+  reads can at worst cause an unnecessary transaction, never an incorrect publish.
 - This release has no older manifest representation registered for automatic migration;
   an older artifact is rejected until a reviewed migration is added.
 
