@@ -168,6 +168,9 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         "v2.2 — Comic Quality",
         "v2.3 — User Experience",
     )
+    # Delivered milestones owe a CHANGELOG entry per issue. Naming them once here is
+    # what keeps the evidence check from quietly covering a subset.
+    DELIVERED = MILESTONES[:3]
     RECORD = "docs/releases/milestone-delivery.md"
 
     # A released heading that must remain below the Unreleased section. It is a
@@ -288,16 +291,74 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
 
     def test_every_delivered_issue_cites_a_closing_pull_request(self):
         for milestone in self.MILESTONES:
-            delivered = "Delivered" in self.sections[milestone] or milestone.startswith(
-                ("v2.0", "v2.1", "v2.2")
-            )
             for issue, identifier, pull in self._issue_rows(self.sections[milestone]):
                 with self.subTest(milestone=milestone, issue=issue):
                     self.assertIsNotNone(identifier, f"#{issue} has no CS identifier")
-                    if delivered:
+                    if milestone in self.DELIVERED:
                         self.assertIsNotNone(
                             pull, f"#{issue} is delivered but cites no pull request"
                         )
+
+    def _timeline(self):
+        """Return `({milestone: last_merge_date}, {tag: publish_date})`."""
+        merged = dict(
+            re.findall(
+                r"\|\s*(v\d+\.\d+ — [^|]+?)\s*\|\s*\d{4}-\d{2}-\d{2} … (\d{4}-\d{2}-\d{2})\s*\|",
+                self.record,
+            )
+        )
+        published = dict(
+            re.findall(
+                r"\|\s*`(\d+\.\d+\.\d+rc\d+)`\s*\|\s*(\d{4}-\d{2}-\d{2})\s*\|", self.record
+            )
+        )
+        return {name.strip(): date for name, date in merged.items()}, published
+
+    def test_delivery_timeline_is_recorded_for_every_delivered_milestone(self):
+        merged, published = self._timeline()
+        for milestone in self.DELIVERED:
+            self.assertIn(milestone, merged, f"{milestone} has no recorded merge window")
+        self.assertEqual(4, len(published), published)
+
+    def test_no_milestone_claims_a_release_it_merged_after(self):
+        """A `Released` cell must be `No`, or name a tag published after the work.
+
+        This is the check that catches the mistake this document was written to
+        correct. The record first said the v2.0 milestone shipped in
+        `2.0.0rc1 … rc4`. Those are real tags, so merely verifying that a cited tag
+        exists passes — and did. What makes the claim false is the ordering: every
+        v2.0 pull request merged on 2026-08-18/19, and the last tag was published on
+        2026-07-30. Work cannot be inside a tag that was cut nineteen days before it.
+
+        Both dates are recorded in the delivery timeline, so the contradiction is
+        checkable offline from the document alone.
+        """
+        merged, published = self._timeline()
+        summary = re.findall(
+            r"\|\s*(v\d+\.\d+ — [^|]+?)\s*\|\s*\d+\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|",
+            self.record,
+        )
+        self.assertEqual(len(self.MILESTONES), len(summary), summary)
+        for milestone, status, released in summary:
+            with self.subTest(milestone=milestone):
+                if status == "Planned":
+                    self.assertEqual("—", released)
+                    continue
+                if released.startswith("No"):
+                    continue
+                cited = set(re.findall(r"\d+\.\d+\.\d+rc\d+", released))
+                self.assertTrue(cited, f"{milestone}: {released!r} names no tag")
+                unknown = sorted(cited - set(published))
+                self.assertFalse(unknown, f"{milestone} claims unpublished tags: {unknown}")
+                last_merge = merged[milestone]
+                latest_claimed = max(published[tag] for tag in cited)
+                self.assertLessEqual(
+                    last_merge,
+                    latest_claimed,
+                    f"{milestone} merged through {last_merge} but claims release in "
+                    f"{sorted(cited)}, published by {latest_claimed}; work cannot be "
+                    "inside a tag cut before it",
+                )
 
     def test_identifiers_are_unique_and_well_formed(self):
         identifiers = [
@@ -314,10 +375,10 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         for phrase in (
             "not** version tags",
             "The published version is `2.0.0rc4`",
-            "unreleased",
             "docs/releases/v2.0-stable-criteria.md",
         ):
             self.assertIn(phrase, self.record)
+        self.assertIn("unreleased", self.record.lower())
 
     def test_changelog_points_at_the_record_and_states_the_release_status(self):
         unreleased = self._unreleased_changelog()
@@ -384,16 +445,36 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         for milestone in ("v2.1", "v2.2"):
             self.assertIn(milestone, self.readme)
 
-    def test_delivered_v2_1_and_v2_2_work_is_described_in_the_changelog(self):
+    def test_every_delivered_issue_is_described_in_the_changelog(self):
         """Each delivered issue's headline artifact must appear in the CHANGELOG.
 
-        This is the check that would have caught the original omission: `CS-015`
-        through `CS-019` were delivered and closed while the CHANGELOG never
-        mentioned them. Each probe is an identifier the change introduced, so it
-        cannot be satisfied by unrelated prose.
+        This is the check that catches an omission, and its scope is the whole
+        delivered set for a reason. An earlier version of this test covered v2.1 and
+        v2.2 only, mirroring the assumption that the v2.0 milestone was already
+        described by the `2.0.0rc*` release notes. It was not: those prereleases were
+        published on 2026-07-30 and every v2.0 milestone issue merged on 2026-08-18/19,
+        so seven of them had no entry anywhere and the test could not see it.
+
+        Each probe is an identifier the change introduced, so it cannot be satisfied
+        by unrelated prose, and `DELIVERED` is derived from the record rather than
+        restated here — adding a delivered milestone without extending `evidence`
+        fails instead of silently narrowing the check.
         """
-        unreleased = self._unreleased_changelog().lower()
+        # Whitespace is collapsed so a probe cannot be defeated by where a line
+        # happens to wrap. `clean-install verification` spanning two lines is a
+        # formatting detail, not a missing entry.
+        unreleased = " ".join(self._unreleased_changelog().lower().split())
         evidence = {
+            "CS-001": "v2.0-stable-criteria",
+            "CS-002": "tests/golden/mini-comic",
+            "CS-003": "resume requires a blocked project",
+            "CS-004": "test_lifecycle_failures.py",
+            "CS-005": "clean-install verification",
+            "CS-006": "doctor_report()",
+            "CS-007": "supported_project_schema_versions",
+            "CS-008": "failure-injection",
+            "CS-009": "comic_sol_product.errors",
+            "CS-010": "release_qualification.py",
             "CS-011": "scripts/benchmark.py",
             "CS-012": "benchmark corpus",
             "CS-013": "consistency_benchmark",
@@ -415,13 +496,14 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         }
         recorded = {
             identifier
-            for milestone in ("v2.1 — Reliability & DX", "v2.2 — Comic Quality")
+            for milestone in self.DELIVERED
             for _, identifier, _ in self._issue_rows(self.sections[milestone])
         }
         self.assertEqual(
             recorded,
             set(evidence),
-            "the delivered set and this test's evidence map disagree",
+            "the delivered set and this test's evidence map disagree; a milestone "
+            "marked delivered must have one evidence probe per issue",
         )
         for identifier, phrase in sorted(evidence.items()):
             with self.subTest(identifier=identifier):

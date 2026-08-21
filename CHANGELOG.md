@@ -2,10 +2,12 @@
 
 ## Unreleased
 
-Milestones v2.1 — Reliability & DX and v2.2 — Comic Quality are delivered in full and are
-unreleased: every change below ships in the next tag after `2.0.0rc4`.
-`docs/releases/milestone-delivery.md` records which issue and pull request delivered each
-one.
+Milestones v2.0 — Stability, v2.1 — Reliability & DX, and v2.2 — Comic Quality are delivered
+in full and are unreleased: every change below ships in the next tag after `2.0.0rc4`. The
+v2.0 milestone is included here deliberately — the `2.0.0rc*` prereleases shipped the v2.0
+product line on 2026-07-29/30, but the milestone that hardened it merged on 2026-08-18/19,
+after `rc4` was published. `docs/releases/milestone-delivery.md` records which issue and pull
+request delivered each change.
 
 ### Added
 
@@ -163,6 +165,52 @@ one.
   score report only what a reviewer actually scored, an unscored dimension is never
   averaged in as a zero, and an unattributable score or a scorecard from another
   definition is refused rather than summarized.
+- Defined the authoritative v2.0 stable release gate in
+  `docs/releases/v2.0-stable-criteria.md`: supported clean-install targets, the required CLI
+  and project lifecycle, interrupted-generation and resume behaviour, project-data
+  preservation, release artifact integrity and provenance, and the no-open-P0/P1 rule.
+  `.github/workflows/release.yml` verifies the document is present, so the gate cannot be
+  removed and released around, and `tests/test_release_docs.py` asserts it stays complete.
+- Added golden end-to-end pipeline coverage over a committed `tests/golden/mini-comic`
+  project, so the deterministic half of the pipeline — plan, storyboard, lettering,
+  composition, export, and validation — is exercised as one path rather than only as
+  independent units.
+- Added a lifecycle failure-injection suite (`tests/test_lifecycle_failures.py`) that faults
+  the operations a project depends on rather than trusting the happy path, and clean-install
+  verification across the supported platforms.
+- Repeated `resume` calls are now read-only and idempotent after a recovery. A first recovery
+  correctly cleared `BLOCKED`, but a second resume then raised
+  `resume requires a BLOCKED project`, which made recovery a one-shot operation and a retry
+  an error. A non-blocked resume now derives its summary without mutating `project.json` or
+  `logs/events.jsonl`, and regression coverage pins the accepted artifact hashes and the
+  provenance reuse events.
+- `doctor` gained an authoritative structured report. `doctor_report()` returns stable check
+  IDs with a `status` of `pass`, `warn`, or `fail`, a message, and remediation, covering
+  runtime, Pillow, fonts, templates, references, the selected output root, MCP installation,
+  and image capability. The same report is exposed through the CLI and the MCP adapter, and
+  the legacy tuple API plus the `healthy` and `messages` JSON fields are preserved, so an
+  existing consumer keeps working while a new one can branch on a check ID instead of parsing
+  prose.
+- Added the `comic_sol_product.errors` registry of canonical `CS-*` error codes, surfaced as
+  `code`, `category`, `message`, `reason`, and `recovery` in CLI JSON and MCP `ToolError`
+  envelopes. The previous CLI envelope and the legacy-readable MCP error text are retained as
+  compatibility fields. Code allocation is append-only and documented in
+  `docs/structured-errors.md`, with CLI/MCP parity, redaction, and registry contract tests, so
+  a caller can branch on a stable identifier rather than on a message string.
+- Made the project schema an explicit compatibility contract rather than an implied one.
+  `scripts/schema.py` owns `CURRENT_PROJECT_SCHEMA_VERSION`,
+  `MIN_READER_PROJECT_SCHEMA_VERSION`, and `SUPPORTED_PROJECT_SCHEMA_VERSIONS`, and every
+  reader goes through it: an unsupported or future version is refused with
+  `UnsupportedSchemaVersionError` instead of being guessed at, downgraded, or rewritten. A
+  migration is permitted only through an explicit `(source, target)` hook in
+  `PROJECT_MIGRATIONS`, published through the journal-backed project transaction, so a refused
+  or interrupted migration leaves `project.json`, source files, logs, and user artifacts
+  byte-for-byte unchanged. A manifest that needs no migration opens no transaction, and a
+  manifest with no `schema_version` is normalized in memory only, leaving the file on disk
+  untouched. `references/schemas.md` states the policy normatively.
+- Added the v2.0 release qualification gate: `scripts/release_qualification.py` and
+  `.github/workflows/release-qualification.yml` check a candidate against the stable criteria
+  as a workflow rather than as a checklist someone remembers to run.
 - Human lifecycle commands now report stage-aware progress. `resume` and `finalize` emit
   `WORKING`, `BLOCKED`, `FAILED`, and `COMPLETE` lines naming the current stage and the
   completed/remaining counts, so a long run is legible instead of silent. Progress goes to

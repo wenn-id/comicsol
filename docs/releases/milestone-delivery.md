@@ -14,19 +14,52 @@ release notes for a tag live in `docs/releases/v<tag>.md`, and the per-change re
 
 | Milestone | Issues | Status | Released |
 |---|---:|---|---|
-| v2.0 — Stability | 10 | Delivered | Yes — `2.0.0rc1` … `2.0.0rc4` |
+| v2.0 — Stability | 10 | Delivered | No — in `CHANGELOG.md` under Unreleased |
 | v2.1 — Reliability & DX | 8 | Delivered | No — in `CHANGELOG.md` under Unreleased |
 | v2.2 — Comic Quality | 10 | Delivered | No — in `CHANGELOG.md` under Unreleased |
 | v2.3 — User Experience | 7 | Planned | — |
 
-Everything delivered by v2.1 and v2.2 is complete in `main` and unreleased. It ships in the
-first tag cut after `2.0.0rc4`; until then `CHANGELOG.md` holds it under Unreleased.
+**No completed milestone is released yet.** This is the point most easily got wrong, so it is
+stated precisely: the four `2.0.0rc*` prereleases shipped the v2.0 *product line* on
+2026-07-29/30, but every issue in the v2.0 *milestone* merged on 2026-08-18/19 — after `rc4`
+was published. The milestone hardened and qualified what the prereleases had already shipped;
+it is not what they contain.
+
+So all 28 delivered issues across v2.0, v2.1, and v2.2 ship in the first tag cut after
+`2.0.0rc4`. Until then `CHANGELOG.md` holds them under Unreleased. The published version is
+`2.0.0rc4`.
+
+### Delivery timeline
+
+The two halves of this table are the whole argument, so they are recorded as data rather than
+prose. Merge windows are the first and last closing pull request of each milestone; publish
+dates are the released tags. Every milestone merged *after* the last tag was published, which
+is why the `Released` column above is `No` throughout.
+
+| Milestone | Merged |
+|---|---|
+| v2.0 — Stability | 2026-08-18 … 2026-08-19 |
+| v2.1 — Reliability & DX | 2026-08-19 … 2026-08-20 |
+| v2.2 — Comic Quality | 2026-08-20 … 2026-08-21 |
+
+| Tag | Published |
+|---|---|
+| `2.0.0rc1` | 2026-07-29 |
+| `2.0.0rc2` | 2026-07-30 |
+| `2.0.0rc3` | 2026-07-30 |
+| `2.0.0rc4` | 2026-07-30 |
 
 ## v2.0 — Stability
 
-Delivered and released across the four `2.0.0rc*` prereleases. The release gate for the
-stable tag is `docs/releases/v2.0-stable-criteria.md`, which is authoritative over this
-document for anything gating a release.
+Hardened and qualified the product line the `2.0.0rc*` prereleases had already shipped:
+end-to-end and failure-injection coverage, resume idempotence, structured diagnostics and
+error codes, schema-migration safety, and a release qualification gate. Every issue here
+merged on 2026-08-18/19, after `rc4` was published on 2026-07-30, so **none of it is in a
+released version** — a distinction worth keeping, because the milestone shares its name with
+the shipped prereleases.
+
+The release gate for the stable tag is `docs/releases/v2.0-stable-criteria.md`, which is
+authoritative over this document for anything gating a release.
 
 | Issue | ID | Delivered | PR |
 |---|---|---|---|
@@ -112,12 +145,20 @@ Planned. Listed here so the record covers every milestone rather than only the f
 
 ## Keeping this record honest
 
-`tests/test_release_docs.py` checks this file offline: the counts in the status summary must
-match the rows in each milestone table, every issue must appear exactly once across the whole
-document, every delivered issue must cite a closing pull request, and the milestone set must
-match the four milestones above. Closing an issue without recording it here fails that test,
-which is the point — a delivery record that can silently omit a delivered change is worth
-less than no record at all.
+`tests/test_release_docs.py` checks this file offline, because a delivery record that can
+silently omit or overstate a delivery is worth less than no record at all:
 
-When a milestone completes: add its rows, update the status summary, then close the milestone
-on GitHub so the tracker and this document agree.
+- the counts in the status summary must match the rows in each milestone table;
+- every issue must appear exactly once across the whole document;
+- every delivered issue must cite a closing pull request and a `CS-` identifier;
+- every delivered issue's headline artifact must actually appear in `CHANGELOG.md`, scoped to
+  the Unreleased section alone;
+- a `Released` cell must be `No`, or name a tag that this repository published *after* the
+  milestone's last merge — the check that catches this document's first version, which
+  claimed the v2.0 milestone shipped in tags cut nineteen days before it merged.
+
+The evidence map in that test is keyed off the delivered milestones listed here, so marking a
+milestone delivered without extending the map fails rather than quietly narrowing the check.
+
+When a milestone completes: add its rows, its merge window, and its evidence probes, update
+the status summary, then close the milestone on GitHub so the tracker and this document agree.

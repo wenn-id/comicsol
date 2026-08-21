@@ -122,9 +122,10 @@ uninstall, and security instructions are in [`docs/install.md`](docs/install.md)
 stable-release checklist is [`docs/releases/v2.0-stable-criteria.md`](docs/releases/v2.0-stable-criteria.md).
 
 What each milestone delivered, and which issue and pull request delivered it, is recorded in
-[`docs/releases/milestone-delivery.md`](docs/releases/milestone-delivery.md). Milestones v2.1
-and v2.2 are complete and unreleased; their changes ship in the first tag after `2.0.0rc4`
-and are listed under Unreleased in [`CHANGELOG.md`](CHANGELOG.md).
+[`docs/releases/milestone-delivery.md`](docs/releases/milestone-delivery.md). Milestones v2.0,
+v2.1, and v2.2 are complete and unreleased; their changes ship in the first tag after
+`2.0.0rc4` and are listed under Unreleased in [`CHANGELOG.md`](CHANGELOG.md). The `2.0.0rc*`
+prereleases shipped the v2.0 product line, not the v2.0 milestone, which merged afterwards.
 
 Container and Compose deployment commands are documented in
 [`docs/install.md`](docs/install.md); they are optional and are not required for
