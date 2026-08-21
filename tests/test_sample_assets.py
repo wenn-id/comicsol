@@ -6,15 +6,51 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from PIL import Image
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "samples/sunlight-courier"
 MATERIALIZER = ROOT / "scripts/materialize_sample.py"
+MAX_TRACKED_RASTER_BYTES = 22 * 1024 * 1024
+def tracked_sample_rasters() -> tuple[Path, ...]:
+    compatibility = {
+        SAMPLE / "panels/raw",
+        SAMPLE / "panels/clean",
+    }
+    return tuple(
+        sorted(
+            path
+            for path in SAMPLE.glob("**/*.png")
+            if path.parent not in compatibility
+        )
+    )
+
+
+def expected_sample_raster_size(path: Path) -> tuple[int, int]:
+    relative = path.relative_to(SAMPLE)
+    if relative.parts[0] == "pages":
+        return (1600, 2400)
+    if relative.parts[0] == "panels" and relative.name in {"clean.png", "lettered.png"}:
+        return (1024, 779)
+    if relative == Path("references/characters/mira.png"):
+        return (1024, 1536)
+    raise AssertionError(f"unclassified tracked sample raster: {relative}")
+
 
 from tests.support import make_symlink  # noqa: E402
 
 
 class SampleAssetTests(unittest.TestCase):
+    def run_materializer(self) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(MATERIALIZER), str(self.project)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
@@ -24,14 +60,16 @@ class SampleAssetTests(unittest.TestCase):
         for relative in ("panels/raw", "panels/clean"):
             shutil.rmtree(self.project / relative, ignore_errors=True)
 
-    def run_materializer(self) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, str(MATERIALIZER), str(self.project)],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+    def test_tracked_sample_rasters_stay_within_weight_budget(self):
+        total = sum(path.stat().st_size for path in tracked_sample_rasters())
+
+        self.assertLessEqual(total, MAX_TRACKED_RASTER_BYTES)
+        for path in tracked_sample_rasters():
+            with Image.open(path) as image:
+                self.assertEqual("PNG", image.format)
+                self.assertEqual("RGB", image.mode)
+                self.assertEqual(expected_sample_raster_size(path), image.size)
+                self.assertNotIn("transparency", image.info)
 
     def test_cli_materializes_byte_identical_compatibility_panels(self):
         result = self.run_materializer()

@@ -1,10 +1,12 @@
 import argparse
+from collections import OrderedDict
 import os
 import re
 import stat
 import sys
 import json
 from pathlib import Path
+from threading import RLock
 from typing import Any, Literal
 
 if __package__ in {None, ""}:
@@ -49,11 +51,15 @@ OUTPUT_ROOT: Path
 
 # Successful symlink scans are cached per project ID. Unchanged directories need
 # only an lstat; changed and newly discovered directories are scanned again.
+# This cache is advisory only. contained_project_path is the authority for every
+# actual project read/write and must remain the load-bearing containment check.
 _DirectorySnapshot = tuple[int, int, int, int, int, int, tuple[str, ...]]
-_SYMLINK_SCAN_CACHE: dict[
+_SYMLINK_SCAN_CACHE_MAX_ENTRIES = 128
+_SYMLINK_SCAN_CACHE: OrderedDict[
     str,
     tuple[Path, dict[str, _DirectorySnapshot]],
-] = {}
+] = OrderedDict()
+_SYMLINK_SCAN_CACHE_LOCK = RLock()
 
 _VALIDATION_STAGES = frozenset({"all", "plan", "storyboard", "panels", "final", "export-ready"})
 _PANEL_ID = PANEL_ID_PATTERN
@@ -311,6 +317,19 @@ def _refresh_windows_snapshot(
     return snapshots, changed
 
 
+def _cache_project_snapshot(
+    project_id: str,
+    resolved: Path,
+    snapshots: dict[str, _DirectorySnapshot],
+) -> None:
+    """Store one successful scan while keeping project cache memory bounded."""
+    with _SYMLINK_SCAN_CACHE_LOCK:
+        _SYMLINK_SCAN_CACHE[project_id] = (resolved, snapshots)
+        _SYMLINK_SCAN_CACHE.move_to_end(project_id)
+        while len(_SYMLINK_SCAN_CACHE) > _SYMLINK_SCAN_CACHE_MAX_ENTRIES:
+            _SYMLINK_SCAN_CACHE.popitem(last=False)
+
+
 def _resolve_project(project_id: str) -> Path:
     """Resolve a project ID safely within OUTPUT_ROOT."""
     try:
@@ -326,11 +345,14 @@ def _resolve_project(project_id: str) -> Path:
             _reject("security-error: project directory resolves outside output root")
         if not resolved.is_dir():
             _reject("security-error: project directory is not an initialized Comic Sol project")
-        cached = _SYMLINK_SCAN_CACHE.get(project_id)
+        with _SYMLINK_SCAN_CACHE_LOCK:
+            cached = _SYMLINK_SCAN_CACHE.get(project_id)
+            if cached is not None and cached[0] == resolved and "." in cached[1]:
+                _SYMLINK_SCAN_CACHE.move_to_end(project_id)
         if cached is None or cached[0] != resolved or "." not in cached[1]:
             snapshots: dict[str, _DirectorySnapshot] = {}
             _scan_subtree(resolved, ".", snapshots)
-            _SYMLINK_SCAN_CACHE[project_id] = (resolved, snapshots)
+            _cache_project_snapshot(project_id, resolved, snapshots)
         else:
             try:
                 refresh = (
@@ -338,10 +360,11 @@ def _resolve_project(project_id: str) -> Path:
                 )
                 snapshots, changed = refresh(resolved, cached[1])
             except Exception:
-                _SYMLINK_SCAN_CACHE.pop(project_id, None)
+                with _SYMLINK_SCAN_CACHE_LOCK:
+                    _SYMLINK_SCAN_CACHE.pop(project_id, None)
                 raise
             if changed:
-                _SYMLINK_SCAN_CACHE[project_id] = (resolved, snapshots)
+                _cache_project_snapshot(project_id, resolved, snapshots)
         if not (resolved / "project.json").is_file():
             _reject("security-error: project directory is not an initialized Comic Sol project")
         return resolved

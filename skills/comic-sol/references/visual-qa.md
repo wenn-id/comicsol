@@ -93,3 +93,41 @@ inspection. A warning-level tail check must have at least one owned dialogue reg
 `fail`; a warning cannot hide all-passing regions. A page warning selects `accept-warning`
 and records the check evidence in `unresolved_warnings`; an error-level failure selects
 `regenerate`.
+
+### Deterministic balloon placement audit
+
+Balloon placement is audited by the engine before you inspect the page, so a review never
+has to re-derive geometry by eye. All of it is measured in each panel's clean-raster pixel
+space rather than the storyboard page rectangle, because that is the space lettering
+geometry is written in.
+
+- `clipped-text` — every box stays inside its clean raster.
+- `text-overlap` — no two boxes in a panel intersect; regions report the shared area and
+  its ratio against the smaller box so a hairline touch reads differently from a
+  buried balloon.
+- `balloon-subject-obstruction` — no balloon comes closer to an authored `speaker_anchor`
+  than the gap the renderer reserves for a tail. Captions are measured exactly against
+  their box; dialogue is measured radially against the ellipse actually drawn, the same way
+  the renderer resolves a tail attachment. That radial measure is deliberately permissive
+  for wide balloons, because measuring any tighter would reject balloons the renderer
+  considers valid. A panel that authors no dialogue anchor has no protected subject and
+  passes, and an anchor outside the raster is reported by `bubble-tail-geometry` rather
+  than trusted as a keep-out region. This is the check that catches a caption dropped onto
+  a speaking face, which placement never guards against because it resolves a box from its
+  anchor keyword without consulting any other line's speaker.
+- `bubble-tail-geometry` — every dialogue tail attaches to its balloon, stops short of its
+  voice source, points at the authored anchor, and keeps its tip inside the panel; the
+  retained tail must still agree with the storyboard's `speaker_anchor` and `voice_source`.
+  Attachment is checked against the ellipse the renderer actually draws, not its bounding
+  box, so a tail whose attachment has drifted into the balloon body is reported as
+  `detached-tail` rather than accepted for being inside the box. An anchor outside
+  normalized `[0,1]` fails as `speaker-anchor-out-of-range` even when the retained tail
+  agrees with it, because a self-consistent tail can still aim outside the panel.
+- `balloon-crowding` — warns when balloon coverage passes 30% of a panel or two balloons
+  sit closer than the readable separation. It names the crowded panels and suggests
+  shortening the line, moving it to another panel, or re-anchoring, then selects
+  `accept-warning` rather than blocking the page.
+
+These checks bound the geometry only. `face-action-obstruction` still requires a human to
+judge whether a balloon covers something that matters artistically, and a passing
+`balloon-subject-obstruction` never implies that review happened.

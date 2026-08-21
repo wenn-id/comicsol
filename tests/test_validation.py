@@ -33,6 +33,10 @@ from scripts.validate_project import (  # noqa: E402
     validate_story_plan,
     validate_storyboard,
 )
+from scripts.page_quality import (  # noqa: E402
+    CURRENT_PAGE_QA_SCHEMA_VERSION,
+    PAGE_BINDING_FIELDS,
+)
 from scripts.quality_records import PANEL_CHECK_IDS, PAGE_CHECK_IDS  # noqa: E402
 from scripts.normalize_panels import normalize_panel  # noqa: E402
 
@@ -193,16 +197,11 @@ class TemplateContractTests(unittest.TestCase):
 
         page_raw = (ROOT / "templates/page-qa.json").read_bytes()
         page = json.loads(page_raw)
-        self.assertEqual("2.0", page["schema_version"])
+        self.assertEqual(CURRENT_PAGE_QA_SCHEMA_VERSION, page["schema_version"])
         self.assertEqual("page-qa", page["kind"])
-        self.assertEqual(
-            {
-                "composition_cache_path", "composition_cache_sha256", "layout_name",
-                "layout_version", "lettering_sha256s", "page_height", "page_path",
-                "page_sha256", "page_width", "storyboard_path", "storyboard_sha256",
-            },
-            set(page["bindings"]),
-        )
+        # The template and the validator must agree, or a record authored from the
+        # template fails its own binding contract.
+        self.assertEqual(PAGE_BINDING_FIELDS, set(page["bindings"]))
         self.assertEqual(list(PAGE_CHECK_IDS), [check["id"] for check in page["checks"]])
         self.assertEqual(
             (json.dumps(page, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(),
@@ -400,6 +399,58 @@ class StrictSchemaValidationTests(unittest.TestCase):
         for data, field in cases:
             with self.subTest(field=field):
                 self.assert_issue(validate_storyboard(data, story, characters), field)
+
+    def test_storyboard_accepts_and_separates_multi_speaker_attribution(self):
+        story, characters = valid_story(), valid_characters()
+        characters["characters"].append({
+            **deepcopy(characters["characters"][0]),
+            "id": "ren", "name": "Ren", "role": "gatekeeper",
+            "reference_path": "references/characters/ren.png",
+        })
+
+        def two_speakers(first_anchor, second_anchor, second_speaker="ren"):
+            """Return a storyboard whose only panel letters two spoken balloons."""
+            data = valid_storyboard()
+            panel = data["pages"][0]["panels"][0]
+            panel["characters"] = ["mira", "ren"]
+            first = panel["text"][0]
+            first["speaker_anchor"] = first_anchor
+            second = deepcopy(first)
+            second.update({
+                "id": "p01-01-t02", "speaker": second_speaker,
+                "speaker_anchor": second_anchor, "priority": 2,
+                "content": "Then I hold the gate.",
+            })
+            panel["text"] = [first, second]
+            return data
+
+        self.assertEqual(
+            [],
+            validate_storyboard(two_speakers([0.78, 0.34], [0.22, 0.62]), story, characters),
+        )
+
+        # The renderer can infer a speaker from a unique display name, but a
+        # storyboard may not author one: `speaker` is a character-bible ID, so a
+        # validated project always records `declared` attribution.
+        display_name = two_speakers([0.78, 0.34], [0.22, 0.62])
+        display_name["pages"][0]["panels"][0]["text"][1]["speaker"] = "Ren"
+        self.assert_issue(
+            validate_storyboard(display_name, story, characters),
+            "text[1].speaker",
+        )
+
+        for description, data in (
+            ("shared anchor", two_speakers([0.78, 0.34], [0.78, 0.35])),
+            ("split anchor", two_speakers([0.78, 0.34], [0.22, 0.62], "mira")),
+        ):
+            with self.subTest(description=description):
+                issues = validate_storyboard(data, story, characters)
+                self.assertTrue(any(
+                    issue.field == "pages[0].panels[0].text"
+                    and issue.message.startswith("dialogue-attribution-ambiguous:")
+                    and "p01-01-t01 and p01-01-t02" in issue.message
+                    for issue in issues
+                ), issues)
 
     def test_storyboard_reports_legacy_tail_migration_and_tail_free_captions(self):
         story, characters = valid_story(), valid_characters()

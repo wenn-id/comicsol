@@ -1,0 +1,26 @@
+{
+  "description": "A caption is dropped straight onto the protected speaker anchor of the dialogue in the same panel. The renderer never guards a caption against another line's voice source, so only page QA can catch it.",
+  "expected_check": "balloon-subject-obstruction",
+  "expected_decision": "regenerate",
+  "expected_result": "fail",
+  "panels": {
+    "p01-02": {
+      "append": [
+        {
+          "anchor": "middle-right",
+          "box": {
+            "height": 100,
+            "width": 100,
+            "x": 454,
+            "y": 535
+          },
+          "font_runs": [],
+          "id": "p01-02-t02",
+          "kind": "caption",
+          "reading_order": 2,
+          "tail": null
+        }
+      ]
+    }
+  }
+}

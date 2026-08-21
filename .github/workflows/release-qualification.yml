@@ -47,6 +47,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --pattern "$archive" \
             --pattern SHA256SUMS \
+            --pattern SHA256SUMS.sigstore.json \
             --pattern "$INSTALLER" \
             --pattern "$metadata" \
             --pattern "$sbom" \
@@ -55,10 +56,15 @@ jobs:
             --jq .content | base64 --decode > qualification/release_qualification.py
           test -s "qualification/$archive"
           test -s qualification/SHA256SUMS
+          test -s qualification/SHA256SUMS.sigstore.json
           test -s "qualification/$INSTALLER"
           test -s "qualification/$metadata"
           test -s "qualification/$sbom"
           test -s qualification/release_qualification.py
+      - name: Install cosign verifier
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.0.6
       - name: Qualify published release artifact
         shell: bash
         env:
@@ -75,6 +81,7 @@ jobs:
             --archive "$archive" \
             --installer "qualification/$INSTALLER" \
             --sha256 qualification/SHA256SUMS \
+            --signature qualification/SHA256SUMS.sigstore.json \
             --version "$version" \
             --metadata "$metadata" \
             --sbom "$sbom" \
@@ -109,12 +116,17 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --pattern "$archive" \
             --pattern SHA256SUMS \
+            --pattern SHA256SUMS.sigstore.json \
             --pattern install.sh \
             --pattern "$metadata" \
             --pattern "$sbom" \
             --dir qualification
           gh api "repos/$GITHUB_REPOSITORY/contents/scripts/release_qualification.py?ref=$RELEASE_TAG" \
             --jq .content | base64 --decode > qualification/release_qualification.py
+      - name: Install cosign verifier
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.0.6
       - name: Qualify Linux artifact in WSL2
         shell: pwsh
         env:
@@ -135,7 +147,9 @@ jobs:
           $archive = "$qualificationRoot/comic-sol-$version-linux-x86_64.zip"
           $metadata = "$qualificationRoot/comic-sol-$version-linux-x86_64.metadata.json"
           $sbom = "$qualificationRoot/comic-sol-$version-linux-x86_64.sbom.json"
-          & wsl.exe -- bash -lc "python3 '$qualificationRoot/release_qualification.py' --archive '$archive' --installer '$qualificationRoot/install.sh' --sha256 '$qualificationRoot/SHA256SUMS' --version '$version' --metadata '$metadata' --sbom '$sbom' --platform wsl --summary '$qualificationRoot/summary-wsl.json'"
+          $cosignPath = (Get-Command cosign.exe).Source
+          $wslCosignPath = (& wsl.exe wslpath -a $cosignPath).Trim()
+          & wsl.exe -- bash -lc "COMIC_SOL_COSIGN='$wslCosignPath' python3 '$qualificationRoot/release_qualification.py' --archive '$archive' --installer '$qualificationRoot/install.sh' --sha256 '$qualificationRoot/SHA256SUMS' --signature '$qualificationRoot/SHA256SUMS.sigstore.json' --version '$version' --metadata '$metadata' --sbom '$sbom' --platform wsl --summary '$qualificationRoot/summary-wsl.json'"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload WSL qualification summary
         if: always()

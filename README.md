@@ -114,9 +114,10 @@ and Windows x86_64, plus transactional user-local installers and a non-root OCI
 image. Native archives include Python, Pillow, MCP, fonts, templates, the Skill,
 and references, so installed execution does not require a system Python.
 
-Every native bundle includes `SHA256SUMS`, deterministic metadata, and a
-CycloneDX SBOM. The RC artifacts are explicitly **unsigned** and not notarized;
-verify the SHA-256 digest before execution. Exact install, upgrade, rollback,
+Every native bundle includes `SHA256SUMS`, a Sigstore bundle for that manifest,
+deterministic metadata, and a CycloneDX SBOM. The RC artifacts use keyless
+Sigstore verification (not Authenticode-signed or Apple-notarized); verify the
+manifest signature and archive digest before execution. Exact install, upgrade, rollback,
 uninstall, and security instructions are in [`docs/install.md`](docs/install.md). The authoritative
 stable-release checklist is [`docs/releases/v2.0-stable-criteria.md`](docs/releases/v2.0-stable-criteria.md).
 

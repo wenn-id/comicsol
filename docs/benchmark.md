@@ -54,12 +54,26 @@ paths may not escape the fixture root.
 | `resume_success` | the resume drill preserved every upstream stage, invalidated exactly the downstream stages, and refinalized to a valid terminal state | higher is better |
 | `repair_rate` | extra generation calls (`logs/generation-counters.json`) per panel | **lower is better** |
 | `panel_acceptance` | panels whose QA decision is `accept` or `accept-warning` | higher is better |
-| `dialogue_correctness` | passing `clipped-text`, `text-overlap`, and `reading-order` page checks plus per-dialogue bounded tail regions | higher is better |
+| `dialogue_correctness` | passing `clipped-text`, `text-overlap`, `reading-order`, `balloon-subject-obstruction`, and `bubble-tail-geometry` page checks plus per-dialogue bounded tail regions | higher is better |
 | `export_success` | pages verified in `exports/pdf-verification.json`, bound to the exported PDF digest | higher is better |
+
+The counted set is every deterministic, error-severity page check that verifies
+dialogue geometry, so the metric measures the dialogue correctness the engine
+enforces rather than a narrower subset of it. Only pages carrying at least one
+`dialogue` text item contribute, and a check absent from a page record is skipped
+instead of counted as a failure.
+
+`balloon-crowding` is deliberately **excluded**. It never fails: it reports `pass` or
+a warning-severity `warning`, because crowded lettering is a reading-comfort hint, not
+a defect, and a crowded page is still accepted as `accept-warning`. Counting it would
+score a comfortable page 1/1 and a merely tight one 0/1, conflating reading comfort
+with correctness and moving the metric on pages the engine accepts.
 
 Dialogue tail regions are not reviewer opinions: `tail_direction_result()` verifies
 each tail attaches to its balloon, points at the authored `speaker_anchor`, keeps a
-positive `source_gap`, and stays inside the panel bounds.
+positive `source_gap`, and stays inside the panel bounds. `bubble-tail-geometry` is
+the same verdict recomputed inside the pipeline, so a tail regression moves both the
+per-dialogue regions and the page check.
 
 ## Running a benchmark
 
@@ -79,6 +93,14 @@ byte-identical** and can be compared directly. Every record carries the revision
 is accountable to: `engine_version`, `git_revision`, the harness version, and the
 project's `stage_versions`. A run that raises still publishes a `failed` record with
 the exception, so CI never loses evidence.
+
+The harness version identifies the measuring instrument, not the record layout. It is
+bumped whenever a metric's numerator or denominator is redefined, because such a record
+still validates against an unchanged schema while no longer meaning what it meant
+before. Both the summary and the diff refuse to mix harness versions, so a stale
+archived baseline fails closed instead of reporting a definition change as a metric
+change. Re-run the benchmark to compare across such a bump; the workflow already
+benchmarks the baseline revision with the current harness, so CI needs no action.
 
 The exit code is `0` only when every case passes.
 
@@ -177,11 +199,11 @@ It writes `summary.json` and a reviewable `summary.md` beside it (or wherever
 
 - pools every metric's numerator and denominator across cases, so `panel_acceptance`
   is accepted panels over **all** panels, `repair_rate` is extra generation calls over
-  all panels, `dialogue_correctness` is passing dialogue page checks and tail regions
-  over all of them, `export_success` is verified PDF pages over all expected pages,
-  and `pipeline_success` and `resume_success` are successful cases over all cases. An
-  average of per-case ratios would weight a one-panel case like a twelve-panel case;
-  pooling does not,
+  all panels, `dialogue_correctness` is passing dialogue geometry page checks and
+  tail regions over all of them, `export_success` is verified PDF pages over all
+  expected pages, and `pipeline_success` and `resume_success` are successful cases
+  over all cases. An average of per-case ratios would weight a one-panel case like a
+  twelve-panel case; pooling does not,
 - carries one `version_tag` of the form `v<engine version>+<git revision>`, taken from
   the records themselves, and fails closed when the records span more than one engine
   revision or a foreign harness version, because those records do not summarize one
