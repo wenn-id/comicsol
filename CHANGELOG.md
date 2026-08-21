@@ -185,8 +185,13 @@ artifacts themselves plus a recorded maintainer decision, and it is not yet sati
   composition, export, and validation — is exercised as one path rather than only as
   independent units.
 - Added a lifecycle failure-injection suite (`tests/test_lifecycle_failures.py`) that faults
-  the operations a project depends on rather than trusting the happy path, and clean-install
-  verification across the supported platforms.
+  the operations a project depends on rather than trusting the happy path.
+- Added clean-install verification across the supported platforms, so a release is qualified
+  from an installed runtime rather than only from a source checkout.
+- Audited installer lifecycle safety: upgrade rollback restores the previous runtime, a failed
+  upgrade leaves external state untouched, reinstall is idempotent, and uninstall removes only
+  the runtime while user projects and separately managed client configuration survive.
+  `tests/test_installers.py` covers each of those as a contract rather than as a manual check.
 - Repeated `resume` calls are now read-only and idempotent after a recovery. A first recovery
   correctly cleared `BLOCKED`, but a second resume then raised
   `resume requires a BLOCKED project`, which made recovery a one-shot operation and a retry

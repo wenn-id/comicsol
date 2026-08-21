@@ -403,6 +403,12 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         self.assertEqual(len(self.MILESTONES), len(summary), summary)
         for milestone, status, released in summary:
             with self.subTest(milestone=milestone):
+                # Without this, a delivered milestone could carry any status word and
+                # skip every check below by simply not saying `Planned`.
+                self.assertEqual(
+                    "Delivered" if milestone in self.DELIVERED else "Planned",
+                    status,
+                )
                 if status == "Planned":
                     self.assertEqual("—", released)
                     continue
@@ -531,11 +537,11 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
             "CS-001": "v2.0-stable-criteria",
             "CS-002": "tests/golden/mini-comic",
             "CS-003": "resume requires a blocked project",
-            "CS-004": "test_lifecycle_failures.py",
-            "CS-005": "clean-install verification",
+            "CS-004": "lifecycle failure-injection suite",
+            "CS-005": "clean-install verification across the supported platforms",
             "CS-006": "doctor_report()",
             "CS-007": "supported_project_schema_versions",
-            "CS-008": "failure-injection",
+            "CS-008": "audited installer lifecycle safety",
             "CS-009": "comic_sol_product.errors",
             "CS-010": "release_qualification.py",
             "CS-011": "scripts/benchmark.py",
@@ -593,6 +599,59 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
                     f"({released[milestone]}) but that CHANGELOG section never "
                     f"mentions {phrase!r}",
                 )
+        self._assert_each_issue_owns_a_distinct_entry(evidence, owner, released)
+
+    def _assert_each_issue_owns_a_distinct_entry(self, evidence, owner, released):
+        """Every delivered issue must be evidenced by an entry of its own.
+
+        A phrase that appears somewhere in the section is not enough. Twice now a
+        probe passed by matching *another* issue's entry: `CS-007` matched
+        `UnsupportedSchemaVersionError` inside the page-QA migration bullet that
+        belongs to `CS-035`, and `CS-008` matched the `failure-injection` bullet that
+        belongs to `CS-004` — so both were undocumented while appearing covered.
+
+        Requiring a distinct owning bullet per issue closes that whole class rather
+        than the two instances. It is a bipartite matching: if no assignment of
+        issues to distinct bullets exists, at least two issues are leaning on one
+        entry, and the smallest such group is reported.
+        """
+        for milestone in self.DELIVERED:
+            bullets = [
+                " ".join(bullet.lower().split())
+                for bullet in re.split(
+                    r"\n(?=- )", self._carrying_section(released[milestone])
+                )
+            ]
+            candidates = {
+                identifier: {
+                    index
+                    for index, bullet in enumerate(bullets)
+                    if evidence[identifier].lower() in bullet
+                }
+                for identifier in sorted(evidence)
+                if owner[identifier] == milestone
+            }
+            assigned: dict[int, str] = {}
+
+            def claim(identifier, seen):
+                for index in sorted(candidates[identifier]):
+                    if index in seen:
+                        continue
+                    seen.add(index)
+                    holder = assigned.get(index)
+                    if holder is None or claim(holder, seen):
+                        assigned[index] = identifier
+                        return True
+                return False
+
+            for identifier in candidates:
+                with self.subTest(milestone=milestone, identifier=identifier):
+                    self.assertTrue(
+                        claim(identifier, set()),
+                        f"{identifier} has no CHANGELOG entry of its own in "
+                        f"{milestone}; its probe {evidence[identifier]!r} only "
+                        "matches an entry another issue already accounts for",
+                    )
 
 
 if __name__ == "__main__":
