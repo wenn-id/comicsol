@@ -31,12 +31,14 @@ from .project_io import ProjectTransaction, contained_project_path, open_path_no
 from .raster_limits import MAX_DECODED_PIXELS
 from .typography import (
     LETTERING_GEOMETRY_SCHEMA_VERSION,
+    SCRIPT_EXTENSION_KEY,
     display_content,
     lettering_geometry_hash,
     normalize_content,
     preflight_text_items,
 )
 from .font_cmap import font_supports
+from .font_coverage import script_for_codepoint
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +46,10 @@ DEFAULT_FONT_PATH = ROOT / "assets/fonts/ComicNeue-Regular.ttf"
 FONT_PATH = DEFAULT_FONT_PATH
 FONT_PATH_BOLD = ROOT / "assets/fonts/ComicNeue-Bold.ttf"
 FONT_PATH_FALLBACK = ROOT / "assets/fonts/NotoSans-Regular.ttf"
+# Optional per-script faces, keyed by the script names `font_coverage` declares.
+# Empty by default: the bundled policy is three faces, and an author opts into a
+# script extension per run so no install carries fonts it will never letter with.
+SCRIPT_FONT_EXTENSIONS: dict[str, Path] = {}
 ANCHORS = (
     "top-left",
     "top-center",
@@ -98,19 +104,45 @@ def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
         return _load_font_path(str(FONT_PATH_FALLBACK), size)
 
 
+def _script_extension_font(size: int, character: str) -> ImageFont.FreeTypeFont | None:
+    """Load the configured face for a character's script when it covers it."""
+    if not SCRIPT_FONT_EXTENSIONS:
+        return None
+    path = SCRIPT_FONT_EXTENSIONS.get(script_for_codepoint(ord(character)))
+    if path is None or not _font_supports(Path(path), character):
+        return None
+    try:
+        return _load_font_path(str(path), size)
+    except OSError:
+        return None
+
+
 def _font_runs(
     text: str,
     size: int,
     bold: bool = False,
     primary: ImageFont.FreeTypeFont | None = None,
 ) -> tuple[tuple[str, ImageFont.FreeTypeFont], ...]:
-    """Group text into adjacent runs using exact per-character font fallback."""
+    """Group text into adjacent runs using exact per-character font fallback.
+
+    Faces are tried in the same order typography preflight authorized them:
+    styled face, Unicode fallback, then the character's script extension. When no
+    extension is configured the Unicode fallback remains the last stop and keeps
+    drawing its own `.notdef` box, so an uncovered character stays visible instead
+    of vanishing.
+    """
     primary = primary or _load_font(size, bold)
     fallback = _load_font_path(str(FONT_PATH_FALLBACK), size)
     primary_path = Path(primary.path)
+    fallback_path = Path(fallback.path)
     runs: list[tuple[str, ImageFont.FreeTypeFont]] = []
     for character in text:
-        selected = primary if character == "\n" or _font_supports(primary_path, character) else fallback
+        if character == "\n" or _font_supports(primary_path, character):
+            selected = primary
+        elif _font_supports(fallback_path, character):
+            selected = fallback
+        else:
+            selected = _script_extension_font(size, character) or fallback
         if runs and Path(runs[-1][1].path) == Path(selected.path):
             runs[-1] = (runs[-1][0] + character, selected)
         else:
@@ -1003,10 +1035,11 @@ def _letter_project_with_summaries(
     if not isinstance(bible, list) or any(not isinstance(character, dict) for character in bible):
         raise ValueError("character bible characters must be an array of objects")
 
-    font_policy = {
+    font_policy: dict[str, object] = {
         "regular": FONT_PATH,
         "bold": FONT_PATH_BOLD,
         "fallback": FONT_PATH_FALLBACK,
+        SCRIPT_EXTENSION_KEY: dict(SCRIPT_FONT_EXTENSIONS),
     }
     preflights: dict[str, dict[str, object]] = {}
     for panel in panels:
@@ -1116,12 +1149,45 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = _LetteringArgumentParser(prog="letter_panels.py")
     parser.add_argument("project_dir", type=Path)
     parser.add_argument("--font", type=Path, default=DEFAULT_FONT_PATH)
+    parser.add_argument(
+        "--font-script",
+        action="append",
+        default=[],
+        metavar="SCRIPT=PATH",
+        help=(
+            "Face serving one script, for example han=NotoSansSC-Regular.ttf. "
+            "Repeatable. Run font_coverage.py to list script names and coverage."
+        ),
+    )
     return parser
 
 
+def _parse_script_extensions(entries: list[str]) -> dict[str, Path]:
+    """Parse ``SCRIPT=PATH`` extension arguments into a loadable font mapping."""
+    extensions: dict[str, Path] = {}
+    for entry in entries:
+        script, separator, value = str(entry).partition("=")
+        script, value = script.strip(), value.strip()
+        if not separator or not script or not value:
+            raise ValueError(f"font script override must be SCRIPT=PATH: {entry}")
+        if script in extensions:
+            raise ValueError(f"font script override is duplicated: {script}")
+        path = Path(value)
+        try:
+            _load_font_path(str(path), 12)
+        except OSError as error:
+            raise ValueError(
+                f"font script override {script} is not a readable "
+                f"TrueType/OpenType file: {path}"
+            ) from error
+        extensions[script] = path
+    return extensions
+
+
 def main(argv: list[str] | None = None) -> int:
-    global FONT_PATH
+    global FONT_PATH, SCRIPT_FONT_EXTENSIONS
     previous_font = FONT_PATH
+    previous_extensions = SCRIPT_FONT_EXTENSIONS
     try:
         arguments = _build_parser().parse_args(argv)
         try:
@@ -1129,6 +1195,9 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as error:
             raise ValueError(f"font is not a readable TrueType/OpenType file: {arguments.font}") from error
         FONT_PATH = arguments.font
+        # Preflight rejects a script that cannot be lettered even with a covering
+        # face, so an unusable override fails before any output is written.
+        SCRIPT_FONT_EXTENSIONS = _parse_script_extensions(arguments.font_script)
         _, summaries = _letter_project_with_summaries(arguments.project_dir)
         print(json.dumps(summaries, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
@@ -1137,6 +1206,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     finally:
         FONT_PATH = previous_font
+        SCRIPT_FONT_EXTENSIONS = previous_extensions
 
 
 if __name__ == "__main__":

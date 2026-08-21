@@ -1,0 +1,16 @@
+{
+  "content": "ᾰᾳῆῥὥ",
+  "description": "Polytonic Greek from Greek Extended, where breathing and iota subscript are single precomposed codepoints.",
+  "expected_category": null,
+  "expected_codepoint": null,
+  "expected_font_ids": null,
+  "expected_reason_contains": null,
+  "expected_remediation_contains": null,
+  "expected_scripts": {
+    "greek": [
+      "NotoSans-Regular.ttf"
+    ]
+  },
+  "expected_status": "pass",
+  "kind": "caption"
+}

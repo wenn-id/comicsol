@@ -1,0 +1,19 @@
+{
+  "content": "q́",
+  "description": "One combining mark over a base from the same face, which places correctly because the mark carries no advance.",
+  "expected_category": null,
+  "expected_codepoint": null,
+  "expected_font_ids": null,
+  "expected_reason_contains": null,
+  "expected_remediation_contains": null,
+  "expected_scripts": {
+    "inherited": [
+      "ComicNeue-Regular.ttf"
+    ],
+    "latin": [
+      "ComicNeue-Regular.ttf"
+    ]
+  },
+  "expected_status": "pass",
+  "kind": "caption"
+}

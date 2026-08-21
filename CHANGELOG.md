@@ -4,6 +4,39 @@
 
 ### Added
 
+- Expanded typography coverage and made the supported script set inventoried rather than
+  implied. New `scripts/font_coverage.py` declares every Unicode block Comic Sol letters
+  along with whether advance-only placement renders it faithfully, reads the bundled cmap
+  tables without Pillow or `fontTools`, and prints a coverage inventory — the bundled
+  three-face policy covers 2842 codepoints, which was never stated anywhere before. This
+  puts Vietnamese (Latin Extended Additional), polytonic Greek, historic and minority
+  Cyrillic, Latin Extended-C/D/E, and the IPA and phonetic blocks under regression test;
+  all were already covered by the bundled fallback and none were claimed or verified.
+  `doctor` gained a `typography` check that fails when the bundled faces stop covering a
+  documented script, and `references/schemas.md` now specifies `typography.json`.
+- Font policies may now carry one optional face per script, configured with
+  `letter_panels.py --font-script SCRIPT=PATH` and recorded as a `script:{script}` role.
+  This admits the linear scripts no bundled face covers — CJK ideographs, kana, precomposed
+  Hangul syllables, Armenian, Georgian, and Ethiopic — without adding megabytes of font
+  binaries to every install; `docs/typography.md` records the vetted SIL OFL 1.1 face for
+  each. A policy that configures no extension hashes exactly as it did before, so no
+  existing project is marked stale by the mechanism. An extension is refused for a script
+  that could not be placed correctly even with a covering face, rather than accepted and
+  mis-drawn.
+- Typography preflight records the checks it performed — `typography-shaping-policy` and
+  `typography-glyph-coverage` — and rolls up which face served which script, so an
+  unintended font substitution is visible in the record instead of only on the page.
+  `validate_lettering_provenance` recomputes rather than reads back: each glyph's
+  `character` must agree with its `codepoint`, its `script` must be the script that
+  codepoint belongs to, and that codepoint must still be letterable, so a stale or edited
+  record cannot label a bidirectional or reordering script as linear and carry the claim
+  past the export gate. Check records are verified field by field and rejected when
+  duplicated, so a record reduced to passing IDs cannot pose as evidence the checks ran.
+- Added `tests/fixtures/typography-scripts/`: 17 fixtures that drive the supported set
+  from data, so declaring a script means adding a file rather than editing a test body.
+  Lettering integration coverage now renders the newly declared scripts and asserts every
+  character of every drawn font run resolves to a real glyph, catching any divergence
+  between what preflight authorized and what the renderer reached for.
 - Made speaker attribution explicit and verifiable for multi-character panels. Every
   spoken balloon now resolves to a stable character-bible ID, and that identity is retained
   in lettering geometry as a per-placement `attribution` record alongside the voice source
@@ -146,6 +179,36 @@
   previous accepted bytes are still archived before the replacement is published.
 
 ### Fixed
+
+- Typography preflight no longer decides shaping support by matching character names,
+  which only recognized scripts someone had thought to spell out. Arabic and CJK were
+  caught while Hebrew, Devanagari, Thai, Bengali, Tamil, Khmer, Myanmar, and conjoining
+  Hangul jamo passed the gate and were judged on glyph coverage alone — so a project that
+  supplied a covering `--font` would letter them as unshaped, unreordered, or
+  reversed text. Classification now comes from the declared block table, and every refusal
+  states the property that forbids it.
+- CJK, kana, and precomposed Hangul syllables were refused as `unsupported-shaping`, which
+  told an author the text was impossible when it was merely unbundled. None of them need
+  reordering or joining, so they now report `missing-glyph` with remediation naming the
+  licensed face that resolves them. Georgian is classified through its uppercased Mtavruli
+  form as well, which lands in a different Unicode block than the Mkhedruli a storyboard
+  authors.
+- The README no longer describes `.notdef` fallback boxes as the outcome for uncovered
+  characters. Preflight refuses the batch before any panel is written, and has done since
+  it was introduced; the documented behaviour contradicted the implemented gate.
+- Codepoints belonging to no classified block are refused rather than assumed to place
+  linearly. The undeclared BMP blocks are dominated by scripts that need joining or
+  reordering — Syriac Supplement, Arabic Extended-B, Devanagari Extended, Javanese,
+  Balinese — so a permissive default handed exactly those a false pass whenever a
+  covering face was configured. The linear symbol, Braille, and CJK compatibility blocks
+  that captions legitimately use are declared explicitly so fail-closed costs no
+  coverage.
+- Combining marks are checked against the base they attach to. One mark over a base from
+  the same face still places correctly and is admitted, but a mark with no base, a
+  stack of two marks, and a mark resolved to a different face than its base are refused:
+  each needs anchor geometry that nominal advances cannot express, and no font choice
+  changes that. NFC normalization continues to compose the common accented forms before
+  this check sees them.
 
 - Fixed out-of-bounds balloon detection, which measured lettering boxes against the
   storyboard page rectangle instead of the panel's own clean raster. For a downscaled hero

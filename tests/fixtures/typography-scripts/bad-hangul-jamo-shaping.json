@@ -1,0 +1,12 @@
+{
+  "content": "ᄀ",
+  "description": "Refused because syllable composition is required, which nominal advances cannot express.",
+  "expected_category": "unsupported-shaping",
+  "expected_codepoint": "U+1100",
+  "expected_font_ids": null,
+  "expected_reason_contains": "syllable composition",
+  "expected_remediation_contains": null,
+  "expected_scripts": null,
+  "expected_status": "fail",
+  "kind": "dialogue"
+}
