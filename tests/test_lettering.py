@@ -1090,6 +1090,174 @@ class LetteringTests(unittest.TestCase):
             self.assertNotIn("Traceback", errors.getvalue())
 
 
+class MultiSpeakerAttributionTests(unittest.TestCase):
+    """Speaker attribution for panels that letter more than one spoken balloon."""
+
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary_directory.name)
+        self.panel = self.root / "p01-01.png"
+        Image.new("RGB", (800, 1000), (28, 32, 40)).save(self.panel)
+        self.characters = [
+            {"id": "mira", "name": "Mira"},
+            {"id": "ren", "name": "Ren"},
+        ]
+
+    def tearDown(self):
+        self.temporary_directory.cleanup()
+
+    def _two_speakers(self):
+        """Return two balloons spoken by two characters standing well apart."""
+        first = dialogue(content="No bridge.", priority=1, anchor="top-left")
+        first["speaker_anchor"] = [0.78, 0.34]
+        second = dialogue(content="Then I hold the gate.", priority=2, anchor="bottom-right")
+        second["speaker"] = "ren"
+        second["speaker_anchor"] = [0.22, 0.62]
+        return [first, second]
+
+    def _letter(self, items):
+        return letter_panel(str(self.panel), 800, 1000, items, self.characters)
+
+    def test_every_spoken_balloon_records_its_resolved_speaker(self):
+        summary = self._letter(self._two_speakers())
+
+        self.assertEqual(
+            {
+                "dialogue-1": {
+                    "authored_speaker": "mira",
+                    "resolution": "declared",
+                    "speaker": "mira",
+                    "speaker_anchor": [0.78, 0.34],
+                },
+                "dialogue-2": {
+                    "authored_speaker": "ren",
+                    "resolution": "declared",
+                    "speaker": "ren",
+                    "speaker_anchor": [0.22, 0.62],
+                },
+            },
+            {
+                placement["id"]: placement["attribution"]
+                for placement in summary["placements"]
+            },
+        )
+
+    def test_caption_beside_dialogue_carries_no_attribution(self):
+        items = self._two_speakers()
+        items.append(caption(content="Dawn arrives late.", priority=3, anchor="middle-left"))
+
+        summary = self._letter(items)
+
+        attribution = {
+            placement["id"]: placement["attribution"]
+            for placement in summary["placements"]
+        }
+        self.assertIsNone(attribution["caption-3"])
+        self.assertEqual("mira", attribution["dialogue-1"]["speaker"])
+
+    def test_two_speakers_sharing_one_anchor_are_ambiguous(self):
+        first, second = self._two_speakers()
+        # One visible mouth cannot belong to two characters, so nothing drawn in
+        # the panel could tell a reader which balloon is whose.
+        second["speaker_anchor"] = [0.78, 0.35]
+        before = self.panel.read_bytes()
+
+        with self.assertRaisesRegex(
+            ValueError, r"dialogue-attribution-ambiguous: shared-anchor"
+        ):
+            self._letter([first, second])
+        self.assertEqual(before, self.panel.read_bytes())
+
+    def test_one_speaker_anchored_in_two_distant_places_is_ambiguous(self):
+        first, second = self._two_speakers()
+        second["speaker"] = "mira"
+
+        with self.assertRaisesRegex(
+            ValueError, r"dialogue-attribution-ambiguous: split-anchor"
+        ):
+            self._letter([first, second])
+
+    def test_one_speaker_may_hold_two_balloons_at_the_same_anchor(self):
+        first, second = self._two_speakers()
+        second["speaker"] = "mira"
+        second["speaker_anchor"] = list(first["speaker_anchor"])
+
+        summary = self._letter([first, second])
+
+        self.assertEqual(
+            ["mira", "mira"],
+            [placement["attribution"]["speaker"] for placement in summary["placements"]],
+        )
+
+    def test_display_name_is_inferred_only_for_direct_renderer_callers(self):
+        # A storyboard `speaker` must be a bible ID, so this path is reachable
+        # only by calling the renderer directly. tests/test_validation.py pins
+        # the other half of that boundary: storyboard validation rejects a
+        # display name outright, which is why every validated project records
+        # `declared` and never `inferred`.
+        item = dialogue(content="No bridge.")
+        item["speaker"] = "Mira"
+
+        summary = self._letter([item])
+
+        self.assertEqual(
+            {
+                "authored_speaker": "Mira",
+                "resolution": "inferred",
+                "speaker": "mira",
+                "speaker_anchor": [0.75, 0.7],
+            },
+            summary["placements"][0]["attribution"],
+        )
+
+    def test_display_name_shared_by_two_characters_is_not_inferred(self):
+        item = dialogue(content="No bridge.")
+        item["speaker"] = "Mira"
+
+        with self.assertRaisesRegex(
+            ValueError, r"dialogue-attribution-ambiguous: display name 'Mira'"
+        ):
+            letter_panel(
+                str(self.panel), 800, 1000, [item],
+                [{"id": "mira", "name": "Mira"}, {"id": "mira-prime", "name": "Mira"}],
+            )
+
+    def test_character_id_wins_over_another_character_display_name(self):
+        item = dialogue(content="No bridge.")
+        item["speaker"] = "ren"
+
+        summary = letter_panel(
+            str(self.panel), 800, 1000, [item],
+            [{"id": "ren", "name": "Ren"}, {"id": "mira", "name": "ren"}],
+        )
+
+        self.assertEqual("ren", summary["placements"][0]["attribution"]["speaker"])
+        self.assertEqual("declared", summary["placements"][0]["attribution"]["resolution"])
+
+    def test_spoken_balloon_without_a_text_id_cannot_be_attributed(self):
+        item = dialogue(content="No bridge.")
+        item.pop("id")
+
+        with self.assertRaisesRegex(ValueError, r"dialogue-attribution-required"):
+            self._letter([item])
+
+    def test_two_spoken_balloons_may_not_share_one_text_id(self):
+        first, second = self._two_speakers()
+        second["id"] = first["id"]
+
+        with self.assertRaisesRegex(
+            ValueError, r"dialogue-attribution-ambiguous: text ID dialogue-1"
+        ):
+            self._letter([first, second])
+
+    def test_unknown_speaker_is_still_reported_as_an_unknown_character(self):
+        item = dialogue(content="No bridge.")
+        item["speaker"] = "ghost"
+
+        with self.assertRaisesRegex(ValueError, r"unknown dialogue character: ghost"):
+            self._letter([item])
+
+
 class LetteringFixtureIntegrationTests(unittest.TestCase):
     def test_valid_fixture_letters_three_panels_from_semantic_files(self):
         with tempfile.TemporaryDirectory() as temporary:

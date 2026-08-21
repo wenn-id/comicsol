@@ -1,0 +1,23 @@
+{
+  "description": "The tail tip is moved to the opposite corner of the panel, so the balloon still renders but points away from the speaker it is attributed to.",
+  "expected_check": "bubble-tail-geometry",
+  "expected_decision": "regenerate",
+  "expected_reasons": [
+    "tail-does-not-point-at-speaker"
+  ],
+  "expected_result": "fail",
+  "panels": {
+    "p01-02": {
+      "replace": {
+        "p01-02-t01": {
+          "tail_fields": {
+            "tip": [
+              10.0,
+              10.0
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -127,7 +127,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
       - name: Build OCI image from locked source
         run: docker build --build-arg DOCKER_BASE_DIGEST="$DOCKER_BASE_DIGEST" -t comic-sol:${{ needs.prepare.outputs.version }} .
       - name: Smoke OCI image
@@ -213,6 +213,15 @@ jobs:
             bundles/**/*.zip
             bundles/**/*.whl
             bundles/**/*.tar.gz
+      - name: Install cosign for release checksum signing
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.0.6
+      - name: Sign global SHA256SUMS with Sigstore
+        shell: bash
+        run: |
+          set -eu
+          cosign sign-blob --yes --bundle bundles/SHA256SUMS.sigstore.json bundles/SHA256SUMS
       - name: Publish immutable release assets
         shell: bash
         run: |
@@ -220,5 +229,5 @@ jobs:
           EXTRA=""
           if [ "$RELEASE_PRERELEASE" = true ]; then EXTRA="--prerelease"; fi
           gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag $EXTRA --title "Comic Sol ${RELEASE_VERSION}" --notes-file "$NOTES"
-          find bundles -type f ! -name SHA256SUMS -print0 | xargs -0 gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber
-          gh release upload "$RELEASE_TAG" bundles/SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+          find bundles -type f ! -name SHA256SUMS ! -name SHA256SUMS.sigstore.json -print0 | xargs -0 gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$RELEASE_TAG" bundles/SHA256SUMS bundles/SHA256SUMS.sigstore.json --repo "$GITHUB_REPOSITORY" --clobber

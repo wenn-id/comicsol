@@ -1,0 +1,23 @@
+{
+  "description": "The tail attachment is moved to the balloon centre (180, 182), which is well inside the bounding box but 139 pixels off the ellipse that is actually drawn. Direction, tip, and source gap all stay self-consistent, so only an outline check catches that the tail starts from nothing.",
+  "expected_check": "bubble-tail-geometry",
+  "expected_decision": "regenerate",
+  "expected_reasons": [
+    "detached-tail"
+  ],
+  "expected_result": "fail",
+  "panels": {
+    "p01-02": {
+      "replace": {
+        "p01-02-t01": {
+          "tail_fields": {
+            "attachment": [
+              180.0,
+              182.0
+            ]
+          }
+        }
+      }
+    }
+  }
+}

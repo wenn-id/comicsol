@@ -1,0 +1,26 @@
+{
+  "description": "Attribution bound to a voice source the tail was never drawn toward. The tail still agrees with the storyboard, so only the attribution record disagrees about who is speaking from where.",
+  "expected_check": "bubble-tail-geometry",
+  "expected_decision": "regenerate",
+  "expected_reasons": [
+    "attribution-anchor-mismatch"
+  ],
+  "expected_result": "fail",
+  "panels": {
+    "p01-02": {
+      "replace": {
+        "p01-02-t01": {
+          "attribution": {
+            "authored_speaker": "mira",
+            "resolution": "declared",
+            "speaker": "mira",
+            "speaker_anchor": [
+              0.2,
+              0.2
+            ]
+          }
+        }
+      }
+    }
+  }
+}

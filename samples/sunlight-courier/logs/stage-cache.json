@@ -3,15 +3,15 @@
   "stages": {
     "composition": {
       "artifacts": {
-        "pages/page-001.png": "8733079f991e14355a83a399b41dd8467a6981dcb9c65423f2522a7bb8479ada",
-        "pages/page-002.png": "96fbfb1f7b35f2bac7fe92ef0378e6c030fcf9a71a01f66accec918f1da39205"
+        "pages/page-001.png": "af5505cf85e1ae83cb5d3c0100a0a36604b0dea53f11ffd31395798f3f41deb7",
+        "pages/page-002.png": "913dd06ae0bbd54f32be5c64745d27836eb4c35c8f2b9363aa5070ee3f377999"
       },
       "key": "60249b1ea1975de6acd7693e50653b597108ad1cc2c3a943be78dff25f524c0e"
     },
     "export": {
       "artifacts": {
         "exports/sunlight-courier.pdf": "7fc073bae781af2a4dfa0e6f800757a0a0f3141de25bc722a84afdbc8c964fe2",
-        "qa/report.md": "77739987a1a09559df7b31e4aa66d4e4617fd0e1310128c35b56f22fca8e1270"
+        "qa/report.md": "38f5595cc915756ed65947ad291054d84f29ebac321998f11f2a82b9098d8fdd"
       },
       "key": "ec684fff341469f8d7f941c973833c1f4f8c60089fd1a67cd4b5322524e9fefd"
     },
@@ -30,10 +30,10 @@
     },
     "lettering": {
       "artifacts": {
-        "panels/p01-01/lettered.png": "c9f39ab3a099835f82ea07e0d94d7805a20d8c3b57ad0353326a87b7b5e4e50c",
-        "panels/p01-02/lettered.png": "146e7853227f446c37c7934b86d2c6b8bd7b5b478db917d4a680187a96617ad0",
-        "panels/p02-01/lettered.png": "19fbe56e647b1db31e21b7f923053fd3aa092db7518251a9f37c8274eddafb05",
-        "panels/p02-02/lettered.png": "bd4c1a7e012ce15f0700175f5511917899a53820b1c832e9b0d92433e680c062"
+        "panels/p01-01/lettered.png": "ad2adc1e50690b64b4366a94324842cdf4a0f4b7ce942073e34f81f994040558",
+        "panels/p01-02/lettered.png": "271f6f35a8d94d3606cc4a8d9288fc24d41b6daa9eda423732bbb7e9b5408d8d",
+        "panels/p02-01/lettered.png": "b3b8109c2ae53cb44b6e3e5df060c615abd607a058add6e34930e8abc81176eb",
+        "panels/p02-02/lettered.png": "e990b5090a459d452496e370a8cb7aacae7743236d098f27e68212eb4fa57acb"
       },
       "key": "2a5dcc83be529b82ca740f43fbc14580ee4f5cedbf2e52e0fee18385e093037d"
     },

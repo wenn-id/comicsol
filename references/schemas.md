@@ -1,8 +1,8 @@
 # Comic Sol artifact schemas
 
 This document is the normative schema contract for Comic Sol. Most project artifacts
-remain schema version `1.0`; panel and page QA records use their documented schema
-version `2.0`. The JSON templates in `templates/` are starting shapes for the agent
+remain schema version `1.0`; the panel QA record uses its documented schema version
+`2.0` and the page QA record uses `2.1`. The JSON templates in `templates/` are starting shapes for the agent
 and deterministic scripts. A template may be structurally incomplete for a later
 pipeline stage; stage validation applies the cross-field rules in this document
 before allowing a transition.
@@ -25,8 +25,15 @@ The current project manifest schema is `1.0`. The minimum reader and writer vers
 - This release has no older manifest representation registered for automatic migration;
   an older artifact is rejected until a reviewed migration is added.
 
-The project manifest version is independent from artifact-level versions such as panel/page
-QA `2.0` and stage cache versions. Those artifacts retain their own validators.
+The project manifest version is independent from artifact-level versions such as panel QA
+`2.0`, page QA `2.1`, and stage cache versions. Those artifacts retain their own validators.
+
+An artifact-level version that has its own migrations follows the same rules through its own
+registry. The page QA record registers `PAGE_QA_MIGRATIONS` in `scripts/page_quality.py`,
+keyed by `(source_version, target_version)` exactly like `PROJECT_MIGRATIONS`: a record whose
+version has no registered hook is rejected with `UnsupportedSchemaVersionError` rather than
+being accepted, migration is published through the journal-backed project transaction, and a
+refused or interrupted migration leaves the record byte-for-byte unchanged.
 
 ## Common JSON rules
 
@@ -339,9 +346,40 @@ rather than constraining it, and reports `unclassified` when it recognizes no fr
 | `anchor` | enum | One of eight anchors below |
 | `priority` | integer | Positive placement order; ties break by item ID |
 
-Anchors are `top-left`, `top-center`, `top-right`, `middle-left`, `middle-right`, `bottom-left`, `bottom-center`, and `bottom-right`. `anchor` places every text item, captions included. Human `speaker_anchor` identifies the visible mouth/face voice-source region; spoken devices use `voice_source: device` and anchor their visible audio source. Non-spoken system status is a caption and has no tail. Captions and SFX omit `voice_source` and `speaker_anchor`. Legacy `tail_target` remains readable but produces `balloon-tail-migration-required` at lettering and later stages; it is never silently reinterpreted. Control characters other than newline are invalid. Explicit newlines are optional wrapping hints. Authored punctuation and words are not rewritten by deterministic scripts.
+Anchors are `top-left`, `top-center`, `top-right`, `middle-left`, `middle-right`, `bottom-left`, `bottom-center`, and `bottom-right`. `anchor` places every text item, captions included. Human `speaker_anchor` identifies the visible mouth/face voice-source region; spoken devices use `voice_source: device` and anchor their visible audio source.
+
+A panel that letters more than one balloon must stay attributable. Because a
+`speaker_anchor` is the only machine-readable evidence tying a balloon to a
+character, two rules decide attribution in normalized panel space and are applied
+identically by storyboard validation and by lettering. Anchors closer than `0.04`
+belonging to *different* speakers read as one voice source and fail as
+`shared-anchor`; anchors farther apart than `0.25` claimed by the *same* speaker
+place one character in two positions and fail as `split-anchor`. One speaker may
+hold several balloons at the same anchor. Every spoken balloon also needs a text
+ID, unique within its panel, because placements, page-QA regions, and reviewer
+evidence all address a balloon by that ID. A violation is reported as
+`dialogue-attribution-ambiguous` — or `dialogue-attribution-required` for a
+missing ID — and is never resolved by authoring order. Non-spoken system status is a caption and has no tail. Captions and SFX omit `voice_source` and `speaker_anchor`. Legacy `tail_target` remains readable but produces `balloon-tail-migration-required` at lettering and later stages; it is never silently reinterpreted. Control characters other than newline are invalid. Explicit newlines are optional wrapping hints. Authored punctuation and words are not rewritten by deterministic scripts.
 
 The word limits are a ceiling, not a guarantee of fit. Dialogue is inscribed in an oval, which holds roughly half the text of the rectangle bounding it, and an anchor area is about 42% of panel width by 30% of panel height. A 32-word line needs a panel of roughly 1000x1200 px or larger; a 720x1064 panel holds about 14 words. Lettering fails with `text item {id} does not fit inside the panel` rather than printing over the artwork, so size dialogue to the panel rectangle the storyboard assigns it.
+
+Lettering geometry is schema `1.1`. Every retained placement carries an
+`attribution` record: `null` for captions and SFX, which are not spoken, and for
+dialogue exactly `authored_speaker` (the token the storyboard wrote), `speaker`
+(the stable character-bible ID it resolved to), `resolution`, and `speaker_anchor`
+(the voice source the attribution is bound to).
+
+`resolution` records how identity was established rather than offering a second
+way to author it. A storyboard `speaker` must be a character-bible ID — a display
+name does not match the ID pattern and is rejected by storyboard validation — so
+every validated project records `declared`. `inferred` exists only for callers
+invoking `letter_panel()` directly with a display name, which the renderer
+accepted silently before and now resolves to exactly one character or refuses: a
+name shared by two characters resolves to no one. Authoring dialogue against
+display names is not a supported storyboard contract. Because
+geometry is fully derived from the clean raster, the storyboard, and the font
+policy, a record written at schema `1.0` is reported as
+`lettering-record-stale` and re-lettered rather than migrated in place.
 
 Dialogue tails are stored in lettering geometry as `organic-cubic-v1` records containing `attachment`, `base`, `control`, `tip`, `speaker_anchor`, `voice_source`, `source_gap`, `length`, `width`, and `policy_version`. The body and cubic tail are supersampled into one mask before one outline is derived. Page-QA check `bubble-tail-direction` requires exactly one current `regions` entry per dialogue with `panel_id`, `text_id`, `speaker`, `voice_source`, `speaker_anchor`, `tip`, and `result`; generic or stale regions fail closed.
 
@@ -586,22 +624,82 @@ Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-nu
 
 ## Page QA record: `qa/pages/page-{NNN}.json`
 
-One schema-2.0 `page-qa` record per composed page is created from `templates/page-qa.json`
-after bounded visual inspection. It contains `schema_version: "2.0"`, `kind: "page-qa"`,
-and `subject_id: "page-{NNN}"`; seven checks in the normative page order; a review object
+One schema-2.1 `page-qa` record per composed page is created from `templates/page-qa.json`
+after bounded visual inspection. It contains `schema_version: "2.1"`, `kind: "page-qa"`,
+and `subject_id: "page-{NNN}"`; ten checks in the normative page order; a review object
 with the fixed method `deterministic-plus-bounded-visual-review`, a non-empty reviewer, and
 an ISO-8601 UTC `reviewed_at`; `decision`; and `unresolved_warnings`.
 
+Seven of those checks are deterministic and authored by the engine with
+`method: deterministic-geometry-v1` and `reviewer: comic-sol`: `clipped-text`,
+`text-overlap`, `reading-order`, `layout-border-integrity`,
+`balloon-subject-obstruction`, `bubble-tail-geometry`, and `balloon-crowding`. The
+remaining three — `face-action-obstruction`, `bubble-tail-direction`, and
+`accidental-text-watermark` — are the bounded visual review the caller supplies.
+
+Balloon geometry is audited in each panel's own clean-raster pixel space, taken from
+`panels/{panel-id}/normalization.json` (`clean.size`), not in the storyboard page
+rectangle the panel is later fitted into. `clipped-text` regions report the offending
+`box`; `text-overlap` regions add `overlap_area` and `overlap_ratio` against the smaller
+box; `balloon-subject-obstruction` regions report the measured `clearance` and the
+`required_clearance` a balloon must keep from an authored `speaker_anchor`;
+`bubble-tail-geometry` regions report a `reason` of `missing-tail`,
+`missing-attribution`, `speaker-mismatch`, `speaker-anchor-mismatch`,
+`voice-source-mismatch`, `placement-kind-mismatch`,
+`speaker-anchor-out-of-range`, `detached-tail`,
+`tail-does-not-point-at-speaker`, or `attribution-anchor-mismatch`.
+`missing-attribution` and `speaker-mismatch` audit identity rather than shape:
+they compare the placement's retained `attribution` against the speaker the
+storyboard authored, which is how a swapped pair of speakers is caught when both
+tails are drawn correctly. `speaker-mismatch` requires *both* `speaker` and
+`authored_speaker` to equal the storyboard's `speaker`, because the canonical
+`speaker` is the identity consumers read and a record agreeing on only the
+authored echo would leave it wrong silently. This is exact for a validated
+storyboard, which authors a character-bible ID; an `inferred` record therefore
+fails closed here, and only a storyboard that failed validation by authoring a
+display name could produce one. `attribution-anchor-mismatch` is checked last and
+against the drawn tail, so a storyboard edit is still reported as an anchor
+mismatch and what remains here is attribution naming a voice source the tail was
+never aimed at. `detached-tail` is measured against the ellipse
+actually drawn rather than its bounding box, so an attachment resting in the
+balloon body is detached even though it is inside the box.
+`speaker-anchor-out-of-range` fails an anchor outside normalized `[0,1]` even when
+the retained tail agrees with it, because a self-consistent tail can still aim at
+a voice source that is not in the panel. `balloon-crowding` is the one warning-severity
+deterministic check: it reports `balloons`, `coverage_ratio`, `coverage_limit`,
+`required_separation`, and `tight_pairs` per crowded panel, selects `accept-warning`,
+and never blocks export on its own.
+
 `bindings` contains exactly `composition_cache_path`, `composition_cache_sha256`,
 `layout_name`, `layout_version`, ordered `lettering_sha256s` values (`panel-id:sha256`),
-`page_height`, `page_path`, `page_sha256`, `page_width`, `storyboard_path`, and
-`storyboard_sha256`. Every value is bound to the artifacts inspected by the record.
+ordered `normalization_sha256s` values (`panel-id:sha256`), `page_height`, `page_path`,
+`page_sha256`, `page_width`, `storyboard_path`, and `storyboard_sha256`. Every value is
+bound to the artifacts inspected by the record. `normalization_sha256s` is bound because
+`clean.size` defines the pixel space every balloon verdict is measured in, so
+re-normalizing a panel makes the record stale even when the page image is unchanged.
 
 An error-level failed check selects `regenerate`; otherwise any check whose result or severity
 is `warning` selects `accept-warning` and places its evidence, in check order, in
 `unresolved_warnings`; all passing checks select `accept`. A legacy five-field record
 (`page`, `page_path`, `page_sha256`, `schema_version`, `status`) is schema-1.0 input only:
 it remains readable for reporting but requires migration and cannot satisfy final validation.
+
+### Version 2.1 and the 2.0 migration
+
+Version `2.1` records the check set that grew from seven entries to ten and the added
+`normalization_sha256s` binding. A `2.0` record is reported as `quality-migration-required`
+rather than as a malformed record, because a version field exists precisely to distinguish
+"this predates a check-set change" from "the reviewer supplied the wrong check IDs".
+
+`migrate_page_quality_record()` runs the registered `("2.0", "2.1")` hook inside the project
+transaction. The seven deterministic checks and all twelve bindings are re-derived from
+current artifacts; nothing is copied and no check result is ever fabricated. The three
+reviewer-supplied checks and the original `review` object — reviewer and `reviewed_at`
+included — are carried across only while the record's bound `page_sha256` still matches the
+page on disk, because that digest is the evidence the reviewer inspected those pixels. When
+the page has changed, migration is refused as stale and the page must be reviewed again.
+`decision` and `unresolved_warnings` are re-derived from the merged ten-check set, since a
+newly derived check can warn where the `2.0` record accepted.
 These records are the integrity gate on finalization. `comic_sol.py finalize` and `validate_project.py --stage final|export-ready` fail closed when a record is missing or when `page_sha256` no longer matches the page, because a terminal status must not claim visual review that did not happen. Recompose a page and its record goes stale; write it again after re-inspecting.
 
 ## Composition cache: `cache/composition.json`

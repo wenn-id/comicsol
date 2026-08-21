@@ -16,7 +16,7 @@ bundled with or required by Comic Sol.
 
 ## Security status
 
-This release is **unsigned**. It is not Authenticode-signed, notarized, or GPG-signed. Every release includes `SHA256SUMS`, per-platform metadata with `signature_status: unsigned`, and a CycloneDX SBOM. Download the archive and checksum manifest over HTTPS, verify the digest, then run the installer. Never pipe a remote installer directly into a shell.
+This release uses a keyless Sigstore signature for `SHA256SUMS`; it is not Authenticode-signed, Apple-notarized, or GPG-signed. Every release includes `SHA256SUMS`, `SHA256SUMS.sigstore.json`, per-platform metadata with `signature_status: sigstore`, and a CycloneDX SBOM. Installers require `cosign` and verify the bundle against the GitHub Actions release workflow identity before checking the archive digest. Never pipe a remote installer directly into a shell.
 
 ## Linux and macOS
 
@@ -27,7 +27,9 @@ sha256sum comic-sol-2.0.0rc4-linux-x86_64.zip
 # Compare the digest with SHA256SUMS.
 sh installers/install.sh \
   --archive ./comic-sol-2.0.0rc4-linux-x86_64.zip \
-  --sha256 <digest-from-SHA256SUMS>
+  --sha256 <digest-from-SHA256SUMS> \
+  --checksums ./SHA256SUMS \
+  --signature ./SHA256SUMS.sigstore.json
 
 $HOME/.local/share/comic-sol/bin/comic-sol --version
 $HOME/.local/share/comic-sol/bin/comic-sol doctor
@@ -35,7 +37,7 @@ $HOME/.local/share/comic-sol/bin/comic-sol doctor
 
 For macOS, use `comic-sol-2.0.0rc4-macos-x86_64.zip`. The default installation root is `$HOME/.local/share/comic-sol`. Override it with `--install-root PATH` or `COMIC_SOL_INSTALL_ROOT`.
 
-The POSIX installer requires `perl`, `sha256sum`, `unzip`, and standard POSIX utilities. Perl is used for race-free no-follow install-root traversal. Native binaries are unsigned, so macOS Gatekeeper may require an explicit local approval for this prerelease.
+The POSIX installer requires `cosign`, `perl`, `sha256sum`, `unzip`, and standard POSIX utilities. Perl is used for race-free no-follow install-root traversal. The native binaries are not notarized, so macOS Gatekeeper may require an explicit local approval for this prerelease.
 
 ## Windows PowerShell
 
@@ -46,17 +48,19 @@ Download `comic-sol-2.0.0rc4-windows-x86_64.zip` and copy `installers/install.ps
 # Compare the digest with SHA256SUMS.
 .\installers\install.ps1 `
   -Archive .\comic-sol-2.0.0rc4-windows-x86_64.zip `
-  -SHA256 <digest-from-SHA256SUMS>
+  -SHA256 <digest-from-SHA256SUMS> `
+  -Checksums .\SHA256SUMS `
+  -Signature .\SHA256SUMS.sigstore.json
 
 & "$HOME\AppData\Local\ComicSol\bin\comic-sol.exe" --version
 & "$HOME\AppData\Local\ComicSol\bin\comic-sol.exe" doctor
 ```
 
-The default root is `$HOME\AppData\Local\ComicSol`. Override it with `-InstallRoot PATH`. The executable is unsigned, so Windows SmartScreen may warn during this prerelease.
+The default root is `$HOME\AppData\Local\ComicSol`. Override it with `-InstallRoot PATH`. The executable is not Authenticode-signed, so Windows SmartScreen may warn during this prerelease.
 
 ## Release qualification
 
-The release qualification workflow validates the *intended release artifact*: the published native archive, not a package rebuilt from the checkout. A maintainer dispatches `.github/workflows/release-qualification.yml` with an existing release tag. The workflow downloads the matching Linux, macOS, and Windows ZIP, `SHA256SUMS`, and installer directly from that GitHub Release, then runs on native runners:
+The release qualification workflow validates the *intended release artifact*: the published native archive, not a package rebuilt from the checkout. A maintainer dispatches `.github/workflows/release-qualification.yml` with an existing release tag. The workflow downloads the matching Linux, macOS, and Windows ZIP, `SHA256SUMS`, its Sigstore bundle, and installer directly from that GitHub Release, then runs on native runners:
 
 - `comic-sol --version` and `comic-sol doctor` from the installed runtime;
 - `init`, `status`, and `validate` on an offline fixture project;
@@ -122,8 +126,19 @@ MCP stdio has no authentication. Any local process able to launch the configured
 Each platform bundle contains:
 
 - `comic-sol-2.0.0rc4-<platform>-x86_64.zip`
-- platform metadata declaring the unsigned state
+- platform metadata declaring `signature_status: sigstore`
 - a CycloneDX SBOM
 - `SHA256SUMS`
+- `SHA256SUMS.sigstore.json`
 
-The GitHub prerelease also provides a global `SHA256SUMS`. A mismatch means the artifact must not be executed.
+The GitHub prerelease also provides a global `SHA256SUMS` and its Sigstore bundle. To verify manually:
+
+```bash
+cosign verify-blob \\
+  --bundle SHA256SUMS.sigstore.json \\
+  --certificate-identity-regexp '^https://github\\.com/wenn-id/comicsol/\\.github/workflows/release\\.yml@refs/tags/v' \\
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
+  SHA256SUMS
+```
+
+The installer additionally checks that the archive digest matches the signed manifest. Any signature or digest mismatch means the artifact must not be executed.

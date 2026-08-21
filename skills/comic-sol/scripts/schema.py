@@ -23,12 +23,24 @@ PROJECT_MIGRATIONS: dict[tuple[str, str], Migration] = {}
 
 
 class UnsupportedSchemaVersionError(ValueError):
-    """Raised when a project cannot be safely read or migrated."""
+    """Raised when a project or its artifacts cannot be safely read or migrated.
 
-    def __init__(self, version: object, *, reason: str | None = None) -> None:
+    `artifact` names the versioned thing being rejected. It defaults to the
+    project manifest this module gates, and artifact-level versions such as the
+    page-QA record pass their own name so the message says which contract failed.
+    """
+
+    def __init__(
+        self,
+        version: object,
+        *,
+        reason: str | None = None,
+        artifact: str = "project",
+    ) -> None:
         self.version = version
+        self.artifact = artifact
         self.reason = reason or "no migration path is registered"
-        super().__init__(f"project schema {version} is unsupported: {self.reason}")
+        super().__init__(f"{artifact} schema {version} is unsupported: {self.reason}")
 
 
 def _read_manifest(path: Path) -> Manifest:

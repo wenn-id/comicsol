@@ -60,6 +60,14 @@ def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+# Lettering geometry carries its own artifact version, independent from the
+# `project.json` version owned by scripts/schema.py. It moved to 1.1 when every
+# placement gained an `attribution` record, so geometry written by the previous
+# engine is reported as stale — and re-lettered — rather than read as if it
+# already carried verifiable speaker attribution.
+LETTERING_GEOMETRY_SCHEMA_VERSION = "1.1"
+
+
 def lettering_geometry_hash(record: Mapping[str, object]) -> str:
     """Hash geometry by canonical semantic JSON rather than source formatting."""
     payload = dict(record)

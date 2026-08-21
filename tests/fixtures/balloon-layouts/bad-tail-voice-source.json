@@ -1,0 +1,20 @@
+{
+  "description": "The retained tail claims a device voice source while the storyboard authored a human one, so the drawn tail shape no longer matches the speaker relationship it was rendered for.",
+  "expected_check": "bubble-tail-geometry",
+  "expected_decision": "regenerate",
+  "expected_reasons": [
+    "voice-source-mismatch"
+  ],
+  "expected_result": "fail",
+  "panels": {
+    "p01-02": {
+      "replace": {
+        "p01-02-t01": {
+          "tail_fields": {
+            "voice_source": "device"
+          }
+        }
+      }
+    }
+  }
+}
