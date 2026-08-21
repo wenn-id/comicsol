@@ -330,7 +330,7 @@ Layout enums are `full-page`, `two-horizontal`, `three-horizontal`, `hero-top-tw
 | `expression` | string | Visible emotional expression |
 | `lighting` | string | Key/fill/environment light direction |
 | `continuity` | array[string] | Exact character/scene invariants checked in QA, each written `owner-id:fact` |
-| `negative` | array[string] | Prohibits generated dialogue, captions, speech bubbles, logos, signatures, watermarks, unauthorized text/SFX, and panel-specific failures; exact authored SFX remains allowed |
+| `negative` | array[string] | Prohibits generated dialogue, captions, speech bubbles, logos, signatures, watermarks, unauthorized text/SFX, and panel-specific failures; exact authored `generated-visual` SFX remains allowed |
 | `text` | array[text item] | 0–3 items; at most 45 words total |
 
 There are at most 12 panels project-wide. Every panel scene and character must exist. Dialogue speakers must both exist in the character bible and appear in the panel.
@@ -350,6 +350,7 @@ rather than constraining it, and reports `unclassified` when it recognizes no fr
 | `voice_source` | enum or omitted | Dialogue only: exactly `human` or `device` |
 | `speaker_anchor` | array[number] or omitted | Dialogue only: finite normalized `[x,y]` coordinates for the visible voice-source region |
 | `content` | string | NFC-normalized; dialogue ≤32 words, caption ≤45, SFX ≤3 |
+| `render_mode` | enum or omitted | SFX only: `generated-visual` (default) or `deterministic-lettering` |
 | `anchor` | enum | One of eight anchors below |
 | `priority` | integer | Positive placement order; ties break by item ID |
 
@@ -370,7 +371,7 @@ missing ID — and is never resolved by authoring order. Non-spoken system statu
 
 The word limits are a ceiling, not a guarantee of fit. Dialogue is inscribed in an oval, which holds roughly half the text of the rectangle bounding it, and an anchor area is about 42% of panel width by 30% of panel height. A 32-word line needs a panel of roughly 1000x1200 px or larger; a 720x1064 panel holds about 14 words. Lettering fails with `text item {id} does not fit inside the panel` rather than printing over the artwork, so size dialogue to the panel rectangle the storyboard assigns it.
 
-Lettering geometry is schema `1.1`. Every retained placement carries an
+Lettering geometry is schema `1.2`. Every retained placement carries an
 `attribution` record: `null` for captions and SFX, which are not spoken, and for
 dialogue exactly `authored_speaker` (the token the storyboard wrote), `speaker`
 (the stable character-bible ID it resolved to), `resolution`, and `speaker_anchor`
@@ -385,15 +386,92 @@ accepted silently before and now resolves to exactly one character or refuses: a
 name shared by two characters resolves to no one. Authoring dialogue against
 display names is not a supported storyboard contract. Because
 geometry is fully derived from the clean raster, the storyboard, and the font
-policy, a record written at schema `1.0` is reported as
+policy, a record written at schema `1.0` or `1.1` is reported as
 `lettering-record-stale` and re-lettered rather than migrated in place.
 
 Dialogue tails are stored in lettering geometry as `organic-cubic-v1` records containing `attachment`, `base`, `control`, `tip`, `speaker_anchor`, `voice_source`, `source_gap`, `length`, `width`, and `policy_version`. The body and cubic tail are supersampled into one mask before one outline is derived. Page-QA check `bubble-tail-direction` requires exactly one current `regions` entry per dialogue with `panel_id`, `text_id`, `speaker`, `voice_source`, `speaker_anchor`, `tip`, and `result`; generic or stale regions fail closed.
 
-Dialogue and captions are deterministic lettering inputs. SFX is authored storyboard
-content for generation prompts and visual QA, but Pillow neither draws SFX nor allocates a placement rectangle or overlap reservation. Lettering summaries retain `text_count`
-for the total authored item count and additionally report `rendered_text_count` for
-dialogue/caption items and `sfx_count` for authored SFX items.
+### SFX render mode and provenance
+
+Dialogue and captions are always deterministic lettering inputs. SFX chooses its producer
+with `render_mode`, and the field is refused on any other kind because no other kind has a
+generated variant.
+
+`generated-visual` is the default, so every storyboard authored before this field existed
+keeps its exact previous meaning. The effect is authored storyboard content for generation
+prompts and visual QA:
+Pillow neither draws generated SFX nor allocates a placement rectangle or overlap reservation
+for it, and the raster is left byte-identical. `deterministic-lettering`
+routes the effect to Pillow, which draws it as outlined bold display type — no balloon or
+strip behind it — and places it in the eight-anchor search like any other item, reserving
+its rectangle so a drawn effect never prints over a drawn balloon. Lettering summaries
+retain `text_count` for the total authored item count, `rendered_text_count` for every item
+actually drawn, `sfx_count` for all authored SFX, and `lettered_sfx_count` for the SFX
+subset this engine drew.
+
+Only `generated-visual` SFX is generation-stage material. Moving an effect to
+`deterministic-lettering` therefore invalidates generation — the artwork must come back
+without the effect baked in — and lettering, while leaving planning and the storyboard
+stage cached. Restating the default explicitly is normalized out of both stages' cache
+material, so it re-rolls no artwork; it is still a storyboard byte change, so
+`artifacts.storyboard.sha256` must be re-bound and every panel's lettering geometry is
+reported `lettering-record-stale` and re-lettered like any other plan edit.
+
+Every panel's lettering geometry carries an `sfx` block at provenance schema `1.0` holding
+`items` and `flags`. Each entry records `box` (the drawn rectangle, `null` for
+generated effects), `anchor` (the anchor placement settled on for a drawn effect, which may
+differ from the authored request when the overlap search relocated it; the authored anchor
+otherwise), `content` as the storyboard authored it, `id`, `render_mode`, `verification`,
+and `origin` — `image-model` or `comic-sol-lettering`. `origin` is the field that answers
+which effects came from the image model and which this engine drew; it is recomputed from
+the storyboard by `validate_project.py` rather than read back, so a record cannot assert
+that an effect was lettered when the plan still hands it to the model.
+
+`verification` states how far the record can be checked, not that pixels were inspected.
+`reviewer-only` means nothing but a human looking at the raster can judge the effect.
+`deterministic` means the effect is reproducible from the storyboard, the clean raster, and
+the pinned font policy — the lettered raster is bound by hash rather than re-rendered, so a
+consistently edited `items`/`sfx` pair is caught by `geometry_sha256`, not by comparison
+against a fresh render.
+
+`flags` holds only the deterministic verification warnings a panel actually raises, each
+with `id`, `item_ids`, `evidence`, `remediation`, `method` (`sfx-policy-v1`), `reviewer`,
+`result`, and `severity`. Flag IDs are, in order: `sfx-glyph-risk` (generated content uses
+codepoints outside the Latin letters, digits, and comic punctuation an image model letters
+reliably), `sfx-duplicate-content` (two generated effects in one panel request the same
+text, so a drawn effect cannot be attributed to either), `sfx-legibility-budget` (a token
+longer than 12 characters or content longer than 24, which the model must compress to
+fit), and `sfx-unprohibited-generation` (a panel letters its own SFX but never prohibits
+generated SFX). Flags never fail a build; nothing here reads pixels or performs OCR, so
+semantic accuracy of arbitrary artwork remains a reviewer judgement.
+
+### SFX repair record: `panels/{panel-id}/sfx-audit.json`
+
+`python scripts/sfx_repair.py PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason
+"..."` is the supported path for replacing a faulty generated effect. In one transaction it
+flips that item to `deterministic-lettering`, adds a generated-SFX prohibition to the
+panel's `negative` list when none names SFX, archives the rejected clean raster — and the
+lettered raster derived from it — to
+`panels/{panel-id}/sfx-audit/{text-id}.attempt-{n}.{clean,lettered}.png`, re-binds the
+manifest's storyboard descriptor, and appends `sfx.replacement-recorded`.
+
+The record is schema `1.0`, `kind` `sfx-audit`, and carries `panel_id` plus an append-only
+`replacements` array. Each entry holds `archived` (one `{kind, path, sha256, source_path}`
+per preserved raster, for `raw`, `clean`, and `lettered` in derivation order),
+`content`, `from_render_mode`, `to_render_mode`, `negative_added`, `reason`, `sequence`,
+and `text_id`. The accepted raw attempt is copied rather than referenced, because the
+regeneration this repair asks for overwrites `panels/raw/{panel-id}.png`. Archive slots are
+probed across every kind for the first free `n`, so a repair never overwrites evidence, and
+the rejected artwork itself is left in place: a repair that destroyed the artifact it
+diagnosed could not be reviewed. Replacing an effect that is already
+`deterministic-lettering`, is not SFX, or has no clean raster to audit is refused, as is a
+manifest with no storyboard descriptor to re-bind.
+
+Re-lettering is the whole fix when the model simply omitted the effect. When it drew a
+faulty one, that ink is still in the clean raster and the panel must be regenerated — and
+promotion refuses to replace an accepted raster until the panel's QA record asks for a
+repair, so that review is written first. The command returns this as `next_action` rather
+than leaving the operator at the refusal.
 
 ## Panel QA record: `qa/panels/{panel-id}.json`
 
@@ -663,7 +741,7 @@ The version 1.0 project boundary contains `project.json`; exact source/request c
 
 The opt-in `plan/character-identity-pack.json` companion artifact also lives inside this boundary, as does the `logs/reference-selection.json` provenance record derived from it and the `logs/repair-plan.json` record derived from the panel QA records.
 
-Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-number}.png`; only the accepted attempt occupies `panels/raw/{panel-id}.png`. An accepted raster is replaced only while its QA record asks for a repair: promotion verifies the new raster, refuses to overwrite a panel the review still accepts, and archives the previous accepted bytes before publishing the replacement. Only a review that was never written permits replacement, which is what initial generation and transient repeats need; a record that exists but cannot be resolved, read, or understood withholds permission rather than granting it, because it is not evidence that anything faulted the panel. The record is read inside the promotion transaction, under the same lock that publishes the replacement. Generated images intentionally contain no dialogue, captions, speech bubbles, signatures, logos, or watermarks. Exact storyboard-authored SFX is instead allowed and required in generated artwork; generated SFX is forbidden when the storyboard has none.
+Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-number}.png`; only the accepted attempt occupies `panels/raw/{panel-id}.png`. An accepted raster is replaced only while its QA record asks for a repair: promotion verifies the new raster, refuses to overwrite a panel the review still accepts, and archives the previous accepted bytes before publishing the replacement. Only a review that was never written permits replacement, which is what initial generation and transient repeats need; a record that exists but cannot be resolved, read, or understood withholds permission rather than granting it, because it is not evidence that anything faulted the panel. The record is read inside the promotion transaction, under the same lock that publishes the replacement. Generated images intentionally contain no dialogue, captions, speech bubbles, signatures, logos, or watermarks. Exact storyboard-authored `generated-visual` SFX is instead allowed and required in generated artwork; generated SFX is forbidden when the storyboard authors none in that mode. A generated effect that came back misspelled or unreadable is replaced through `scripts/sfx_repair.py`, which routes it to deterministic lettering and archives the rejected clean and lettered rasters under `panels/{panel-id}/sfx-audit/` rather than discarding the artwork it faulted.
 
 ## Page QA record: `qa/pages/page-{NNN}.json`
 

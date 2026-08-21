@@ -55,6 +55,8 @@ BUNDLED_SCRIPTS = (
     "render_report.py",
     "repair_strategy.py",
     "schema.py",
+    "sfx_repair.py",
+    "sfx_verification.py",
     "stage_registry.py",
     "typography.py",
     "validate_project.py",

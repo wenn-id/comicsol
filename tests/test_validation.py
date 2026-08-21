@@ -1157,24 +1157,44 @@ class SkillContractTests(unittest.TestCase):
             "exact storyboard-authored sfx",
             "dynamic motion/action typography",
             "no generated dialogue, captions, or speech bubbles",
-            "if no sfx is authored, prohibit generated sfx",
+            "prohibit\n   generated sfx when no `generated-visual` item is authored",
         ):
             self.assertIn(phrase, creative)
         for phrase in (
-            "exact storyboard-authored sfx is allowed and required",
+            "exact storyboard-authored `generated-visual` sfx is allowed and required",
             "missing, misspelled, duplicated, or unauthorized sfx",
             "dialogue", "caption", "speech bubbles", "logos", "signatures", "watermarks",
+            # The repair path is part of the reviewer contract: a faulty generated
+            # effect has a cheaper remedy than re-rolling the panel.
+            "scripts/sfx_repair.py",
         ):
             self.assertIn(phrase, visual)
         self.assertIn(
-            "pillow neither draws sfx nor allocates a placement rectangle or overlap reservation",
+            "pillow neither draws generated sfx nor allocates a placement rectangle "
+            "or overlap reservation",
             schemas,
         )
         self.assertNotIn("no dialogue, captions, sfx", schemas)
-        for phrase in ("text_count", "rendered_text_count", "sfx_count"):
+        for phrase in (
+            "text_count", "rendered_text_count", "sfx_count", "lettered_sfx_count",
+        ):
             self.assertIn(phrase, schemas)
             self.assertIn(phrase, workflow)
-        self.assertIn("exact storyboard sfx", skill)
+        # Render mode and origin are the two claims that make SFX verifiable, so
+        # both are documented wherever an author or a reviewer would look.
+        for phrase in ("generated-visual", "deterministic-lettering"):
+            self.assertIn(phrase, schemas)
+            self.assertIn(phrase, workflow)
+            self.assertIn(phrase, creative)
+        for phrase in (
+            "image-model", "comic-sol-lettering", "sfx-audit.json",
+            "sfx-glyph-risk", "sfx-duplicate-content", "sfx-legibility-budget",
+            "sfx-unprohibited-generation",
+        ):
+            self.assertIn(phrase, schemas)
+        self.assertIn("exact `generated-visual` storyboard sfx", skill)
+        self.assertIn("`deterministic-lettering` sfx", skill)
+        self.assertIn("sfx_repair.py", skill)
         self.assertIn("image model", skill)
 
     def test_all_deterministic_cli_commands_are_routed(self):
@@ -1185,7 +1205,7 @@ class SkillContractTests(unittest.TestCase):
             "comic_sol.py record-stage", "comic_sol.py record-attempt",
             "comic_sol.py promote-attempt",
             "comic_sol.py override-panel", "validate_project.py", "letter_panels.py",
-            "compose_pages.py", "export_pdf.py", "render_report.py",
+            "sfx_repair.py", "compose_pages.py", "export_pdf.py", "render_report.py",
         )
         for command in commands:
             self.assertIn(command, text)

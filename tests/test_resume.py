@@ -137,13 +137,23 @@ class ResumeTests(unittest.TestCase):
             visual_panels = []
             for panel in panels:
                 item = deepcopy(panel)
-                sfx_items = [
-                    text_item
-                    for text_item in item.get("text", [])
-                    if text_item.get("kind") == "sfx"
-                ]
-                if sfx_items:
-                    item["text"] = sfx_items
+                # Only SFX the image model is asked to draw is generation
+                # material; an effect routed to deterministic lettering belongs
+                # to the lettering stage instead.
+                generated_sfx = []
+                for text_item in item.get("text", []):
+                    if text_item.get("kind") != "sfx":
+                        continue
+                    mode = text_item.get("render_mode", "generated-visual")
+                    if mode != "generated-visual":
+                        continue
+                    material = dict(text_item)
+                    # Restating the default is a documentation change, so it is
+                    # normalized away rather than treated as a new input.
+                    material.pop("render_mode", None)
+                    generated_sfx.append(material)
+                if generated_sfx:
+                    item["text"] = generated_sfx
                 else:
                     item.pop("text", None)
                 visual_panels.append(item)
@@ -175,7 +185,19 @@ class ResumeTests(unittest.TestCase):
                 if record.get("schema_version") == "2.0"
                 else "panels/clean/p01-01.png"
             )
-            return [[panel["text"] for panel in panels]], [self.project / clean_relative]
+            text = []
+            for panel in panels:
+                items = []
+                for text_item in panel["text"]:
+                    material = dict(text_item)
+                    if (
+                        material.get("kind") == "sfx"
+                        and material.get("render_mode") == "generated-visual"
+                    ):
+                        del material["render_mode"]
+                    items.append(material)
+                text.append(items)
+            return [text], [self.project / clean_relative]
         if stage == "composition":
             geometry = [{"number": page["number"], "layout": page["layout"], "panels": [p["rect"] for p in page["panels"]]} for page in storyboard["pages"]]
             return [geometry], [self.project / "panels/p01-01/lettered.png"]
@@ -482,6 +504,70 @@ class ResumeTests(unittest.TestCase):
         self.assertTrue(all(by_stage[stage] == "rerun" for stage in ("lettering", "composition", "export")))
         self.assertEqual(raw_hash, sha256_file(self.project / "panels/raw/p01-01.png"))
         self.assertEqual(clean_hash, sha256_file(self.project / "panels/clean/p01-01.png"))
+
+    def test_sfx_render_mode_change_invalidates_generation_onward(self):
+        """Routing an effect to lettering must re-derive the artwork without it."""
+        storyboard = read_json(self.project / "plan/storyboard.json")
+        storyboard["pages"][0]["panels"][0]["text"] = [{
+            "id": "p01-01-sfx", "kind": "sfx", "content": "KRAK!",
+            "render_mode": "generated-visual",
+        }]
+        atomic_write_json(self.project / "plan/storyboard.json", storyboard)
+        manifest = read_json(self.project / "project.json")
+        manifest["artifacts"]["storyboard"] = self._descriptor("plan/storyboard.json")
+        atomic_write_json(self.project / "project.json", manifest)
+        self._write_cache_snapshot()
+        self.assertTrue(
+            all(action.action == "reuse" for action in build_resume_plan(self.project))
+        )
+
+        storyboard["pages"][0]["panels"][0]["text"][0]["render_mode"] = (
+            "deterministic-lettering"
+        )
+        atomic_write_json(self.project / "plan/storyboard.json", storyboard)
+        manifest = read_json(self.project / "project.json")
+        manifest["artifacts"]["storyboard"] = self._descriptor("plan/storyboard.json")
+        atomic_write_json(self.project / "project.json", manifest)
+
+        actions = build_resume_plan(self.project)
+
+        by_stage = {
+            action.stage: action.action
+            for action in actions
+            if action.artifact == "stage"
+        }
+        # Planning and the storyboard are unaffected: the plan is the input the
+        # edit was made to, not an output derived from it.
+        self.assertEqual("reuse", by_stage["planning"])
+        self.assertEqual("reuse", by_stage["storyboard"])
+        self.assertEqual("regenerate", by_stage["generation"])
+        self.assertEqual("rerun", by_stage["lettering"])
+
+    def test_declaring_the_default_render_mode_does_not_re_roll_artwork(self):
+        """An absent render mode is the documented default, not a distinct input."""
+        storyboard = read_json(self.project / "plan/storyboard.json")
+        storyboard["pages"][0]["panels"][0]["text"] = [{
+            "id": "p01-01-sfx", "kind": "sfx", "content": "KRAK!",
+        }]
+        atomic_write_json(self.project / "plan/storyboard.json", storyboard)
+        manifest = read_json(self.project / "project.json")
+        manifest["artifacts"]["storyboard"] = self._descriptor("plan/storyboard.json")
+        atomic_write_json(self.project / "project.json", manifest)
+        self._write_cache_snapshot()
+
+        storyboard["pages"][0]["panels"][0]["text"][0]["render_mode"] = (
+            "generated-visual"
+        )
+        atomic_write_json(self.project / "plan/storyboard.json", storyboard)
+        manifest = read_json(self.project / "project.json")
+        manifest["artifacts"]["storyboard"] = self._descriptor("plan/storyboard.json")
+        atomic_write_json(self.project / "project.json", manifest)
+
+        actions = build_resume_plan(self.project)
+
+        self.assertTrue(
+            all(action.action == "reuse" for action in actions), actions
+        )
 
     def test_fingerprint_change_invalidates_generation_onward(self):
         characters = read_json(self.project / "plan/character-bible.json")

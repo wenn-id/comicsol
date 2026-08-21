@@ -4,6 +4,34 @@
 
 ### Added
 
+- Made SFX handling explicit enough to verify or replace. SFX was the one text kind Comic
+  Sol handed to the image model, and nothing recorded that: an authored `KRAK!` could come
+  back misspelled, mirrored, doubled, or missing, and the project held no evidence that the
+  effect had never been deterministic in the first place. An SFX item now declares
+  `render_mode` — `generated-visual`, the default, or `deterministic-lettering`, which
+  Pillow draws as outlined bold display type that reserves its rectangle like any balloon.
+  Every panel's lettering geometry (now schema `1.2`) carries an `sfx` provenance block
+  naming each effect's `origin` as `image-model` or `comic-sol-lettering`, so a reviewer can
+  attribute a suspect effect instead of guessing. `validate_project.py` recomputes that
+  block from the storyboard rather than reading it back, so a record cannot claim an effect
+  was lettered while the plan still hands it to the model. New `scripts/sfx_verification.py`
+  also reports the risks that *are* deterministically knowable without reading pixels:
+  `sfx-glyph-risk`, `sfx-duplicate-content`, `sfx-legibility-budget`, and
+  `sfx-unprohibited-generation`. Nothing performs OCR, and semantic accuracy of arbitrary
+  artwork remains a reviewer judgement.
+- Added `scripts/sfx_repair.py`, the supported path for replacing one faulty generated
+  effect without re-rolling a whole panel on a hope. In one transaction it routes that item
+  to deterministic lettering, adds the missing generated-SFX prohibition to the panel,
+  archives the rejected clean and lettered rasters under `panels/{panel-id}/sfx-audit/`, and
+  records the transition, the reason, and every preserved hash in
+  `panels/{panel-id}/sfx-audit.json` — a repair that destroyed the artifact it diagnosed
+  could not be reviewed. Only `generated-visual` SFX is generation material, so the edit
+  invalidates generation and lettering while planning and the storyboard stage keep their
+  cache; restating the default render mode explicitly is normalized out of both stages' cache
+  material, so no existing project is regenerated or re-rolled by the mechanism. Lettered SFX
+  is also excluded from `balloon-subject-obstruction` and `balloon-crowding`, which encode
+  rules about speech: an effect is placed over the action deliberately, and counting it would
+  fail a correct page while telling the reviewer to shorten dialogue that is not the cause.
 - Expanded typography coverage and made the supported script set inventoried rather than
   implied. New `scripts/font_coverage.py` declares every Unicode block Comic Sol letters
   along with whether advance-only placement renders it faithfully, reads the bundled cmap

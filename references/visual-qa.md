@@ -18,9 +18,12 @@ declared invariants. Record non-empty evidence for exactly seven ordered checks:
    Evidence: short phrase (`"match prior"`, `"scene consistent"`).
 6. `text-free`: no generated dialogue, caption, speech bubbles, logos, signatures,
    watermarks, blank/white placeholder rectangles, or empty balloon-like shapes.
-   Exact storyboard-authored SFX is allowed and required when authored;
+   Exact storyboard-authored `generated-visual` SFX is allowed and required;
    missing, misspelled, duplicated, or unauthorized SFX fails this check, and generated
-   SFX fails when none is authored. Evidence: short phrase (`"no text"`, `"sfx correct"`,
+   SFX fails when none is authored `generated-visual` — including a panel whose effects
+   are all `deterministic-lettering`, which asks the model for no SFX at all. Only the
+   image model's SFX is reviewed here; effects Comic Sol letters are verified by their
+   own provenance. Evidence: short phrase (`"no text"`, `"sfx correct"`,
    `"no placeholder"`).
 7. `technical`: readable raster, minimum 512 px dimensions, aspect within ±2%, and no
    unintended alpha. Evidence: short phrase (`"512+ px"`, `"ratio ok"`, `"no alpha"`).
@@ -63,6 +66,23 @@ eight storyboard anchor `area` values, with specific evidence and repair guidanc
   that cannot be read or whose decision is unrecognized refuses the replacement.
 - A subject defect region names a character the panel's trait review covered. Use an
   `area` region, or record the trait review first, when it cannot.
+- A faulty generated SFX has a cheaper remedy than re-rolling the panel and hoping.
+  `python scripts/sfx_repair.py PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason
+  "..."` routes that one effect to deterministic lettering, archives the rejected raw,
+  clean, and lettered rasters under `panels/{panel-id}/sfx-audit/`, records the transition
+  and the reason in `panels/{panel-id}/sfx-audit.json`, and adds the missing generated-SFX
+  prohibition to the panel. It edits the plan, never a raster: planning and the
+  storyboard stage stay cached, and generation and lettering re-derive the panel from
+  the corrected storyboard.
+- Whether that repair also needs a regeneration is a visual judgement the command cannot
+  make, so it returns the answer as `next_action`. Re-lettering is the whole fix when the
+  model omitted the effect. When the model drew a faulty one, that ink is still in the clean
+  raster: re-review the panel to `regenerate` first, because promotion refuses to replace an
+  accepted raster while its QA record still accepts the panel.
+- Lettered SFX is excluded from `balloon-subject-obstruction` and `balloon-crowding`. Both
+  encode rules about speech — a balloon must not cover the mouth it speaks from, a cluster
+  must not crowd the reading path — and an effect is placed over the action deliberately.
+  `clipped-text`, `text-overlap`, and `reading-order` still judge it.
 - Permit one immediate transient repeat; it consumes the global budget but not the
   per-panel visual retry budget.
 - After exhaustion, an error-level panel is `BLOCKED` and cannot reach lettering/export.

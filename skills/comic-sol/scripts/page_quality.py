@@ -691,9 +691,21 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
         if orders != list(range(1, len(items) + 1)):
             order_regions.append({"panel_id": panel_id, "observed": orders})
         anchors = _protected_anchors(panel, panel_width, panel_height)
+        # `clipped-text`, `text-overlap`, and `reading-order` judge every drawn box,
+        # lettered SFX included: an effect can be cut off by the panel edge or
+        # printed over a balloon exactly like any other lettering.
+        #
+        # The two balloon checks below are different. Both encode a rule about
+        # *speech*: a balloon must not cover the mouth it speaks from, and a
+        # cluster of balloons must not crowd the reading path. A sound effect is
+        # deliberately placed over the action — that is what makes it read as a
+        # sound — and its evidence would tell the reviewer to shorten dialogue
+        # that is not the cause. Judging SFX by those rules would fail correct
+        # pages, so they see balloons only.
+        balloons = [entry for entry in boxes if entry[2] != "sfx"]
         obstruction_regions.extend(
             _subject_obstruction_regions(
-                panel_id, anchors, boxes, panel_width, panel_height
+                panel_id, anchors, balloons, panel_width, panel_height
             )
         )
         tail_regions.extend(
@@ -702,7 +714,7 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
             )
         )
         crowding_regions.extend(
-            _crowding_regions(panel_id, boxes, panel_width, panel_height)
+            _crowding_regions(panel_id, balloons, panel_width, panel_height)
         )
 
     layout_regions = [{

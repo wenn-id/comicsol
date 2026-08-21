@@ -47,9 +47,12 @@ Write each preserved panel prompt in this exact order:
 4. Panel action and expression.
 5. Camera, composition, and lighting.
 6. Reserved text-safe areas for deterministic dialogue and caption lettering.
-7. Exact storyboard-authored SFX: when present, require the image model to draw every
-   exact item once as dynamic motion/action typography integrated into the artwork.
-   If no SFX is authored, prohibit generated SFX.
+7. Exact storyboard-authored SFX, by declared `render_mode`. For each
+   `generated-visual` item — the default — require the image model to draw that exact
+   item once as dynamic motion/action typography integrated into the artwork. Prohibit
+   generated SFX when no `generated-visual` item is authored, including when every
+   authored effect is `deterministic-lettering`: those are drawn by Comic Sol after
+   generation, so a baked copy would sit underneath the drawn one.
 8. Negative constraints: no generated dialogue, captions, or speech bubbles; no
    blank/white placeholder rectangles of any kind; no empty balloon-like shapes;
    no logos, signatures, watermarks, unauthorized text/SFX, duplicated principal

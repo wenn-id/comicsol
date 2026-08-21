@@ -320,7 +320,7 @@ class LetteringTests(unittest.TestCase):
 
         starts = []
 
-        def capture_line_start(_draw, _runs, position, _fill):
+        def capture_line_start(_draw, _runs, position, _fill, **_options):
             starts.append(position)
 
         with mock.patch(
@@ -464,7 +464,7 @@ class LetteringTests(unittest.TestCase):
         draw = ImageDraw.Draw(image)
         captured_runs = []
 
-        def capture_runs(_draw, runs, _position, _fill):
+        def capture_runs(_draw, runs, _position, _fill, **_options):
             captured_runs.extend(runs)
 
         with mock.patch(
@@ -861,7 +861,7 @@ class LetteringTests(unittest.TestCase):
         fitted = _fitted_item_rect(draw, item, maximum, font)
         captured_runs = []
 
-        def capture_runs(_draw, runs, _position, _fill):
+        def capture_runs(_draw, runs, _position, _fill, **_options):
             captured_runs.extend(runs)
 
         with mock.patch(

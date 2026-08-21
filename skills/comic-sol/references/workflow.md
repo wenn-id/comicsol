@@ -87,10 +87,14 @@ character-bible `speaker`, sets `voice_source` to `human` or `device`, and place
 normalized `speaker_anchor` on the visible mouth/face or device audio-source region.
 Non-spoken system status is a caption with no tail; captions and SFX omit dialogue-only
 fields. Legacy `tail_target` is readable but blocks lettering with
-`balloon-tail-migration-required` and must be migrated explicitly. SFX is authored
-artwork content; dialogue and captions are deterministic lettering content. Transition
-through `SCRIPTED`, validate with `validate_project.py PROJECT_DIR --stage storyboard`,
-then transition to `STORYBOARDED`.
+`balloon-tail-migration-required` and must be migrated explicitly. Dialogue and captions
+are always deterministic lettering content. SFX chooses its producer with `render_mode`:
+`generated-visual` (the default) is artwork content the image model bakes in, and
+`deterministic-lettering` is drawn by Comic Sol as outlined display type. Prefer
+`deterministic-lettering` when the effect must be legible verbatim — non-Latin scripts
+especially — and `generated-visual` when integration with the artwork matters more than
+exactness. Transition through `SCRIPTED`, validate with
+`validate_project.py PROJECT_DIR --stage storyboard`, then transition to `STORYBOARDED`.
 
 ### 4. Detect image capability
 
@@ -205,8 +209,12 @@ If `finalize` is unavailable, run the stages individually in this order:
 
 1. `letter_panels.py PROJECT_DIR [--font PATH]`, `comic_sol.py record-stage PROJECT_DIR
    lettering`, then transition to `LETTERED`. `text_count` is the authored total;
-   `rendered_text_count` counts dialogue/captions; `sfx_count` counts validated authored
-   SFX. Pillow must not draw SFX.
+   `rendered_text_count` counts every item drawn; `sfx_count` counts validated authored
+   SFX; `lettered_sfx_count` counts the SFX subset Pillow drew. Pillow must not draw
+   `generated-visual` SFX. Each panel's `sfx` provenance block names every effect's
+   `origin` as `image-model` or `comic-sol-lettering`; replace a faulty generated effect
+   with `sfx_repair.py PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason "..."`,
+   which archives the rejected rasters and re-letters from the corrected storyboard.
 2. `compose_pages.py PROJECT_DIR --all`, `comic_sol.py record-stage PROJECT_DIR
    composition`, then transition to `COMPOSED`. Composition also writes
    `cache/composition.json` and its manifest descriptor.

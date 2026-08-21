@@ -731,6 +731,62 @@ class BalloonPlacementQualityTests(unittest.TestCase):
             check["regions"],
         )
 
+    def test_lettered_sfx_is_not_judged_by_the_balloon_placement_rules(self):
+        """A sound effect belongs over the action, which is where anchors live.
+
+        `balloon-subject-obstruction` encodes a rule about speech: a balloon must
+        not cover the mouth it speaks from. `balloon-crowding` encodes a rule about
+        the reading path and tells the reviewer to shorten dialogue. A lettered SFX
+        is neither, so the same geometry that fails as a balloon must not fail — or
+        be counted — as an effect. `clipped-text`, `text-overlap`, and
+        `reading-order` still judge it, because those apply to any drawn box.
+        """
+        # p01-02's dialogue anchors at [0.7, 0.55] of a 720x1064 panel, so this box
+        # sits directly on the protected voice source. The storyboard is untouched,
+        # which keeps that anchor protected: the only variable is the drawn box's
+        # kind.
+        def extra(kind):
+            return {"panels": {"p01-02": {"append": [{
+                "anchor": "middle-right",
+                "attribution": None,
+                "box": {"x": 454, "y": 545, "width": 120, "height": 90},
+                "font_runs": [
+                    {"font_id": "ComicNeue-Bold.ttf", "style": "bold", "text": "KRAK!"}
+                ],
+                "id": "p01-02-t02",
+                "kind": kind,
+                "reading_order": 2,
+                "tail": None,
+            }]}}}
+
+        as_balloon = self._fresh_project()
+        apply_balloon_layout(as_balloon, extra("caption"))
+        as_sfx = self._fresh_project()
+        apply_balloon_layout(as_sfx, extra("sfx"))
+
+        balloon_checks = self._checks(as_balloon)
+        sfx_checks = self._checks(as_sfx)
+
+        # Identical geometry: only the kind differs.
+        self.assertEqual("fail", balloon_checks["balloon-subject-obstruction"]["result"])
+        self.assertEqual(
+            ["p01-02-t02"],
+            [
+                region["item_id"]
+                for region in balloon_checks["balloon-subject-obstruction"]["regions"]
+            ],
+        )
+        self.assertEqual("pass", sfx_checks["balloon-subject-obstruction"]["result"])
+        self.assertEqual([], sfx_checks["balloon-subject-obstruction"]["regions"])
+        for region in sfx_checks["balloon-crowding"]["regions"]:
+            self.assertNotIn(
+                "p01-02-t02",
+                [item for pair in region.get("tight_pairs", []) for item in pair["items"]],
+            )
+        # The kind-agnostic text checks still cover the effect.
+        for check_id in ("clipped-text", "text-overlap", "reading-order"):
+            self.assertEqual("pass", sfx_checks[check_id]["result"], check_id)
+
     def test_panels_without_authored_anchors_have_no_protected_subject(self):
         project = self._fresh_project()
         # p01-01 and p01-03 carry captions only, so no anchor exists to protect.

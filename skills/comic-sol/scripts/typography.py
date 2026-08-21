@@ -99,10 +99,12 @@ def _sha256_bytes(payload: bytes) -> str:
 
 # Lettering geometry carries its own artifact version, independent from the
 # `project.json` version owned by scripts/schema.py. It moved to 1.1 when every
-# placement gained an `attribution` record, so geometry written by the previous
-# engine is reported as stale — and re-lettered — rather than read as if it
-# already carried verifiable speaker attribution.
-LETTERING_GEOMETRY_SCHEMA_VERSION = "1.1"
+# placement gained an `attribution` record, and to 1.2 when every panel gained an
+# `sfx` provenance block naming which effects the image model produced and which
+# this engine lettered. Geometry written by a previous engine is reported as
+# stale — and re-lettered — rather than read as if it already carried a claim it
+# never recorded.
+LETTERING_GEOMETRY_SCHEMA_VERSION = "1.2"
 
 
 def lettering_geometry_hash(record: Mapping[str, object]) -> str:

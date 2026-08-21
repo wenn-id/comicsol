@@ -40,6 +40,11 @@ from .project_io import (
 from .raster_limits import MAX_DECODED_PIXELS
 from .repair_strategy import REPAIR_STRATEGIES, recorded_panel_plan
 from .schema import read_project_manifest
+from .sfx_verification import (
+    is_generated_sfx,
+    normalized_text_material,
+    sfx_material,
+)
 from .stage_registry import (
     ARTIFACT_STAGE,
     RESUME_STAGES,
@@ -143,6 +148,7 @@ EVENT_DETAIL_KINDS = {
     "project_id": "identifier",
     "panel_id": "identifier",
     "scene_id": "identifier",
+    "text_id": "identifier",
     "source_path": "path",
     "artifact_path": "path",
     "attempt_path": "path",
@@ -559,13 +565,17 @@ def _resume_stage_material(
         for panel in panels:
             visual_panel = dict(panel)
             text_items = panel.get("text", [])
-            sfx_items = [
-                dict(text_item)
+            # Only SFX the image model is asked to draw is generation material.
+            # Routing an effect to deterministic lettering therefore invalidates
+            # generation for that panel — the artwork must come back without the
+            # baked effect — while leaving planning and the storyboard untouched.
+            generated_sfx = [
+                sfx_material(text_item)
                 for text_item in text_items
-                if isinstance(text_item, dict) and text_item.get("kind") == "sfx"
+                if is_generated_sfx(text_item)
             ] if isinstance(text_items, list) else []
-            if sfx_items:
-                visual_panel["text"] = sfx_items
+            if generated_sfx:
+                visual_panel["text"] = generated_sfx
             else:
                 visual_panel.pop("text", None)
             visual_panels.append(visual_panel)
@@ -615,7 +625,9 @@ def _resume_stage_material(
             ),
         )
     if material_kind == "lettering":
-        text = [panel.get("text", []) for panel in panels]
+        # Normalized the same way generation material is, so restating the default
+        # render mode does not re-letter a page that would come out identical.
+        text = [normalized_text_material(panel.get("text", [])) for panel in panels]
         return [text] if text else [[]], _project_files(
             project_dir, [_panel_clean_relative_path(project_dir, panel_id) for panel_id in panel_ids]
         )

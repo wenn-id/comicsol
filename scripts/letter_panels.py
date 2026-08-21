@@ -29,6 +29,11 @@ from .core_primitives import (
 )
 from .project_io import ProjectTransaction, contained_project_path, open_path_nofollow, read_contained_bytes
 from .raster_limits import MAX_DECODED_PIXELS
+from .sfx_verification import (
+    is_deterministic_sfx,
+    render_mode_problem,
+    sfx_provenance,
+)
 from .typography import (
     LETTERING_GEOMETRY_SCHEMA_VERSION,
     SCRIPT_EXTENSION_KEY,
@@ -65,6 +70,27 @@ ANCHORS = (
 ELLIPSE_TEXT_RATIO = math.sqrt(2.0)
 BALLOON_PADDING = 19
 CAPTION_PADDING = 20
+# Lettered SFX carries no balloon or strip, so its padding only keeps the outlined
+# glyphs off the edge of the rectangle they were fitted into.
+SFX_PADDING = 10
+# SFX is display typography, not body text, so it is sized from a much larger
+# range than dialogue.
+#
+# The floor is one step above the largest dialogue size on purpose. An effect that
+# had been allowed to shrink to dialogue scale would still be drawn, still be
+# recorded as lettered SFX, and still read as a caption nobody put a box around —
+# a silent quality failure. Refusing to place it instead surfaces the real problem
+# (the effect is too long for the panel it was anchored to) as
+# `does not fit inside the panel`, which the author can act on.
+SFX_MINIMUM_FONT_SIZE = 44
+SFX_FONT_SIZES = range(120, SFX_MINIMUM_FONT_SIZE - 1, -4)
+# Ink weight for the keyline drawn around SFX glyphs. Effects are drawn straight
+# onto artwork with no shape behind them, so the outline is what keeps them
+# readable over both a bright sky and a dark interior.
+SFX_STROKE_RATIO = 0.11
+SFX_STROKE_MINIMUM = 3
+SFX_FILL = (255, 255, 255, 255)
+SFX_STROKE_FILL = (15, 15, 15, 255)
 # Panels are page-sized at most (1600x2400); sixteen page areas leaves room for
 # oversampled source art while rejecting decompression bombs.
 BALLOON_SUPERSAMPLE = 6
@@ -304,15 +330,25 @@ def _draw_font_runs(
     runs: tuple[tuple[str, ImageFont.FreeTypeFont], ...],
     position: tuple[float, float],
     fill: tuple[int, ...],
+    *,
+    stroke_width: int = 1,
+    stroke_fill: tuple[int, ...] | None = None,
 ) -> None:
-    """Draw one line of mixed-font runs from a shared baseline."""
+    """Draw one line of mixed-font runs from a shared baseline.
+
+    The keyline defaults to one pixel of the fill colour, which is what gives
+    Comic Neue the confident ink weight used by print-comic dialogue without
+    changing measured glyph advances. A caller may widen it and colour it
+    separately — lettered SFX does, because it is drawn straight onto artwork with
+    no balloon or strip behind it — and because Pillow strokes outward from the
+    same advances, the measured layout stays exact either way.
+    """
     x, y = position
     for text, run_font in runs:
-        # One-pixel keyline gives Comic Neue the confident ink weight used by
-        # print-comic dialogue without changing measured glyph advances.
         draw.text(
             (x, y), text, font=run_font, fill=fill, anchor="ls",
-            stroke_width=1, stroke_fill=fill,
+            stroke_width=stroke_width,
+            stroke_fill=fill if stroke_fill is None else stroke_fill,
         )
         x += draw.textlength(text, font=run_font)
 
@@ -323,6 +359,9 @@ def _draw_styled_layout(
     center_x: float,
     top_y: float,
     fill: tuple[int, ...],
+    *,
+    stroke_width: int = 1,
+    stroke_fill: tuple[int, ...] | None = None,
 ) -> None:
     """Draw a measured layout with every line centered independently."""
     line_top = top_y
@@ -332,8 +371,15 @@ def _draw_styled_layout(
             line.runs,
             (center_x - line.width / 2, line_top - line.top),
             fill,
+            stroke_width=stroke_width,
+            stroke_fill=stroke_fill,
         )
         line_top += line.height + layout.spacing
+
+
+def _sfx_stroke_width(font: ImageFont.FreeTypeFont) -> int:
+    """Return the keyline width that keeps SFX legible at its drawn size."""
+    return max(SFX_STROKE_MINIMUM, round(font.size * SFX_STROKE_RATIO))
 
 
 def _resolve_speaker(character_bible: list[dict], speaker: object) -> tuple[str, str]:
@@ -452,7 +498,23 @@ _overlap = rectangles_overlap
 
 def _text_padding(kind: object) -> int:
     """Return the padding between a text block and the shape drawn around it."""
-    return BALLOON_PADDING if kind == "dialogue" else CAPTION_PADDING
+    if kind == "dialogue":
+        return BALLOON_PADDING
+    if kind == "sfx":
+        return SFX_PADDING
+    return CAPTION_PADDING
+
+
+def _sfx_text_width(box_width: float, font: ImageFont.FreeTypeFont) -> float:
+    """Return the wrapping width lettered SFX may use inside its rectangle.
+
+    The keyline grows outward from the glyph advances Pillow measured, so the
+    stroke is reserved here rather than discovered after the text has already been
+    fitted. Without it, a heavily outlined effect would spill past the rectangle
+    that placement reserved and could touch a balloon that placement considered
+    clear.
+    """
+    return _text_wrap_width("sfx", box_width - 2 * _sfx_stroke_width(font))
 
 
 def _text_wrap_width(kind: object, box_width: float) -> float:
@@ -479,19 +541,29 @@ def _fitted_item_rect(
 ) -> dict[str, int]:
     """Fit a rendered text shape inside its anchor's maximum placement area."""
     kind = item.get("kind")
-    if kind not in {"caption", "dialogue"}:
+    if kind not in {"caption", "dialogue", "sfx"}:
         return dict(maximum)
+    is_sfx_item = kind == "sfx"
     layout = _layout_styled_text(
         draw,
         display_content(kind, item.get("content", "")),
         font,
-        _text_wrap_width(kind, maximum["width"]),
+        _sfx_text_width(maximum["width"], font)
+        if is_sfx_item
+        else _text_wrap_width(kind, maximum["width"]),
         emphasis=kind == "dialogue",
     )
     if layout is None:
         raise ValueError(f"text item {item.get('id', 'unknown')} cannot be wrapped")
     if kind == "dialogue":
         box_width, box_height = _balloon_box(layout)
+    elif is_sfx_item:
+        # SFX draws no shape, so its rectangle is the outlined text plus padding.
+        # It is reserved in `occupied` exactly like a balloon: an effect the engine
+        # drew must not be printed over dialogue the engine also drew.
+        inset = SFX_PADDING + _sfx_stroke_width(font)
+        box_width = math.ceil(layout.width) + 2 * inset
+        box_height = layout.height + 2 * inset
     else:
         box_width = math.ceil(layout.width) + 2 * CAPTION_PADDING
         box_height = layout.height + CAPTION_PADDING
@@ -721,13 +793,26 @@ def _item_font(
 ) -> ImageFont.FreeTypeFont:
     kind = item.get("kind")
     content = display_content(kind, item.get("content", ""))
-    for size in range(42, 23, -2):
-        font = _load_font(size)
+    is_sfx_item = kind == "sfx"
+    # SFX is display typography: it starts far larger than dialogue and is drawn in
+    # the bold face, because an effect the size of a spoken line reads as a caption
+    # rather than as a sound.
+    #
+    # Typography preflight authorized these glyphs against the regular face, since
+    # emphasis parsing never marks an SFX span bold. The bold face covers exactly
+    # the same repertoire today, and `_font_runs` falls back per character anyway,
+    # so nothing can reach a `.notdef`; a font policy that changed that would need
+    # preflight to resolve the SFX role the way the renderer does.
+    sizes = SFX_FONT_SIZES if is_sfx_item else range(42, 23, -2)
+    for size in sizes:
+        font = _load_font(size, bold=is_sfx_item)
         layout = _layout_styled_text(
             draw,
             content,
             font,
-            _text_wrap_width(kind, rect["width"]),
+            _sfx_text_width(rect["width"], font)
+            if is_sfx_item
+            else _text_wrap_width(kind, rect["width"]),
             emphasis=kind == "dialogue",
         )
         if layout is None:
@@ -735,6 +820,13 @@ def _item_font(
         if kind == "dialogue":
             box_width, box_height = _balloon_box(layout)
             if box_width <= rect["width"] and box_height <= rect["height"]:
+                return font
+        elif is_sfx_item:
+            inset = SFX_PADDING + _sfx_stroke_width(font)
+            if (
+                math.ceil(layout.width) + 2 * inset <= rect["width"]
+                and layout.height + 2 * inset <= rect["height"]
+            ):
                 return font
         elif layout.height <= rect["height"] - 2 * _text_padding(kind):
             return font
@@ -760,7 +852,10 @@ def render_text_item(
         raise ValueError(f"text item {item.get('id', 'unknown')} has unknown kind")
     if kind == "dialogue":
         _resolve_speaker(character_bible, item.get("speaker"))
-    if kind == "sfx":
+    # Generated SFX is the image model's to draw, so the renderer leaves the
+    # artwork byte-exact and records the effect's origin instead of overdrawing it.
+    # Only SFX the storyboard hands to deterministic lettering is drawn here.
+    if kind == "sfx" and not is_deterministic_sfx(item):
         return
 
     image_width, image_height = canvas.size
@@ -774,7 +869,9 @@ def render_text_item(
         draw,
         content,
         font,
-        _text_wrap_width(kind, bounded["width"]),
+        _sfx_text_width(bounded["width"], font)
+        if kind == "sfx"
+        else _text_wrap_width(kind, bounded["width"]),
         emphasis=kind == "dialogue",
     )
     if layout is None:
@@ -820,6 +917,20 @@ def render_text_item(
             x0 + bounded["width"] / 2,
             text_y,
             (15, 15, 15, 255),
+        )
+    else:
+        # Lettered SFX is outlined display type drawn straight onto the artwork:
+        # no balloon, no strip, nothing hiding the panel behind it. The keyline is
+        # what makes it survive both a bright sky and a dark interior.
+        assert layout is not None
+        _draw_styled_layout(
+            draw,
+            layout,
+            x0 + bounded["width"] / 2,
+            text_y,
+            SFX_FILL,
+            stroke_width=_sfx_stroke_width(font),
+            stroke_fill=SFX_STROKE_FILL,
         )
 
 
@@ -893,6 +1004,12 @@ def letter_panel(
                     f"text item {item.get('id', 'unknown')} speaker_anchor must be "
                     "finite normalized coordinates"
                 )
+        render_mode_issue = render_mode_problem(item)
+        if render_mode_issue is not None:
+            raise ValueError(
+                f"text item {item.get('id', 'unknown')} render_mode "
+                f"{render_mode_issue}"
+            )
         content = normalize_content(item.get("content", ""))
         limit = {"dialogue": 32, "caption": 45, "sfx": 3}.get(item.get("kind"))
         if limit is None:
@@ -904,15 +1021,26 @@ def letter_panel(
             raise ValueError(f"text item {item.get('id', 'unknown')} has unknown anchor")
         item["content"] = content
 
-    renderable = [item for item in ordered if item.get("kind") != "sfx"]
+    # Generated SFX still reserves nothing and still leaves the raster untouched.
+    # SFX the storyboard routed to deterministic lettering is renderable like any
+    # other item, so it is placed, reserved, and reported as a placement.
+    renderable = [
+        item
+        for item in ordered
+        if item.get("kind") != "sfx" or is_deterministic_sfx(item)
+    ]
     rendered_text_count = len(renderable)
-    sfx_count = len(ordered) - rendered_text_count
+    sfx_items_total = [item for item in ordered if item.get("kind") == "sfx"]
+    lettered_sfx_count = len(
+        [item for item in sfx_items_total if is_deterministic_sfx(item)]
+    )
     word_count = sum(normalized_word_count(item["content"]) for item in ordered)
     summary = {
         "font_used": str(Path(_load_font(12).path)),
         "lettered_path": str(path),
+        "lettered_sfx_count": lettered_sfx_count,
         "rendered_text_count": rendered_text_count,
-        "sfx_count": sfx_count,
+        "sfx_count": len(sfx_items_total),
         "text_count": len(ordered),
         "word_count": word_count,
         "placements": [],
@@ -950,6 +1078,14 @@ def letter_panel(
         assert selected_anchor is not None
         render_text_item(draw, item, rect, font, character_bible, canvas=canvas)
         display = display_content(item.get("kind"), item.get("content", ""))
+        # SFX is laid out with emphasis parsing disabled, so its runs are recorded
+        # from the same path that drew them: reporting `**` spans the renderer
+        # never honoured would make the geometry record disagree with the raster.
+        drawn_runs = (
+            _font_runs(display, font.size, primary=font)
+            if item.get("kind") == "sfx"
+            else _styled_font_runs(display, font)
+        )
         font_runs = [
             {
                 "font_id": Path(run_font.path).name,
@@ -960,7 +1096,7 @@ def letter_panel(
                 ),
                 "text": run_text,
             }
-            for run_text, run_font in _styled_font_runs(display, font)
+            for run_text, run_font in drawn_runs
         ]
         tail_geometry = None
         tail = item.get("speaker_anchor")
@@ -1103,8 +1239,16 @@ def _letter_project_with_summaries(
                 },
                 "panel_id": panel_id,
                 "schema_version": LETTERING_GEOMETRY_SCHEMA_VERSION,
+                # Which SFX the image model was asked to bake into the artwork and
+                # which this engine drew, recorded next to the placements so a
+                # reviewer can attribute a suspect effect without guessing.
+                "sfx": sfx_provenance(panel, summary["placements"]),
             }
             geometry["geometry_sha256"] = lettering_geometry_hash(geometry)
+            # Also reported in the run summary, so a flag is visible in the output
+            # of the command that lettered the panel rather than only inside an
+            # artifact somebody has to know to open.
+            summary["sfx_flags"] = geometry["sfx"]["flags"]
             staged.append((
                 panel_id,
                 lettered_payload,

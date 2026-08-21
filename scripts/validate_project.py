@@ -41,6 +41,11 @@ from .page_quality import (
     validate_page_quality,
 )
 from .quality_records import PANEL_CHECK_IDS, validate_quality_checks
+from .sfx_verification import (
+    evaluate_sfx_flags,
+    render_mode_problem,
+    sfx_provenance,
+)
 from .schema import (
     CURRENT_PROJECT_SCHEMA_VERSION,
     MIN_READER_PROJECT_SCHEMA_VERSION,
@@ -478,7 +483,15 @@ def _validate_text_item(
     """Validate one storyboard text item."""
     base_fields = {"id", "kind", "speaker", "content", "anchor", "priority"}
     dialogue_fields = {"voice_source", "speaker_anchor", "tail_target"}
-    item = _object(value, base_fields | dialogue_fields, base_fields, issues, path, prefix)
+    sfx_fields = {"render_mode"}
+    item = _object(
+        value,
+        base_fields | dialogue_fields | sfx_fields,
+        base_fields,
+        issues,
+        path,
+        prefix,
+    )
     if item is None:
         return 0
     _identifier(item.get("id"), issues, path, f"{prefix}.id")
@@ -546,6 +559,11 @@ def _validate_text_item(
             _add(issues, path, f"{prefix}.voice_source", "must be omitted for caption and sfx")
         if has_speaker_anchor:
             _add(issues, path, f"{prefix}.speaker_anchor", "must be omitted for caption and sfx")
+    # `render_mode` is SFX-only: dialogue and captions have no generated variant,
+    # so accepting the field on them would imply a choice that does not exist.
+    render_mode_issue = render_mode_problem(item)
+    if render_mode_issue is not None:
+        _add(issues, path, f"{prefix}.render_mode", render_mode_issue)
     _integer(item.get("priority"), 1, 1_000_000, issues, path, f"{prefix}.priority")
     return word_count
 
@@ -1226,6 +1244,94 @@ def _validate_placement_attribution(
         )
 
 
+def sfx_advisories(project_dir: Path) -> list[str]:
+    """Return one human-readable line per SFX verification flag the plan raises.
+
+    These are deliberately not `ValidationIssue`s. Nothing here reads pixels, so a
+    flag says an authored effect is *unlikely* to survive the image model, which is
+    a judgement for the author rather than a broken artifact. Reporting them from
+    storyboard validation is what makes them useful at all: the same warning
+    attached to lettering provenance arrives after the provider has already drawn
+    the effect and after visual QA has already accepted it.
+
+    A storyboard that cannot be read yields no advisories; the validation issues
+    that produced that state are already being reported.
+    """
+    try:
+        path = contained_project_path(
+            Path(project_dir), "plan/storyboard.json", must_exist=True
+        )
+        storyboard = json.loads(path.read_text("utf-8"))
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(storyboard, dict) or not isinstance(storyboard.get("pages"), list):
+        return []
+    lines: list[str] = []
+    for page in storyboard["pages"]:
+        if not isinstance(page, dict) or not isinstance(page.get("panels"), list):
+            continue
+        for panel in page["panels"]:
+            if not isinstance(panel, dict):
+                continue
+            panel_id = panel.get("id")
+            for flag in evaluate_sfx_flags(panel):
+                lines.append(
+                    f"SFX-WARNING {panel_id}:{flag['id']}: {flag['evidence']} "
+                    f"Remediation: {flag['remediation']}."
+                )
+    return lines
+
+
+def _storyboard_panel(
+    project_dir: Path, panel_id: str
+) -> dict[str, object] | None:
+    """Return one storyboard panel, or ``None`` when it cannot be resolved."""
+    try:
+        path = contained_project_path(
+            project_dir, "plan/storyboard.json", must_exist=True
+        )
+        storyboard = json.loads(path.read_text("utf-8"))
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(storyboard, dict) or not isinstance(storyboard.get("pages"), list):
+        return None
+    for page in storyboard["pages"]:
+        if not isinstance(page, dict) or not isinstance(page.get("panels"), list):
+            continue
+        for panel in page["panels"]:
+            if isinstance(panel, dict) and panel.get("id") == panel_id:
+                return panel
+    return None
+
+
+def _validate_sfx_provenance(
+    project_dir: Path,
+    panel_id: str,
+    geometry: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    """Recompute the recorded SFX provenance from the storyboard it claims.
+
+    The block is derived entirely from authored storyboard text plus the
+    placements already present in the record, so it is recomputed and compared
+    rather than read back. A record that merely asserted an effect was lettered
+    could otherwise carry that claim — and the reviewer confidence that goes with
+    it — past this gate while the raster came from the image model.
+    """
+    recorded = geometry.get("sfx")
+    panel = _storyboard_panel(project_dir, panel_id)
+    if panel is None:
+        stale("sfx", "storyboard panel is unavailable to verify SFX provenance")
+        return
+    expected = sfx_provenance(panel, geometry.get("items", []))
+    if recorded != expected:
+        stale(
+            "sfx",
+            "recorded SFX provenance does not match the authored storyboard; "
+            "letter the panel again",
+        )
+
+
 def validate_lettering_provenance(
     project_dir: Path,
     panel_id: str,
@@ -1262,10 +1368,12 @@ def validate_lettering_provenance(
         # font policy, so an older record is re-lettered rather than migrated.
         stale(
             "schema_version",
-            "geometry predates speaker attribution and must be lettered again",
+            "geometry predates speaker attribution or SFX provenance and must be "
+            "lettered again",
         )
     if geometry.get("geometry_sha256") != lettering_geometry_hash(geometry):
         stale("geometry_sha256", "canonical geometry hash does not match")
+    _validate_sfx_provenance(project_dir, panel_id, geometry, stale)
 
     try:
         typography_path = contained_project_path(
@@ -2209,6 +2317,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"issues": []}, indent=2, sort_keys=True))
     else:
         print(f"VALID {arguments.project_dir} ({arguments.stage})")
+    # SFX advisories go to stderr on a clean run, so `--json` keeps stdout to one
+    # parseable envelope. They are warnings rather than issues — a risky effect is a
+    # judgement call, not a broken artifact — but they are only actionable *before*
+    # the image model has drawn it, so a validated storyboard is the last honest
+    # place to raise them.
+    for line in sfx_advisories(arguments.project_dir):
+        print(line, file=sys.stderr)
     return 0
 
 
