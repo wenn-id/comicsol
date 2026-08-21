@@ -35,15 +35,15 @@ reporting to the bundled Python scripts.
 4. Detect image capability from tools exposed in the current agent session. Do not ask
    deterministic scripts to discover or call an image provider.
 5. Generate canonical references and panels into attempt paths. Require the image model to
-   draw each exact `generated-visual` storyboard SFX, inspect every result visually, record
-   all seven QA checks, and selectively repair only failures within budget. Replace a
-   misspelled or unreadable generated effect with `sfx_repair.py` rather than re-rolling.
+   draw each exact `generated-visual` storyboard SFX and never a `deterministic-lettering`
+   one, inspect every result visually, record all seven QA checks, and repair only failures
+   within budget. Route a bad effect to lettering with `sfx_repair.py` and follow its
+   `next_action`: ink the model drew needs a `regenerate` review, not re-lettering alone.
 6. Promote accepted attempts; deterministically letter dialogue, captions, and any
    `deterministic-lettering` SFX while validating and counting exact `generated-visual`
-   storyboard SFX without drawing it in Pillow; compose
-   pages, inspect every composed page and write its `qa/pages/page-{NNN}.json` record,
-   export the PDF, render the QA report (which projects the terminal status the project
-   is about to reach), validate final integrity, then transition to that terminal status.
+   storyboard SFX without drawing it in Pillow; compose pages, inspect every composed page
+   and write its `qa/pages/page-{NNN}.json` record, export the PDF, render the QA report
+   (which projects the terminal status), validate final integrity, then transition to it.
 7. Return status, counts, warnings, and clickable project output paths.
 
 ## Token budget rules

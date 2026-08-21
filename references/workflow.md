@@ -133,8 +133,13 @@ a missing, invalid, stale, or unbacked identity pack rather than letting identit
 start.
 
 Write each ordered prompt, requiring the image model to integrate every exact authored
-SFX once and prohibiting generated dialogue, captions, speech bubbles, logos,
-signatures, watermarks, or un-authored SFX. Embed the `character_identity.py PROJECT_DIR
+`generated-visual` SFX once and prohibiting generated dialogue, captions, speech bubbles,
+logos, signatures, watermarks, or un-authored SFX. Never ask it for a
+`deterministic-lettering` effect, and prohibit generated SFX outright when the panel
+authors none in `generated-visual` mode: Comic Sol draws those effects itself after
+generation, so a baked copy would sit underneath the drawn one.
+
+Embed the `character_identity.py PROJECT_DIR
 --panel PANEL_ID` block verbatim in the prompt, so a retry or a resume reuses the same
 identity context instead of rewording it.
 

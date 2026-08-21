@@ -1160,13 +1160,20 @@ class SkillContractTests(unittest.TestCase):
             "prohibit\n   generated sfx when no `generated-visual` item is authored",
         ):
             self.assertIn(phrase, creative)
+        # The panel-prompt instruction must agree with the render-mode split. Asking
+        # the image model for an effect Comic Sol also letters bakes a duplicate
+        # into the artwork, so both documents state the same rule.
+        self.assertIn("every exact authored\n`generated-visual` sfx once", workflow)
+        self.assertIn("never ask it for a\n`deterministic-lettering` effect", workflow)
         for phrase in (
             "exact storyboard-authored `generated-visual` sfx is allowed and required",
             "missing, misspelled, duplicated, or unauthorized sfx",
             "dialogue", "caption", "speech bubbles", "logos", "signatures", "watermarks",
             # The repair path is part of the reviewer contract: a faulty generated
-            # effect has a cheaper remedy than re-rolling the panel.
-            "scripts/sfx_repair.py",
+            # effect has a cheaper remedy than re-rolling the panel, and whether it
+            # still needs a regeneration has to be stated rather than assumed.
+            "sfx_repair.py",
+            "re-review the panel to `regenerate`",
         ):
             self.assertIn(phrase, visual)
         self.assertIn(

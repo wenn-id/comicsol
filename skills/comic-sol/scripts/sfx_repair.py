@@ -327,7 +327,7 @@ def replace_generated_sfx(
         # written first. Leaving that unsaid would strand the operator at a refusal.
         "next_action": (
             f"Re-letter the project. If the rejected effect is still visible in "
-            f"panels/{panel_id}/clean.png, re-review qa/panels/{panel_id}.json to "
+            f"{clean_relative}, re-review qa/panels/{panel_id}.json to "
             f"`regenerate` before promoting a new raster."
         ),
         "panel_id": panel_id,
@@ -339,10 +339,12 @@ def replace_generated_sfx(
 
 class _SfxRepairArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
+        """Raise instead of exiting, so `main` reports one uniform error line."""
         raise ValueError(f"invalid invocation: {message}")
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Return the argument parser for the SFX repair command."""
     parser = _SfxRepairArgumentParser(prog="sfx_repair.py")
     parser.add_argument("project_dir", type=Path)
     parser.add_argument("--panel", required=True, dest="panel_id")

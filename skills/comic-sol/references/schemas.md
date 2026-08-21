@@ -447,7 +447,7 @@ semantic accuracy of arbitrary artwork remains a reviewer judgement.
 
 ### SFX repair record: `panels/{panel-id}/sfx-audit.json`
 
-`python scripts/sfx_repair.py PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason
+`sfx_repair.py PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason
 "..."` is the supported path for replacing a faulty generated effect. In one transaction it
 flips that item to `deterministic-lettering`, adds a generated-SFX prohibition to the
 panel's `negative` list when none names SFX, archives the rejected clean raster — and the

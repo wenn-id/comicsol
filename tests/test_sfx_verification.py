@@ -1,5 +1,7 @@
 """SFX render-mode policy, provenance, verification flags, and repair path."""
 
+import contextlib
+import io
 import json
 import shutil
 import tempfile
@@ -25,6 +27,7 @@ from scripts.letter_panels import (  # noqa: E402
     letter_project,
 )
 from scripts.schema import read_project_manifest  # noqa: E402
+from scripts.sfx_repair import main as sfx_repair_main  # noqa: E402
 from scripts.sfx_repair import replace_generated_sfx  # noqa: E402
 from scripts.sfx_verification import (  # noqa: E402
     DETERMINISTIC_LETTERING,
@@ -33,6 +36,7 @@ from scripts.sfx_verification import (  # noqa: E402
     ORIGIN_IMAGE_MODEL,
     ORIGIN_LETTERING,
     SFX_CONTENT_LENGTH_LIMIT,
+    SFX_FLAG_IDS,
     SFX_TOKEN_LENGTH_LIMIT,
     VERIFICATION_DETERMINISTIC,
     VERIFICATION_REVIEWER,
@@ -262,14 +266,21 @@ class SfxFlagTests(unittest.TestCase):
             )
         )
 
-    def test_flags_are_ordered_by_id_and_not_by_authoring_order(self):
+    def test_flags_follow_the_declared_vocabulary_not_authoring_or_lexical_order(self):
+        """`SFX_FLAG_IDS` is the normative order the recorded block is compared to."""
         crowded = panel(
-            sfx("ドォン", priority=1),
-            sfx("KRAK!", priority=2),
-            sfx("krak!", priority=3),
+            # Authored duplicate-first, and `sfx-duplicate-content` also sorts before
+            # `sfx-glyph-risk` lexically, so neither could produce this order.
+            sfx("KRAK!", priority=1),
+            sfx("krak!", priority=2),
+            sfx("ドォン", priority=3),
         )
+
+        reported = flag_ids(crowded)
+
+        self.assertEqual(["sfx-glyph-risk", "sfx-duplicate-content"], reported)
         self.assertEqual(
-            ["sfx-duplicate-content", "sfx-glyph-risk"], flag_ids(crowded)
+            sorted(reported, key=SFX_FLAG_IDS.index), reported
         )
 
 
@@ -892,6 +903,64 @@ class SfxRepairTests(unittest.TestCase):
         self.assertEqual(
             1, self._panel()["negative"].count(DETERMINISTIC_SFX_NEGATIVE)
         )
+
+    def test_cli_prints_the_result_as_json_and_reports_success(self):
+        """The CLI is the surface operators and agents actually reach.
+
+        There is no MCP tool for this operation — `AGENTS.md` pins the surface at
+        exactly 17 `comic_*` tools — so the command line is the only wrapper needing
+        parity coverage.
+        """
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = sfx_repair_main([
+                str(self.project),
+                "--panel", "p01-01",
+                "--text-id", "p01-01-t02",
+                "--reason", "Generated effect read as KRRAK.",
+            ])
+
+        self.assertEqual(0, code)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual("p01-01-t02", payload["text_id"])
+        self.assertEqual(DETERMINISTIC_LETTERING, payload["render_mode"])
+        self.assertIn("next_action", payload)
+        self.assertEqual(
+            ["raw", "clean", "lettered"],
+            [entry["kind"] for entry in payload["archived"]],
+        )
+        item = next(
+            text for text in self._panel()["text"] if text["id"] == "p01-01-t02"
+        )
+        self.assertEqual(DETERMINISTIC_LETTERING, item["render_mode"])
+
+    def test_cli_reports_a_refusal_as_one_error_line_without_a_traceback(self):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = sfx_repair_main([
+                str(self.project),
+                "--panel", "p01-01",
+                "--text-id", "p01-01-t01",
+                "--reason", "Not an SFX item.",
+            ])
+
+        self.assertEqual(1, code)
+        self.assertEqual("", stdout.getvalue())
+        message = stderr.getvalue()
+        self.assertTrue(message.startswith("ERROR ValueError: "), message)
+        self.assertIn("is not SFX", message)
+        self.assertNotIn("Traceback", message)
+
+    def test_cli_rejects_a_missing_argument_without_exiting_the_process(self):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = sfx_repair_main([str(self.project), "--panel", "p01-01"])
+
+        self.assertEqual(1, code)
+        self.assertIn("invalid invocation", stderr.getvalue())
 
     def test_archive_sequence_advances_rather_than_overwriting_evidence(self):
         """A slot already holding evidence of any kind is skipped whole."""

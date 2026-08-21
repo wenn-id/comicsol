@@ -67,7 +67,7 @@ eight storyboard anchor `area` values, with specific evidence and repair guidanc
 - A subject defect region names a character the panel's trait review covered. Use an
   `area` region, or record the trait review first, when it cannot.
 - A faulty generated SFX has a cheaper remedy than re-rolling the panel and hoping.
-  `python scripts/sfx_repair.py PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason
+  `sfx_repair.py PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason
   "..."` routes that one effect to deterministic lettering, archives the rejected raw,
   clean, and lettered rasters under `panels/{panel-id}/sfx-audit/`, records the transition
   and the reason in `panels/{panel-id}/sfx-audit.json`, and adds the missing generated-SFX

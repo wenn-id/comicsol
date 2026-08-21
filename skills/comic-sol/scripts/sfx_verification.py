@@ -372,7 +372,18 @@ def evaluate_sfx_flags(panel: Mapping[str, object]) -> list[dict[str, object]]:
             f"add a negative such as {DETERMINISTIC_SFX_NEGATIVE!r} to the panel",
         ))
 
-    return sorted(flags, key=lambda flag: (str(flag["id"]), tuple(flag["item_ids"])))  # type: ignore[arg-type]
+    # Ordered by the declared vocabulary rather than lexically, because
+    # `SFX_FLAG_IDS` is the normative order this record is compared against and a
+    # reader should meet the flags in the order the policy lists them.
+    return sorted(
+        flags,
+        key=lambda flag: (
+            SFX_FLAG_IDS.index(flag["id"])  # type: ignore[arg-type]
+            if flag["id"] in SFX_FLAG_IDS
+            else len(SFX_FLAG_IDS),
+            tuple(flag["item_ids"]),  # type: ignore[arg-type]
+        ),
+    )
 
 
 def _placement(placements: object, item_id: str) -> Mapping[str, object] | None:
