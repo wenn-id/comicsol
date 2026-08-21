@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 from scripts.font_coverage import (  # noqa: E402
+    BUNDLED_COVERAGE_PROBES,
     BUNDLED_TARGET_SCRIPTS,
     EXTENSION_TARGET_SCRIPTS,
     LINEAR_SCRIPTS,
@@ -20,6 +21,7 @@ from scripts.font_coverage import (  # noqa: E402
     font_codepoints,
     format_ranges,
     main,
+    missing_coverage_probes,
     recommended_font,
     script_for_codepoint,
     shaping_policy,
@@ -252,6 +254,7 @@ class CoverageInventoryTests(unittest.TestCase):
                 self.assertIn(entry["status"], {"covered", "partial"})
                 self.assertGreater(entry["covered"], 0)
 
+
     def test_extension_target_scripts_are_admitted_but_uncovered(self):
         for script in EXTENSION_TARGET_SCRIPTS:
             with self.subTest(script=script):
@@ -298,6 +301,38 @@ class CoverageInventoryTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             coverage_inventory({"regular": 42})
 
+
+class CoverageProbeTests(unittest.TestCase):
+    """Probes assert the alphabet, not merely that a script has some glyph."""
+
+    def test_bundled_policy_maps_every_required_codepoint(self):
+        self.assertEqual({}, missing_coverage_probes(BUNDLED_POLICY))
+
+    def test_probes_cover_the_alphabets_dialogue_cannot_avoid(self):
+        self.assertEqual(
+            sorted(BUNDLED_TARGET_SCRIPTS), sorted(BUNDLED_COVERAGE_PROBES)
+        )
+        for script, codepoints in BUNDLED_COVERAGE_PROBES.items():
+            with self.subTest(script=script):
+                self.assertEqual(len(set(codepoints)), len(codepoints))
+                self.assertTrue(
+                    all(script_for_codepoint(c) == script for c in codepoints)
+                )
+
+    def test_a_face_keeping_a_token_glyph_does_not_pass_as_coverage(self):
+        """A count-above-zero check would call Comic Neue alone Greek-capable."""
+        missing = missing_coverage_probes({"regular": FONTS / "ComicNeue-Regular.ttf"})
+
+        self.assertNotIn("latin", missing)
+        for script in ("greek", "cyrillic"):
+            with self.subTest(script=script):
+                self.assertEqual(
+                    len(BUNDLED_COVERAGE_PROBES[script]), len(missing[script])
+                )
+
+    def test_probe_check_refuses_a_policy_entry_that_is_not_a_path(self):
+        with self.assertRaises(TypeError):
+            missing_coverage_probes({"regular": 42})
 
 class InventoryCommandTests(unittest.TestCase):
     def test_default_invocation_prints_the_bundled_inventory(self):

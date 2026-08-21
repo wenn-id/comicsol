@@ -160,8 +160,8 @@ def _shaping_decision(character: str) -> tuple[bool, str]:
 
 def _combining_refusal(
     character: str,
-    base: Mapping[str, object] | None,
-    font_id: str,
+    role: str,
+    base: tuple[str, str] | None,
 ) -> str:
     """Return why a combining mark cannot be positioned, or an empty string.
 
@@ -174,14 +174,21 @@ def _combining_refusal(
       geometry that nominal advances cannot express;
     - a mark drawn from a different face than its base is positioned against
       metrics that were never designed together.
+
+    Faces are compared by policy role rather than by font ID, because a font ID
+    is a bare file name: two roles resolving to same-named files in different
+    directories would otherwise look like one face. Roles are unique by
+    construction, and two roles never split a base from its mark when they point
+    at the same file, because resolution always tries the styled role first.
     """
     if not is_combining(ord(character)):
         return ""
     if base is None:
         return "combining mark has no base glyph to attach to"
-    if is_combining(ord(str(base["character"]))):
+    base_character, base_role = base
+    if is_combining(ord(base_character)):
         return "stacked combining marks require anchor positioning"
-    if base["font_id"] != font_id:
+    if base_role != role:
         return "combining mark and its base glyph resolve to different faces"
     return ""
 
@@ -280,10 +287,10 @@ def preflight_text_items(
         if not isinstance(raw_content, str):
             raise TypeError(f"text item {item_id} content must be a string")
         content = display_content(text_item.get("kind"), raw_content)
-        # The glyph a combining mark would attach to. It carries across styled
-        # spans, because emphasis does not interrupt a base-and-mark pair, and it
-        # is cleared by whitespace, which does.
-        base_glyph: dict[str, object] | None = None
+        # The character and policy role a combining mark would attach to. It
+        # carries across styled spans, because emphasis does not interrupt a
+        # base-and-mark pair, and it is cleared by whitespace, which does.
+        base_face: tuple[str, str] | None = None
         for span, style in _style_spans(content):
             role = "bold" if style == "bold" else "regular"
             for character in span:
@@ -294,7 +301,7 @@ def preflight_text_items(
                         "item_id": item_id,
                         "policy": "line-break",
                     })
-                    base_glyph = None
+                    base_face = None
                     continue
                 if character.isspace():
                     non_glyphs.append({
@@ -302,7 +309,7 @@ def preflight_text_items(
                         "item_id": item_id,
                         "policy": "normalized-space",
                     })
-                    base_glyph = None
+                    base_face = None
                     continue
                 script = script_for_codepoint(ord(character))
                 shaping, reason = _shaping_decision(character)
@@ -334,7 +341,7 @@ def preflight_text_items(
                     # Coverage is settled, so the resolved face is known and the
                     # mark can be checked against the base it will attach to.
                     mark_reason = _combining_refusal(
-                        character, base_glyph, identifiers[selected_role]
+                        character, selected_role, base_face
                     )
                     if mark_reason:
                         category = "unsupported-shaping"
@@ -363,7 +370,7 @@ def preflight_text_items(
                     "shaping": "supported",
                     "style": style,
                 })
-                base_glyph = glyphs[-1]
+                base_face = (character, selected_role)
 
     if issues:
         raise TypographyPreflightError(issues)

@@ -1841,38 +1841,40 @@ def doctor_report(output_root: Path) -> dict[str, object]:
     # scripts lettering promises. This reads the bundled cmaps so a font swap that
     # quietly drops a script is reported here instead of at lettering time.
     try:
-        from .font_coverage import BUNDLED_TARGET_SCRIPTS, coverage_inventory
+        from .font_coverage import (
+            BUNDLED_COVERAGE_PROBES,
+            BUNDLED_TARGET_SCRIPTS,
+            missing_coverage_probes,
+        )
 
-        inventory = coverage_inventory({
+        policy = {
             "regular": FONT_PATH_COMIC_REGULAR,
             "bold": FONT_PATH_COMIC_BOLD,
             "fallback": FONT_PATH_FALLBACK,
-        })
-        scripts = {
-            str(entry["script"]): entry
-            for entry in inventory["scripts"]  # type: ignore[union-attr]
-            if isinstance(entry, dict)
         }
-        uncovered = sorted(
-            script
-            for script in BUNDLED_TARGET_SCRIPTS
-            if int(scripts.get(script, {}).get("covered", 0)) == 0
-        )
-        covered_total = int(inventory["summary"]["covered_codepoints"])  # type: ignore[index]
-        if uncovered:
+        missing = missing_coverage_probes(policy)
+        probe_total = sum(len(BUNDLED_COVERAGE_PROBES[s]) for s in BUNDLED_TARGET_SCRIPTS)
+        if missing:
+            failures = [
+                f"{script} is missing "
+                + ", ".join(f"U+{codepoint:04X}" for codepoint in codepoints[:8])
+                + (" and more" if len(codepoints) > 8 else "")
+                for script, codepoints in sorted(missing.items())
+            ]
             add_check(
                 "typography",
                 "fail",
-                "Bundled fonts no longer cover required scripts: " + ", ".join(uncovered),
+                "Bundled fonts no longer letter required scripts: "
+                + ", ".join(sorted(missing)),
                 "Restore the bundled assets/fonts directory so the documented scripts letter again.",
-                uncovered_scripts=uncovered,
+                failures=failures,
             )
         else:
             add_check(
                 "typography",
                 "pass",
-                f"Bundled fonts cover {', '.join(BUNDLED_TARGET_SCRIPTS)} "
-                f"({covered_total} codepoints).",
+                f"Bundled fonts map all {probe_total} required "
+                f"{'/'.join(BUNDLED_TARGET_SCRIPTS)} codepoints.",
                 "No action required.",
             )
     except Exception as error:

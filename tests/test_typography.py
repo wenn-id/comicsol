@@ -307,6 +307,35 @@ class ScriptExtensionPolicyTests(unittest.TestCase):
             {entry["script"]: entry["font_ids"] for entry in result["scripts"]},
         )
 
+    def test_same_named_faces_in_different_directories_are_distinct(self):
+        """Faces are compared by role, because a font ID is only a file name.
+
+        A policy may legitimately point two roles at same-named files in
+        different directories. Comparing the recorded IDs would then treat a
+        combining mark and its base as one face and let two genuinely different
+        font files position each other.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            elsewhere = Path(temporary) / "ComicNeue-Regular.ttf"
+            # Same name as the regular face, different file: Noto Sans bytes.
+            elsewhere.write_bytes(FONT_POLICY["fallback"].read_bytes())
+            policy = {
+                **FONT_POLICY,
+                SCRIPT_EXTENSION_KEY: {"inherited": elsewhere},
+            }
+
+            self.assertEqual(
+                elsewhere.name, Path(FONT_POLICY["regular"]).name
+            )
+            # U+0305 is absent from Comic Neue, so the mark resolves to another
+            # role while its base stays on the regular face.
+            with self.assertRaises(TypographyPreflightError) as raised:
+                preflight_text_items([item("q\u0305", kind="caption")], policy)
+
+        issue = raised.exception.issues[0]
+        self.assertEqual("unsupported-shaping", issue.category)
+        self.assertIn("different faces", issue.reason)
+
     def test_extension_is_refused_for_a_script_no_font_could_rescue(self):
         for script in ("arabic", "devanagari", "hebrew", "thai", "not-a-script"):
             with self.subTest(script=script):

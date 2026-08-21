@@ -337,6 +337,53 @@ BUNDLED_TARGET_SCRIPTS: tuple[str, ...] = (
     "cyrillic",
 )
 
+# The codepoints each bundled target script must still map, checked instead of a
+# non-zero count: a script's declared blocks reserve codepoints Unicode has never
+# assigned, so complete coverage is unreachable and "covers at least one glyph"
+# would pass a replacement face that kept a token letter and dropped the alphabet.
+# These are the characters ordinary dialogue in the script cannot avoid.
+BUNDLED_COVERAGE_PROBES: dict[str, tuple[int, ...]] = {
+    "latin": (
+        *range(0x0041, 0x005B),  # A-Z
+        *range(0x0061, 0x007B),  # a-z
+        *range(0x0030, 0x003A),  # 0-9
+        0x0021,  # !
+        0x002C,  # ,
+        0x002E,  # .
+        0x003F,  # ?
+    ),
+    "greek": (
+        *range(0x0391, 0x03A2),  # Alpha-Rho
+        *range(0x03A3, 0x03AA),  # Sigma-Omega
+        *range(0x03B1, 0x03CA),  # alpha-omega
+    ),
+    "cyrillic": (
+        *range(0x0410, 0x0430),  # A-Ya
+        *range(0x0430, 0x0450),  # a-ya
+    ),
+}
+
+
+def missing_coverage_probes(
+    font_policy: Mapping[str, object],
+) -> dict[str, tuple[int, ...]]:
+    """Return the probe codepoints a font policy fails to map, keyed by script."""
+    covered: set[int] = set()
+    for value in font_policy.values():
+        if not isinstance(value, (str, Path)):
+            raise TypeError("font policy entries must be paths")
+        covered |= font_codepoints(str(value))
+    missing: dict[str, tuple[int, ...]] = {}
+    for script in BUNDLED_TARGET_SCRIPTS:
+        absent = tuple(
+            codepoint
+            for codepoint in BUNDLED_COVERAGE_PROBES[script]
+            if codepoint not in covered
+        )
+        if absent:
+            missing[script] = absent
+    return missing
+
 # Scripts that place linearly and are therefore admitted by policy, but whose
 # glyphs no bundled face carries. Authors reach them by configuring the matching
 # `SCRIPT_FONTS` extension; until they do, preflight reports `missing-glyph`.
@@ -611,6 +658,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "BUNDLED_COVERAGE_PROBES",
     "BUNDLED_TARGET_SCRIPTS",
     "EXTENSION_TARGET_SCRIPTS",
     "INVENTORY_SCHEMA_VERSION",
@@ -628,6 +676,7 @@ __all__ = [
     "font_codepoints",
     "format_ranges",
     "is_combining",
+    "missing_coverage_probes",
     "recommended_font",
     "script_for_codepoint",
     "shaping_policy",
