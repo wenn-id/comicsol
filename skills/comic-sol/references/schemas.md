@@ -366,10 +366,17 @@ The word limits are a ceiling, not a guarantee of fit. Dialogue is inscribed in 
 Lettering geometry is schema `1.1`. Every retained placement carries an
 `attribution` record: `null` for captions and SFX, which are not spoken, and for
 dialogue exactly `authored_speaker` (the token the storyboard wrote), `speaker`
-(the stable character-bible ID it resolved to), `resolution` (`declared` when the
-token was that ID, `inferred` when it was a display name matching exactly one
-character), and `speaker_anchor` (the voice source the attribution is bound to). A
-display name shared by two characters resolves to no one and is refused. Because
+(the stable character-bible ID it resolved to), `resolution`, and `speaker_anchor`
+(the voice source the attribution is bound to).
+
+`resolution` records how identity was established rather than offering a second
+way to author it. A storyboard `speaker` must be a character-bible ID — a display
+name does not match the ID pattern and is rejected by storyboard validation — so
+every validated project records `declared`. `inferred` exists only for callers
+invoking `letter_panel()` directly with a display name, which the renderer
+accepted silently before and now resolves to exactly one character or refuses: a
+name shared by two characters resolves to no one. Authoring dialogue against
+display names is not a supported storyboard contract. Because
 geometry is fully derived from the clean raster, the storyboard, and the font
 policy, a record written at schema `1.0` is reported as
 `lettering-record-stale` and re-lettered rather than migrated in place.

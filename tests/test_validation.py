@@ -429,6 +429,16 @@ class StrictSchemaValidationTests(unittest.TestCase):
             validate_storyboard(two_speakers([0.78, 0.34], [0.22, 0.62]), story, characters),
         )
 
+        # The renderer can infer a speaker from a unique display name, but a
+        # storyboard may not author one: `speaker` is a character-bible ID, so a
+        # validated project always records `declared` attribution.
+        display_name = two_speakers([0.78, 0.34], [0.22, 0.62])
+        display_name["pages"][0]["panels"][0]["text"][1]["speaker"] = "Ren"
+        self.assert_issue(
+            validate_storyboard(display_name, story, characters),
+            "text[1].speaker",
+        )
+
         for description, data in (
             ("shared anchor", two_speakers([0.78, 0.34], [0.78, 0.35])),
             ("split anchor", two_speakers([0.78, 0.34], [0.22, 0.62], "mira")),

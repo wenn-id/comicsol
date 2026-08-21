@@ -5,11 +5,14 @@
 ### Added
 
 - Made speaker attribution explicit and verifiable for multi-character panels. Every
-  spoken balloon now resolves to a stable character-bible ID — declared when the
-  storyboard writes that ID, inferred when it writes a display name matching exactly one
-  character — and that identity is retained in lettering geometry as a per-placement
-  `attribution` record alongside the voice source it is bound to. A display name shared by
-  two characters resolves to no one and is refused rather than settled by authoring order.
+  spoken balloon now resolves to a stable character-bible ID, and that identity is retained
+  in lettering geometry as a per-placement `attribution` record alongside the voice source
+  it is bound to. The record's `resolution` reports how identity was established: a
+  storyboard `speaker` must be a bible ID, so every validated project records `declared`,
+  while `inferred` covers callers invoking `letter_panel()` directly with a display name —
+  which the renderer previously accepted silently and now resolves to exactly one character
+  or refuses, because a name shared by two characters resolves to no one. Authoring dialogue
+  against display names remains unsupported at the storyboard level.
 - Panels whose balloons cannot be told apart now fail with `dialogue-attribution-ambiguous`
   at both storyboard validation and lettering, using one shared policy in
   `scripts/core_primitives.py`: different speakers claiming anchors closer than `0.04`

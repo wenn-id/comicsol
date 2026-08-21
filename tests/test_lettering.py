@@ -1189,7 +1189,12 @@ class MultiSpeakerAttributionTests(unittest.TestCase):
             [placement["attribution"]["speaker"] for placement in summary["placements"]],
         )
 
-    def test_display_name_is_inferred_to_a_stable_character_id(self):
+    def test_display_name_is_inferred_only_for_direct_renderer_callers(self):
+        # A storyboard `speaker` must be a bible ID, so this path is reachable
+        # only by calling the renderer directly. tests/test_validation.py pins
+        # the other half of that boundary: storyboard validation rejects a
+        # display name outright, which is why every validated project records
+        # `declared` and never `inferred`.
         item = dialogue(content="No bridge.")
         item["speaker"] = "Mira"
 
