@@ -1,0 +1,23 @@
+{
+  "content": "Stay **LOUD** Ω Ж",
+  "description": "Baseline mixed-script dialogue: the comic face keeps the Latin voice while the fallback serves Greek and Cyrillic.",
+  "expected_category": null,
+  "expected_codepoint": null,
+  "expected_font_ids": null,
+  "expected_reason_contains": null,
+  "expected_remediation_contains": null,
+  "expected_scripts": {
+    "cyrillic": [
+      "NotoSans-Regular.ttf"
+    ],
+    "greek": [
+      "NotoSans-Regular.ttf"
+    ],
+    "latin": [
+      "ComicNeue-Bold.ttf",
+      "ComicNeue-Regular.ttf"
+    ]
+  },
+  "expected_status": "pass",
+  "kind": "dialogue"
+}

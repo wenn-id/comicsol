@@ -1,0 +1,17 @@
+{
+  "content": "Chào bạn, ế mới",
+  "description": "Vietnamese precomposed tone marks from Latin Extended Additional, the largest script the bundled fallback covered without saying so.",
+  "expected_category": null,
+  "expected_codepoint": null,
+  "expected_font_ids": null,
+  "expected_reason_contains": null,
+  "expected_remediation_contains": null,
+  "expected_scripts": {
+    "latin": [
+      "ComicNeue-Regular.ttf",
+      "NotoSans-Regular.ttf"
+    ]
+  },
+  "expected_status": "pass",
+  "kind": "caption"
+}

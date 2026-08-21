@@ -1,0 +1,12 @@
+{
+  "content": "ก",
+  "description": "Refused because mark stacking is required, which nominal advances cannot express.",
+  "expected_category": "unsupported-shaping",
+  "expected_codepoint": "U+0E01",
+  "expected_font_ids": null,
+  "expected_reason_contains": "mark stacking",
+  "expected_remediation_contains": null,
+  "expected_scripts": null,
+  "expected_status": "fail",
+  "kind": "dialogue"
+}

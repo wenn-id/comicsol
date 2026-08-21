@@ -41,6 +41,7 @@ BUNDLED_SCRIPTS = (
     "core_primitives.py",
     "export_pdf.py",
     "font_cmap.py",
+    "font_coverage.py",
     "layouts.py",
     "letter_panels.py",
     "normalize_panels.py",

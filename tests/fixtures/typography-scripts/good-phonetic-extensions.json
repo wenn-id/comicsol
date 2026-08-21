@@ -1,0 +1,19 @@
+{
+  "content": "ɐʙᴀᵈ",
+  "description": "IPA and phonetic modifier letters, which lettering must place as ordinary linear glyphs rather than as marks.",
+  "expected_category": null,
+  "expected_codepoint": null,
+  "expected_font_ids": null,
+  "expected_reason_contains": null,
+  "expected_remediation_contains": null,
+  "expected_scripts": {
+    "common": [
+      "NotoSans-Regular.ttf"
+    ],
+    "latin": [
+      "NotoSans-Regular.ttf"
+    ]
+  },
+  "expected_status": "pass",
+  "kind": "caption"
+}

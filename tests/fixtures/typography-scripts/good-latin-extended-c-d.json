@@ -1,0 +1,16 @@
+{
+  "content": "Ⱡꝺꞅ",
+  "description": "Latin Extended-C and -D letters used by orthographies outside the Latin-1 range.",
+  "expected_category": null,
+  "expected_codepoint": null,
+  "expected_font_ids": null,
+  "expected_reason_contains": null,
+  "expected_remediation_contains": null,
+  "expected_scripts": {
+    "latin": [
+      "NotoSans-Regular.ttf"
+    ]
+  },
+  "expected_status": "pass",
+  "kind": "caption"
+}

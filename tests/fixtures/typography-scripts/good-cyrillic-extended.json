@@ -1,0 +1,16 @@
+{
+  "content": "Ꙁꙋⷠ",
+  "description": "Historic and minority Cyrillic from Cyrillic Extended-A and -B, with the combining letter attached to the base it is drawn over.",
+  "expected_category": null,
+  "expected_codepoint": null,
+  "expected_font_ids": null,
+  "expected_reason_contains": null,
+  "expected_remediation_contains": null,
+  "expected_scripts": {
+    "cyrillic": [
+      "NotoSans-Regular.ttf"
+    ]
+  },
+  "expected_status": "pass",
+  "kind": "caption"
+}

@@ -52,6 +52,10 @@ QUALITY_SCENARIOS = {
         "typography:bold",
         "typography:combining",
         "typography:non-latin-fallback",
+        "typography:latin-extended",
+        "typography:greek-extended",
+        "typography:cyrillic-extended",
+        "typography:script-extension",
     ),
     "retry-paths": _scenario(
         "retry-paths", "retry:transient-repeat", "retry:visual-retry"

@@ -1,0 +1,12 @@
+{
+  "content": "א",
+  "description": "Refused because bidirectional reordering is required, which nominal advances cannot express.",
+  "expected_category": "unsupported-shaping",
+  "expected_codepoint": "U+05D0",
+  "expected_font_ids": null,
+  "expected_reason_contains": "bidirectional reordering",
+  "expected_remediation_contains": null,
+  "expected_scripts": null,
+  "expected_status": "fail",
+  "kind": "dialogue"
+}
