@@ -1,7 +1,7 @@
 services:
   comic-sol:
     build: .
-    image: comic-sol:2.0.0rc4
+    image: comic-sol:2.0.0rc5
     read_only: true
     command: ["mcp", "--root", "/data"]
     volumes:
