@@ -66,9 +66,10 @@ class UnicodeBlockTableTests(unittest.TestCase):
         self.assertEqual("Basic Latin", block.block)
         self.assertEqual("Basic Latin", block_for_codepoint(0x0000).block)
         self.assertEqual("Latin-1 Supplement", block_for_codepoint(0x0080).block)
-        # U+1380 sits between Ethiopic and Cherokee and belongs to no declared block.
-        self.assertIsNone(block_for_codepoint(0x1380))
-        self.assertEqual("unassigned", script_for_codepoint(0x1380))
+        # U+2FE0 sits in the unassigned gap before Ideographic Description
+        # Characters and belongs to no declared block.
+        self.assertIsNone(block_for_codepoint(0x2FE0))
+        self.assertEqual("unassigned", script_for_codepoint(0x2FE0))
 
 
 class ShapingPolicyTests(unittest.TestCase):
@@ -120,9 +121,40 @@ class ShapingPolicyTests(unittest.TestCase):
         self.assertEqual(SHAPING_LINEAR, shaping_policy(0xFEFF)[0])
         self.assertEqual(SHAPING_COMPLEX, shaping_policy(0xFE71)[0])
 
-    def test_unclaimed_lettering_plane_codepoints_place_linearly(self):
-        """Silence in the table means symbol territory, not an unknown script."""
-        self.assertEqual(SHAPING_LINEAR, shaping_policy(0x1380)[0])
+    def test_undeclared_codepoints_are_refused_rather_than_assumed_linear(self):
+        """Admitting the unknown by default would grant false passes.
+
+        The blocks left undeclared are dominated by scripts that need joining or
+        reordering, so a permissive default would let exactly those through
+        whenever a covering face happened to be configured for them.
+        """
+        for label, codepoint in (
+            ("Syriac Supplement", 0x0860),
+            ("Arabic Extended-B", 0x0870),
+            ("Devanagari Extended", 0xA8E0),
+            ("Javanese", 0xA980),
+            ("Balinese", 0x1B00),
+            ("Private Use Area", 0xE000),
+            ("unassigned gap", 0x2FE0),
+        ):
+            with self.subTest(label=label):
+                shaping, reason = shaping_policy(codepoint)
+                self.assertEqual(SHAPING_COMPLEX, shaping)
+                self.assertIn("no block the lettering policy has classified", reason)
+
+    def test_declared_symbol_and_compatibility_blocks_stay_admitted(self):
+        """Fail-closed must not cost the linear symbol blocks captions use."""
+        for label, codepoint in (
+            ("Braille Patterns", 0x2800),
+            ("Box Drawing", 0x2500),
+            ("Enclosed Alphanumerics", 0x2460),
+            ("Kangxi Radicals", 0x2F00),
+            ("CJK Compatibility Ideographs", 0xF900),
+            ("Ogham", 0x1680),
+            ("Runic", 0x16A0),
+        ):
+            with self.subTest(label=label):
+                self.assertEqual(SHAPING_LINEAR, shaping_policy(codepoint)[0])
 
 
 class ScriptFontSelectionTests(unittest.TestCase):

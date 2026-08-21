@@ -17,6 +17,7 @@ from .font_cmap import font_supports
 from .font_coverage import (
     LINEAR_SCRIPTS,
     SHAPING_LINEAR,
+    is_combining,
     recommended_font,
     script_for_codepoint,
     shaping_policy,
@@ -153,6 +154,34 @@ def _shaping_decision(character: str) -> tuple[bool, str]:
     return shaping == SHAPING_LINEAR, reason
 
 
+def _combining_refusal(
+    character: str,
+    base: Mapping[str, object] | None,
+    font_id: str,
+) -> str:
+    """Return why a combining mark cannot be positioned, or an empty string.
+
+    A single mark carries no advance and a negative left bearing, so it lands
+    over the base it follows and needs no shaping. Three arrangements do need
+    real anchor handling, and none of them is fixed by any font choice:
+
+    - a mark with no base has nothing to attach to;
+    - a second mark must stack above the first, which requires the anchor
+      geometry that nominal advances cannot express;
+    - a mark drawn from a different face than its base is positioned against
+      metrics that were never designed together.
+    """
+    if not is_combining(ord(character)):
+        return ""
+    if base is None:
+        return "combining mark has no base glyph to attach to"
+    if is_combining(ord(str(base["character"]))):
+        return "stacked combining marks require anchor positioning"
+    if base["font_id"] != font_id:
+        return "combining mark and its base glyph resolve to different faces"
+    return ""
+
+
 def _remediation(category: str, script: str) -> str:
     """Return the shortest action that resolves one preflight issue."""
     if category == "missing-glyph":
@@ -247,6 +276,10 @@ def preflight_text_items(
         if not isinstance(raw_content, str):
             raise TypeError(f"text item {item_id} content must be a string")
         content = display_content(text_item.get("kind"), raw_content)
+        # The glyph a combining mark would attach to. It carries across styled
+        # spans, because emphasis does not interrupt a base-and-mark pair, and it
+        # is cleared by whitespace, which does.
+        base_glyph: dict[str, object] | None = None
         for span, style in _style_spans(content):
             role = "bold" if style == "bold" else "regular"
             for character in span:
@@ -257,6 +290,7 @@ def preflight_text_items(
                         "item_id": item_id,
                         "policy": "line-break",
                     })
+                    base_glyph = None
                     continue
                 if character.isspace():
                     non_glyphs.append({
@@ -264,6 +298,7 @@ def preflight_text_items(
                         "item_id": item_id,
                         "policy": "normalized-space",
                     })
+                    base_glyph = None
                     continue
                 script = script_for_codepoint(ord(character))
                 shaping, reason = _shaping_decision(character)
@@ -291,6 +326,15 @@ def preflight_text_items(
                     category = "unsupported-shaping"
                 elif selected_role is None:
                     category = "missing-glyph"
+                else:
+                    # Coverage is settled, so the resolved face is known and the
+                    # mark can be checked against the base it will attach to.
+                    mark_reason = _combining_refusal(
+                        character, base_glyph, identifiers[selected_role]
+                    )
+                    if mark_reason:
+                        category = "unsupported-shaping"
+                        reason = mark_reason
                 if category is not None:
                     issues.append(TypographyIssue(
                         category=category,
@@ -315,6 +359,7 @@ def preflight_text_items(
                     "shaping": "supported",
                     "style": style,
                 })
+                base_glyph = glyphs[-1]
 
     if issues:
         raise TypographyPreflightError(issues)

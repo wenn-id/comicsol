@@ -191,6 +191,19 @@
 - The README no longer describes `.notdef` fallback boxes as the outcome for uncovered
   characters. Preflight refuses the batch before any panel is written, and has done since
   it was introduced; the documented behaviour contradicted the implemented gate.
+- Codepoints belonging to no classified block are refused rather than assumed to place
+  linearly. The undeclared BMP blocks are dominated by scripts that need joining or
+  reordering — Syriac Supplement, Arabic Extended-B, Devanagari Extended, Javanese,
+  Balinese — so a permissive default handed exactly those a false pass whenever a
+  covering face was configured. The linear symbol, Braille, and CJK compatibility blocks
+  that captions legitimately use are declared explicitly so fail-closed costs no
+  coverage.
+- Combining marks are checked against the base they attach to. One mark over a base from
+  the same face still places correctly and is admitted, but a mark with no base, a
+  stack of two marks, and a mark resolved to a different face than its base are refused:
+  each needs anchor geometry that nominal advances cannot express, and no font choice
+  changes that. NFC normalization continues to compose the common accented forms before
+  this check sees them.
 
 - Fixed out-of-bounds balloon detection, which measured lettering boxes against the
   storyboard page rectangle instead of the panel's own clean raster. For a downscaled hero

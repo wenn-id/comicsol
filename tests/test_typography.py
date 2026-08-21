@@ -181,7 +181,7 @@ class TypographyPreflightTests(unittest.TestCase):
     def test_declared_script_fixtures_behave_as_documented(self):
         """Drive the supported set from fixtures so adding a script adds a file."""
         fixtures = sorted((FIXTURES / "typography-scripts").glob("*.json"))
-        self.assertEqual(17, len(fixtures))
+        self.assertEqual(22, len(fixtures))
         for path in fixtures:
             scenario = json.loads(path.read_text("utf-8"))
             with self.subTest(fixture=path.name):

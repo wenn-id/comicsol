@@ -1285,11 +1285,16 @@ def validate_lettering_provenance(
                 "and must be lettered again",
             )
         checks = typography.get("checks")
-        if not isinstance(checks, list) or any(
-            not isinstance(check, dict) for check in checks
+        # Check IDs are compared as a set, so they are confirmed to be strings
+        # first: an array or object arriving here from a hand-edited record is
+        # unhashable and would raise instead of being reported as an issue.
+        if (
+            not isinstance(checks, list)
+            or any(not isinstance(check, dict) for check in checks)
+            or any(not isinstance(check.get("id"), str) for check in checks)
         ):
             stale("typography.checks", "typography preflight checks are missing")
-        elif {check.get("id") for check in checks} != set(PREFLIGHT_CHECKS):
+        elif {check["id"] for check in checks} != set(PREFLIGHT_CHECKS):
             stale(
                 "typography.checks",
                 "typography preflight check set does not match the current policy",

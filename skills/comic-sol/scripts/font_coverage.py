@@ -27,6 +27,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Mapping, Sequence
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "scripts"
+
 from .font_cmap import cmap_glyph_id, unicode_cmap_subtables
 
 
@@ -46,6 +50,9 @@ LETTERING_PLANE_LAST = 0xFFFF
 _ASTRAL_REASON = (
     "codepoint is outside the basic multilingual plane that lettering supports"
 )
+_UNDECLARED_REASON = (
+    "codepoint belongs to no block the lettering policy has classified"
+)
 
 
 @dataclass(frozen=True)
@@ -58,6 +65,7 @@ class UnicodeBlock:
     last: int
     shaping: str
     reason: str = ""
+    combining: bool = False
 
     @property
     def total(self) -> int:
@@ -80,6 +88,17 @@ def _complex(script: str, block: str, first: int, last: int, reason: str) -> Uni
     return UnicodeBlock(script, block, first, last, SHAPING_COMPLEX, reason)
 
 
+def _marks(script: str, block: str, first: int, last: int) -> UnicodeBlock:
+    """Declare a block of combining marks that attach to a preceding base.
+
+    These place linearly in the narrow sense that their glyphs carry no advance
+    and a negative left bearing, so one mark lands over the base it follows. What
+    they do not survive is being stacked or being drawn from a different face
+    than their base, which `typography.py` checks per character.
+    """
+    return UnicodeBlock(script, block, first, last, SHAPING_LINEAR, combining=True)
+
+
 _JOINING = "script requires contextual joining and bidirectional reordering"
 _BIDI = "script requires bidirectional reordering"
 _CLUSTER = "script requires syllable cluster reordering and conjunct formation"
@@ -87,11 +106,10 @@ _STACKING = "script requires mark stacking that nominal advances cannot express"
 _VERTICAL = "script requires vertical layout and contextual joining"
 _JAMO = "conjoining jamo require syllable composition; use precomposed syllables"
 
-# Blocks are declared in ascending, non-overlapping codepoint order. Codepoints
-# in the lettering plane that no block claims default to `SHAPING_LINEAR`: the
-# unclaimed remainder is punctuation, symbol, and technical blocks that place
-# linearly, so silence here is the correct permissive answer. Every script whose
-# rendering depends on neighbours is claimed explicitly below.
+# Blocks are declared in ascending, non-overlapping codepoint order, which
+# `tests/test_font_coverage.py` asserts so the bisect lookup cannot be ambiguous.
+# A codepoint no block claims is refused, so this table is the whole of what
+# lettering admits: adding a script means adding its blocks here.
 UNICODE_BLOCKS: tuple[UnicodeBlock, ...] = (
     _linear("latin", "Basic Latin", 0x0000, 0x007F),
     _linear("latin", "Latin-1 Supplement", 0x0080, 0x00FF),
@@ -99,7 +117,7 @@ UNICODE_BLOCKS: tuple[UnicodeBlock, ...] = (
     _linear("latin", "Latin Extended-B", 0x0180, 0x024F),
     _linear("latin", "IPA Extensions", 0x0250, 0x02AF),
     _linear("common", "Spacing Modifier Letters", 0x02B0, 0x02FF),
-    _linear("inherited", "Combining Diacritical Marks", 0x0300, 0x036F),
+    _marks("inherited", "Combining Diacritical Marks", 0x0300, 0x036F),
     _linear("greek", "Greek and Coptic", 0x0370, 0x03FF),
     _linear("cyrillic", "Cyrillic", 0x0400, 0x04FF),
     _linear("cyrillic", "Cyrillic Supplement", 0x0500, 0x052F),
@@ -130,59 +148,94 @@ UNICODE_BLOCKS: tuple[UnicodeBlock, ...] = (
     _linear("georgian", "Georgian", 0x10A0, 0x10FF),
     _complex("hangul", "Hangul Jamo", 0x1100, 0x11FF, _JAMO),
     _linear("ethiopic", "Ethiopic", 0x1200, 0x137F),
+    _linear("ethiopic", "Ethiopic Supplement", 0x1380, 0x139F),
     _linear("cherokee", "Cherokee", 0x13A0, 0x13FF),
+    _linear("canadian-aboriginal", "Unified Canadian Aboriginal Syllabics", 0x1400, 0x167F),
+    _linear("ogham", "Ogham", 0x1680, 0x169F),
+    _linear("runic", "Runic", 0x16A0, 0x16FF),
     _complex("khmer", "Khmer", 0x1780, 0x17FF, _CLUSTER),
     _complex("mongolian", "Mongolian", 0x1800, 0x18AF, _VERTICAL),
-    _linear("inherited", "Combining Diacritical Marks Extended", 0x1AB0, 0x1AFF),
+    _linear("canadian-aboriginal", "Canadian Aboriginal Syllabics Extended", 0x18B0, 0x18FF),
+    _marks("inherited", "Combining Diacritical Marks Extended", 0x1AB0, 0x1AFF),
     _linear("cyrillic", "Cyrillic Extended-C", 0x1C80, 0x1C8F),
     # Mtavruli capitals live here, and dialogue is displayed uppercased, so this
     # block is on the path of any Georgian dialogue line.
     _linear("georgian", "Georgian Extended", 0x1C90, 0x1CBF),
     _linear("common", "Phonetic Extensions", 0x1D00, 0x1D7F),
     _linear("common", "Phonetic Extensions Supplement", 0x1D80, 0x1DBF),
-    _linear("inherited", "Combining Diacritical Marks Supplement", 0x1DC0, 0x1DFF),
+    _marks("inherited", "Combining Diacritical Marks Supplement", 0x1DC0, 0x1DFF),
     _linear("latin", "Latin Extended Additional", 0x1E00, 0x1EFF),
     _linear("greek", "Greek Extended", 0x1F00, 0x1FFF),
     _linear("common", "General Punctuation", 0x2000, 0x206F),
     _linear("common", "Superscripts and Subscripts", 0x2070, 0x209F),
     _linear("common", "Currency Symbols", 0x20A0, 0x20CF),
-    _linear("inherited", "Combining Marks for Symbols", 0x20D0, 0x20FF),
+    _marks("inherited", "Combining Marks for Symbols", 0x20D0, 0x20FF),
     _linear("common", "Letterlike Symbols", 0x2100, 0x214F),
     _linear("common", "Number Forms", 0x2150, 0x218F),
     _linear("common", "Arrows", 0x2190, 0x21FF),
     _linear("common", "Mathematical Operators", 0x2200, 0x22FF),
     _linear("common", "Miscellaneous Technical", 0x2300, 0x23FF),
+    _linear("common", "Control Pictures", 0x2400, 0x243F),
+    _linear("common", "Optical Character Recognition", 0x2440, 0x245F),
+    _linear("common", "Enclosed Alphanumerics", 0x2460, 0x24FF),
+    _linear("common", "Box Drawing", 0x2500, 0x257F),
+    _linear("common", "Block Elements", 0x2580, 0x259F),
     _linear("common", "Geometric Shapes", 0x25A0, 0x25FF),
     _linear("common", "Miscellaneous Symbols", 0x2600, 0x26FF),
     _linear("common", "Dingbats", 0x2700, 0x27BF),
+    _linear("common", "Miscellaneous Mathematical Symbols-A", 0x27C0, 0x27EF),
+    _linear("common", "Supplemental Arrows-A", 0x27F0, 0x27FF),
+    _linear("braille", "Braille Patterns", 0x2800, 0x28FF),
+    _linear("common", "Supplemental Arrows-B", 0x2900, 0x297F),
+    _linear("common", "Miscellaneous Mathematical Symbols-B", 0x2980, 0x29FF),
+    _linear("common", "Supplemental Mathematical Operators", 0x2A00, 0x2AFF),
+    _linear("common", "Miscellaneous Symbols and Arrows", 0x2B00, 0x2BFF),
     _linear("glagolitic", "Glagolitic", 0x2C00, 0x2C5F),
     _linear("latin", "Latin Extended-C", 0x2C60, 0x2C7F),
     _linear("coptic", "Coptic", 0x2C80, 0x2CFF),
     _linear("georgian", "Georgian Supplement", 0x2D00, 0x2D2F),
-    _linear("cyrillic", "Cyrillic Extended-A", 0x2DE0, 0x2DFF),
+    _linear("ethiopic", "Ethiopic Extended", 0x2D80, 0x2DDF),
+    _marks("cyrillic", "Cyrillic Extended-A", 0x2DE0, 0x2DFF),
     _linear("common", "Supplemental Punctuation", 0x2E00, 0x2E7F),
+    _linear("han", "CJK Radicals Supplement", 0x2E80, 0x2EFF),
+    _linear("han", "Kangxi Radicals", 0x2F00, 0x2FDF),
+    _linear("han", "Ideographic Description Characters", 0x2FF0, 0x2FFF),
     _linear("han", "CJK Symbols and Punctuation", 0x3000, 0x303F),
     _linear("kana", "Hiragana", 0x3040, 0x309F),
     _linear("kana", "Katakana", 0x30A0, 0x30FF),
     _linear("bopomofo", "Bopomofo", 0x3100, 0x312F),
+    _linear("bopomofo", "Bopomofo Extended", 0x31A0, 0x31BF),
+    _linear("han", "CJK Strokes", 0x31C0, 0x31EF),
     _linear("kana", "Katakana Phonetic Extensions", 0x31F0, 0x31FF),
+    _linear("han", "Enclosed CJK Letters and Months", 0x3200, 0x32FF),
+    _linear("han", "CJK Compatibility", 0x3300, 0x33FF),
     _linear("han", "CJK Unified Ideographs Extension A", 0x3400, 0x4DBF),
+    _linear("common", "Yijing Hexagram Symbols", 0x4DC0, 0x4DFF),
     _linear("han", "CJK Unified Ideographs", 0x4E00, 0x9FFF),
     _linear("yi", "Yi Syllables", 0xA000, 0xA48F),
+    _linear("yi", "Yi Radicals", 0xA490, 0xA4CF),
+    _linear("lisu", "Lisu", 0xA4D0, 0xA4FF),
+    _linear("vai", "Vai", 0xA500, 0xA63F),
     _linear("cyrillic", "Cyrillic Extended-B", 0xA640, 0xA69F),
     _linear("common", "Modifier Tone Letters", 0xA700, 0xA71F),
     _linear("latin", "Latin Extended-D", 0xA720, 0xA7FF),
+    _linear("ethiopic", "Ethiopic Extended-A", 0xAB00, 0xAB2F),
     _linear("latin", "Latin Extended-E", 0xAB30, 0xAB6F),
     _linear("cherokee", "Cherokee Supplement", 0xAB70, 0xABBF),
     _linear("hangul", "Hangul Syllables", 0xAC00, 0xD7A3),
+    _linear("han", "CJK Compatibility Ideographs", 0xF900, 0xFAFF),
     _linear("latin", "Alphabetic Presentation Forms", 0xFB00, 0xFB1C),
     _complex("hebrew", "Hebrew Presentation Forms", 0xFB1D, 0xFB4F, _BIDI),
     _complex("arabic", "Arabic Presentation Forms-A", 0xFB50, 0xFDFF, _JOINING),
     _linear("inherited", "Variation Selectors", 0xFE00, 0xFE0F),
-    _linear("inherited", "Combining Half Marks", 0xFE20, 0xFE2F),
+    _linear("common", "Vertical Forms", 0xFE10, 0xFE19),
+    _marks("inherited", "Combining Half Marks", 0xFE20, 0xFE2F),
+    _linear("han", "CJK Compatibility Forms", 0xFE30, 0xFE4F),
+    _linear("common", "Small Form Variants", 0xFE50, 0xFE6F),
     # U+FEFF is a byte-order mark rather than an Arabic form, so the joining
-    # block stops one codepoint short of it and the mark keeps placing linearly.
+    # block stops one codepoint short of it and the mark is declared on its own.
     _complex("arabic", "Arabic Presentation Forms-B", 0xFE70, 0xFEFE, _JOINING),
+    _linear("common", "Zero Width No-Break Space", 0xFEFF, 0xFEFF),
     _linear("common", "Halfwidth and Fullwidth Forms", 0xFF00, 0xFFEF),
     _linear("common", "Specials", 0xFFF0, 0xFFFF),
 )
@@ -316,15 +369,24 @@ def shaping_policy(codepoint: int) -> tuple[str, str]:
     """Classify a codepoint as linearly placeable or shaping-dependent.
 
     Returns the shaping class and, when the codepoint is refused, the reason a
-    reviewer needs. Codepoints inside the lettering plane that no block claims
-    are linear: the unclaimed remainder is symbol and punctuation territory.
+    reviewer needs. A codepoint no block claims is refused rather than admitted:
+    the blocks left undeclared are dominated by scripts that need joining or
+    reordering — Syriac Supplement, Arabic Extended-B, Devanagari Extended,
+    Javanese, Balinese — so admitting the unknown by default would hand exactly
+    those scripts a false pass whenever a covering face was configured.
     """
     if codepoint > LETTERING_PLANE_LAST:
         return SHAPING_COMPLEX, _ASTRAL_REASON
     block = block_for_codepoint(codepoint)
     if block is None:
-        return SHAPING_LINEAR, ""
+        return SHAPING_COMPLEX, _UNDECLARED_REASON
     return block.shaping, block.reason
+
+
+def is_combining(codepoint: int) -> bool:
+    """Report whether a codepoint attaches to a preceding base glyph."""
+    block = block_for_codepoint(codepoint)
+    return block is not None and block.combining
 
 
 def recommended_font(script: str) -> ScriptFont | None:
@@ -565,6 +627,7 @@ __all__ = [
     "coverage_inventory",
     "font_codepoints",
     "format_ranges",
+    "is_combining",
     "recommended_font",
     "script_for_codepoint",
     "shaping_policy",

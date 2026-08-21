@@ -34,10 +34,13 @@ Regular — covers 2842 codepoints in the Basic Multilingual Plane:
 | Script | Blocks | Covered / claimed | Status |
 | --- | --- | --- | --- |
 | `latin` | 10 | 1160 / 1293 | partial |
-| `common` | 18 | 675 / 2208 | partial |
+| `common` | 33 | 676 / 3563 | partial |
 | `cyrillic` | 5 | 441 / 448 | partial |
 | `greek` | 2 | 354 / 400 | partial |
 | `inherited` | 6 | 210 / 336 | partial |
+
+Every other declared script reports `uncovered` or `shaping-unsupported`; 45 scripts
+across 122 blocks are classified in total.
 
 Per face: Comic Neue Regular and Bold carry 303 codepoints each across 38 ranges;
 Noto Sans Regular carries 2840 across 52 ranges. "Partial" is the normal and expected
@@ -83,9 +86,31 @@ resolves them:
 | Vertical layout with joining | Mongolian |
 | Syllable composition | Conjoining Hangul jamo (`U+1100-U+11FF`) |
 | Outside the lettering plane | Everything above `U+FFFF`, including emoji |
+| Not classified by this policy | Any codepoint no declared block claims |
 
 Supporting these needs a shaping engine, not a font selection, and that is a separate
 change with its own determinism problem to solve.
+
+The last row is deliberately fail-closed. The BMP blocks left undeclared are dominated
+by scripts that need joining or reordering — Syriac Supplement, Arabic Extended-B,
+Devanagari Extended, Javanese, Balinese — so admitting the unknown would hand exactly
+those a false pass whenever a covering face was configured. Adding a script therefore
+means declaring its blocks, and the block table is the whole of what lettering admits.
+
+## Combining marks
+
+One combining mark over a base drawn from the same face is admitted: a mark glyph
+carries no advance and a negative left bearing, so it lands over the character it
+follows without shaping. Text is normalized to NFC first, so the common accented forms
+never reach this path as marks at all.
+
+Three arrangements are refused, and no font choice fixes any of them:
+
+- a mark with no base glyph to attach to;
+- a second mark stacking above the first, which needs anchor geometry that nominal
+  advances cannot express;
+- a mark resolved to a different face than its base, whose metrics were never designed
+  against each other.
 
 Hangul shows why the classification is per block rather than per script: conjoining
 jamo are refused while the precomposed syllables in `U+AC00-U+D7A3` are admitted.

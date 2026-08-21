@@ -25,6 +25,14 @@ not involved, because coverage and shaping are decided before anything is drawn.
 
 Unused fields are present and `null` so every fixture has the same shape.
 
+## Combining marks
+
+A single mark over a base from the same face is admitted, because a mark glyph
+carries no advance and a negative left bearing and therefore lands on the base it
+follows. Three arrangements are refused instead, and no font choice fixes any of
+them: a mark with no base, a second mark stacking above the first, and a mark
+drawn from a different face than its base.
+
 ## The two ways a script can be refused
 
 The distinction the `bad-*` fixtures pin down is the point of the policy:
@@ -46,6 +54,11 @@ The distinction the `bad-*` fixtures pin down is the point of the policy:
 | `good-latin-extended-c-d.json` | Latin Extended-C and -D orthographies. |
 | `good-phonetic-extensions.json` | IPA and phonetic modifier letters placed as linear glyphs. |
 | `good-mixed-latin-greek-cyrillic.json` | Mixed-script dialogue keeping the comic face for Latin and emphasis. |
+| `good-latin-combining-mark.json` | One combining mark over a base from the same face. |
+| `bad-orphan-combining-mark.json` | A combining mark with no base glyph to attach to. |
+| `bad-stacked-combining-marks.json` | Two marks on one base, which needs anchor geometry. |
+| `bad-cross-face-combining-mark.json` | A mark drawn from a different face than its base. |
+| `bad-undeclared-block.json` | A codepoint in no classified block, refused rather than assumed linear. |
 | `bad-han-uncovered.json` | CJK ideographs: linear, uncovered, resolved by the Han extension. |
 | `bad-kana-uncovered.json` | Hiragana: linear, uncovered, resolved by the Kana extension. |
 | `bad-hangul-syllable-uncovered.json` | Precomposed Hangul syllables: linear, uncovered. |
