@@ -1,0 +1,12 @@
+{
+  "content": "क",
+  "description": "Refused because cluster reordering is required, which nominal advances cannot express.",
+  "expected_category": "unsupported-shaping",
+  "expected_codepoint": "U+0915",
+  "expected_font_ids": null,
+  "expected_reason_contains": "cluster reordering",
+  "expected_remediation_contains": null,
+  "expected_scripts": null,
+  "expected_status": "fail",
+  "kind": "dialogue"
+}

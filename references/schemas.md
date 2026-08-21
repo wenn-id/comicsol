@@ -614,6 +614,42 @@ SHA-256 values, page dimensions/order, reference existence, and the PDF readabil
 result. Rendering fails before publication if any `{{TOKEN}}` remains, and successful
 output is UTF-8 with exactly one trailing newline.
 
+## Typography preflight: `panels/{panel-id}/typography.json`
+
+Schema version `1.1`. Written by lettering before any panel raster is published, and
+re-verified by `validate_lettering_provenance`. The record is derived entirely from the
+storyboard text and the font policy, so an older record is re-lettered rather than
+migrated.
+
+| Field | Rules |
+| --- | --- |
+| `kind` | Always `typography-preflight`. |
+| `schema_version` | Always `1.1`. Version `1.0` records predate the script coverage policy and are reported stale. |
+| `status` | Always `pass`. Preflight raises instead of persisting a failing record. |
+| `issues` | Always `[]`, for the same reason. |
+| `checks` | Exactly one entry per performed check, currently `typography-shaping-policy` and `typography-glyph-coverage`. Each carries `id`, `result` (`pass`), `severity` (`error`), `method` (`font-cmap-policy-v1`), `reviewer` (`comic-sol`), and non-empty `evidence`. Duplicated IDs and omitted fields are rejected, so a record reduced to passing IDs cannot pose as evidence the checks ran. |
+| `glyphs` | One entry per visible character: `character`, `codepoint` (`U+XXXX`), `coverage` (`supported`), `shaping` (`supported`), `script`, `style` (`regular` or `bold`), `font_id`, and `item_id`. `font_id` is a bare file name, never a path and never `.notdef`. |
+| `non_glyphs` | One entry per character with no drawn glyph: `codepoint`, `item_id`, and `policy` (`line-break` or `normalized-space`). |
+| `scripts` | Roll-up of which faces served which script: `script`, `codepoints`, and sorted `font_ids`. Its `codepoints` total equals the length of `glyphs`. |
+| `font_policy` | Role-to-font-id map. Required roles are `regular`, `bold`, and `fallback`; an optional per-script face appears as `script:{script}`. |
+| `font_policy_sha256` | SHA-256 over each role's font ID and file digest in sorted role order. A policy with no script extension hashes identically to one from before extensions existed. |
+| `input_sha256` | SHA-256 over the canonical authored text items. |
+
+Characters are checked as the renderer will draw them: normalized to NFC, and
+uppercased for `dialogue`. Uppercasing can move a character into a different Unicode
+block, so `script` reflects the displayed form.
+
+Validation recomputes rather than reads back. `character` must agree with `codepoint`,
+`script` must be the script that codepoint actually belongs to, and that codepoint must
+still be letterable under the current policy. A record therefore cannot assert that a
+bidirectional or reordering script is fine and carry the claim past the export gate.
+
+Script names, block ranges, and shaping classification come from
+`scripts/font_coverage.py`, whose `main()` prints the coverage inventory. A script is
+admitted only when advance-only placement renders it faithfully; see
+`docs/typography.md` for the supported set, the selected extension fonts, and the
+fallback order.
+
 ## Generated project paths
 
 The version 1.0 project boundary contains `project.json`; exact source/request copies; the three plan JSON files; character/scene reference PNGs; preserved reference/panel prompt text; raw `panels/raw/{panel-id}.png`, clean `panels/clean/{panel-id}.png`, and lettered `panels/{panel-id}/lettered.png` panel images; per-panel QA JSON; per-page QA JSON `qa/pages/page-{NNN}.json`; `qa/report.md`; zero-padded `pages/page-001.png` files; the composition cache `cache/composition.json`; `exports/{project-id}.pdf`; the resume cache `logs/stage-cache.json`; and append-only `logs/events.jsonl`.
