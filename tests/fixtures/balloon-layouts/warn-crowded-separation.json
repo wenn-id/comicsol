@@ -1,0 +1,26 @@
+{
+  "description": "A second balloon sits four pixels below the first, under the 14.4 pixel readable separation for this panel. The two balloons do not overlap, so overlap detection stays silent and only the crowding warning reports the cluster.",
+  "expected_check": "balloon-crowding",
+  "expected_decision": "accept-warning",
+  "expected_result": "warning",
+  "panels": {
+    "p01-02": {
+      "append": [
+        {
+          "anchor": "middle-left",
+          "box": {
+            "height": 100,
+            "width": 100,
+            "x": 29,
+            "y": 325
+          },
+          "font_runs": [],
+          "id": "p01-02-t02",
+          "kind": "caption",
+          "reading_order": 2,
+          "tail": null
+        }
+      ]
+    }
+  }
+}

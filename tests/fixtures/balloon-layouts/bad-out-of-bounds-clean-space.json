@@ -1,0 +1,20 @@
+{
+  "description": "The caption box ends at x=1000, which fits inside the 1472x1176 storyboard page rectangle for this hero panel but leaves the 736x588 clean raster the geometry is actually measured in. Auditing the page rectangle instead of the clean raster hides this clipping.",
+  "expected_check": "clipped-text",
+  "expected_decision": "regenerate",
+  "expected_result": "fail",
+  "panels": {
+    "p01-01": {
+      "replace": {
+        "p01-01-t01": {
+          "box": {
+            "height": 100,
+            "width": 300,
+            "x": 700,
+            "y": 40
+          }
+        }
+      }
+    }
+  }
+}

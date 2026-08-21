@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from scripts.benchmark import (  # noqa: E402
     CASES_ROOT,
+    DIALOGUE_PAGE_CHECK_IDS,
+    HARNESS_VERSION,
     METRIC_DIRECTIONS,
     METRIC_IDS,
     diff_results,
@@ -46,7 +48,7 @@ def _minimal_result(case_id, values, *, status="passed", revision="a" * 40):
     return {
         "case_id": case_id,
         "case_sha256": "b" * 64,
-        "harness_version": "1",
+        "harness_version": HARNESS_VERSION,
         "kind": "benchmark-result",
         "metrics": {
             metric_id: {
@@ -156,6 +158,23 @@ class BenchmarkPrimitiveTests(unittest.TestCase):
         metric = _metric("dialogue_correctness", 0, 0)
         self.assertEqual(1.0, metric["value"])
 
+    def test_dialogue_metric_counts_every_deterministic_geometry_check(self):
+        """The metric must cover the dialogue geometry the engine enforces."""
+        self.assertEqual(
+            {
+                "clipped-text",
+                "text-overlap",
+                "reading-order",
+                "balloon-subject-obstruction",
+                "bubble-tail-geometry",
+            },
+            set(DIALOGUE_PAGE_CHECK_IDS),
+        )
+
+    def test_dialogue_metric_excludes_the_crowding_warning(self):
+        """`balloon-crowding` warns instead of failing, so it is not a correctness signal."""
+        self.assertNotIn("balloon-crowding", DIALOGUE_PAGE_CHECK_IDS)
+
     def test_reference_rasters_are_reproducible_across_processes(self):
         code = (
             "from scripts.benchmark import _reference_raster; "
@@ -227,10 +246,12 @@ class BenchmarkPrimitiveTests(unittest.TestCase):
         self.assertEqual("metric value is inconsistent: panel_acceptance", _validate_result_record(record))
 
     def test_tail_verdict_requires_an_aligned_contained_tail(self):
+        # source_gap is the real distance left between the tip and the speaker
+        # anchor at [0.5, 0.1] of a 1000x1000 panel, which is (500, 100).
         tail = {
             "attachment": [100.0, 100.0],
             "tip": [140.0, 100.0],
-            "source_gap": 20.0,
+            "source_gap": 360.0,
         }
         self.assertEqual("pass", tail_direction_result(tail, [0.5, 0.1], 1000, 1000))
         self.assertEqual(
@@ -271,6 +292,23 @@ class BenchmarkDiffTests(unittest.TestCase):
         self.assertEqual("unchanged", result["cases"]["case-one"]["metrics"]["export_success"]["verdict"])
         self.assertTrue((self.root / "diff.md").is_file())
         self.assertIn("NO REGRESSION", (self.root / "diff.md").read_text(encoding="utf-8"))
+
+    def test_a_stale_harness_baseline_cannot_be_diffed(self):
+        """A record measured by an older harness measures a different metric."""
+        stale = _minimal_result("case-one", PERFECT)
+        stale["harness_version"] = "1"
+        self._publish(self.baseline, stale)
+        self._publish(self.candidate, _minimal_result("case-one", PERFECT))
+        result = diff_results(self.baseline, self.candidate, self.root / "diff.json")
+        self.assertEqual("REGRESSION", result["decision"])
+        self.assertEqual("failed", result["status"])
+        self.assertTrue(
+            any(
+                "benchmark harness" in item and item.startswith("baseline:")
+                for item in result["exceptions"]
+            ),
+            result["exceptions"],
+        )
 
     def test_lower_quality_metrics_regress_and_fail_closed(self):
         self._publish(self.baseline, _minimal_result("case-one", PERFECT))
@@ -436,7 +474,7 @@ class BenchmarkRunTests(unittest.TestCase):
         revision = self.first["revision"]
         self.assertIn("engine_version", revision)
         self.assertIn("git_revision", revision)
-        self.assertEqual("1", revision["harness_version"])
+        self.assertEqual(HARNESS_VERSION, revision["harness_version"])
         self.assertEqual(
             {"composition", "export", "generation", "lettering", "planning", "storyboard"},
             set(revision["stage_versions"]),
@@ -497,6 +535,84 @@ class BenchmarkRunTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.assertEqual((0, 0), _dialogue_counts(project, {"page_count": 1}))
+
+    def _dialogue_page_project(self, name, checks):
+        """Write a one-page, one-dialogue project carrying the given page checks."""
+        project = self.root / name
+        (project / "plan").mkdir(parents=True)
+        (project / "qa/pages").mkdir(parents=True)
+        (project / "plan/storyboard.json").write_text(
+            json.dumps({
+                "pages": [{
+                    "number": 1,
+                    "panels": [{
+                        "id": "p01-01",
+                        "text": [{"id": "d1", "kind": "dialogue"}],
+                    }],
+                }]
+            }),
+            encoding="utf-8",
+        )
+        (project / "qa/pages/page-001.json").write_text(
+            json.dumps({"checks": checks}), encoding="utf-8"
+        )
+        return project
+
+    @staticmethod
+    def _page_checks(*, tail_region="pass", **results):
+        """Build a page record whose checks all pass unless overridden."""
+        checks = [
+            {"id": check_id, "result": results.get(check_id, "pass")}
+            for check_id in DIALOGUE_PAGE_CHECK_IDS
+        ]
+        # Warning-severity by design, and never counted; present so the fixture proves
+        # the exclusion rather than merely omitting the check.
+        checks.append({"id": "balloon-crowding", "result": "warning"})
+        checks.append({
+            "id": "bubble-tail-direction",
+            "result": "pass" if tail_region == "pass" else "fail",
+            "regions": [{"id": "d1", "result": tail_region}],
+        })
+        return checks
+
+    def test_dialogue_metric_counts_the_widened_check_set_on_a_healthy_page(self):
+        project = self._dialogue_page_project("healthy", self._page_checks())
+        # Five deterministic geometry checks plus one bounded tail region.
+        self.assertEqual((6, 6), _dialogue_counts(project, {"page_count": 1}))
+
+    def test_faulted_tail_moves_the_dialogue_metric_below_one(self):
+        project = self._dialogue_page_project(
+            "faulted-tail",
+            self._page_checks(**{"bubble-tail-geometry": "fail"}, tail_region="fail"),
+        )
+        passed, total = _dialogue_counts(project, {"page_count": 1})
+        self.assertEqual((4, 6), (passed, total))
+        self.assertLess(_metric("dialogue_correctness", passed, total)["value"], 1.0)
+
+    def test_obstructed_balloon_moves_the_dialogue_metric_below_one(self):
+        """A fault only the widened set sees must not read as perfect dialogue."""
+        project = self._dialogue_page_project(
+            "obstructed",
+            self._page_checks(**{"balloon-subject-obstruction": "fail"}),
+        )
+        passed, total = _dialogue_counts(project, {"page_count": 1})
+        self.assertEqual((5, 6), (passed, total))
+        self.assertLess(_metric("dialogue_correctness", passed, total)["value"], 1.0)
+
+    def test_crowding_warning_does_not_change_the_dialogue_denominator(self):
+        crowded = self._dialogue_page_project("crowded", self._page_checks())
+        uncrowded = self._dialogue_page_project(
+            "uncrowded",
+            [
+                check
+                for check in self._page_checks()
+                if check["id"] != "balloon-crowding"
+            ],
+        )
+        self.assertEqual(
+            _dialogue_counts(uncrowded, {"page_count": 1}),
+            _dialogue_counts(crowded, {"page_count": 1}),
+        )
 
     def test_repeated_deterministic_runs_are_byte_comparable(self):
         second = run_case(self.case, output_root=self.root / "second")

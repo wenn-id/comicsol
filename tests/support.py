@@ -65,6 +65,73 @@ QUALITY_SCENARIOS = {
 }
 
 
+MULTI_SPEAKER_PANEL_ID = "p01-02"
+MULTI_SPEAKER_TEXT_IDS = ("p01-02-t01", "p01-02-t02")
+
+
+def write_multi_speaker_panel(project: Path) -> tuple[str, ...]:
+    """Turn one lettering fixture panel into a two-character dialogue exchange.
+
+    The fixture projects all speak with a single voice, so nothing in them can
+    show whether attribution survives a panel where two characters talk. The
+    anchors and anchor keywords chosen here keep both balloons clear of each
+    other and of both protected voice sources, so a correct multi-character panel
+    is expected to pass every deterministic page check unaided.
+    """
+    project = Path(project)
+    bible_path = project / "plan/character-bible.json"
+    bible = json.loads(bible_path.read_text("utf-8"))
+    if not any(character["id"] == "ren" for character in bible["characters"]):
+        gatekeeper = dict(bible["characters"][0])
+        gatekeeper.update({
+            "id": "ren",
+            "name": "Ren",
+            "role": "gatekeeper",
+            "reference_path": "references/characters/ren.png",
+        })
+        bible["characters"].append(gatekeeper)
+        _write_json(bible_path, bible)
+
+    storyboard_path = project / "plan/storyboard.json"
+    storyboard = json.loads(storyboard_path.read_text("utf-8"))
+    panel = next(
+        candidate
+        for page in storyboard["pages"]
+        for candidate in page["panels"]
+        if candidate["id"] == MULTI_SPEAKER_PANEL_ID
+    )
+    panel["characters"] = ["mira", "ren"]
+    first = dict(panel["text"][0])
+    first.update({
+        "id": MULTI_SPEAKER_TEXT_IDS[0],
+        "anchor": "top-left",
+        "content": "No bridge.",
+        "priority": 1,
+        "speaker": "mira",
+        "speaker_anchor": [0.78, 0.34],
+    })
+    second = dict(first)
+    second.update({
+        "id": MULTI_SPEAKER_TEXT_IDS[1],
+        "anchor": "bottom-right",
+        "content": "Then I hold the gate.",
+        "priority": 2,
+        "speaker": "ren",
+        "speaker_anchor": [0.22, 0.62],
+    })
+    panel["text"] = [first, second]
+    _write_json(storyboard_path, storyboard)
+    return MULTI_SPEAKER_TEXT_IDS
+
+
+def _write_json(path: Path, value: object) -> None:
+    """Write one project artifact the way the engine and fixtures store JSON."""
+    path.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        "utf-8",
+    )
+
+
 def bounded_tail_regions(project: Path, page_number: int) -> list[dict[str, object]]:
     """Build exact test-only tail regions from current storyboard and geometry."""
     storyboard = json.loads((Path(project) / "plan/storyboard.json").read_text("utf-8"))

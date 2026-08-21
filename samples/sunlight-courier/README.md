@@ -17,4 +17,7 @@ python scripts/materialize_sample.py
 ```
 
 The command overwrites compatibility copies byte-for-byte from the canonical
-panels. Final lettered panels, pages, QA evidence, and the PDF remain tracked.
+panels. Final lettered panels and page PNGs remain tracked as visually reviewed
+delivery derivatives, encoded as opaque RGB PNGs to keep the clone lightweight;
+the canonical clean panels and character reference remain full-fidelity source
+art. The PDF and QA evidence remain tracked and hash-bound to those derivatives.

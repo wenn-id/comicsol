@@ -24,6 +24,7 @@ from .comic_sol import (
     read_json,
     sha256_file,
 )
+from .page_quality import CURRENT_PAGE_QA_SCHEMA_VERSION
 from .project_io import ProjectLock, contained_project_path, open_path_nofollow
 from .quality_records import PANEL_CHECK_IDS
 from .schema import read_project_manifest
@@ -127,17 +128,26 @@ def _load_page_records(project_dir: Path) -> list[dict[str, object]]:
     if not page_dir.is_dir():
         return records
     for path in page_dir.glob("page-*.json"):
+        # read_json enforces the JSON-object invariant, raising for a readable
+        # non-object, so every record below is a mapping.
         record = read_json(path)
-        if record.get("schema_version") == "2.0" and record.get("kind") == "page-qa":
+        if (
+            record.get("schema_version") == CURRENT_PAGE_QA_SCHEMA_VERSION
+            and record.get("kind") == "page-qa"
+        ):
             records.append(record)
-        elif record.get("schema_version") == "1.0":
+        else:
+            # Every other readable record here is disclosed rather than dropped:
+            # a superseded check set, a legacy five-field record, and a record
+            # this reader cannot recognize at all are all reported as awaiting
+            # migration. Silently omitting one would let the Page QA table read
+            # as complete for a page whose review the validator rejects.
             record["quality-migration-required"] = True
             records.append(record)
     def sort_key(record: dict[str, object]) -> tuple[str, str]:
         """Order page-QA records without trusting legacy page field types."""
-        if record.get("schema_version") == "2.0":
-            subject_id = record.get("subject_id")
-            return ("v2", subject_id if isinstance(subject_id, str) else "")
+        if isinstance(record.get("subject_id"), str):
+            return ("v2", record["subject_id"])
         page = record.get("page")
         return (
             "v1",
@@ -347,9 +357,14 @@ def _page_qa_table(records: list[dict[str, object]]) -> str:
     ]
     for record in records:
         if record.get("quality-migration-required"):
+            subject_id = record.get("subject_id")
+            page_label = (
+                subject_id if isinstance(subject_id, str) and subject_id
+                else f"page-{record.get('page', 'unknown')}"
+            )
             lines.append(
                 "| " + " | ".join(_escape_table(cell) for cell in (
-                    f"page-{record.get('page', 'unknown')}",
+                    page_label,
                     "quality-migration-required", "migration-required", "missing",
                     "migration-required", "migration-required",
                 )) + " |"

@@ -5,6 +5,7 @@
     "layout_name": "",
     "layout_version": "",
     "lettering_sha256s": [],
+    "normalization_sha256s": [],
     "page_height": 0,
     "page_path": "pages/page-001.png",
     "page_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -75,6 +76,33 @@
       "result": "fail",
       "reviewer": "",
       "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "balloon-subject-obstruction",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "bubble-tail-geometry",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
+    },
+    {
+      "evidence": "",
+      "id": "balloon-crowding",
+      "method": "migration-required",
+      "regions": [],
+      "result": "fail",
+      "reviewer": "",
+      "severity": "error"
     }
   ],
   "decision": "regenerate",
@@ -84,7 +112,7 @@
     "reviewed_at": "",
     "reviewer": ""
   },
-  "schema_version": "2.0",
+  "schema_version": "2.1",
   "subject_id": "page-001",
   "unresolved_warnings": [
     "quality-migration-required"

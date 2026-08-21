@@ -4,6 +4,50 @@
 
 ### Added
 
+- Made speaker attribution explicit and verifiable for multi-character panels. Every
+  spoken balloon now resolves to a stable character-bible ID, and that identity is retained
+  in lettering geometry as a per-placement `attribution` record alongside the voice source
+  it is bound to. The record's `resolution` reports how identity was established: a
+  storyboard `speaker` must be a bible ID, so every validated project records `declared`,
+  while `inferred` covers callers invoking `letter_panel()` directly with a display name —
+  which the renderer previously accepted silently and now resolves to exactly one character
+  or refuses, because a name shared by two characters resolves to no one. Authoring dialogue
+  against display names remains unsupported at the storyboard level.
+- Panels whose balloons cannot be told apart now fail with `dialogue-attribution-ambiguous`
+  at both storyboard validation and lettering, using one shared policy in
+  `scripts/core_primitives.py`: different speakers claiming anchors closer than `0.04`
+  normalized report `shared-anchor`, and one speaker claiming anchors farther apart than
+  `0.25` reports `split-anchor`. A spoken balloon without a text ID, or two sharing one, is
+  refused as `dialogue-attribution-required` because attribution would not be addressable.
+- `bubble-tail-geometry` gained three identity reasons — `missing-attribution`,
+  `speaker-mismatch`, and `attribution-anchor-mismatch` — so a swapped pair of speakers is
+  detected from the record even when both tails attach and point correctly.
+- Added multi-speaker regression coverage: a two-character dialogue panel that passes every
+  deterministic page check without an override, a swap of its two retained attributions that
+  is detected on both balloons, and three named balloon-layout fixtures for the new reasons.
+- Added deterministic speech balloon placement QA to the composed-page record: three new
+  page checks in `scripts/page_quality.py` audit balloon geometry the engine previously
+  left to the eye. `balloon-subject-obstruction` fails when a balloon comes closer to an
+  authored `speaker_anchor` than the clearance the renderer reserves for a tail, measuring
+  dialogue against the ellipse actually drawn and captions against their box, and passing
+  when a panel authors no anchor to protect. `bubble-tail-geometry` promotes the tail
+  verdict that previously existed only in the benchmark harness into the pipeline, so a
+  tail must attach to its balloon, stop short of its voice source, point at the authored
+  anchor, stay inside the panel, and still agree with the storyboard's `speaker_anchor` and
+  `voice_source`. `balloon-crowding` reports crowded layouts as an actionable
+  warning — naming the panels, their balloon coverage, and any pair closer than the
+  readable separation — selecting `accept-warning` instead of blocking export.
+- `text-overlap` regions now report `overlap_area` and `overlap_ratio` against the smaller
+  box, so a hairline touch is distinguishable from a buried balloon without weakening the
+  existing rule that any overlap fails.
+- Added named good and bad balloon layout fixtures (`tests/fixtures/balloon-layouts/`) that
+  describe a placement defect as data applied to the lettered one-page fixture, covering the
+  good baseline, out-of-bounds placement, dialogue and caption subject obstruction, stale
+  tail direction and voice source, and both crowding signals.
+- Added a committed pre-change page-QA record fixture (`tests/fixtures/page-qa-2.0/`) and a
+  migration test module, so the registered `("2.0", "2.1")` page-QA migration is exercised
+  against a record in the superseded shape rather than one assembled inside a test body.
+
 - Added the Comic Sol benchmark framework (`scripts/benchmark.py`) with a validated
   benchmark project contract in `benchmarks/cases/`, comparable pipeline success,
   resume success, repair rate, panel acceptance, dialogue correctness, and export
@@ -101,6 +145,71 @@
   promotion event. A repair therefore starts from a review that asked for one, and the
   previous accepted bytes are still archived before the replacement is published.
 
+### Fixed
+
+- Fixed out-of-bounds balloon detection, which measured lettering boxes against the
+  storyboard page rectangle instead of the panel's own clean raster. For a downscaled hero
+  panel that made `clipped-text` about twice as permissive as intended, so a box could run
+  well past the artwork and still pass. Page QA now reads the pixel space the geometry is
+  actually written in from `panels/{panel-id}/normalization.json`. The renderer and the
+  audit also share one clearance constant, which makes `balloon-subject-obstruction` exact
+  for the pair the renderer resolves — a dialogue balloon against the anchor it speaks
+  from — while still reporting a caption or a second balloon landing on another line's
+  speaker, which placement never considers.
+- `bubble-tail-geometry` recomputes a tail's `source_gap` from its retained tip instead of
+  trusting the recorded value, and a corrupt or non-finite `speaker_anchor` now fails the
+  check closed rather than raising out of page-QA construction.
+- Page QA records now bind ordered `normalization_sha256s`, because `clean.size` defines the
+  pixel space every balloon verdict is measured in. Re-normalizing a panel makes the record
+  stale even when the composed page image is unchanged.
+
+### Changed
+
+- **Lettering geometry `schema_version` moves from `"1.0"` to `"1.1"` now that every
+  placement carries an `attribution` record.** Geometry is fully derived from the clean
+  raster, the storyboard, and the font policy, so there is nothing to migrate: a `"1.0"`
+  record is reported as `lettering-record-stale: geometry predates speaker attribution and
+  must be lettered again` and is re-lettered rather than rewritten in place. The lettering
+  stage cache version in `templates/manifest.json` moves from `"2"` to `"3"` for the same
+  reason, so a project carrying the new version reruns lettering instead of reusing a
+  cached result written in the previous shape.
+- **The page-QA record `schema_version` moves from `"2.0"` to `"2.1"`, and `"2.0"` records
+  migrate in place.** The page check set grows from seven entries to ten and `bindings` gains
+  `normalization_sha256s`, so the record carries a new version instead of changing shape
+  underneath one. A `"2.0"` record is now reported as
+  `quality-migration-required: schema 2.0 page QA must be migrated to 2.1` rather than as
+  `page-quality-stale: quality-check-ids`, which named the reviewer's check IDs for what was
+  really a superseded check set. `migrate_page_quality_record()` runs the registered
+  `("2.0", "2.1")` hook from `PAGE_QA_MIGRATIONS` inside the project transaction: the seven
+  deterministic checks and all bindings are re-derived from current artifacts, and the three
+  reviewer-supplied checks and the original review are preserved only while the bound
+  `page_sha256` still matches the page on disk. A record with no registered migration path
+  fails closed with `UnsupportedSchemaVersionError`, and a refused or interrupted migration
+  leaves the project byte-for-byte unchanged. `templates/page-qa.json` starts at `"2.1"` and
+  still stubs the new checks as `migration-required`. No `project.json` schema version is
+  affected. This supersedes the note that these records must simply be re-derived per page.
+
+- **The `dialogue_correctness` benchmark metric now measures a wider check set.**
+  `DIALOGUE_PAGE_CHECK_IDS` in `scripts/benchmark.py` gains `balloon-subject-obstruction`
+  and `bubble-tail-geometry`, so the metric covers every deterministic, error-severity page
+  check that verifies dialogue geometry rather than the three it counted before a tail or
+  speaker-clearance regression was enforced by the pipeline. `balloon-crowding` stays
+  excluded by design: it never fails, only warns, so counting it would conflate reading
+  comfort with correctness. Both committed cases still report `1.0`, but the denominator per
+  dialogue-bearing page grows by two, so recorded numerators and denominators — including
+  `observations.dialogue_checks_passed`/`dialogue_checks_total` — change even where the
+  ratio does not.
+
+- **`HARNESS_VERSION` is now `"2"`, so benchmark result records produced by the previous
+  harness are no longer comparable.** The result schema is unchanged, which is exactly the
+  hazard: a harness-1 record still validates while measuring a narrower
+  `dialogue_correctness`, so pooling or diffing it against a current run would report a
+  definition change as a metric change. `summarize_results()` already rejected foreign
+  harness versions; `diff_results()` now does too, and reports the stale side as an
+  exception instead of a clean verdict. Re-run the benchmark rather than reusing archived
+  pre-bump results; `.github/workflows/benchmark.yml` already benchmarks the baseline
+  revision with the current harness, so CI needs no change.
+
 ### Removed
 
 - Removed the unwired `comic_sol_product.providers` Python API. Integrations must
@@ -183,3 +292,4 @@ First Native Distribution release candidate.
 - x86_64 is the release architecture for `v2.0.0rc1`; arm64 naming is reserved but no arm64 artifact is claimed.
 - Image generation still depends on an agent-exposed provider capability; deterministic fixtures do not claim live visual quality.
 - Provider credentials and provider SDKs remain outside the base package.
+

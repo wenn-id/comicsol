@@ -53,7 +53,11 @@ from .comic_sol import (
     sha256_file,
     transition,
 )
-from .core_primitives import PANEL_CHECK_IDS, PANEL_ID_PATTERN, canonical_artifact_bytes
+from .core_primitives import (
+    PANEL_CHECK_IDS,
+    PANEL_ID_PATTERN,
+    canonical_artifact_bytes,
+)
 from .normalize_panels import normalize_panel
 from .page_quality import (
     SUBJECTIVE_PAGE_CHECK_IDS,
@@ -70,10 +74,72 @@ from .raster_limits import MAX_DECODED_PIXELS
 from .stage_registry import RESUME_STAGES
 from .validate_project import ProjectValidationError, require_valid_project
 
+# tail_geometry_result was added alongside the balloon placement QA checks.
+# When the CI benchmark workflow copies this harness into a baseline checkout
+# that predates that addition, the import fails. Keep the harness runnable
+# against older engine revisions by falling back to a local implementation.
+try:
+    from .core_primitives import tail_geometry_result
+except ImportError:
+    def _is_point(value: object) -> bool:
+        return (
+            isinstance(value, (list, tuple))
+            and len(value) == 2
+            and all(
+                isinstance(item, (int, float))
+                and not isinstance(item, bool)
+                and math.isfinite(float(item))
+                for item in value
+            )
+        )
+
+    def tail_geometry_result(  # type: ignore[misc]
+        tail: Mapping[str, Any], speaker_anchor: object, width: int, height: int
+    ) -> str:
+        """Fallback for baselines that predate the shared primitive."""
+        attachment = tail.get("attachment")
+        tip = tail.get("tip")
+        gap = tail.get("source_gap")
+        if (
+            not isinstance(speaker_anchor, list)
+            or not _is_point(speaker_anchor)
+            or any(not 0.0 <= float(value) <= 1.0 for value in speaker_anchor)
+            or not _is_point(attachment)
+            or not _is_point(tip)
+            or not isinstance(gap, (int, float))
+            or isinstance(gap, bool)
+            or gap <= 0
+        ):
+            return "fail"
+        target = (
+            round(float(speaker_anchor[0]) * width),
+            round(float(speaker_anchor[1]) * height),
+        )
+        tail_x, tail_y = tip[0] - attachment[0], tip[1] - attachment[1]
+        target_x = target[0] - attachment[0]
+        target_y = target[1] - attachment[1]
+        tail_length = math.hypot(tail_x, tail_y)
+        target_length = math.hypot(target_x, target_y)
+        if tail_length <= 0 or target_length <= 0 or tail_length >= target_length:
+            return "fail"
+        alignment = (tail_x * target_x + tail_y * target_y) / (tail_length * target_length)
+        if alignment < 0.999:
+            return "fail"
+        if not (0 <= tip[0] <= width and 0 <= tip[1] <= height):
+            return "fail"
+        observed_gap = math.hypot(target[0] - tip[0], target[1] - tip[1])
+        if abs(observed_gap - float(gap)) > 1.0:
+            return "fail"
+        return "pass"
+
 ROOT = Path(__file__).resolve().parents[1]
 CASES_ROOT = ROOT / "benchmarks/cases"
 
-HARNESS_VERSION = "1"
+# Bumped to "2" when `dialogue_correctness` grew to count `balloon-subject-obstruction`
+# and `bubble-tail-geometry`. The record schema is unchanged, but the metric no longer
+# means what it meant under "1", so a harness-1 record and a harness-2 record are not
+# comparable even though both validate. Summaries and diffs refuse to mix them.
+HARNESS_VERSION = "2"
 CASE_SCHEMA_VERSION = "1.0"
 RESULT_SCHEMA_VERSION = "1.0"
 DIFF_SCHEMA_VERSION = "1.0"
@@ -106,7 +172,22 @@ METRIC_DIRECTIONS = {
 }
 METRIC_IDS = tuple(sorted(METRIC_DIRECTIONS))
 
-DIALOGUE_PAGE_CHECK_IDS = ("clipped-text", "text-overlap", "reading-order")
+# Every deterministic, error-severity page check that verifies dialogue geometry, so
+# the metric measures the dialogue correctness the engine actually enforces. Each one
+# is always emitted and is strictly pass/fail, so each contributes one unit.
+#
+# `balloon-crowding` is deliberately excluded: `_crowding_check()` never returns
+# `fail`, only `pass` or a warning-severity `warning`, because crowded lettering is a
+# reading-comfort hint rather than a defect. Counting it would score a comfortable
+# page 1/1 and a merely tight one 0/1, conflating comfort with correctness and making
+# the metric move on pages the engine still accepts.
+DIALOGUE_PAGE_CHECK_IDS = (
+    "clipped-text",
+    "text-overlap",
+    "reading-order",
+    "balloon-subject-obstruction",
+    "bubble-tail-geometry",
+)
 TAIL_CHECK_ID = "bubble-tail-direction"
 
 REVIEWER = "comic-sol-benchmark"
@@ -730,50 +811,12 @@ def dialogue_tail_regions(project: Path, page_number: int) -> list[dict[str, Any
 def tail_direction_result(
     tail: Mapping[str, Any], speaker_anchor: object, width: int, height: int
 ) -> str:
-    """Verify one tail attaches to its balloon and points at the authored speaker."""
-    attachment = tail.get("attachment")
-    tip = tail.get("tip")
-    gap = tail.get("source_gap")
-    if (
-        not isinstance(speaker_anchor, list)
-        or len(speaker_anchor) != 2
-        or not _is_point(attachment)
-        or not _is_point(tip)
-        or not isinstance(gap, (int, float))
-        or isinstance(gap, bool)
-        or gap <= 0
-    ):
-        return "fail"
-    target = (
-        round(float(speaker_anchor[0]) * width),
-        round(float(speaker_anchor[1]) * height),
-    )
-    tail_x, tail_y = tip[0] - attachment[0], tip[1] - attachment[1]
-    target_x, target_y = target[0] - attachment[0], target[1] - attachment[1]
-    tail_length = math.hypot(tail_x, tail_y)
-    target_length = math.hypot(target_x, target_y)
-    if tail_length <= 0 or target_length <= 0 or tail_length >= target_length:
-        return "fail"
-    alignment = (tail_x * target_x + tail_y * target_y) / (tail_length * target_length)
-    if alignment < 0.999:
-        return "fail"
-    if not (0 <= tip[0] <= width and 0 <= tip[1] <= height):
-        return "fail"
-    return "pass"
+    """Verify one tail attaches to its balloon and points at the authored speaker.
 
-
-def _is_point(value: object) -> bool:
-    """Report whether a value is a finite two-dimensional geometry point."""
-    return (
-        isinstance(value, list)
-        and len(value) == 2
-        and all(
-            isinstance(item, (int, float))
-            and not isinstance(item, bool)
-            and math.isfinite(float(item))
-            for item in value
-        )
-    )
+    The verdict itself is the engine-side primitive the deterministic page check
+    uses, so the harness reports exactly what the pipeline enforces.
+    """
+    return tail_geometry_result(tail, speaker_anchor, width, height)
 
 
 def _write_page_records(
@@ -1312,6 +1355,20 @@ def diff_results(
     candidate_records, candidate_exceptions = load_results(candidate)
     exceptions = [f"baseline: {item}" for item in exceptions]
     exceptions += [f"candidate: {item}" for item in candidate_exceptions]
+
+    # A record only validates against the schema, which cannot tell that a metric was
+    # redefined under an older harness. Without this gate a stale archived baseline
+    # would diff cleanly against a current run and report the definition change as an
+    # improvement or as no change at all, which is the one thing a regression gate
+    # exists to prevent.
+    for label, records in (("baseline", baseline_records), ("candidate", candidate_records)):
+        for case_id in sorted(records):
+            harness = records[case_id].get("harness_version")
+            if harness != HARNESS_VERSION:
+                exceptions.append(
+                    f"{label}: {case_id}: result was produced by benchmark harness "
+                    f"{harness!r}, not {HARNESS_VERSION!r}, so it is not comparable"
+                )
 
     missing_cases = sorted(set(baseline_records) - set(candidate_records))
     new_cases = sorted(set(candidate_records) - set(baseline_records))

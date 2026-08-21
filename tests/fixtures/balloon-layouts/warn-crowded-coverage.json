@@ -1,0 +1,20 @@
+{
+  "description": "One caption grows to 240000 of the panel's 766080 pixels, about 31 percent, which is past the comfortable reading budget. The geometry is still legal, so the page is accepted with an actionable warning rather than blocked.",
+  "expected_check": "balloon-crowding",
+  "expected_decision": "accept-warning",
+  "expected_result": "warning",
+  "panels": {
+    "p01-03": {
+      "replace": {
+        "p01-03-t01": {
+          "box": {
+            "height": 400,
+            "width": 600,
+            "x": 29,
+            "y": 43
+          }
+        }
+      }
+    }
+  }
+}

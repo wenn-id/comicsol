@@ -11,7 +11,11 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 
 from scripts.comic_sol import atomic_write_json, canonical_json_bytes, read_json  # noqa: E402
-from scripts.quality_records import PANEL_CHECK_IDS  # noqa: E402
+from scripts.page_quality import (  # noqa: E402
+    CURRENT_PAGE_QA_SCHEMA_VERSION,
+    DETERMINISTIC_PAGE_CHECK_IDS,
+)
+from scripts.quality_records import PAGE_CHECK_IDS, PANEL_CHECK_IDS  # noqa: E402
 from scripts.render_report import QaSummary, main, render_report, summarize_qa  # noqa: E402
 from scripts import project_io  # noqa: E402
 
@@ -229,15 +233,8 @@ class ReportTests(unittest.TestCase):
         page_dir = self.project / "qa/pages"
         page_dir.mkdir(parents=True, exist_ok=True)
         checks = []
-        for check_id in (
-            "clipped-text", "text-overlap", "face-action-obstruction",
-            "bubble-tail-direction", "reading-order",
-            "accidental-text-watermark", "layout-border-integrity",
-        ):
-            deterministic = check_id in {
-                "clipped-text", "text-overlap", "reading-order",
-                "layout-border-integrity",
-            }
+        for check_id in PAGE_CHECK_IDS:
+            deterministic = check_id in DETERMINISTIC_PAGE_CHECK_IDS
             checks.append({
                 "id": check_id,
                 "result": "pass",
@@ -265,7 +262,7 @@ class ReportTests(unittest.TestCase):
                 "reviewed_at": "2026-08-14T01:02:03Z",
                 "reviewer": "fixture-reviewer",
             },
-            "schema_version": "2.0",
+            "schema_version": CURRENT_PAGE_QA_SCHEMA_VERSION,
             "subject_id": "page-001",
             "unresolved_warnings": [],
         })
@@ -291,6 +288,51 @@ class ReportTests(unittest.TestCase):
         text = render_report(self.project).read_text("utf-8")
 
         self.assertIn("quality-migration-required", text)
+
+    def test_report_refuses_a_page_record_that_is_not_a_json_object(self):
+        # The disclosure path below assumes a mapping. read_json is what makes
+        # that safe: a readable non-object fails closed naming the file, rather
+        # than being reported as a review.
+        page_dir = self.project / "qa/pages"
+        page_dir.mkdir(parents=True, exist_ok=True)
+        for payload in ("null", '"reviewed"', "[]", "7"):
+            with self.subTest(payload=payload):
+                (page_dir / "page-001.json").write_text(payload + "\n", "utf-8")
+
+                with self.assertRaisesRegex(ValueError, "expected a JSON object"):
+                    render_report(self.project)
+
+    def test_report_retains_superseded_and_unrecognizable_page_records(self):
+        # A record this reader cannot accept as a current review is disclosed
+        # rather than dropped, so the Page QA table can never read as complete
+        # for a page whose record validation rejects.
+        page_dir = self.project / "qa/pages"
+        page_dir.mkdir(parents=True, exist_ok=True)
+        cases = {
+            "superseded check set": {
+                "kind": "page-qa", "schema_version": "2.0", "subject_id": "page-001",
+            },
+            "wrong kind at the current version": {
+                "kind": "panel-qa",
+                "schema_version": CURRENT_PAGE_QA_SCHEMA_VERSION,
+                "subject_id": "page-001",
+            },
+            "missing kind at the current version": {
+                "schema_version": CURRENT_PAGE_QA_SCHEMA_VERSION,
+                "subject_id": "page-001",
+            },
+            "unknown version": {
+                "kind": "page-qa", "schema_version": "9.9", "subject_id": "page-001",
+            },
+        }
+        for label, record in cases.items():
+            with self.subTest(record=label):
+                atomic_write_json(page_dir / "page-001.json", record)
+
+                text = render_report(self.project).read_text("utf-8")
+
+                self.assertIn("quality-migration-required", text)
+                self.assertIn("page-001", text)
 
     def test_report_retains_malformed_legacy_page_as_migration_required(self):
         page_dir = self.project / "qa/pages"
