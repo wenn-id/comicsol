@@ -16,8 +16,14 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 PLATFORMS = {"linux", "macos", "windows", "wsl"}
+ARCHITECTURES = {"arm64", "x86_64"}
 ARTIFACT_PLATFORMS = {"linux": "linux", "macos": "macos", "windows": "windows", "wsl": "linux"}
-DEFAULT_REQUIRED_PLATFORMS = ("linux", "macos", "windows", "wsl")
+DEFAULT_REQUIRED_TARGETS: tuple[tuple[str, str | None], ...] = (
+    ("linux", "x86_64"),
+    ("macos", "arm64"),
+    ("windows", "x86_64"),
+    ("wsl", "x86_64"),
+)
 
 
 def run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> str:
@@ -192,12 +198,15 @@ def aggregate_summaries(
     root: Path,
     output: Path,
     *,
-    required_platforms: tuple[str, ...] = DEFAULT_REQUIRED_PLATFORMS,
+    required_targets: tuple[tuple[str, str | None], ...] = DEFAULT_REQUIRED_TARGETS,
     markdown: Path | None = None,
 ) -> dict[str, Any]:
     """Aggregate qualification summaries with a fail-closed release decision."""
     root = root.resolve()
-    required = tuple(dict.fromkeys(required_platforms))
+    target_architectures = dict(required_targets)
+    if len(target_architectures) != len(required_targets):
+        raise ValueError("required qualification platforms must be unique")
+    required = tuple(target_architectures)
     records: dict[str, dict[str, Any]] = {}
     exceptions: list[str] = []
     for path in sorted(root.glob("summary-*.json")):
@@ -216,12 +225,25 @@ def aggregate_summaries(
         records[platform] = record
 
     missing = [platform for platform in required if platform not in records]
+    architecture_mismatches = [
+        platform
+        for platform, expected in target_architectures.items()
+        if expected is not None
+        and platform in records
+        and records[platform].get("architecture") != expected
+    ]
+    for platform in architecture_mismatches:
+        expected = target_architectures[platform]
+        actual = records[platform].get("architecture")
+        exceptions.append(f"{platform}: expected architecture {expected!r}, found {actual!r}")
     failed = [
         platform
         for platform in required
         if platform in records
         and (
-            records[platform].get("status") != "passed" or bool(records[platform].get("exceptions"))
+            records[platform].get("status") != "passed"
+            or bool(records[platform].get("exceptions"))
+            or platform in architecture_mismatches
         )
     ]
     ready = not missing and not failed and not exceptions
@@ -230,11 +252,17 @@ def aggregate_summaries(
         "status": "passed" if ready else "failed",
         "platform_count": len(records),
         "required_platforms": list(required),
+        "required_targets": [
+            {"platform": platform, "architecture": architecture}
+            for platform, architecture in required_targets
+        ],
         "missing_platforms": missing,
         "failed_platforms": failed,
+        "architecture_mismatches": architecture_mismatches,
         "exceptions": exceptions,
         "summaries": {
             platform: {
+                "architecture": records[platform].get("architecture"),
                 "status": records[platform].get("status"),
                 "checks": records[platform].get("checks", []),
                 "exceptions": records[platform].get("exceptions", []),
@@ -265,14 +293,20 @@ def aggregate_summaries(
 
 
 def validate_published_metadata(
-    metadata: Path, sbom: Path, *, artifact: str, platform: str, version: str
+    metadata: Path,
+    sbom: Path,
+    *,
+    artifact: str,
+    platform: str,
+    architecture: str,
+    version: str,
 ) -> None:
     """Validate published metadata and the full CycloneDX runtime contract."""
     metadata_record = json.loads(metadata.read_text(encoding="utf-8"))
     expected_metadata = {
         "product": "comic-sol",
         "platform": platform,
-        "architecture": "x86_64",
+        "architecture": architecture,
         "tag": f"v{version}",
         "version": version,
         "signature_file": "SHA256SUMS.sigstore.json",
@@ -316,7 +350,7 @@ def validate_published_metadata(
     if (
         properties.get("comic-sol:release:artifact") != artifact
         or properties.get("comic-sol:release:platform") != platform
-        or properties.get("comic-sol:release:architecture") != "x86_64"
+        or properties.get("comic-sol:release:architecture") != architecture
     ):
         raise RuntimeError("published SBOM release properties are invalid")
 
@@ -439,6 +473,7 @@ def write_plan_fixture(project: Path) -> None:
 def qualify(
     *,
     platform_name: str,
+    architecture: str,
     archive: Path,
     installer: Path,
     checksums: Path,
@@ -451,6 +486,8 @@ def qualify(
     """Run version, doctor, lifecycle, installer, and preservation checks."""
     if platform_name not in PLATFORMS:
         raise ValueError(f"unsupported qualification platform: {platform_name}")
+    if architecture not in ARCHITECTURES:
+        raise ValueError(f"unsupported qualification architecture: {architecture}")
     archive = archive.resolve(strict=True)
     installer = installer.resolve(strict=True)
     checksums = checksums.resolve(strict=True)
@@ -466,6 +503,7 @@ def qualify(
         digest = checksum_for(checksums, archive)
     artifact_platform = ARTIFACT_PLATFORMS[platform_name]
     record: dict[str, Any] = {
+        "architecture": architecture,
         "artifact": archive.name,
         "artifact_platform": artifact_platform,
         "platform": platform_name,
@@ -481,6 +519,7 @@ def qualify(
             sbom.resolve(strict=True),
             artifact=archive.name,
             platform=artifact_platform,
+            architecture=architecture,
             version=version,
         )
         record["checks"].append("metadata-sbom")
@@ -515,9 +554,10 @@ def qualify(
         executable = executable_path(install_root)
         if not executable.is_file():
             raise RuntimeError(f"installed executable is missing: {executable}")
-        version = run([str(executable), "--version"], cwd=root, env=env)
-        if not version.startswith("comic-sol "):
-            raise RuntimeError(f"unexpected installed version output: {version!r}")
+        version_output = run([str(executable), "--version"], cwd=root, env=env)
+        expected_version_output = f"comic-sol {version}"
+        if version_output != expected_version_output:
+            raise RuntimeError(f"unexpected installed version output: {version_output!r}")
         record["version"] = version
         record["checks"].append("version")
 
@@ -597,6 +637,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sha256", type=Path)
     parser.add_argument("--signature", type=Path)
     parser.add_argument("--platform", choices=sorted(PLATFORMS))
+    parser.add_argument("--architecture", choices=sorted(ARCHITECTURES))
     parser.add_argument("--summary", type=Path)
     parser.add_argument("--version")
     parser.add_argument("--metadata", type=Path)
@@ -608,11 +649,13 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.aggregate_root is not None or arguments.aggregate_output is not None:
         if arguments.aggregate_root is None or arguments.aggregate_output is None:
             parser.error("--aggregate-root and --aggregate-output must be supplied together")
-        required = DEFAULT_REQUIRED_PLATFORMS + (("source",) if arguments.require_source else ())
+        required_targets = DEFAULT_REQUIRED_TARGETS + (
+            (("source", None),) if arguments.require_source else ()
+        )
         result = aggregate_summaries(
             arguments.aggregate_root,
             arguments.aggregate_output,
-            required_platforms=required,
+            required_targets=required_targets,
         )
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0 if result["status"] == "passed" else 1
@@ -622,16 +665,18 @@ def main(argv: list[str] | None = None) -> int:
         arguments.sha256,
         arguments.signature,
         arguments.platform,
+        arguments.architecture,
         arguments.summary,
         arguments.version,
     )
     if any(value is None for value in required):
         parser.error(
-            "artifact qualification requires --archive, --installer, --sha256, --signature, --platform, --summary, and --version"
+            "artifact qualification requires --archive, --installer, --sha256, --signature, --platform, --architecture, --summary, and --version"
         )
     try:
         record = qualify(
             platform_name=arguments.platform,
+            architecture=arguments.architecture,
             archive=arguments.archive,
             installer=arguments.installer,
             checksums=arguments.sha256,
@@ -643,7 +688,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     except Exception as error:
         record = {
+            "architecture": arguments.architecture,
             "platform": arguments.platform,
+            "version": arguments.version,
             "status": "failed",
             "checks": [],
             "exceptions": [f"{type(error).__name__}: {error}"],

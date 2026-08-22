@@ -93,6 +93,7 @@ jobs:
             --metadata "$metadata" \
             --sbom "$sbom" \
             --platform "$PLATFORM" \
+            --architecture "$ARCH" \
             --summary "qualification/summary-$PLATFORM.json"
       - name: Upload qualification summary
         if: always()
@@ -112,12 +113,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
+          ARCH: x86_64
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-          archive="comic-sol-${version}-linux-x86_64.zip"
-          metadata="comic-sol-${version}-linux-x86_64.metadata.json"
-          sbom="comic-sol-${version}-linux-x86_64.sbom.json"
+          archive="comic-sol-${version}-linux-${ARCH}.zip"
+          metadata="comic-sol-${version}-linux-${ARCH}.metadata.json"
+          sbom="comic-sol-${version}-linux-${ARCH}.sbom.json"
           mkdir -p qualification
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
@@ -138,25 +140,34 @@ jobs:
         shell: pwsh
         env:
           RELEASE_TAG: ${{ inputs.tag }}
+          ARCH: x86_64
         run: |
           $ErrorActionPreference = "Stop"
           $wslStatus = & wsl.exe --status 2>&1
           if ($LASTEXITCODE -ne 0) {
             $reason = "WSL2 not available on this runner: $($wslStatus -join ' ')"
-            '{"platform":"wsl","status":"exception","checks":[],"exceptions":["' + $reason.Replace('"', '\"') + '"]}' | Set-Content -Encoding utf8 qualification/summary-wsl.json
+            $summary = [ordered]@{
+              architecture = $env:ARCH
+              platform = "wsl"
+              status = "exception"
+              checks = @()
+              exceptions = @($reason)
+            }
+            $summary | ConvertTo-Json -Depth 3 | Set-Content -Encoding utf8 qualification/summary-wsl.json
             Write-Output $reason
             exit 0
           }
           $root = (Resolve-Path qualification).Path
           $wslRoot = (& wsl.exe wslpath -a $root).Trim()
           $version = $env:RELEASE_TAG.Substring(1)
+          $architecture = $env:ARCH
           $qualificationRoot = $wslRoot
-          $archive = "$qualificationRoot/comic-sol-$version-linux-x86_64.zip"
-          $metadata = "$qualificationRoot/comic-sol-$version-linux-x86_64.metadata.json"
-          $sbom = "$qualificationRoot/comic-sol-$version-linux-x86_64.sbom.json"
+          $archive = "$qualificationRoot/comic-sol-$version-linux-$architecture.zip"
+          $metadata = "$qualificationRoot/comic-sol-$version-linux-$architecture.metadata.json"
+          $sbom = "$qualificationRoot/comic-sol-$version-linux-$architecture.sbom.json"
           $cosignPath = (Get-Command cosign.exe).Source
           $wslCosignPath = (& wsl.exe wslpath -a $cosignPath).Trim()
-          & wsl.exe -- bash -lc "COMIC_SOL_COSIGN='$wslCosignPath' python3 '$qualificationRoot/release_qualification.py' --archive '$archive' --installer '$qualificationRoot/install.sh' --sha256 '$qualificationRoot/SHA256SUMS' --signature '$qualificationRoot/SHA256SUMS.sigstore.json' --version '$version' --metadata '$metadata' --sbom '$sbom' --platform wsl --summary '$qualificationRoot/summary-wsl.json'"
+          & wsl.exe -- bash -lc "COMIC_SOL_COSIGN='$wslCosignPath' python3 '$qualificationRoot/release_qualification.py' --archive '$archive' --installer '$qualificationRoot/install.sh' --sha256 '$qualificationRoot/SHA256SUMS' --signature '$qualificationRoot/SHA256SUMS.sigstore.json' --version '$version' --metadata '$metadata' --sbom '$sbom' --platform wsl --architecture '$architecture' --summary '$qualificationRoot/summary-wsl.json'"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload WSL qualification summary
         if: always()
