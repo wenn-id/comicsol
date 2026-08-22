@@ -118,7 +118,7 @@ class ReleaseQualificationContractTests(unittest.TestCase):
                 "wsl": "x86_64",
                 "source": None,
             }
-            required_platforms = tuple(platform_architectures)
+            required_targets = tuple(platform_architectures.items())
             for platform, architecture in platform_architectures.items():
                 record = {
                     "platform": platform,
@@ -133,17 +133,30 @@ class ReleaseQualificationContractTests(unittest.TestCase):
                     encoding="utf-8",
                 )
             output = root / "release-summary.json"
-            result = aggregate_summaries(root, output, required_platforms=required_platforms)
+            result = aggregate_summaries(root, output, required_targets=required_targets)
             self.assertEqual("RELEASE READY", result["decision"])
             self.assertEqual("passed", result["status"])
             self.assertEqual(5, result["platform_count"])
+            self.assertEqual([], result["architecture_mismatches"])
             self.assertTrue(output.is_file())
+
+            macos_summary = root / "summary-macos.json"
+            mismatched = json.loads(macos_summary.read_text(encoding="utf-8"))
+            mismatched["architecture"] = "x86_64"
+            macos_summary.write_text(json.dumps(mismatched) + "\n", encoding="utf-8")
+            blocked = aggregate_summaries(root, output, required_targets=required_targets)
+            self.assertEqual("RELEASE BLOCKED", blocked["decision"])
+            self.assertIn("macos", blocked["failed_platforms"])
+            self.assertEqual(["macos"], blocked["architecture_mismatches"])
+            self.assertIn("expected architecture 'arm64'", blocked["exceptions"][0])
+            mismatched["architecture"] = "arm64"
+            macos_summary.write_text(json.dumps(mismatched) + "\n", encoding="utf-8")
 
             broken = json.loads((root / "summary-windows.json").read_text(encoding="utf-8"))
             broken["status"] = "failed"
             broken["exceptions"] = ["known broken artifact"]
             (root / "summary-windows.json").write_text(json.dumps(broken) + "\n", encoding="utf-8")
-            blocked = aggregate_summaries(root, output, required_platforms=required_platforms)
+            blocked = aggregate_summaries(root, output, required_targets=required_targets)
             self.assertEqual("RELEASE BLOCKED", blocked["decision"])
             self.assertEqual("failed", blocked["status"])
             self.assertIn("windows", blocked["failed_platforms"])
@@ -544,6 +557,14 @@ class ReleaseQualificationContractTests(unittest.TestCase):
         self.assertIn("Platform-specific exceptions", workflow)
         self.assertIn("WSL2", workflow)
         self.assertIn("not available", workflow)
+        self.assertIn("$summary = [ordered]@{", workflow)
+        self.assertIn("architecture = $env:ARCH", workflow)
+        self.assertIn("exceptions = @($reason)", workflow)
+        self.assertIn(
+            "$summary | ConvertTo-Json -Depth 3 | Set-Content -Encoding utf8 qualification/summary-wsl.json",
+            workflow,
+        )
+        self.assertNotIn("$reason.Replace", workflow)
         self.assertIn("upload-artifact", workflow)
         self.assertIn("$qualificationRoot", workflow)
         self.assertIn("qualification/summary-wsl.json", workflow)

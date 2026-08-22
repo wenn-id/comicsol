@@ -18,7 +18,12 @@ ROOT = Path(__file__).resolve().parents[1]
 PLATFORMS = {"linux", "macos", "windows", "wsl"}
 ARCHITECTURES = {"arm64", "x86_64"}
 ARTIFACT_PLATFORMS = {"linux": "linux", "macos": "macos", "windows": "windows", "wsl": "linux"}
-DEFAULT_REQUIRED_PLATFORMS = ("linux", "macos", "windows", "wsl")
+DEFAULT_REQUIRED_TARGETS: tuple[tuple[str, str | None], ...] = (
+    ("linux", "x86_64"),
+    ("macos", "arm64"),
+    ("windows", "x86_64"),
+    ("wsl", "x86_64"),
+)
 
 
 def run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> str:
@@ -193,12 +198,15 @@ def aggregate_summaries(
     root: Path,
     output: Path,
     *,
-    required_platforms: tuple[str, ...] = DEFAULT_REQUIRED_PLATFORMS,
+    required_targets: tuple[tuple[str, str | None], ...] = DEFAULT_REQUIRED_TARGETS,
     markdown: Path | None = None,
 ) -> dict[str, Any]:
     """Aggregate qualification summaries with a fail-closed release decision."""
     root = root.resolve()
-    required = tuple(dict.fromkeys(required_platforms))
+    target_architectures = dict(required_targets)
+    if len(target_architectures) != len(required_targets):
+        raise ValueError("required qualification platforms must be unique")
+    required = tuple(target_architectures)
     records: dict[str, dict[str, Any]] = {}
     exceptions: list[str] = []
     for path in sorted(root.glob("summary-*.json")):
@@ -217,12 +225,25 @@ def aggregate_summaries(
         records[platform] = record
 
     missing = [platform for platform in required if platform not in records]
+    architecture_mismatches = [
+        platform
+        for platform, expected in target_architectures.items()
+        if expected is not None
+        and platform in records
+        and records[platform].get("architecture") != expected
+    ]
+    for platform in architecture_mismatches:
+        expected = target_architectures[platform]
+        actual = records[platform].get("architecture")
+        exceptions.append(f"{platform}: expected architecture {expected!r}, found {actual!r}")
     failed = [
         platform
         for platform in required
         if platform in records
         and (
-            records[platform].get("status") != "passed" or bool(records[platform].get("exceptions"))
+            records[platform].get("status") != "passed"
+            or bool(records[platform].get("exceptions"))
+            or platform in architecture_mismatches
         )
     ]
     ready = not missing and not failed and not exceptions
@@ -231,11 +252,17 @@ def aggregate_summaries(
         "status": "passed" if ready else "failed",
         "platform_count": len(records),
         "required_platforms": list(required),
+        "required_targets": [
+            {"platform": platform, "architecture": architecture}
+            for platform, architecture in required_targets
+        ],
         "missing_platforms": missing,
         "failed_platforms": failed,
+        "architecture_mismatches": architecture_mismatches,
         "exceptions": exceptions,
         "summaries": {
             platform: {
+                "architecture": records[platform].get("architecture"),
                 "status": records[platform].get("status"),
                 "checks": records[platform].get("checks", []),
                 "exceptions": records[platform].get("exceptions", []),
@@ -622,11 +649,13 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.aggregate_root is not None or arguments.aggregate_output is not None:
         if arguments.aggregate_root is None or arguments.aggregate_output is None:
             parser.error("--aggregate-root and --aggregate-output must be supplied together")
-        required = DEFAULT_REQUIRED_PLATFORMS + (("source",) if arguments.require_source else ())
+        required_targets = DEFAULT_REQUIRED_TARGETS + (
+            (("source", None),) if arguments.require_source else ()
+        )
         result = aggregate_summaries(
             arguments.aggregate_root,
             arguments.aggregate_output,
-            required_platforms=required,
+            required_targets=required_targets,
         )
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0 if result["status"] == "passed" else 1

@@ -146,7 +146,14 @@ jobs:
           $wslStatus = & wsl.exe --status 2>&1
           if ($LASTEXITCODE -ne 0) {
             $reason = "WSL2 not available on this runner: $($wslStatus -join ' ')"
-            '{"platform":"wsl","status":"exception","checks":[],"exceptions":["' + $reason.Replace('"', '\"') + '"]}' | Set-Content -Encoding utf8 qualification/summary-wsl.json
+            $summary = [ordered]@{
+              architecture = $env:ARCH
+              platform = "wsl"
+              status = "exception"
+              checks = @()
+              exceptions = @($reason)
+            }
+            $summary | ConvertTo-Json -Depth 3 | Set-Content -Encoding utf8 qualification/summary-wsl.json
             Write-Output $reason
             exit 0
           }
