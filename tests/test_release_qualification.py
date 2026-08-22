@@ -10,6 +10,7 @@ from unittest import mock
 from comic_sol_product import __version__ as _V
 
 from scripts.release_qualification import aggregate_summaries
+from scripts.release_qualification import executable_path
 from scripts.release_qualification import qualify
 from scripts.release_qualification import validate_published_metadata
 from scripts.release_qualification import verify_payload_checksums
@@ -361,7 +362,7 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             files = _write_qualification_files(root, platform="macos", architecture="arm64")
 
             def fake_install(**kwargs):
-                binary = kwargs["install_root"] / "bin" / "comic-sol"
+                binary = executable_path(kwargs["install_root"])
                 binary.parent.mkdir(parents=True)
                 binary.write_text("fake executable\n", encoding="utf-8")
 
@@ -381,7 +382,7 @@ class ReleaseQualificationContractTests(unittest.TestCase):
                 raise AssertionError(f"unexpected command: {arguments!r}")
 
             def fake_uninstall(**kwargs):
-                binary = kwargs["install_root"] / "bin" / "comic-sol"
+                binary = executable_path(kwargs["install_root"])
                 binary.unlink()
                 binary.parent.rmdir()
 
@@ -418,7 +419,7 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             files = _write_qualification_files(root, platform="linux", architecture="x86_64")
 
             def fake_install(**kwargs):
-                binary = kwargs["install_root"] / "bin" / "comic-sol"
+                binary = executable_path(kwargs["install_root"])
                 binary.parent.mkdir(parents=True)
                 binary.write_text("fake executable\n", encoding="utf-8")
 
