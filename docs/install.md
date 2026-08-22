@@ -1,8 +1,8 @@
 # Install Comic Sol v2.0.0rc4
 
-> `v2.0.0rc5` is prepared in the repository but **not yet published**. These instructions name
+> `v2.0.0rc6` is prepared in the repository but **not yet published**. These instructions name
 > `v2.0.0rc4`, the latest published prerelease, because those are the archives that exist.
-> They are updated to name `v2.0.0rc5` when that tag is published.
+> They are updated to name `v2.0.0rc6` when that tag is published.
 
 Comic Sol `v2.0.0rc4` is a prerelease distributed as native portable archives for Linux, macOS, and Windows, plus a Python wheel/source archive and an OCI image definition. Native archives bundle Python 3.11, Pillow, MCP, fonts, templates, the Skill, and references; no system Python is required after extraction.
 
@@ -41,7 +41,7 @@ $HOME/.local/share/comic-sol/bin/comic-sol doctor
 
 For macOS, use `comic-sol-2.0.0rc4-macos-x86_64.zip`. Despite that name, the archive contains
 arm64 binaries and will not run natively on an Intel Mac — it was built on an arm64 runner while
-the release still labelled every artifact `x86_64`. From `2.0.0rc5` onward the macOS archive is
+the release still labelled every artifact `x86_64`. From `2.0.0rc6` onward the macOS archive is
 named `comic-sol-<version>-macos-arm64.zip` so the name matches its contents, and Apple silicon
 is the only macOS release target. The default installation root is `$HOME/.local/share/comic-sol`.
 Override it with `--install-root PATH` or `COMIC_SOL_INSTALL_ROOT`.

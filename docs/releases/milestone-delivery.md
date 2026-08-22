@@ -14,17 +14,17 @@ release notes for a tag live in `docs/releases/v<tag>.md`, and the per-change re
 
 | Milestone | Issues | Status | Released |
 |---|---:|---|---|
-| v2.0 — Stability | 10 | Delivered | Pending — `2.0.0rc5` |
-| v2.1 — Reliability & DX | 8 | Delivered | Pending — `2.0.0rc5` |
-| v2.2 — Comic Quality | 10 | Delivered | Pending — `2.0.0rc5` |
+| v2.0 — Stability | 10 | Delivered | Pending — `2.0.0rc6` |
+| v2.1 — Reliability & DX | 8 | Delivered | Pending — `2.0.0rc6` |
+| v2.2 — Comic Quality | 10 | Delivered | Pending — `2.0.0rc6` |
 | v2.3 — User Experience | 7 | Planned | — |
 
-All 28 delivered issues across v2.0, v2.1, and v2.2 are **prepared for `2.0.0rc5`, which is
+All 28 delivered issues across v2.0, v2.1, and v2.2 are **prepared for `2.0.0rc6`, which is
 not published**: the tag does not exist, no artifact has been built, and the release
 qualification gate has not been run. `Pending` means exactly that, and it becomes `Yes` when
 the tag is published. The published version is `2.0.0rc4`.
 
-`2.0.0rc5` will still be a prerelease when it ships:
+`2.0.0rc6` will still be a prerelease when it ships:
 `docs/releases/v2.0-stable-criteria.md` is the gate for a stable `2.0.0` tag and is not yet
 satisfied.
 
@@ -32,7 +32,7 @@ One point is easily got wrong, so it is stated precisely: the four earlier `2.0.
 prereleases shipped the v2.0 *product line* on 2026-07-29/30, but every issue in the v2.0
 *milestone* merged on 2026-08-18/19 — after `rc4` was published. The milestone hardened and
 qualified what those prereleases had already shipped; it is not what they contain. That is why
-v2.0 is carried by `2.0.0rc5` alongside v2.1 and v2.2.
+v2.0 is carried by `2.0.0rc6` alongside v2.1 and v2.2.
 
 ### Delivery timeline
 
@@ -53,7 +53,8 @@ milestone merged after `2.0.0rc4` was published, which is why none is carried by
 | `2.0.0rc2` | 2026-07-30 | Published |
 | `2.0.0rc3` | 2026-07-30 | Published |
 | `2.0.0rc4` | 2026-07-30 | Published |
-| `2.0.0rc5` | — | Prepared; not tagged |
+| `2.0.0rc5` | — | Prepared; Native Release failed, not published |
+| `2.0.0rc6` | — | Prepared; not tagged |
 
 ## v2.0 — Stability
 
@@ -62,7 +63,7 @@ end-to-end and failure-injection coverage, resume idempotence, structured diagno
 error codes, schema-migration safety, and a release qualification gate. Every issue here
 merged on 2026-08-18/19, after `rc4` was published on 2026-07-30, so **none of it is in an
 earlier tag** — a distinction worth keeping, because the milestone shares its name with the
-prereleases that preceded it. It is prepared for `2.0.0rc5`.
+prereleases that preceded it. It is prepared for `2.0.0rc6`.
 
 The release gate for the stable tag is `docs/releases/v2.0-stable-criteria.md`, which is
 authoritative over this document for anything gating a release.

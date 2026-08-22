@@ -40,9 +40,22 @@ carries it.
   left as separate work because `CONTRIBUTING.md`, `docs/onboarding.md`, `README.md`, and the
   lock-completeness test all reference those paths.
 
-## 2.0.0rc5 — unreleased
+### Changed
 
-Prepared for the `v2.0.0rc5` tag and **not published**. No archive, checksum, SBOM, or
+- Recorded the versioning strategy for the pending candidate and re-cut it as `2.0.0rc6`.
+  `v2.0`, `v2.1`, and `v2.2` remain **milestone names, not version tags**; the distribution
+  version is `2.0.0rc6`, and `comic_sol_product/version.py`, the Compose image tag, package
+  metadata, native archive and SBOM names, `docs/releases/v2.0.0rc6.md`, this changelog, and
+  the installer examples all agree on it. The prepared-but-failed `v2.0.0rc5` tag is neither
+  moved nor reused: its Native Release runs failed with no release attached, `main` advanced
+  two release fixes past its target, and moving an immutable release tag would break the
+  guarantee that a tag names the exact reviewed bytes. `v2.0.0rc6` is therefore annotated
+  fresh at the reviewed `main` commit. No `2.2.0` distribution exists or is planned by this
+  candidate.
+
+## 2.0.0rc6 — unreleased
+
+Prepared for the `v2.0.0rc6` tag and **not published**. No archive, checksum, SBOM, or
 signature exists until the release workflow runs, and the release qualification gate has not
 been executed. The published prerelease is still `2.0.0rc4`.
 

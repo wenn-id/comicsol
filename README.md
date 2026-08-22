@@ -123,7 +123,7 @@ stable-release checklist is [`docs/releases/v2.0-stable-criteria.md`](docs/relea
 
 What each milestone delivered, and which issue and pull request delivered it, is recorded in
 [`docs/releases/milestone-delivery.md`](docs/releases/milestone-delivery.md). Milestones v2.0,
-v2.1, and v2.2 are complete and unreleased: they are **prepared for `v2.0.0rc5`, which is not
+v2.1, and v2.2 are complete and unreleased: they are **prepared for `v2.0.0rc6`, which is not
 yet published**, so the
 current published prerelease remains `v2.0.0rc4` and the archives described above are its own.
 The `2.0.0rc*` prereleases shipped the v2.0 product line, not the v2.0 milestone, which merged

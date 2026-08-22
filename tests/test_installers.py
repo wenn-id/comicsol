@@ -90,7 +90,7 @@ class PublicInstallerContractTests(unittest.TestCase):
         )
 
     @staticmethod
-    def write_runtime_archive(root, version="2.0.0rc5", filename="comic-sol.zip"):
+    def write_runtime_archive(root, version="2.0.0rc6", filename="comic-sol.zip"):
         archive = root / filename
         executable = (
             "#!/bin/sh\n"
@@ -414,7 +414,7 @@ class PublicInstallerContractTests(unittest.TestCase):
 
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
                 self.assertEqual(1, server.request_count)
-                self.assertEqual("2.0.0rc5", (install_root / "active-version").read_text().strip())
+                self.assertEqual("2.0.0rc6", (install_root / "active-version").read_text().strip())
                 self.assertTrue((install_root / ".comic-sol-install").is_file())
             finally:
                 self.stop_installer_server(server, thread)
@@ -424,7 +424,7 @@ class PublicInstallerContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             archive = self.write_runtime_archive(
-                root, filename="comic-sol-2.0.0rc5-linux-x86_64.zip"
+                root, filename="comic-sol-2.0.0rc6-linux-x86_64.zip"
             )
             server, thread = self.start_installer_server(
                 tls=True, payload=archive.read_bytes()
@@ -439,7 +439,7 @@ class PublicInstallerContractTests(unittest.TestCase):
                     {"CURL_CA_BUNDLE": str(cast(Path, server.certificate_path))},
                 )
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-                self.assertEqual("2.0.0rc5", (install_root / "active-version").read_text().strip())
+                self.assertEqual("2.0.0rc6", (install_root / "active-version").read_text().strip())
             finally:
                 self.stop_installer_server(server, thread)
 
@@ -838,7 +838,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             config.parent.mkdir(parents=True)
             config.write_text("[mcp_servers.other]\ncommand = 'keep'\n", encoding="utf-8")
             old_archive = self.write_runtime_archive(root, version="2.0.0rc4", filename="old.zip")
-            new_archive = self.write_runtime_archive(root, version="2.0.0rc5", filename="new.zip")
+            new_archive = self.write_runtime_archive(root, version="2.0.0rc6", filename="new.zip")
             environment = {
                 "COMIC_SOL_OUTPUT_ROOT": str(project),
                 "HOME": str(root / "home"),
@@ -850,7 +850,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             old_versioned = (install_root / "versions" / "2.0.0rc4" / "comic-sol").read_bytes()
             upgraded = self.run_posix_archive_install(new_archive, install_root, env=environment)
             self.assertEqual(0, upgraded.returncode, upgraded.stdout + upgraded.stderr)
-            self.assertEqual("2.0.0rc5", (install_root / "active-version").read_text().strip())
+            self.assertEqual("2.0.0rc6", (install_root / "active-version").read_text().strip())
             self.assertNotEqual(old_bin, (install_root / "bin" / "comic-sol").read_bytes())
             self.assertEqual(
                 old_bin, (install_root / "versions" / "2.0.0rc4" / "comic-sol").read_bytes()
@@ -858,7 +858,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertEqual(
                 old_versioned, (install_root / "versions" / "2.0.0rc4" / "comic-sol").read_bytes()
             )
-            self.assertFalse((install_root / "versions" / ".2.0.0rc5.rollback").exists())
+            self.assertFalse((install_root / "versions" / ".2.0.0rc6.rollback").exists())
             self.assertFalse((install_root / ".bin.rollback").exists())
             self.assertTrue((install_root / "versions" / "2.0.0rc4").exists())
             self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
@@ -877,7 +877,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             config.parent.mkdir(parents=True)
             config.write_text("[mcp_servers.other]\ncommand = 'keep'\n", encoding="utf-8")
             old_archive = self.write_runtime_archive(root, version="2.0.0rc4", filename="old.zip")
-            new_archive = self.write_runtime_archive(root, version="2.0.0rc5", filename="new.zip")
+            new_archive = self.write_runtime_archive(root, version="2.0.0rc6", filename="new.zip")
             environment = {
                 "COMIC_SOL_OUTPUT_ROOT": str(project),
                 "HOME": str(root / "home"),
@@ -1031,14 +1031,14 @@ class PublicInstallerContractTests(unittest.TestCase):
             (install_root / "bin").mkdir(parents=True)
             (install_root / "bin/old.txt").write_text("old", encoding="utf-8")
             (install_root / "versions/2.0.0rc4").mkdir(parents=True)
-            (install_root / "versions/2.0.0rc5").mkdir(parents=True)
+            (install_root / "versions/2.0.0rc6").mkdir(parents=True)
             self.write_marker(install_root)
 
             archive = root / "comic-sol.zip"
             executable = (
                 "#!/bin/sh\n"
                 'case "$1" in\n'
-                "  --version) echo 'comic-sol 2.0.0rc5' ;;\n"
+                "  --version) echo 'comic-sol 2.0.0rc6' ;;\n"
                 "  doctor) exit 0 ;;\n"
                 "esac\n"
             ).encode("utf-8")
@@ -1061,7 +1061,7 @@ class PublicInstallerContractTests(unittest.TestCase):
                 "#!/bin/sh\n"
                 'case "$*" in\n'
                 "  *rollback*)\n"
-                "    if grep -q '2.0.0rc5' \"$TEST_INSTALL_ROOT/.comic-sol-install\" 2>/dev/null; then\n"
+                "    if grep -q '2.0.0rc6' \"$TEST_INSTALL_ROOT/.comic-sol-install\" 2>/dev/null; then\n"
                 "      exit 1\n"
                 "    fi\n"
                 "    ;;\n"
@@ -1103,10 +1103,10 @@ class PublicInstallerContractTests(unittest.TestCase):
 
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
             self.assertEqual(
-                "2.0.0rc5", (install_root / "active-version").read_text("utf-8").strip()
+                "2.0.0rc6", (install_root / "active-version").read_text("utf-8").strip()
             )
             marker_lines = (install_root / ".comic-sol-install").read_text("utf-8").splitlines()
-            self.assertEqual("2.0.0rc5", marker_lines[1])
+            self.assertEqual("2.0.0rc6", marker_lines[1])
             self.assertIn("Could not remove rollback backup", result.stderr)
 
     @unittest.skipUnless(os.name != "nt", "POSIX installer test")
