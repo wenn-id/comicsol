@@ -232,9 +232,10 @@ scripted attempt and would report the same trivial strategy mix for every revisi
 `--consistency-scorecard` folds a scored scorecard:
 
 ```sh
+version="$(python -c 'from comic_sol_product import __version__; print(__version__)')"
 python scripts/benchmark_summary.py \
   --results build/benchmark/results \
-  --consistency-baseline benchmarks/consistency/baseline-v2.0.0rc4.json \
+  --consistency-baseline "benchmarks/consistency/baseline-v${version}.json" \
   --consistency-scorecard /tmp/consistency-scorecard.json \
   --output build/benchmark/summary.json
 ```

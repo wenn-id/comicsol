@@ -49,9 +49,9 @@ carries it.
   the installer examples all agree on it. The prepared-but-failed `v2.0.0rc5` tag is neither
   moved nor reused: its Native Release runs failed with no release attached, `main` advanced
   two release fixes past its target, and moving an immutable release tag would break the
-  guarantee that a tag names the exact reviewed bytes. `v2.0.0rc6` is therefore annotated
-  fresh at the reviewed `main` commit. No `2.2.0` distribution exists or is planned by this
-  candidate.
+  guarantee that a tag names the exact reviewed bytes. `v2.0.0rc6` will therefore be annotated
+  fresh at the reviewed `main` commit after this PR lands. No `2.2.0` distribution exists or is
+  planned by this candidate.
 
 ## 2.0.0rc6 — unreleased
 

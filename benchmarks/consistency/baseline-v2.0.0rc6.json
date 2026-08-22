@@ -1,0 +1,148 @@
+{
+  "benchmark": "character-consistency",
+  "definition_sha256": "729607cc8ff0bb14589a73bb283badb86a391659abe97ee8e339e43446cc5ad8",
+  "engine_version": "2.0.0rc6",
+  "evidence_mode": "structural",
+  "generated_by": "python -m tests.consistency_benchmark baseline",
+  "kind": "character-consistency-baseline",
+  "project_validation": {
+    "result": "pass",
+    "stage": "storyboard"
+  },
+  "schema_version": "1.0",
+  "structural": {
+    "backgrounds": [
+      "engine-shed",
+      "harbor-noon",
+      "rain-night-market",
+      "reference-studio"
+    ],
+    "character_count": 2,
+    "characters": [
+      "bayu",
+      "rani"
+    ],
+    "dimensions": [
+      "face",
+      "hair",
+      "age",
+      "clothing",
+      "accessories",
+      "proportions",
+      "signature-traits"
+    ],
+    "expressions": [
+      "alarmed",
+      "braced",
+      "delighted",
+      "exhausted",
+      "focused",
+      "furious",
+      "neutral",
+      "relieved",
+      "wry"
+    ],
+    "immutable_traits": {
+      "bayu": {
+        "accessories": "yellow ear-defenders around the neck",
+        "age": "teen, seventeen",
+        "clothing": "faded blue mechanic coveralls tied at the waist",
+        "face": "long face with a broad flat nose and a chipped front tooth",
+        "hair": "tight black curls cropped at the temples",
+        "proportions": "tall narrow build with long forearms",
+        "signature-traits": "chipped front tooth; tight black curls cropped at the temples; faded blue coveralls tied at the waist; yellow ear-defenders around the neck"
+      },
+      "rani": {
+        "accessories": "brass compass on a bootlace",
+        "age": "adult, late twenties",
+        "clothing": "olive field jacket with a buttoned left chest pocket",
+        "face": "round face with a crescent scar under the right eye",
+        "hair": "black hair in a blunt chin-length bob with a straight fringe",
+        "proportions": "compact square-shouldered build with a slight forward lean",
+        "signature-traits": "crescent scar under the right eye; blunt chin-length bob; olive field jacket; brass compass on a bootlace"
+      }
+    },
+    "invariant_pins": {
+      "expected": 60,
+      "recorded": 60
+    },
+    "layouts": [
+      "four-grid",
+      "four-grid",
+      "four-grid"
+    ],
+    "lighting_conditions": [
+      "cold-rim-and-red-glow",
+      "even-neutral-daylight",
+      "hard-noon-sun",
+      "single-lamp-low-light"
+    ],
+    "page_count": 3,
+    "panel_count": 12,
+    "panels": [
+      "p01-01",
+      "p01-02",
+      "p01-03",
+      "p01-04",
+      "p02-01",
+      "p02-02",
+      "p02-03",
+      "p02-04",
+      "p03-01",
+      "p03-02",
+      "p03-03",
+      "p03-04"
+    ],
+    "text_item_count": 0,
+    "trait_restatements": {
+      "expected": 105,
+      "recorded": 105
+    },
+    "views": {
+      "close-up": 3,
+      "front": 3,
+      "full-body": 2,
+      "profile": 2,
+      "three-quarter": 2
+    },
+    "views_per_character": {
+      "bayu": [
+        "close-up",
+        "front",
+        "full-body",
+        "profile",
+        "three-quarter"
+      ],
+      "rani": [
+        "close-up",
+        "front",
+        "full-body",
+        "profile",
+        "three-quarter"
+      ]
+    }
+  },
+  "visual": {
+    "how_to_score": "python -m tests.consistency_benchmark materialize OUTPUT_ROOT, render every prompts/panels/*.txt with one provider, score the emitted scorecard, then run python -m tests.consistency_benchmark summarize SCORECARD_PATH",
+    "limitations": [
+      "no image provider runs in CI, so this baseline renders no panel and scores no dimension",
+      "a deterministic run proves definition mechanics only; it never claims visual quality",
+      "one reviewer with one provider produces one opinion, not a release-wide claim"
+    ],
+    "reason": "identity drift is a reviewer judgement, so scored dimensions stay out of deterministic CI",
+    "scale": {
+      "labels": {
+        "0": "a different character",
+        "1": "major drift in this dimension",
+        "2": "recognizable but wrong in this dimension",
+        "3": "minor drift a reader would forgive",
+        "4": "indistinguishable from the canonical trait"
+      },
+      "max": 4,
+      "min": 0
+    },
+    "scored": false,
+    "scored_dimensions": 0,
+    "total_dimensions": 105
+  }
+}

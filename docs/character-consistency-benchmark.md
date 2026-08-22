@@ -114,8 +114,8 @@ scoring the same definition again, never by editing the definition.
 
 ## Baseline
 
-`benchmarks/consistency/baseline-v2.0.0rc4.json` is the baseline for the current
-release. It records the structural plane as measured numbers — 12 panels, 3 pages, 2
+`benchmarks/consistency/baseline-v2.0.0rc6.json` is the baseline for the current
+engine candidate. It records the structural plane as measured numbers — 12 panels, 3 pages, 2
 characters, 4 backgrounds, 4 lighting conditions, 9 expressions, 60 invariant pins, 105
 trait restatements, `storyboard` validation `pass` — and records the visual plane as
 explicitly **unscored**, with its limitations named: no image provider runs in CI, so no
