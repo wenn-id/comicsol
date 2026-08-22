@@ -151,15 +151,18 @@ def build_evidence(
         or not isinstance(deployment.get("html_audit_url"), str)
     ):
         raise RuntimeError("deployment evidence belongs to another candidate or environment")
+    if not required_reviewers:
+        raise RuntimeError("required reviewer identity is invalid")
     if any(not isinstance(reviewer, dict) for reviewer in required_reviewers):
         raise RuntimeError("required reviewer identity is invalid")
 
     release_url = f"https://github.com/{repository}/releases/tag/{quote(tag, safe='')}"
+    download_base_url = f"https://github.com/{repository}/releases/download/{quote(tag, safe='')}"
     payload_records = [
         {
             "name": item["name"],
             "sha256": item["sha256"],
-            "url": f"{release_url}/download/{quote(item['name'], safe='')}",
+            "url": f"{download_base_url}/{quote(item['name'], safe='')}",
         }
         for item in sorted(payloads, key=lambda item: item["name"])
     ]
@@ -190,8 +193,8 @@ def build_evidence(
             "checksum_manifest": {
                 "name": manifest.get("name"),
                 "sha256": manifest["sha256"],
-                "url": f"{release_url}/download/SHA256SUMS",
-                "signature_url": f"{release_url}/download/SHA256SUMS.sigstore.json",
+                "url": f"{download_base_url}/SHA256SUMS",
+                "signature_url": f"{download_base_url}/SHA256SUMS.sigstore.json",
             },
             "payloads": payload_records,
             "sboms": [item for item in payload_records if item["name"].endswith(".sbom.json")],
