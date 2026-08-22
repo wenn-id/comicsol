@@ -7,6 +7,7 @@ import errno
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 import threading
@@ -385,7 +386,10 @@ def _read_bounded_stream(stream: BinaryIO, *, max_bytes: int) -> bytes:
     gigabyte file is refused without loading it, and the read itself is capped
     one byte above the limit to catch a file that grows between the two.
     """
-    size = os.fstat(stream.fileno()).st_size
+    st = os.fstat(stream.fileno())
+    if not stat.S_ISREG(st.st_mode):
+        raise InputResourceLimitError("the regular file requirement")
+    size = st.st_size
     if size > max_bytes:
         raise InputResourceLimitError(
             f"the file size limit of {max_bytes} bytes"
@@ -874,11 +878,30 @@ class ProjectTransaction:
                     )
                 except (json.JSONDecodeError, OSError, ValueError):
                     continue
+                if not isinstance(journal, dict):
+                    continue
                 phase = journal.get("phase")
                 targets = journal.get("targets")
                 if not isinstance(targets, list):
                     continue
                 if phase in ("staging", "publishing", "rolled_back"):
+                    valid = True
+                    for entry in targets:
+                        if not isinstance(entry, dict):
+                            valid = False
+                            break
+                        if not isinstance(entry.get("path"), str):
+                            valid = False
+                            break
+                        operation = entry.get("operation")
+                        if operation not in {"write", "append"}:
+                            valid = False
+                            break
+                        if operation == "write" and "backup" not in entry:
+                            valid = False
+                            break
+                    if not valid:
+                        continue
                     for entry in reversed(targets):
                         if entry.get("operation") == "append":
                             ProjectTransaction(project_dir, "recovery")._rollback_append(entry)

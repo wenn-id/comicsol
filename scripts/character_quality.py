@@ -17,7 +17,7 @@ if __package__ in {None, ""}:
 
 from .character_identity import IDENTITY_PACK_PATH, STORYBOARD_PATH, validate_identity_pack
 from .core_primitives import PANEL_ID_PATTERN, canonical_artifact_bytes
-from .input_limits import MAX_JSON_BYTES, loads_bounded_json
+from .input_limits import InputResourceLimitError, MAX_JSON_BYTES, loads_bounded_json
 from .project_io import ProjectTransaction, read_contained_bytes
 from .quality_records import GENERIC_EVIDENCE
 from .reference_strategy import REFERENCE_PLAN_PATH, project_reference_plan
@@ -692,6 +692,8 @@ def _read_document(project_dir: Path, relative: str) -> Mapping[str, Any]:
             read_contained_bytes(project_dir, relative, max_bytes=MAX_JSON_BYTES),
             source=relative,
         )
+    except InputResourceLimitError:
+        raise
     except (OSError, UnicodeDecodeError, ValueError) as error:
         raise CharacterQualityError(
             f"{relative} cannot be read as JSON: {type(error).__name__}"

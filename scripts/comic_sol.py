@@ -34,6 +34,7 @@ from .project_io import (
     contained_project_path,
     durable_atomic_write,
     open_path_nofollow,
+    read_bytes_nofollow,
     read_contained_bytes,
     read_json_nofollow,
     validate_source_bytes,
@@ -1563,21 +1564,18 @@ def _verify_raster(path: Path) -> tuple[int, int]:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with open_path_nofollow(path) as stream:
-                if os.fstat(stream.fileno()).st_size > MAX_ENCODED_RASTER_BYTES:
-                    raise InputResourceLimitError(
-                        f"the encoded raster size limit of "
-                        f"{MAX_ENCODED_RASTER_BYTES} bytes"
-                    )
-                with Image.open(stream) as image:
-                    if image.format not in {"PNG", "JPEG", "WEBP"}:
-                        raise ValueError("attempt must be a readable raster")
-                    if image.width * image.height > MAX_DECODED_PIXELS:
-                        raise ValueError("attempt exceeds the decoded pixel limit")
-                    image.load()
-                    if image.width < 512 or image.height < 512:
-                        raise ValueError("attempt must be a readable raster at least 512px")
-                    return image.width, image.height
+            payload = read_bytes_nofollow(path, max_bytes=MAX_ENCODED_RASTER_BYTES)
+            with Image.open(io.BytesIO(payload)) as image:
+                if image.format not in {"PNG", "JPEG", "WEBP"}:
+                    raise ValueError("attempt must be a readable raster")
+                if image.width * image.height > MAX_DECODED_PIXELS:
+                    raise ValueError("attempt exceeds the decoded pixel limit")
+                image.load()
+                if image.width < 512 or image.height < 512:
+                    raise ValueError("attempt must be a readable raster at least 512px")
+                return image.width, image.height
+    except InputResourceLimitError:
+        raise
     except (OSError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
         raise ValueError("attempt must be a readable raster") from error
 

@@ -1830,9 +1830,9 @@ def validate_pdf_verification(
         return [ValidationIssue(relative, "pdf-verification-stale", "verification path escapes the project boundary")]
     stale_reasons: list[str] = []
     try:
-        payload = path.read_bytes()
-        record = json.loads(payload.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        payload = read_bytes_nofollow(path, max_bytes=MAX_JSON_BYTES)
+        record = loads_bounded_json(payload, source="pdf-verification.json")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
         record = None
         stale_reasons.append("verification record is missing or unreadable")
 

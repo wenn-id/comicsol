@@ -17,7 +17,7 @@ from typing import Mapping, Sequence
 from PIL import Image
 
 from .comic_sol import atomic_write_json, read_json
-from .input_limits import loads_bounded_json
+from .input_limits import MAX_JSON_BYTES, loads_bounded_json
 from .core_primitives import (
     BALLOON_COVERAGE_WARNING_RATIO,
     TAIL_ATTACHMENT_TOLERANCE,
@@ -87,14 +87,17 @@ class PageQualityIssue:
     message: str
 
 
-def _read_and_digest(path: Path) -> tuple[bytes, str]:
+def _read_and_digest(path: Path, *, max_bytes: int | None = None) -> tuple[bytes, str]:
     """Read one artifact and digest exactly the bytes that were read.
 
     Every digest this module derives comes from here, so the cost of one page
     validation is countable: a test can assert how many times each artifact was
     read instead of inspecting the call sites.
     """
-    payload = read_bytes_nofollow(Path(path))
+    if max_bytes is None:
+        payload = read_bytes_nofollow(Path(path))
+    else:
+        payload = read_bytes_nofollow(Path(path), max_bytes=max_bytes)
     return payload, hashlib.sha256(payload).hexdigest()
 
 
@@ -127,12 +130,12 @@ class _ArtifactSnapshots:
     def __init__(self) -> None:
         self._snapshots: dict[Path, tuple[bytes, str]] = {}
 
-    def snapshot(self, path: Path) -> tuple[bytes, str]:
+    def snapshot(self, path: Path, *, max_bytes: int | None = None) -> tuple[bytes, str]:
         """Return one artifact's bytes with the digest of exactly those bytes."""
         key = Path(path)
         snapshot = self._snapshots.get(key)
         if snapshot is None:
-            snapshot = _read_and_digest(key)
+            snapshot = _read_and_digest(key, max_bytes=max_bytes)
             self._snapshots[key] = snapshot
         return snapshot
 
@@ -221,7 +224,7 @@ def _json_snapshot(
     The parse is repeated for each call rather than cached with the bytes, so no
     two callers share a mutable value.
     """
-    payload, digest = artifacts.snapshot(Path(path))
+    payload, digest = artifacts.snapshot(Path(path), max_bytes=MAX_JSON_BYTES)
     value = loads_bounded_json(payload, source=Path(path).name)
     if not isinstance(value, dict):
         raise ValueError(f"expected a JSON object: {path}")
