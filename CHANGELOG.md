@@ -27,7 +27,7 @@ carries it.
 
   This also corrects a mislabelling that predates the change: `2.0.0rc1` through `2.0.0rc4`
   published their macOS archives as `-macos-x86_64.zip` while building them on an arm64
-  runner. All 102 Mach-O binaries inside `comic-sol-2.0.0rc4-macos-x86_64.zip` are arm64, and
+  runner. All 106 Mach-O binaries inside `comic-sol-2.0.0rc4-macos-x86_64.zip` are arm64, and
   its metadata, SBOM, and checksum entries all record `x86_64`. Anyone who took the archive at
   its word on an Intel Mac received a binary that cannot run natively. Apple silicon is now
   the only macOS release target, and the name says so. `docs/install.md` records the

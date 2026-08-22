@@ -218,6 +218,13 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("comic_sol_product.cli", entrypoint)
 
     def test_container_and_release_workflow_are_hardened(self):
+        """The container image and release workflow keep their supply-chain gates.
+
+        Covers the non-root container contract, the tag-to-version verification in
+        prepare, hash-pinned dependency installs, Sigstore signing and provenance
+        attestation, and the rule that every `uses:` reference is pinned to a full
+        commit SHA rather than a floating tag.
+        """
         root = Path(__file__).resolve().parents[1]
         dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
         compose = (root / "compose.yaml").read_text(encoding="utf-8")
