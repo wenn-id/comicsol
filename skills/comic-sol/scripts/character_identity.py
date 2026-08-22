@@ -37,7 +37,7 @@ if __package__ in {None, ""}:
     __package__ = "scripts"
 
 from .core_primitives import canonical_artifact_bytes, canonical_json_bytes
-from .project_io import ProjectTransaction, contained_project_path, open_path_nofollow
+from .project_io import ProjectTransaction, contained_project_path, read_contained_json
 
 
 IDENTITY_PACK_SCHEMA_VERSION = "1.0"
@@ -106,10 +106,8 @@ class IdentityContext:
 
 def _read_json(project_dir: Path, relative: str) -> Any:
     """Read one contained project JSON document without following symlinks."""
-    path = contained_project_path(project_dir, relative)
     try:
-        with open_path_nofollow(path) as stream:
-            return json.load(stream)
+        return read_contained_json(Path(project_dir), relative)
     except json.JSONDecodeError as error:
         raise IdentityPackError(f"{relative} is not valid JSON: {error}") from error
 

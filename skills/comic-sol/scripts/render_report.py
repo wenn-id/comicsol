@@ -24,8 +24,14 @@ from .comic_sol import (
     read_json,
     sha256_file,
 )
+from .input_limits import MAX_EVENT_LOG_BYTES, loads_bounded_json
 from .page_quality import CURRENT_PAGE_QA_SCHEMA_VERSION
-from .project_io import ProjectLock, contained_project_path, open_path_nofollow
+from .project_io import (
+    ProjectLock,
+    contained_project_path,
+    open_path_nofollow,
+    read_bytes_nofollow,
+)
 from .quality_records import PANEL_CHECK_IDS
 from .schema import read_project_manifest
 
@@ -537,10 +543,14 @@ def _resume(project_dir: Path) -> str:
     reused: set[str] = set()
     regenerated: set[str] = set()
     if event_path.is_file():
-        for line in event_path.read_text("utf-8").splitlines():
+        try:
+            payload = read_bytes_nofollow(event_path, max_bytes=MAX_EVENT_LOG_BYTES)
+        except (OSError, ValueError):
+            payload = b""
+        for line in payload.decode("utf-8", errors="replace").splitlines():
             try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
+                event = loads_bounded_json(line, source="events.jsonl")
+            except (json.JSONDecodeError, ValueError):
                 continue
             if not isinstance(event, dict) or not isinstance(event.get("details"), dict):
                 continue

@@ -16,10 +16,20 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Iterator
 
 from .core_primitives import canonical_json_bytes
+from .input_limits import (
+    MAX_JSON_BYTES,
+    InputResourceLimitError,
+    loads_bounded_json,
+)
+from .raster_limits import MAX_ENCODED_RASTER_BYTES
 
 
 MAX_SOURCE_BYTES = 200 * 1024
 SOURCE_SUFFIXES = {".txt", ".md"}
+# No-follow read cap for any single contained file. JSON readers pass the
+# smaller JSON limit explicitly; rasters and other binary artifacts are the
+# only inputs that may approach this bound.
+MAX_READ_BYTES = MAX_ENCODED_RASTER_BYTES
 _DRIVE = re.compile(r"^[A-Za-z]:")
 _LOCK_RETRY_SECONDS = 0.05
 PROJECT_OPERATION_LOCK_TIMEOUT = 300.0
@@ -368,15 +378,64 @@ def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -
     return os.fdopen(descriptor, _stream_mode(flags))
 
 
-def read_contained_bytes(project_dir: Path, relative: str | Path) -> bytes:
-    """Read bytes from a safe relative project path."""
+def _read_bounded_stream(stream: BinaryIO, *, max_bytes: int) -> bytes:
+    """Read one open stream while enforcing a documented byte ceiling.
+
+    The size is checked through the descriptor before reading so a multi-
+    gigabyte file is refused without loading it, and the read itself is capped
+    one byte above the limit to catch a file that grows between the two.
+    """
+    size = os.fstat(stream.fileno()).st_size
+    if size > max_bytes:
+        raise InputResourceLimitError(
+            f"the file size limit of {max_bytes} bytes"
+        )
+    payload = stream.read(max_bytes + 1)
+    if len(payload) > max_bytes:
+        raise InputResourceLimitError(
+            f"the file size limit of {max_bytes} bytes"
+        )
+    return payload
+
+
+def read_bytes_nofollow(
+    path: Path, *, max_bytes: int = MAX_READ_BYTES
+) -> bytes:
+    """Read bounded bytes from an absolute path without following symlinks."""
+    with open_path_nofollow(Path(path)) as stream:
+        return _read_bounded_stream(stream, max_bytes=max_bytes)
+
+
+def read_json_nofollow(path: Path, *, require_object: bool = True) -> object:
+    """Read and parse one bounded no-follow JSON document."""
+    path = Path(path)
+    payload = read_bytes_nofollow(path, max_bytes=MAX_JSON_BYTES)
+    value = loads_bounded_json(payload, source=path.name)
+    if require_object and not isinstance(value, dict):
+        raise ValueError(f"expected a JSON object: {path}")
+    return value
+
+
+def read_contained_bytes(
+    project_dir: Path,
+    relative: str | Path,
+    *,
+    max_bytes: int = MAX_READ_BYTES,
+) -> bytes:
+    """Read bounded bytes from a safe relative project path."""
     try:
         with open_contained(project_dir, relative) as stream:
-            return stream.read()
+            return _read_bounded_stream(stream, max_bytes=max_bytes)
     except OSError as error:
         if error.errno in (errno.ELOOP, errno.EMLINK):
             raise ValueError("project path must not contain symlinks") from error
         raise
+
+
+def read_contained_json(project_dir: Path, relative: str | Path) -> object:
+    """Read and parse one bounded contained JSON document."""
+    payload = read_contained_bytes(project_dir, relative, max_bytes=MAX_JSON_BYTES)
+    return loads_bounded_json(payload, source=os.fspath(relative).replace("\\", "/"))
 
 
 def remove_contained(project_dir: Path, relative: str | Path) -> None:
@@ -809,8 +868,11 @@ class ProjectTransaction:
                 if not journal_path.is_file():
                     continue
                 try:
-                    journal = json.loads(journal_path.read_text("utf-8"))
-                except (json.JSONDecodeError, OSError):
+                    journal = loads_bounded_json(
+                        read_bytes_nofollow(journal_path, max_bytes=MAX_JSON_BYTES),
+                        source="journal.json",
+                    )
+                except (json.JSONDecodeError, OSError, ValueError):
                     continue
                 phase = journal.get("phase")
                 targets = journal.get("targets")

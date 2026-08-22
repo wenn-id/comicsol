@@ -58,6 +58,7 @@ from .core_primitives import (
     PANEL_ID_PATTERN,
     canonical_artifact_bytes,
 )
+from .input_limits import MAX_JSON_BYTES, loads_bounded_json
 from .project_io import (
     ProjectTransaction,
     contained_project_path,
@@ -627,8 +628,13 @@ def accepted_content_is_stale(project_dir: Path, record: Mapping[str, Any]) -> b
 def _read_document(project_dir: Path, relative: str) -> Mapping[str, Any]:
     """Read one contained JSON object without following symlinks, or fail closed."""
     try:
-        value = json.loads(read_contained_bytes(Path(project_dir), relative))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        value = loads_bounded_json(
+            read_contained_bytes(
+                Path(project_dir), relative, max_bytes=MAX_JSON_BYTES
+            ),
+            source=relative,
+        )
+    except (OSError, UnicodeDecodeError, ValueError) as error:
         raise RepairStrategyError(
             f"{relative} cannot be read as JSON: {type(error).__name__}"
         ) from error

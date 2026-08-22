@@ -28,6 +28,18 @@ The optional MCP server uses local `stdio` and has no authentication. Any local 
 
 Comic Sol does not bundle image-provider credentials or send data by itself. When an agent invokes an external image capability, that provider's privacy and retention policy applies.
 
+### Resource limits on untrusted project input
+
+Everything a caller can place inside the project root is untrusted, so the engine bounds every project-relative input before reading or decoding it. The central limits live in `scripts/input_limits.py` and `scripts/raster_limits.py`, and every violation fails with the stable structured error `CS-SEC-002`:
+
+- A project JSON document is at most 2 MiB of UTF-8, at most 64 levels of nesting, at most 4096 entries per array or object, and at most 65,536 characters per string. The append-only `logs/events.jsonl` log is capped at 8 MiB as a whole.
+- A raster is checked against a 128 MiB encoded-byte ceiling before decode, in addition to the existing decoded-pixel ceiling (`MAX_DECODED_PIXELS`).
+- All project reads go through the no-follow bounded readers in `scripts/project_io.py` (`read_contained_bytes`, `read_contained_json`, `read_bytes_nofollow`, `read_json_nofollow`); file size is checked before any read or decode.
+
+### Narrative field limits and hygiene
+
+Titles (200 characters), transition warnings (500 characters), and panel override reasons (1000 characters) are persisted operator notes, not story content. They are validated on every CLI and MCP write path and re-checked on validation: over-length or credential-shaped values are rejected, and validation flags them when found in persisted artifacts. Narrative fields must never contain source text, PII, or credentials; obvious secrets are rejected outright rather than redacted, because a redacted note would still claim to be an accepted override.
+
 ## Repository hardening
 
 The repository uses GitHub vulnerability alerts, Dependabot security updates,

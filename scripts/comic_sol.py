@@ -35,9 +35,21 @@ from .project_io import (
     durable_atomic_write,
     open_path_nofollow,
     read_contained_bytes,
+    read_json_nofollow,
     validate_source_bytes,
 )
-from .raster_limits import MAX_DECODED_PIXELS
+from .input_limits import (
+    MAX_OVERRIDE_REASON_CHARS,
+    MAX_TITLE_CHARS,
+    MAX_WARNING_CHARS,
+    OVERRIDE_REASON_LIMIT_MESSAGE,
+    REQUEST_TITLE_LIMIT_MESSAGE,
+    TITLE_LIMIT_MESSAGE,
+    WARNING_LIMIT_MESSAGE,
+    InputResourceLimitError,
+    validate_narrative,
+)
+from .raster_limits import MAX_DECODED_PIXELS, MAX_ENCODED_RASTER_BYTES
 from .repair_strategy import REPAIR_STRATEGIES, recorded_panel_plan
 from .schema import read_project_manifest
 from .sfx_verification import (
@@ -178,12 +190,11 @@ def _utc_now() -> str:
 
 
 def read_json(path: Path) -> dict[str, object]:
-    """Read a UTF-8 JSON object without following path symlinks."""
-    with open_path_nofollow(Path(path)) as stream:
-        value = json.load(stream)
+    """Read a bounded UTF-8 JSON object without following path symlinks."""
+    value = read_json_nofollow(Path(path))
     if not isinstance(value, dict):
         raise ValueError(f"expected a JSON object: {path}")
-    return value
+    return cast(dict[str, object], value)
 
 
 def atomic_write_bytes(path: Path, payload: bytes) -> None:
@@ -270,8 +281,10 @@ def validate_request_settings(request: dict[str, object]) -> dict[str, object]:
         raise ValueError("request mode must be one of short_prompt, pasted_story, source_file, or resume")
     if not isinstance(language, str) or not language.strip() or len(language) > 35:
         raise ValueError("request language must be a non-empty language tag")
-    if title is not None and (not isinstance(title, str) or not title.strip() or len(title) > 200):
-        raise ValueError("request title must be a non-empty string of at most 200 characters")
+    if title is not None:
+        validate_narrative(
+            title, message=REQUEST_TITLE_LIMIT_MESSAGE, max_chars=MAX_TITLE_CHARS
+        )
     return {key: request[key] for key in sorted(request)}
 
 
@@ -308,8 +321,9 @@ def init_project(
         raise TypeError("source must be bytes")
     if not isinstance(request, dict):
         raise TypeError("request must be a JSON object")
-    if not title.strip():
-        raise ValueError("title must not be empty")
+    validate_narrative(
+        title, message=TITLE_LIMIT_MESSAGE, max_chars=MAX_TITLE_CHARS
+    )
     validate_source_bytes(source)
     validated_request = validate_request_settings(request)
 
@@ -429,6 +443,10 @@ def transition(
     warning: str | None = None,
 ) -> dict[str, object]:
     """Move a project by one legal state, publishing the manifest last."""
+    if warning is not None:
+        validate_narrative(
+            warning, message=WARNING_LIMIT_MESSAGE, max_chars=MAX_WARNING_CHARS
+        )
     if target == "BLOCKED":
         block_warning = warning or "project blocked"
         reason = re.sub(r"[^a-z0-9]+", "-", block_warning.lower()).strip("-")
@@ -1509,6 +1527,10 @@ def _verify_raster_payload(
     }
     if not isinstance(payload, bytes) or not payload:
         raise ValueError("attempt must be a readable raster")
+    if len(payload) > MAX_ENCODED_RASTER_BYTES:
+        raise InputResourceLimitError(
+            f"the encoded raster size limit of {MAX_ENCODED_RASTER_BYTES} bytes"
+        )
     try:
         expected_format, extension = formats[media_type]
     except (KeyError, TypeError) as error:
@@ -1541,15 +1563,21 @@ def _verify_raster(path: Path) -> tuple[int, int]:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with open_path_nofollow(path) as stream, Image.open(stream) as image:
-                if image.format not in {"PNG", "JPEG", "WEBP"}:
-                    raise ValueError("attempt must be a readable raster")
-                if image.width * image.height > MAX_DECODED_PIXELS:
-                    raise ValueError("attempt exceeds the decoded pixel limit")
-                image.load()
-                if image.width < 512 or image.height < 512:
-                    raise ValueError("attempt must be a readable raster at least 512px")
-                return image.width, image.height
+            with open_path_nofollow(path) as stream:
+                if os.fstat(stream.fileno()).st_size > MAX_ENCODED_RASTER_BYTES:
+                    raise InputResourceLimitError(
+                        f"the encoded raster size limit of "
+                        f"{MAX_ENCODED_RASTER_BYTES} bytes"
+                    )
+                with Image.open(stream) as image:
+                    if image.format not in {"PNG", "JPEG", "WEBP"}:
+                        raise ValueError("attempt must be a readable raster")
+                    if image.width * image.height > MAX_DECODED_PIXELS:
+                        raise ValueError("attempt exceeds the decoded pixel limit")
+                    image.load()
+                    if image.width < 512 or image.height < 512:
+                        raise ValueError("attempt must be a readable raster at least 512px")
+                    return image.width, image.height
     except (OSError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
         raise ValueError("attempt must be a readable raster") from error
 
@@ -1683,8 +1711,11 @@ def record_override(project_dir: Path, panel_id: str, reason: str) -> None:
     """Downgrade an overridable visual QA failure to a recorded warning."""
     if PANEL_ID_PATTERN.fullmatch(panel_id) is None:
         raise ValueError("invalid panel ID")
-    if not isinstance(reason, str) or not reason.strip():
-        raise ValueError("override reason must not be empty")
+    validate_narrative(
+        reason,
+        message=OVERRIDE_REASON_LIMIT_MESSAGE,
+        max_chars=MAX_OVERRIDE_REASON_CHARS,
+    )
     project_dir = Path(project_dir)
     record_path = project_dir / f"qa/panels/{panel_id}.json"
     with ProjectTransaction(project_dir, "override") as tx:

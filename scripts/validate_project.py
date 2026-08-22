@@ -28,7 +28,15 @@ from .character_quality import (
 )
 from .core_primitives import PANEL_ID_PATTERN as CORE_PANEL_ID_PATTERN
 from .core_primitives import dialogue_attribution_conflicts, is_normalized_point
-from .project_io import contained_project_path, open_path_nofollow
+from .project_io import contained_project_path, open_path_nofollow, read_bytes_nofollow
+from .input_limits import (
+    MAX_JSON_BYTES,
+    MAX_OVERRIDE_REASON_CHARS,
+    MAX_TITLE_CHARS,
+    MAX_WARNING_CHARS,
+    looks_like_secret,
+    loads_bounded_json,
+)
 from .raster_limits import MAX_DECODED_PIXELS
 from .repair_strategy import (
     REPAIR_PLAN_PATH,
@@ -149,6 +157,32 @@ def _nonempty_string(
     return True
 
 
+def _narrative_field(
+    value: object,
+    issues: list[ValidationIssue],
+    path: str,
+    field: str,
+    *,
+    max_chars: int,
+) -> bool:
+    """Validate one persisted narrative field for length and secret hygiene."""
+    if not _nonempty_string(value, issues, path, field):
+        return False
+    valid = True
+    if len(value) > max_chars:  # type: ignore[arg-type]
+        _add(issues, path, field, f"must be at most {max_chars} characters")
+        valid = False
+    if looks_like_secret(value):  # type: ignore[arg-type]
+        _add(
+            issues,
+            path,
+            field,
+            "must not contain secrets or credentials",
+        )
+        valid = False
+    return valid
+
+
 def _identifier(value: object, issues: list[ValidationIssue], path: str, field: str) -> bool:
     """Validate a Comic Sol identifier field."""
     if not isinstance(value, str) or ID_PATTERN.fullmatch(value) is None:
@@ -239,6 +273,7 @@ def _string_list(
     field: str,
     minimum: int = 0,
     maximum: int | None = None,
+    entry_max_chars: int | None = None,
 ) -> list[str] | None:
     """Validate a list of non-empty string values."""
     if not isinstance(value, list):
@@ -248,7 +283,13 @@ def _string_list(
         upper = "unbounded" if maximum is None else str(maximum)
         _add(issues, path, field, f"must contain {minimum} to {upper} items")
     for index, item in enumerate(value):
-        _nonempty_string(item, issues, path, f"{field}[{index}]")
+        entry = f"{field}[{index}]"
+        if not _nonempty_string(item, issues, path, entry):
+            continue
+        if entry_max_chars is not None and len(item) > entry_max_chars:  # type: ignore[arg-type]
+            _add(issues, path, entry, f"must be at most {entry_max_chars} characters")
+        if looks_like_secret(item):  # type: ignore[arg-type]
+            _add(issues, path, entry, "must not contain secrets or credentials")
     return [item for item in value if isinstance(item, str)]
 
 
@@ -281,7 +322,9 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
             ),
         )
     _identifier(root.get("project_id"), issues, path, "project_id")
-    _nonempty_string(root.get("title"), issues, path, "title")
+    _narrative_field(
+        root.get("title"), issues, path, "title", max_chars=MAX_TITLE_CHARS
+    )
     _timestamp(root.get("created_at"), issues, path, "created_at")
     _timestamp(root.get("updated_at"), issues, path, "updated_at")
     if root.get("status") not in ALL_STATUSES:
@@ -367,7 +410,13 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
                 _add(issues, path, f"panels[{index}]", "must match pNN-NN")
         if len(set(panels)) != len(panels):
             _add(issues, path, "panels", "panel IDs must be unique")
-    warnings = _string_list(root.get("warnings"), issues, path, "warnings")
+    warnings = _string_list(
+        root.get("warnings"),
+        issues,
+        path,
+        "warnings",
+        entry_max_chars=MAX_WARNING_CHARS,
+    )
     if root.get("status") == "COMPLETE" and warnings:
         _add(issues, path, "status", "must be COMPLETE_WITH_WARNINGS while warnings remain")
     if root.get("status") == "COMPLETE_WITH_WARNINGS" and warnings == []:
@@ -864,7 +913,11 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
     if has_warning and decision not in {"accept-warning", "regenerate"}:
         _add(issues, path, "decision", "warnings require accept-warning or regenerate")
     unresolved = _string_list(
-        root.get("unresolved_warnings"), issues, path, "unresolved_warnings"
+        root.get("unresolved_warnings"),
+        issues,
+        path,
+        "unresolved_warnings",
+        entry_max_chars=MAX_WARNING_CHARS,
     )
     if decision == "accept-warning" and not unresolved:
         _add(issues, path, "unresolved_warnings", "accepted warnings must be recorded")
@@ -872,7 +925,13 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
         _add(issues, path, "unresolved_warnings", "accepted record cannot have warnings")
     override_reason = root.get("override_reason")
     if "override_reason" in root:
-        _nonempty_string(override_reason, issues, path, "override_reason")
+        _narrative_field(
+            override_reason,
+            issues,
+            path,
+            "override_reason",
+            max_chars=MAX_OVERRIDE_REASON_CHARS,
+        )
         if decision != "accept-warning":
             _add(issues, path, "override_reason", "is allowed only for accept-warning")
         has_failed_warning = isinstance(checks, list) and any(
@@ -996,8 +1055,20 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
         _add(issues, path, "failure_category", "must be a sanitized category string or null")
     override_reason = root.get("override_reason")
     if "override_reason" in root:
-        _nonempty_string(override_reason, issues, path, "override_reason")
-    unresolved = _string_list(root.get("unresolved_warnings"), issues, path, "unresolved_warnings")
+        _narrative_field(
+            override_reason,
+            issues,
+            path,
+            "override_reason",
+            max_chars=MAX_OVERRIDE_REASON_CHARS,
+        )
+    unresolved = _string_list(
+        root.get("unresolved_warnings"),
+        issues,
+        path,
+        "unresolved_warnings",
+        entry_max_chars=MAX_WARNING_CHARS,
+    )
     if decision == "accept_with_warnings" and (not has_warning or not unresolved):
         _add(issues, path, "unresolved_warnings", "accepted warnings require check evidence and user-visible impact")
     if "override_reason" in root:
@@ -1058,8 +1129,8 @@ def _read_canonical_json(
         return None
     try:
         path = contained_project_path(project_dir, relative_path, must_exist=True)
-        raw = path.read_bytes()
-        data = json.loads(raw.decode("utf-8"))
+        raw = read_bytes_nofollow(path, max_bytes=MAX_JSON_BYTES)
+        data = loads_bounded_json(raw, source=relative_path)
         if not isinstance(data, dict):
             raise ValueError("expected a JSON object")
     except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
@@ -1164,8 +1235,11 @@ def validate_panel_provenance(
     normalization_path = resolved.get("normalization")
     if normalization_path is not None:
         try:
-            normalization = json.loads(normalization_path.read_text("utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
+            normalization = loads_bounded_json(
+                read_bytes_nofollow(normalization_path, max_bytes=MAX_JSON_BYTES),
+                source="normalization record",
+            )
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
             stale("normalization_path", "normalization record is unreadable")
         else:
             if not isinstance(normalization, dict):
@@ -1261,7 +1335,10 @@ def sfx_advisories(project_dir: Path) -> list[str]:
         path = contained_project_path(
             Path(project_dir), "plan/storyboard.json", must_exist=True
         )
-        storyboard = json.loads(path.read_text("utf-8"))
+        storyboard = loads_bounded_json(
+            read_bytes_nofollow(path, max_bytes=MAX_JSON_BYTES),
+            source="plan/storyboard.json",
+        )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         return []
     if not isinstance(storyboard, dict) or not isinstance(storyboard.get("pages"), list):
@@ -1290,7 +1367,10 @@ def _storyboard_panel(
         path = contained_project_path(
             project_dir, "plan/storyboard.json", must_exist=True
         )
-        storyboard = json.loads(path.read_text("utf-8"))
+        storyboard = loads_bounded_json(
+            read_bytes_nofollow(path, max_bytes=MAX_JSON_BYTES),
+            source="plan/storyboard.json",
+        )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         return None
     if not isinstance(storyboard, dict) or not isinstance(storyboard.get("pages"), list):
@@ -1354,7 +1434,10 @@ def validate_lettering_provenance(
         geometry_path = contained_project_path(
             project_dir, geometry_relative, must_exist=True
         )
-        geometry = json.loads(geometry_path.read_text("utf-8"))
+        geometry = loads_bounded_json(
+            read_bytes_nofollow(geometry_path, max_bytes=MAX_JSON_BYTES),
+            source="lettering geometry",
+        )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         stale("geometry.path", "lettering geometry is missing or unreadable")
         return tuple(_sorted(issues))
@@ -1379,7 +1462,10 @@ def validate_lettering_provenance(
         typography_path = contained_project_path(
             project_dir, typography_relative, must_exist=True
         )
-        typography = json.loads(typography_path.read_text("utf-8"))
+        typography = loads_bounded_json(
+            read_bytes_nofollow(typography_path, max_bytes=MAX_JSON_BYTES),
+            source="typography preflight",
+        )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         stale("typography.path", "typography preflight is missing or unreadable")
         typography = None

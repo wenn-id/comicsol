@@ -14,7 +14,7 @@ Every public definition contains:
 
 CLI JSON errors keep the existing envelope (`ok`, `command`, `data`, `error`) and add the canonical fields inside `error`. Human CLI output remains readable and renders the code, category, message, reason, and recovery. MCP `ToolError` carries the same fields as a JSON string because the installed MCP SDK transports a string error value.
 
-The initial namespaces are `CS-IMG`, `CS-PROJ`, `CS-QA`, `CS-FONT`, `CS-MCP`, `CS-INSTALL`, `CS-EXPORT`, and `CS-SEC`.
+The initial namespaces are `CS-IMG`, `CS-PROJ`, `CS-QA`, `CS-FONT`, `CS-MCP`, `CS-INSTALL`, `CS-EXPORT`, and `CS-SEC`. Within `CS-SEC`, `CS-SEC-001` reports a containment failure (path, symlink, or boundary crossing) while `CS-SEC-002` reports that an otherwise contained input exceeded a documented resource limit (JSON size/depth/collection/string, encoded raster bytes, or narrative field length); the engine raises the latter as `scripts.input_limits.InputResourceLimitError`, whose message always begins with `security-error: input exceeds`.
 
 ## Adding a code
 

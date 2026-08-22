@@ -17,6 +17,7 @@ if __package__ in {None, ""}:
 
 from .character_identity import IDENTITY_PACK_PATH, STORYBOARD_PATH, validate_identity_pack
 from .core_primitives import PANEL_ID_PATTERN, canonical_artifact_bytes
+from .input_limits import MAX_JSON_BYTES, loads_bounded_json
 from .project_io import ProjectTransaction, read_contained_bytes
 from .quality_records import GENERIC_EVIDENCE
 from .reference_strategy import REFERENCE_PLAN_PATH, project_reference_plan
@@ -558,13 +559,15 @@ def _bound_document(
         issues.append(f"{label} path is not canonical")
         return None
     try:
-        payload = read_contained_bytes(project_dir, expected_path)
+        payload = read_contained_bytes(
+            project_dir, expected_path, max_bytes=MAX_JSON_BYTES
+        )
     except (OSError, ValueError) as error:
         issues.append(f"{label} cannot be read: {type(error).__name__}")
         return None
     try:
-        document = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        document = loads_bounded_json(payload, source=expected_path)
+    except (UnicodeDecodeError, ValueError):
         issues.append(f"{label} is not valid JSON")
         return None
     if not isinstance(document, Mapping):
@@ -621,8 +624,12 @@ def validate_character_quality_provenance(
     if identity_pack is None or reference_plan is None or not isinstance(panel_id, str):
         return tuple(sorted(set(issues)))
     try:
-        bible_payload = read_contained_bytes(project_dir, "plan/character-bible.json")
-        character_bible = json.loads(bible_payload)
+        bible_payload = read_contained_bytes(
+            project_dir, "plan/character-bible.json", max_bytes=MAX_JSON_BYTES
+        )
+        character_bible = loads_bounded_json(
+            bible_payload, source="plan/character-bible.json"
+        )
         if not isinstance(character_bible, Mapping):
             raise CharacterQualityError("character bible must contain a JSON object")
         identity_issues = validate_identity_pack(
@@ -632,7 +639,10 @@ def validate_character_quality_provenance(
         )
         if identity_issues:
             issues.append("character bible and identity pack disagree: " + identity_issues[0])
-        storyboard = json.loads(read_contained_bytes(project_dir, STORYBOARD_PATH))
+        storyboard = loads_bounded_json(
+            read_contained_bytes(project_dir, STORYBOARD_PATH, max_bytes=MAX_JSON_BYTES),
+            source=STORYBOARD_PATH,
+        )
         if not isinstance(storyboard, Mapping):
             raise CharacterQualityError("storyboard must contain a JSON object")
         context = character_consistency_context(
@@ -678,8 +688,11 @@ def validate_character_quality_provenance(
 
 def _read_document(project_dir: Path, relative: str) -> Mapping[str, Any]:
     try:
-        value = json.loads(read_contained_bytes(project_dir, relative))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        value = loads_bounded_json(
+            read_contained_bytes(project_dir, relative, max_bytes=MAX_JSON_BYTES),
+            source=relative,
+        )
+    except (OSError, UnicodeDecodeError, ValueError) as error:
         raise CharacterQualityError(
             f"{relative} cannot be read as JSON: {type(error).__name__}"
         ) from error

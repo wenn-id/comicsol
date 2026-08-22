@@ -49,7 +49,8 @@ from .character_identity import (
     read_identity_pack,
 )
 from .core_primitives import canonical_artifact_bytes
-from .project_io import ProjectTransaction, contained_project_path, open_path_nofollow
+from .input_limits import MAX_JSON_BYTES, loads_bounded_json
+from .project_io import ProjectTransaction, contained_project_path, read_contained_bytes
 
 
 REFERENCE_PLAN_SCHEMA_VERSION = "1.0"
@@ -600,8 +601,12 @@ def read_storyboard(project_dir: Path) -> Mapping[str, Any]:
     """Read the project storyboard without following symlinks, or fail closed."""
     path = contained_project_path(Path(project_dir), STORYBOARD_PATH)
     try:
-        with open_path_nofollow(path) as stream:
-            value = json.load(stream)
+        value = loads_bounded_json(
+            read_contained_bytes(
+                Path(project_dir), STORYBOARD_PATH, max_bytes=MAX_JSON_BYTES
+            ),
+            source=STORYBOARD_PATH,
+        )
     except json.JSONDecodeError as error:
         raise ReferenceStrategyError(
             f"{STORYBOARD_PATH} is not valid JSON: {error}"

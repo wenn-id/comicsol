@@ -17,6 +17,7 @@ from typing import Mapping, Sequence
 from PIL import Image
 
 from .comic_sol import atomic_write_json, read_json
+from .input_limits import loads_bounded_json
 from .core_primitives import (
     BALLOON_COVERAGE_WARNING_RATIO,
     TAIL_ATTACHMENT_TOLERANCE,
@@ -38,6 +39,7 @@ from .project_io import (
     ProjectTransaction,
     contained_project_path,
     open_path_nofollow,
+    read_bytes_nofollow,
 )
 from .quality_records import PAGE_CHECK_IDS, validate_quality_checks
 from .schema import UnsupportedSchemaVersionError
@@ -92,8 +94,7 @@ def _read_and_digest(path: Path) -> tuple[bytes, str]:
     validation is countable: a test can assert how many times each artifact was
     read instead of inspecting the call sites.
     """
-    with open_path_nofollow(Path(path)) as stream:
-        payload = stream.read()
+    payload = read_bytes_nofollow(Path(path))
     return payload, hashlib.sha256(payload).hexdigest()
 
 
@@ -221,7 +222,7 @@ def _json_snapshot(
     two callers share a mutable value.
     """
     payload, digest = artifacts.snapshot(Path(path))
-    value = json.loads(payload)
+    value = loads_bounded_json(payload, source=Path(path).name)
     if not isinstance(value, dict):
         raise ValueError(f"expected a JSON object: {path}")
     return value, digest

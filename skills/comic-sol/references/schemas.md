@@ -64,7 +64,7 @@ The manifest is created from `templates/manifest.json` and is the authoritative 
 |---|---|---:|---|
 | `schema_version` | string | yes | Exactly `"1.0"` |
 | `project_id` | string | yes | Valid ID; also the base output/PDF name |
-| `title` | string | yes | Non-empty after initialization |
+| `title` | string | yes | Non-empty after initialization; at most 200 characters, without secrets or PII |
 | `created_at` | timestamp | yes | Set once at initialization |
 | `updated_at` | timestamp | yes | Changed only by a non-no-op atomic transition |
 | `status` | enum | yes | One manifest status listed below |
@@ -74,7 +74,7 @@ The manifest is created from `templates/manifest.json` and is the authoritative 
 | `artifacts` | object | yes | Produced named artifact descriptors; initially empty |
 | `stage_versions` | object | yes | Deterministic cache-version strings |
 | `panels` | array[string] | yes | Unique panel IDs in page/reading order |
-| `warnings` | array[string] | yes | Unresolved project-level warning messages |
+| `warnings` | array[string] | yes | Unresolved project-level warning messages; each at most 500 characters and free of secrets or PII |
 | `blocked_from` | enum \| null | yes | Linear status held when blocked; `null` otherwise |
 | `blocked_reason` | string \| null | yes | Stable sanitized category when blocked; `null` otherwise |
 
@@ -654,7 +654,8 @@ check requires `regenerate`; a warning result or warning severity requires
 reused after structural validation and all bound files, hashes, and dimensions are
 rechecked.
 
-`override_reason` is a non-empty user-provided reason that distinguishes an explicit
+`override_reason` is a non-empty user-provided reason of at most 1000 characters
+(operator note only: no source text, PII, or credentials) that distinguishes an explicit
 override from an ordinary warning. When present, the decision is `accept-warning`,
 the same reason appears in `unresolved_warnings`, and at least one check retains
 `result: fail` with severity downgraded to `warning`. The override operation starts

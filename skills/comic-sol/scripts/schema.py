@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 from .core_primitives import canonical_artifact_bytes
-from .project_io import ProjectTransaction, open_path_nofollow
+from .project_io import ProjectTransaction, read_json_nofollow
 
 CURRENT_PROJECT_SCHEMA_VERSION = "1.0"
 MIN_READER_PROJECT_SCHEMA_VERSION = "1.0"
@@ -44,8 +42,7 @@ class UnsupportedSchemaVersionError(ValueError):
 
 
 def _read_manifest(path: Path) -> Manifest:
-    with open_path_nofollow(Path(path)) as stream:
-        value: Any = json.load(stream)
+    value = read_json_nofollow(Path(path))
     if not isinstance(value, dict):
         raise ValueError("project.json must contain a JSON object")
     return value
