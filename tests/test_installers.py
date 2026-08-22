@@ -14,9 +14,7 @@ from pathlib import Path
 from typing import cast
 
 
-_TEST_SIGSTORE_BUNDLE = (
-    '{"mediaType":"application/vnd.dev.sigstore.bundle+json","verification":"test-fixture"}\n'
-)
+_TEST_SIGSTORE_BUNDLE = '{"mediaType":"application/vnd.dev.sigstore.bundle+json","verification":"test-fixture"}\n'
 
 
 class _InstallerHTTPServer(http.server.ThreadingHTTPServer):
@@ -139,19 +137,19 @@ class PublicInstallerContractTests(unittest.TestCase):
             "    my $left_path = Cwd::abs_path($left);\n"
             "    my $right_path = Cwd::abs_path($right);\n"
             "    exit 1 unless defined $left_path && defined $right_path && $left_path eq $right_path;\n"
-            '  \' "$1" "$2"\n'
+            "  ' \"$1\" \"$2\"\n"
             "}\n"
-            'if [ "${1-}" != verify-blob ] ||\n'
-            '   [ "${2-}" != --bundle ] ||\n'
-            f'   ! same_path "${{3-}}" {shlex.quote(str(signature))} ||\n'
-            '   [ "${4-}" != --certificate-identity-regexp ] ||\n'
-            f'   [ "${{5-}}" != {shlex.quote(expected_identity)} ] ||\n'
-            '   [ "${6-}" != --certificate-oidc-issuer ] ||\n'
-            f'   [ "${{7-}}" != {shlex.quote(expected_issuer)} ] ||\n'
-            f'   ! same_path "${{8-}}" {shlex.quote(str(checksums))}; then\n'
+            "if [ \"${1-}\" != verify-blob ] ||\n"
+            "   [ \"${2-}\" != --bundle ] ||\n"
+            f"   ! same_path \"${{3-}}\" {shlex.quote(str(signature))} ||\n"
+            "   [ \"${4-}\" != --certificate-identity-regexp ] ||\n"
+            f"   [ \"${{5-}}\" != {shlex.quote(expected_identity)} ] ||\n"
+            "   [ \"${6-}\" != --certificate-oidc-issuer ] ||\n"
+            f"   [ \"${{7-}}\" != {shlex.quote(expected_issuer)} ] ||\n"
+            f"   ! same_path \"${{8-}}\" {shlex.quote(str(checksums))}; then\n"
             "  exit 90\n"
             "fi\n"
-            f'printf %s {shlex.quote(expected_bundle_payload)} | cmp -s - "$3"\n',
+            f"printf %s {shlex.quote(expected_bundle_payload)} | cmp -s - \"$3\"\n",
             encoding="utf-8",
         )
         cosign.chmod(0o755)
@@ -342,14 +340,13 @@ class PublicInstallerContractTests(unittest.TestCase):
             {"expected_issuer": "https://issuer.invalid"},
         )
         for fixture_options in scenarios:
-            with (
-                self.subTest(fixture_options=fixture_options),
-                tempfile.TemporaryDirectory() as raw,
-            ):
+            with self.subTest(fixture_options=fixture_options), tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)
                 archive = self.write_runtime_archive(root)
                 install_root = root / "runtime"
-                result = self.run_posix_archive_install(archive, install_root, **fixture_options)
+                result = self.run_posix_archive_install(
+                    archive, install_root, **fixture_options
+                )
 
                 self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
                 self.assertIn("signature verification failed", result.stderr)
@@ -429,7 +426,9 @@ class PublicInstallerContractTests(unittest.TestCase):
             archive = self.write_runtime_archive(
                 root, filename="comic-sol-2.0.0rc6-linux-x86_64.zip"
             )
-            server, thread = self.start_installer_server(tls=True, payload=archive.read_bytes())
+            server, thread = self.start_installer_server(
+                tls=True, payload=archive.read_bytes()
+            )
             try:
                 install_root = root / "runtime"
                 url = f"https://127.0.0.1:{server.server_address[1]}/{archive.name}"
@@ -450,7 +449,9 @@ class PublicInstallerContractTests(unittest.TestCase):
             root = Path(raw)
             archive = self.write_runtime_archive(root)
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-            checksums, signature, cosign = self.write_signature_fixture(root, archive.name, digest)
+            checksums, signature, cosign = self.write_signature_fixture(
+                root, archive.name, digest
+            )
             checksums.write_text(f"{'0' * 64}  {archive.name}\n", encoding="utf-8")
             result = subprocess.run(
                 [
@@ -482,7 +483,9 @@ class PublicInstallerContractTests(unittest.TestCase):
             archive = self.write_runtime_archive(root)
             install_root = root / "runtime"
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-            checksums, signature, cosign = self.write_signature_fixture(root, archive.name, digest)
+            checksums, signature, cosign = self.write_signature_fixture(
+                root, archive.name, digest
+            )
             shim = root / "shim"
             shim.mkdir()
             real_unzip = shutil.which("unzip")
@@ -692,7 +695,9 @@ class PublicInstallerContractTests(unittest.TestCase):
             archive = self.write_runtime_archive(root)
             install_root = root / "runtime"
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-            checksums, signature, cosign = self.write_signature_fixture(root, archive.name, digest)
+            checksums, signature, cosign = self.write_signature_fixture(
+                root, archive.name, digest
+            )
 
             result = subprocess.run(
                 [
@@ -731,7 +736,9 @@ class PublicInstallerContractTests(unittest.TestCase):
             archive = self.write_runtime_archive(root)
             install_root = root / "runtime"
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-            checksums, signature, cosign = self.write_signature_fixture(root, archive.name, digest)
+            checksums, signature, cosign = self.write_signature_fixture(
+                root, archive.name, digest
+            )
 
             result = subprocess.run(
                 [
@@ -1041,7 +1048,9 @@ class PublicInstallerContractTests(unittest.TestCase):
             with zipfile.ZipFile(archive, "w") as package:
                 package.writestr(member, executable)
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-            checksums, signature, cosign = self.write_signature_fixture(root, archive.name, digest)
+            checksums, signature, cosign = self.write_signature_fixture(
+                root, archive.name, digest
+            )
 
             shim = root / "shim"
             shim.mkdir()
@@ -1107,7 +1116,9 @@ class PublicInstallerContractTests(unittest.TestCase):
             archive = self.write_runtime_archive(root)
             install_root = root / "runtime\nname"
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-            checksums, signature, cosign = self.write_signature_fixture(root, archive.name, digest)
+            checksums, signature, cosign = self.write_signature_fixture(
+                root, archive.name, digest
+            )
             result = subprocess.run(
                 [
                     "sh",

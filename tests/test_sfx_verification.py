@@ -107,7 +107,9 @@ class SfxRenderModePolicyTests(unittest.TestCase):
             "must be one of",
             render_mode_problem(sfx(render_mode="hand-drawn")) or "",
         )
-        self.assertIn("must be one of", render_mode_problem(sfx(render_mode=True)) or "")
+        self.assertIn(
+            "must be one of", render_mode_problem(sfx(render_mode=True)) or ""
+        )
         caption = {
             "id": "caption-1",
             "kind": "caption",
@@ -127,12 +129,10 @@ class SfxRenderModePolicyTests(unittest.TestCase):
 
 class SfxProvenanceTests(unittest.TestCase):
     def test_provenance_names_the_producer_of_every_effect(self):
-        record = sfx_provenance(
-            panel(
-                sfx("KRAK!", priority=1),
-                sfx("THUD", priority=2, render_mode=DETERMINISTIC_LETTERING),
-            )
-        )
+        record = sfx_provenance(panel(
+            sfx("KRAK!", priority=1),
+            sfx("THUD", priority=2, render_mode=DETERMINISTIC_LETTERING),
+        ))
 
         self.assertEqual(["sfx-1", "sfx-2"], [item["id"] for item in record["items"]])
         generated, lettered = record["items"]
@@ -146,7 +146,9 @@ class SfxProvenanceTests(unittest.TestCase):
         box = {"x": 10, "y": 20, "width": 30, "height": 40}
         placements = [{"id": "sfx-1", "kind": "sfx", "box": box}]
 
-        lettered = sfx_provenance(panel(sfx(render_mode=DETERMINISTIC_LETTERING)), placements)
+        lettered = sfx_provenance(
+            panel(sfx(render_mode=DETERMINISTIC_LETTERING)), placements
+        )
         generated = sfx_provenance(panel(sfx()), placements)
 
         self.assertEqual(box, lettered["items"][0]["box"])
@@ -155,12 +157,10 @@ class SfxProvenanceTests(unittest.TestCase):
         self.assertIsNone(generated["items"][0]["box"])
 
     def test_provenance_records_authored_content_and_orders_by_placement(self):
-        record = sfx_provenance(
-            panel(
-                sfx("SECOND", priority=9),
-                sfx("FIRST", priority=2),
-            )
-        )
+        record = sfx_provenance(panel(
+            sfx("SECOND", priority=9),
+            sfx("FIRST", priority=2),
+        ))
         self.assertEqual(["FIRST", "SECOND"], [item["content"] for item in record["items"]])
 
     def test_panel_without_sfx_records_an_empty_block(self):
@@ -189,18 +189,18 @@ class SfxFlagTests(unittest.TestCase):
         # policy, so the reason the flag exists no longer applies.
         self.assertNotIn(
             "sfx-glyph-risk",
-            flag_ids(
-                panel(
-                    sfx("ドォン", render_mode=DETERMINISTIC_LETTERING),
-                    negative=(DETERMINISTIC_SFX_NEGATIVE,),
-                )
-            ),
+            flag_ids(panel(
+                sfx("ドォン", render_mode=DETERMINISTIC_LETTERING),
+                negative=(DETERMINISTIC_SFX_NEGATIVE,),
+            )),
         )
 
     def test_duplicate_generated_content_is_flagged_case_insensitively(self):
         duplicated = panel(sfx("KRAK!", priority=1), sfx("krak!", priority=2))
         self.assertEqual(["sfx-duplicate-content"], flag_ids(duplicated))
-        self.assertEqual(["sfx-1", "sfx-2"], evaluate_sfx_flags(duplicated)[0]["item_ids"])
+        self.assertEqual(
+            ["sfx-1", "sfx-2"], evaluate_sfx_flags(duplicated)[0]["item_ids"]
+        )
 
     def test_distinct_generated_content_is_not_flagged_as_duplicate(self):
         self.assertEqual(
@@ -249,19 +249,21 @@ class SfxFlagTests(unittest.TestCase):
         ):
             with self.subTest(negative=boilerplate):
                 self.assertFalse(
-                    negatives_prohibit_generated_sfx(panel(negative=("text", boilerplate)))
+                    negatives_prohibit_generated_sfx(
+                        panel(negative=("text", boilerplate))
+                    )
                 )
                 self.assertEqual(
                     ["sfx-unprohibited-generation"],
-                    flag_ids(
-                        panel(
-                            sfx(render_mode=DETERMINISTIC_LETTERING),
-                            negative=("text", boilerplate),
-                        )
-                    ),
+                    flag_ids(panel(
+                        sfx(render_mode=DETERMINISTIC_LETTERING),
+                        negative=("text", boilerplate),
+                    )),
                 )
         self.assertTrue(
-            negatives_prohibit_generated_sfx(panel(negative=(DETERMINISTIC_SFX_NEGATIVE,)))
+            negatives_prohibit_generated_sfx(
+                panel(negative=(DETERMINISTIC_SFX_NEGATIVE,))
+            )
         )
 
     def test_flags_follow_the_declared_vocabulary_not_authoring_or_lexical_order(self):
@@ -277,14 +279,20 @@ class SfxFlagTests(unittest.TestCase):
         reported = flag_ids(crowded)
 
         self.assertEqual(["sfx-glyph-risk", "sfx-duplicate-content"], reported)
-        self.assertEqual(sorted(reported, key=SFX_FLAG_IDS.index), reported)
+        self.assertEqual(
+            sorted(reported, key=SFX_FLAG_IDS.index), reported
+        )
 
 
 class SfxStoryboardValidationTests(unittest.TestCase):
     def setUp(self):
         self.story = read_json(FIXTURES / "valid-one-page/plan/story-plan.json")
-        self.characters = read_json(FIXTURES / "valid-one-page/plan/character-bible.json")
-        self.storyboard = read_json(FIXTURES / "valid-one-page/plan/storyboard.json")
+        self.characters = read_json(
+            FIXTURES / "valid-one-page/plan/character-bible.json"
+        )
+        self.storyboard = read_json(
+            FIXTURES / "valid-one-page/plan/storyboard.json"
+        )
 
     def _issues(self, item, panel_index=0):
         storyboard = json.loads(json.dumps(self.storyboard))
@@ -297,7 +305,9 @@ class SfxStoryboardValidationTests(unittest.TestCase):
         ]
 
     def test_fixture_storyboard_is_valid_before_any_sfx_is_added(self):
-        self.assertEqual([], validate_storyboard(self.storyboard, self.story, self.characters))
+        self.assertEqual(
+            [], validate_storyboard(self.storyboard, self.story, self.characters)
+        )
 
     def test_both_declared_render_modes_validate_on_sfx(self):
         for mode in (GENERATED_VISUAL, DETERMINISTIC_LETTERING):
@@ -321,7 +331,9 @@ class SfxStoryboardValidationTests(unittest.TestCase):
             "priority": 2,
             "render_mode": DETERMINISTIC_LETTERING,
         }
-        self.assertTrue(any("must be omitted" in detail for detail in self._issues(item)))
+        self.assertTrue(
+            any("must be omitted" in detail for detail in self._issues(item))
+        )
 
 
 class SfxLetteringTests(unittest.TestCase):
@@ -400,7 +412,8 @@ class SfxLetteringTests(unittest.TestCase):
             800,
             1000,
             [
-                sfx(priority=1, anchor="middle-right", render_mode=DETERMINISTIC_LETTERING),
+                sfx(priority=1, anchor="middle-right",
+                    render_mode=DETERMINISTIC_LETTERING),
                 dialogue,
             ],
             self.characters,
@@ -499,7 +512,11 @@ class SfxAdvisoryTests(unittest.TestCase):
 
         summaries = _letter_project_with_summaries(self.project)[1]
 
-        flagged = [flag["id"] for summary in summaries for flag in summary.get("sfx_flags", [])]
+        flagged = [
+            flag["id"]
+            for summary in summaries
+            for flag in summary.get("sfx_flags", [])
+        ]
         self.assertEqual(["sfx-legibility-budget"], flagged)
 
 
@@ -521,7 +538,9 @@ class SfxPageQualityTests(unittest.TestCase):
         )
         # Excluding SFX at the call site is what keeps the identical geometry from
         # being reported: a sound effect is placed over the action on purpose.
-        sfx_regions = page_quality._subject_obstruction_regions("p01-01", anchors, [], 800, 1000)
+        sfx_regions = page_quality._subject_obstruction_regions(
+            "p01-01", anchors, [], 800, 1000
+        )
 
         self.assertEqual(1, len(balloon_regions))
         self.assertEqual([], sfx_regions)
@@ -587,16 +606,14 @@ class SfxRepairTests(unittest.TestCase):
     def _author_generated_sfx(self):
         """Give the fixture one generated effect and re-bind the manifest to it."""
         storyboard = self._storyboard()
-        self._panel(storyboard)["text"].append(
-            {
-                "anchor": "middle-right",
-                "content": "KRAK!",
-                "id": "p01-01-t02",
-                "kind": "sfx",
-                "priority": 2,
-                "speaker": None,
-            }
-        )
+        self._panel(storyboard)["text"].append({
+            "anchor": "middle-right",
+            "content": "KRAK!",
+            "id": "p01-01-t02",
+            "kind": "sfx",
+            "priority": 2,
+            "speaker": None,
+        })
         self._write_json("plan/storyboard.json", storyboard)
         manifest = read_json(self.project / "project.json")
         manifest["artifacts"]["storyboard"]["sha256"] = sha256_file(
@@ -609,17 +626,25 @@ class SfxRepairTests(unittest.TestCase):
         versions = manifest["stage_versions"]
         keys = {}
         for stage in self.CACHED_STAGES:
-            canonical_inputs, files = _resume_stage_material(self.project, stage, manifest)
-            keys[stage] = stage_cache_key(stage, canonical_inputs, files, versions[stage])
+            canonical_inputs, files = _resume_stage_material(
+                self.project, stage, manifest
+            )
+            keys[stage] = stage_cache_key(
+                stage, canonical_inputs, files, versions[stage]
+            )
         return keys
 
     def _replace(self, text_id="p01-01-t02", reason="Generated effect read as KRRAK."):
-        return replace_generated_sfx(self.project, "p01-01", text_id, reason=reason)
+        return replace_generated_sfx(
+            self.project, "p01-01", text_id, reason=reason
+        )
 
     def test_generated_effect_is_recorded_as_the_image_model_before_repair(self):
         geometry = read_json(self.project / "panels/p01-01/lettering.json")
 
-        self.assertEqual(LETTERING_GEOMETRY_SCHEMA_VERSION, geometry["schema_version"])
+        self.assertEqual(
+            LETTERING_GEOMETRY_SCHEMA_VERSION, geometry["schema_version"]
+        )
         entry = geometry["sfx"]["items"][0]
         self.assertEqual("p01-01-t02", entry["id"])
         self.assertEqual(ORIGIN_IMAGE_MODEL, entry["origin"])
@@ -635,7 +660,9 @@ class SfxRepairTests(unittest.TestCase):
     def test_replacement_routes_the_effect_to_lettering_and_prohibits_generation(self):
         result = self._replace()
 
-        item = next(text for text in self._panel()["text"] if text["id"] == "p01-01-t02")
+        item = next(
+            text for text in self._panel()["text"] if text["id"] == "p01-01-t02"
+        )
         self.assertEqual(DETERMINISTIC_LETTERING, item["render_mode"])
         self.assertTrue(result["negative_added"])
         self.assertIn(DETERMINISTIC_SFX_NEGATIVE, self._panel()["negative"])
@@ -662,12 +689,20 @@ class SfxRepairTests(unittest.TestCase):
         self.assertEqual({"raw", "clean", "lettered"}, set(archived))
         for kind, payload in before.items():
             entry = archived[kind]
-            self.assertEqual(payload, (self.project / entry["path"]).read_bytes(), kind)
-            self.assertEqual(entry["sha256"], sha256_file(self.project / entry["path"]), kind)
+            self.assertEqual(
+                payload, (self.project / entry["path"]).read_bytes(), kind
+            )
+            self.assertEqual(
+                entry["sha256"], sha256_file(self.project / entry["path"]), kind
+            )
         # The rejected artwork itself is untouched: repair preserves evidence
         # rather than deleting the artifact it was diagnosing.
-        self.assertEqual(before["clean"], (self.project / "panels/p01-01/clean.png").read_bytes())
-        self.assertEqual(before["raw"], (self.project / "panels/raw/p01-01.png").read_bytes())
+        self.assertEqual(
+            before["clean"], (self.project / "panels/p01-01/clean.png").read_bytes()
+        )
+        self.assertEqual(
+            before["raw"], (self.project / "panels/raw/p01-01.png").read_bytes()
+        )
 
     def test_replacement_states_the_conditional_next_action(self):
         """Promotion refuses an accepted panel, so the prerequisite must be stated."""
@@ -688,7 +723,9 @@ class SfxRepairTests(unittest.TestCase):
 
         # Refusing beats succeeding with a manifest hash that disagrees with the
         # plan, which every later validation would report as a broken project.
-        self.assertEqual(storyboard_before, (self.project / "plan/storyboard.json").read_bytes())
+        self.assertEqual(
+            storyboard_before, (self.project / "plan/storyboard.json").read_bytes()
+        )
         self.assertFalse((self.project / "panels/p01-01/sfx-audit").exists())
 
     def test_audit_record_states_the_transition_and_the_reason(self):
@@ -697,7 +734,7 @@ class SfxRepairTests(unittest.TestCase):
         record = read_json(self.project / "panels/p01-01/sfx-audit.json")
         self.assertEqual("sfx-audit", record["kind"])
         self.assertEqual("p01-01", record["panel_id"])
-        (entry,) = record["replacements"]
+        entry, = record["replacements"]
         self.assertEqual("p01-01-t02", entry["text_id"])
         self.assertEqual("KRAK!", entry["content"])
         self.assertEqual(GENERATED_VISUAL, entry["from_render_mode"])
@@ -715,10 +752,14 @@ class SfxRepairTests(unittest.TestCase):
 
         events = [
             json.loads(line)
-            for line in (self.project / "logs/events.jsonl").read_text("utf-8").splitlines()
+            for line in (self.project / "logs/events.jsonl")
+            .read_text("utf-8")
+            .splitlines()
             if line.strip()
         ]
-        recorded = [event for event in events if event["event"] == "sfx.replacement-recorded"]
+        recorded = [
+            event for event in events if event["event"] == "sfx.replacement-recorded"
+        ]
         self.assertEqual(1, len(recorded))
         self.assertEqual(
             {
@@ -744,7 +785,9 @@ class SfxRepairTests(unittest.TestCase):
         # The storyboard artifact is re-bound, so the storyboard stage is not
         # faulted for an artifact hash mismatch it did not cause.
         manifest = read_project_manifest(self.project / "project.json")
-        self.assertNotIn("storyboard", _manifest_artifact_problem(self.project, manifest))
+        self.assertNotIn(
+            "storyboard", _manifest_artifact_problem(self.project, manifest)
+        )
 
     def test_relettering_after_replacement_draws_and_attributes_the_effect(self):
         clean_before = (self.project / "panels/p01-01/clean.png").read_bytes()
@@ -753,29 +796,39 @@ class SfxRepairTests(unittest.TestCase):
         letter_project(self.project)
 
         geometry = read_json(self.project / "panels/p01-01/lettering.json")
-        (entry,) = geometry["sfx"]["items"]
+        entry, = geometry["sfx"]["items"]
         self.assertEqual(ORIGIN_LETTERING, entry["origin"])
         self.assertEqual(DETERMINISTIC_LETTERING, entry["render_mode"])
         self.assertIsNotNone(entry["box"])
         self.assertIn("p01-01-t02", [item["id"] for item in geometry["items"]])
         self.assertEqual([], geometry["sfx"]["flags"])
         # Lettering never edits its own input.
-        self.assertEqual(clean_before, (self.project / "panels/p01-01/clean.png").read_bytes())
+        self.assertEqual(
+            clean_before, (self.project / "panels/p01-01/clean.png").read_bytes()
+        )
 
     def test_relettered_provenance_passes_validation_and_stale_claims_do_not(self):
         self._replace()
         letter_project(self.project)
 
-        self.assertEqual((), validate_lettering_provenance(self.project, "p01-01"))
+        self.assertEqual(
+            (), validate_lettering_provenance(self.project, "p01-01")
+        )
 
         # A record claiming this engine lettered an effect the storyboard still
         # hands to the image model must not pass as provenance.
         storyboard = self._storyboard()
-        item = next(text for text in self._panel(storyboard)["text"] if text["id"] == "p01-01-t02")
+        item = next(
+            text for text in self._panel(storyboard)["text"]
+            if text["id"] == "p01-01-t02"
+        )
         item["render_mode"] = GENERATED_VISUAL
         self._write_json("plan/storyboard.json", storyboard)
 
-        details = [issue.message for issue in validate_lettering_provenance(self.project, "p01-01")]
+        details = [
+            issue.message
+            for issue in validate_lettering_provenance(self.project, "p01-01")
+        ]
         self.assertTrue(
             any("recorded SFX provenance does not match" in detail for detail in details),
             details,
@@ -794,7 +847,9 @@ class SfxRepairTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid panel ID"):
             replace_generated_sfx(self.project, "p1-1", "p01-01-t02", reason="x")
         with self.assertRaisesRegex(ValueError, "invalid text ID"):
-            replace_generated_sfx(self.project, "p01-01", "../escape", reason="x")
+            replace_generated_sfx(
+                self.project, "p01-01", "../escape", reason="x"
+            )
         with self.assertRaisesRegex(ValueError, "reason must not be empty"):
             self._replace(reason="   ")
 
@@ -805,22 +860,24 @@ class SfxRepairTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._replace(text_id="p01-01-t01")
 
-        self.assertEqual(storyboard_before, (self.project / "plan/storyboard.json").read_bytes())
-        self.assertEqual(manifest_before, (self.project / "project.json").read_bytes())
+        self.assertEqual(
+            storyboard_before, (self.project / "plan/storyboard.json").read_bytes()
+        )
+        self.assertEqual(
+            manifest_before, (self.project / "project.json").read_bytes()
+        )
         self.assertFalse((self.project / "panels/p01-01/sfx-audit.json").exists())
 
     def test_second_effect_in_the_same_panel_archives_its_own_evidence(self):
         storyboard = self._storyboard()
-        self._panel(storyboard)["text"].append(
-            {
-                "anchor": "bottom-left",
-                "content": "THUD",
-                "id": "p01-01-t03",
-                "kind": "sfx",
-                "priority": 3,
-                "speaker": None,
-            }
-        )
+        self._panel(storyboard)["text"].append({
+            "anchor": "bottom-left",
+            "content": "THUD",
+            "id": "p01-01-t03",
+            "kind": "sfx",
+            "priority": 3,
+            "speaker": None,
+        })
         self._write_json("plan/storyboard.json", storyboard)
         manifest = read_json(self.project / "project.json")
         manifest["artifacts"]["storyboard"]["sha256"] = sha256_file(
@@ -837,12 +894,15 @@ class SfxRepairTests(unittest.TestCase):
             [entry["text_id"] for entry in record["replacements"]],
         )
         archives = sorted(
-            path.name for path in (self.project / "panels/p01-01/sfx-audit").iterdir()
+            path.name
+            for path in (self.project / "panels/p01-01/sfx-audit").iterdir()
         )
         self.assertIn("p01-01-t02.attempt-1.clean.png", archives)
         self.assertIn("p01-01-t03.attempt-1.clean.png", archives)
         # The prohibition is added once and not duplicated.
-        self.assertEqual(1, self._panel()["negative"].count(DETERMINISTIC_SFX_NEGATIVE))
+        self.assertEqual(
+            1, self._panel()["negative"].count(DETERMINISTIC_SFX_NEGATIVE)
+        )
 
     def test_cli_prints_the_result_as_json_and_reports_success(self):
         """The CLI is the surface operators and agents actually reach.
@@ -853,17 +913,12 @@ class SfxRepairTests(unittest.TestCase):
         """
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
-            code = sfx_repair_main(
-                [
-                    str(self.project),
-                    "--panel",
-                    "p01-01",
-                    "--text-id",
-                    "p01-01-t02",
-                    "--reason",
-                    "Generated effect read as KRRAK.",
-                ]
-            )
+            code = sfx_repair_main([
+                str(self.project),
+                "--panel", "p01-01",
+                "--text-id", "p01-01-t02",
+                "--reason", "Generated effect read as KRRAK.",
+            ])
 
         self.assertEqual(0, code)
         payload = json.loads(stdout.getvalue())
@@ -874,7 +929,9 @@ class SfxRepairTests(unittest.TestCase):
             ["raw", "clean", "lettered"],
             [entry["kind"] for entry in payload["archived"]],
         )
-        item = next(text for text in self._panel()["text"] if text["id"] == "p01-01-t02")
+        item = next(
+            text for text in self._panel()["text"] if text["id"] == "p01-01-t02"
+        )
         self.assertEqual(DETERMINISTIC_LETTERING, item["render_mode"])
 
     def test_cli_reports_a_refusal_as_one_error_line_without_a_traceback(self):
@@ -883,17 +940,12 @@ class SfxRepairTests(unittest.TestCase):
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
         ):
-            code = sfx_repair_main(
-                [
-                    str(self.project),
-                    "--panel",
-                    "p01-01",
-                    "--text-id",
-                    "p01-01-t01",
-                    "--reason",
-                    "Not an SFX item.",
-                ]
-            )
+            code = sfx_repair_main([
+                str(self.project),
+                "--panel", "p01-01",
+                "--text-id", "p01-01-t01",
+                "--reason", "Not an SFX item.",
+            ])
 
         self.assertEqual(1, code)
         self.assertEqual("", stdout.getvalue())
@@ -916,7 +968,10 @@ class SfxRepairTests(unittest.TestCase):
         # Only a manual edit back to generated-visual can reach a second repair of
         # one item, but the archive must survive that path rather than trust it.
         storyboard = self._storyboard()
-        item = next(text for text in self._panel(storyboard)["text"] if text["id"] == "p01-01-t02")
+        item = next(
+            text for text in self._panel(storyboard)["text"]
+            if text["id"] == "p01-01-t02"
+        )
         item["render_mode"] = GENERATED_VISUAL
         self._write_json("plan/storyboard.json", storyboard)
         manifest = read_json(self.project / "project.json")
@@ -925,7 +980,8 @@ class SfxRepairTests(unittest.TestCase):
         )
         self._write_json("project.json", manifest)
         first = sorted(
-            path.read_bytes() for path in (self.project / "panels/p01-01/sfx-audit").iterdir()
+            path.read_bytes()
+            for path in (self.project / "panels/p01-01/sfx-audit").iterdir()
         )
 
         result = self._replace()
@@ -935,7 +991,8 @@ class SfxRepairTests(unittest.TestCase):
             self.assertIn(".attempt-2.", entry["path"])
         # Every byte archived by the first repair is still exactly where it was.
         surviving = sorted(
-            path.read_bytes() for path in (self.project / "panels/p01-01/sfx-audit").iterdir()
+            path.read_bytes()
+            for path in (self.project / "panels/p01-01/sfx-audit").iterdir()
         )
         for payload in first:
             self.assertIn(payload, surviving)

@@ -33,37 +33,25 @@ MAXIMUM_DIALOGUE = (
 
 def dialogue(content="Keep moving.", priority=1, anchor="top-left"):
     return {
-        "id": f"dialogue-{priority}",
-        "kind": "dialogue",
-        "speaker": "mira",
-        "content": content,
-        "anchor": anchor,
-        "voice_source": "human",
+        "id": f"dialogue-{priority}", "kind": "dialogue", "speaker": "mira",
+        "content": content, "anchor": anchor, "voice_source": "human",
         "speaker_anchor": [0.75, 0.7],
         "priority": priority,
     }
 
 
-def caption(
-    content="Below the city, daylight became a delivery.", priority=1, anchor="bottom-right"
-):
+def caption(content="Below the city, daylight became a delivery.", priority=1, anchor="bottom-right"):
     return {
-        "id": f"caption-{priority}",
-        "kind": "caption",
-        "speaker": None,
-        "content": content,
-        "anchor": anchor,
+        "id": f"caption-{priority}", "kind": "caption", "speaker": None,
+        "content": content, "anchor": anchor,
         "priority": priority,
     }
 
 
 def sfx(content="KRAK!", priority=1, anchor="middle-right"):
     return {
-        "id": f"sfx-{priority}",
-        "kind": "sfx",
-        "speaker": None,
-        "content": content,
-        "anchor": anchor,
+        "id": f"sfx-{priority}", "kind": "sfx", "speaker": None,
+        "content": content, "anchor": anchor,
         "priority": priority,
     }
 
@@ -161,7 +149,9 @@ class LetteringTests(unittest.TestCase):
         self.assertEqual(missing_mask.size, comparison_mask.size)
         self.assertEqual(bytes(missing_mask), bytes(comparison_mask))
 
-        with mock.patch("scripts.letter_panels.FONT_PATH", self.root / "missing.ttf"):
+        with mock.patch(
+            "scripts.letter_panels.FONT_PATH", self.root / "missing.ttf"
+        ):
             self.assertEqual(fallback, Path(_load_font(32).path))
 
     def test_dialogue_renders_complete_emphasis_with_prominent_bold_pixels(self):
@@ -191,8 +181,7 @@ class LetteringTests(unittest.TestCase):
             )
             interior = image.crop((40, 50, 440, 170))
             return sum(
-                1
-                for pixel in interior.get_flattened_data()
+                1 for pixel in interior.get_flattened_data()
                 if isinstance(pixel, tuple) and max(pixel) < 128
             )
 
@@ -213,8 +202,9 @@ class LetteringTests(unittest.TestCase):
 
         content = "AA **wwww**"
         regular_visible_width = draw.textlength("AA wwww", font=regular)
-        mixed_visible_width = draw.textlength("AA ", font=regular) + draw.textlength(
-            "wwww", font=bold
+        mixed_visible_width = (
+            draw.textlength("AA ", font=regular)
+            + draw.textlength("wwww", font=bold)
         )
         literal_marker_width = draw.textlength(content, font=regular)
         self.assertLess(regular_visible_width, mixed_visible_width)
@@ -253,8 +243,9 @@ class LetteringTests(unittest.TestCase):
         self.assertTrue(all(line.width <= wrapped_maximum for line in wrapped.lines))
 
         regular_fallback_width = draw.textlength("AA ΩΩ", font=regular)
-        mixed_fallback_width = draw.textlength("AA ", font=regular) + draw.textlength(
-            "ΩΩ", font=fallback
+        mixed_fallback_width = (
+            draw.textlength("AA ", font=regular)
+            + draw.textlength("ΩΩ", font=fallback)
         )
         self.assertLess(regular_fallback_width, mixed_fallback_width)
         fallback_maximum = (regular_fallback_width + mixed_fallback_width) / 2
@@ -292,11 +283,7 @@ class LetteringTests(unittest.TestCase):
             ["".join(text for text, _ in line.runs) for line in spanning.lines],
         )
         self.assertTrue(
-            all(
-                Path(run_font.path) == bold_path
-                for line in spanning.lines
-                for _, run_font in line.runs
-            )
+            all(Path(run_font.path) == bold_path for line in spanning.lines for _, run_font in line.runs)
         )
         self.assertTrue(all(line.width <= word_width + 1 for line in spanning.lines))
 
@@ -367,10 +354,7 @@ class LetteringTests(unittest.TestCase):
         for line in centered_layout.lines:
             points = [
                 (x, y)
-                for y in range(
-                    max(0, int(line_top) - 2),
-                    min(centered_image.height, int(line_top + line.height) + 3),
-                )
+                for y in range(max(0, int(line_top) - 2), min(centered_image.height, int(line_top + line.height) + 3))
                 for x in range(rect["x"] + 24, rect["x"] + rect["width"] - 24)
                 if max(centered_image.getpixel((x, y))) < 128
             ]
@@ -381,11 +365,8 @@ class LetteringTests(unittest.TestCase):
 
     def test_letter_panel_produces_valid_png_and_summary(self):
         result = letter_panel(
-            str(self.panel),
-            800,
-            1000,
-            [dialogue(), caption(priority=2), sfx(priority=3)],
-            self.characters,
+            str(self.panel), 800, 1000,
+            [dialogue(), caption(priority=2), sfx(priority=3)], self.characters,
         )
         with Image.open(self.panel) as image:
             self.assertEqual("PNG", image.format)
@@ -401,11 +382,7 @@ class LetteringTests(unittest.TestCase):
     def test_letter_panel_accepts_source_bytes_before_output_exists(self):
         output = self.root / "lettered.png"
         result = letter_panel(
-            str(output),
-            800,
-            1000,
-            [caption()],
-            self.characters,
+            str(output), 800, 1000, [caption()], self.characters,
             source_bytes=self.panel.read_bytes(),
         )
         self.assertTrue(output.is_file())
@@ -417,16 +394,14 @@ class LetteringTests(unittest.TestCase):
         for items in ([], [sfx()]):
             output = self.root / f"out-{len(items)}.png"
             summary = letter_panel(
-                str(output),
-                800,
-                1000,
-                items,
-                self.characters,
+                str(output), 800, 1000, items, self.characters,
                 source_bytes=self.panel.read_bytes(),
             )
             self.assertTrue(output.is_file())
             with Image.open(output) as actual:
-                self.assertIsNone(ImageChops.difference(before, actual.convert("RGB")).getbbox())
+                self.assertIsNone(
+                    ImageChops.difference(before, actual.convert("RGB")).getbbox()
+                )
             self.assertEqual(0, summary["rendered_text_count"])
 
     def test_text_items_render_in_priority_then_id_order(self):
@@ -436,7 +411,9 @@ class LetteringTests(unittest.TestCase):
         def observe(draw, item, rect, font, character_bible, *, canvas):
             seen.append(item["content"])
 
-        with mock.patch("scripts.letter_panels.render_text_item", side_effect=observe):
+        with mock.patch(
+            "scripts.letter_panels.render_text_item", side_effect=observe
+        ):
             letter_panel(str(self.panel), 800, 1000, items, self.characters)
         self.assertEqual(["FIRST", "SECOND"], seen)
 
@@ -445,8 +422,7 @@ class LetteringTests(unittest.TestCase):
         image = Image.open(self.panel).convert("RGB")
         self.assertGreater(
             sum(
-                1
-                for pixel in image.get_flattened_data()
+                1 for pixel in image.get_flattened_data()
                 if isinstance(pixel, tuple) and all(channel > 200 for channel in pixel)
             ),
             1000,
@@ -467,11 +443,7 @@ class LetteringTests(unittest.TestCase):
         attachment = tuple(geometry["attachment"])
 
         render_text_item(
-            draw,
-            item,
-            rect,
-            ImageFont.truetype(str(FONT), 24),
-            self.characters,
+            draw, item, rect, ImageFont.truetype(str(FONT), 24), self.characters,
             canvas=image,
         )
 
@@ -495,7 +467,9 @@ class LetteringTests(unittest.TestCase):
         def capture_runs(_draw, runs, _position, _fill, **_options):
             captured_runs.extend(runs)
 
-        with mock.patch("scripts.letter_panels._draw_font_runs", side_effect=capture_runs):
+        with mock.patch(
+            "scripts.letter_panels._draw_font_runs", side_effect=capture_runs
+        ):
             render_text_item(
                 draw,
                 item,
@@ -520,16 +494,8 @@ class LetteringTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(
             {
-                "policy_version",
-                "voice_source",
-                "speaker_anchor",
-                "attachment",
-                "base",
-                "control",
-                "tip",
-                "source_gap",
-                "length",
-                "width",
+                "policy_version", "voice_source", "speaker_anchor", "attachment",
+                "base", "control", "tip", "source_gap", "length", "width",
             },
             set(first),
         )
@@ -547,11 +513,8 @@ class LetteringTests(unittest.TestCase):
             delta=1.5,
         )
         for point in (
-            first["attachment"],
-            first["tip"],
-            *first["base"],
-            *first["control"][0],
-            *first["control"][1],
+            first["attachment"], first["tip"], *first["base"],
+            *first["control"][0], *first["control"][1],
         ):
             self.assertTrue(all(math.isfinite(value) for value in point))
             self.assertGreaterEqual(point[0], 0)
@@ -611,13 +574,13 @@ class LetteringTests(unittest.TestCase):
         self.assertLess(short_rect["width"], maximum["width"])
         self.assertLess(short_rect["height"], maximum["height"])
         self.assertGreaterEqual(short_rect["height"], short_layout.height + 36)
-        self.assertGreater(
-            long_rect["width"] * long_rect["height"], short_rect["width"] * short_rect["height"]
-        )
+        self.assertGreater(long_rect["width"] * long_rect["height"], short_rect["width"] * short_rect["height"])
         self.assertGreaterEqual(short_rect["x"], maximum["x"])
         self.assertGreaterEqual(short_rect["y"], maximum["y"])
 
-        geometry = _organic_tail_geometry(short_rect, [0.40, 0.28], 800, 1000, "human")
+        geometry = _organic_tail_geometry(
+            short_rect, [0.40, 0.28], 800, 1000, "human"
+        )
         attachment = tuple(geometry["attachment"])
         target = tuple(geometry["tip"])
         self.assertLess(target[0], 800)
@@ -629,9 +592,10 @@ class LetteringTests(unittest.TestCase):
             short_rect["y"] + short_rect["height"] / 2,
         )
         radii = (short_rect["width"] / 2, short_rect["height"] / 2)
-        ellipse_value = ((attachment[0] - center[0]) / radii[0]) ** 2 + (
-            (attachment[1] - center[1]) / radii[1]
-        ) ** 2
+        ellipse_value = (
+            ((attachment[0] - center[0]) / radii[0]) ** 2
+            + ((attachment[1] - center[1]) / radii[1]) ** 2
+        )
         self.assertAlmostEqual(1.0, ellipse_value, delta=0.03)
         delta_x, delta_y = target[0] - center[0], target[1] - center[1]
         scale = 1 / math.sqrt((delta_x / radii[0]) ** 2 + (delta_y / radii[1]) ** 2)
@@ -646,16 +610,15 @@ class LetteringTests(unittest.TestCase):
             "scripts.letter_panels._draw_antialiased_balloon",
             wraps=letter_panels_module._draw_antialiased_balloon,
         ) as balloon_draw:
-            render_text_item(draw, short, short_rect, short_font, self.characters, canvas=image)
+            render_text_item(
+                draw, short, short_rect, short_font, self.characters, canvas=image
+            )
 
         balloon_draw.assert_called_once()
         self.assertIs(image, balloon_draw.call_args.args[0])
         self.assertIsNotNone(balloon_draw.call_args.args[2])
         self.assertEqual((28, 32, 40), image.getpixel((short_rect["x"] + 2, short_rect["y"] + 2)))
-        self.assertGreater(
-            min(image.getpixel((short_rect["x"] + short_rect["width"] // 2, short_rect["y"] + 6))),
-            220,
-        )
+        self.assertGreater(min(image.getpixel((short_rect["x"] + short_rect["width"] // 2, short_rect["y"] + 6))), 220)
 
     def test_balloon_circumscribes_a_maximum_length_dialogue_block(self):
         from scripts.letter_panels import (
@@ -691,11 +654,7 @@ class LetteringTests(unittest.TestCase):
         balloon = image.copy()
         with mock.patch("scripts.letter_panels._draw_font_runs"):
             render_text_item(
-                ImageDraw.Draw(balloon, "RGBA"),
-                item,
-                rect,
-                font,
-                self.characters,
+                ImageDraw.Draw(balloon, "RGBA"), item, rect, font, self.characters,
                 canvas=balloon,
             )
         render_text_item(draw, item, rect, font, self.characters, canvas=image)
@@ -713,8 +672,8 @@ class LetteringTests(unittest.TestCase):
         escaped = [
             point
             for point in text_pixels
-            if ((point[0] - center_x) / radius_x) ** 2 + ((point[1] - center_y) / radius_y) ** 2
-            > 1.0
+            if ((point[0] - center_x) / radius_x) ** 2
+            + ((point[1] - center_y) / radius_y) ** 2 > 1.0
         ]
         self.assertEqual(
             [], escaped[:8], f"{len(escaped)}/{len(text_pixels)} text pixels left the balloon"
@@ -723,14 +682,13 @@ class LetteringTests(unittest.TestCase):
 
     def test_caption_honors_its_authored_anchor(self):
         letter_panel(
-            str(self.panel),
-            800,
-            1000,
-            [caption("A quiet beat.", anchor="bottom-center")],
-            self.characters,
+            str(self.panel), 800, 1000,
+            [caption("A quiet beat.", anchor="bottom-center")], self.characters,
         )
         image = Image.open(self.panel).convert("RGB")
-        box = ImageChops.difference(image, Image.new("RGB", (800, 1000), (28, 32, 40))).getbbox()
+        box = ImageChops.difference(
+            image, Image.new("RGB", (800, 1000), (28, 32, 40))
+        ).getbbox()
 
         self.assertIsNotNone(box)
         self.assertGreaterEqual(box[1], 660)
@@ -761,7 +719,9 @@ class LetteringTests(unittest.TestCase):
 
         self.assertGreaterEqual(MAX_DECODED_PIXELS, 1600 * 2400)
         before = self.panel.read_bytes()
-        with mock.patch("scripts.letter_panels.MAX_DECODED_PIXELS", 800 * 1000 - 1):
+        with mock.patch(
+            "scripts.letter_panels.MAX_DECODED_PIXELS", 800 * 1000 - 1
+        ):
             with self.assertRaisesRegex(ValueError, "pixel decode limit"):
                 letter_panel(str(self.panel), 800, 1000, [dialogue()], self.characters)
         self.assertEqual(before, self.panel.read_bytes())
@@ -771,7 +731,9 @@ class LetteringTests(unittest.TestCase):
         result = letter_panel(str(self.panel), 800, 1000, [sfx()], self.characters)
 
         with Image.open(self.panel) as actual:
-            self.assertIsNone(ImageChops.difference(before, actual.convert("RGB")).getbbox())
+            self.assertIsNone(
+                ImageChops.difference(before, actual.convert("RGB")).getbbox()
+            )
         self.assertEqual(1, result["text_count"])
         self.assertEqual(0, result["rendered_text_count"])
         self.assertEqual(1, result["sfx_count"])
@@ -827,11 +789,11 @@ class LetteringTests(unittest.TestCase):
         shutil.copy2(self.panel, with_sfx)
         spoken = dialogue("Same placement.", priority=2, anchor="middle-right")
 
-        plain_result = letter_panel(str(without_sfx), 800, 1000, [spoken], self.characters)
+        plain_result = letter_panel(
+            str(without_sfx), 800, 1000, [spoken], self.characters
+        )
         mixed_result = letter_panel(
-            str(with_sfx),
-            800,
-            1000,
+            str(with_sfx), 800, 1000,
             [sfx("KRAK!", priority=1, anchor="middle-right"), spoken],
             self.characters,
         )
@@ -845,12 +807,8 @@ class LetteringTests(unittest.TestCase):
     def test_caption_is_drawn_at_top_as_overlay(self):
         letter_panel(str(self.panel), 800, 1000, [caption(anchor="top-left")], self.characters)
         image = Image.open(self.panel).convert("RGB")
-        top = ImageChops.difference(
-            image.crop((0, 0, 800, 320)), Image.new("RGB", (800, 320), (28, 32, 40))
-        )
-        bottom = ImageChops.difference(
-            image.crop((0, 680, 800, 1000)), Image.new("RGB", (800, 320), (28, 32, 40))
-        )
+        top = ImageChops.difference(image.crop((0, 0, 800, 320)), Image.new("RGB", (800, 320), (28, 32, 40)))
+        bottom = ImageChops.difference(image.crop((0, 680, 800, 1000)), Image.new("RGB", (800, 320), (28, 32, 40)))
         self.assertIsNotNone(top.getbbox())
         self.assertIsNone(bottom.getbbox())
 
@@ -906,7 +864,9 @@ class LetteringTests(unittest.TestCase):
         def capture_runs(_draw, runs, _position, _fill, **_options):
             captured_runs.extend(runs)
 
-        with mock.patch("scripts.letter_panels._draw_font_runs", side_effect=capture_runs):
+        with mock.patch(
+            "scripts.letter_panels._draw_font_runs", side_effect=capture_runs
+        ):
             render_text_item(draw, item, fitted, font, self.characters, canvas=image)
 
         self.assertEqual(item["content"], "".join(text for text, _ in captured_runs))
@@ -926,14 +886,8 @@ class LetteringTests(unittest.TestCase):
         font = ImageFont.truetype(str(FONT), 24)
         rect = {"x": 96, "y": 96, "width": 250, "height": 180}
         for anchor in (
-            "top-left",
-            "top-center",
-            "top-right",
-            "middle-left",
-            "middle-right",
-            "bottom-left",
-            "bottom-center",
-            "bottom-right",
+            "top-left", "top-center", "top-right", "middle-left",
+            "middle-right", "bottom-left", "bottom-center", "bottom-right",
         ):
             item = dialogue(anchor=anchor)
             item["speaker_anchor"] = [0.9, 0.85]
@@ -942,8 +896,7 @@ class LetteringTests(unittest.TestCase):
 
     def test_unknown_dialogue_character_raises_without_partial_write(self):
         before = self.panel.read_bytes()
-        item = dialogue()
-        item["speaker"] = "ghost"
+        item = dialogue(); item["speaker"] = "ghost"
         with self.assertRaisesRegex(ValueError, "ghost"):
             letter_panel(str(self.panel), 800, 1000, [item], self.characters)
         self.assertEqual(before, self.panel.read_bytes())
@@ -988,22 +941,18 @@ class LetteringTests(unittest.TestCase):
                     0,
                     letter_main([str(custom_project), "--font", str(override)]),
                 )
-            self.assertTrue(
-                all(
-                    summary["font_used"] == str(override)
-                    for summary in json.loads(custom_output.getvalue())
-                )
-            )
+            self.assertTrue(all(
+                summary["font_used"] == str(override)
+                for summary in json.loads(custom_output.getvalue())
+            ))
 
             default_output = io.StringIO()
             with contextlib.redirect_stdout(default_output):
                 self.assertEqual(0, letter_main([str(default_project)]))
-            self.assertTrue(
-                all(
-                    summary["font_used"] == str(FONT)
-                    for summary in json.loads(default_output.getvalue())
-                )
-            )
+            self.assertTrue(all(
+                summary["font_used"] == str(FONT)
+                for summary in json.loads(default_output.getvalue())
+            ))
 
     def test_cli_missing_invocation_uses_house_error_without_traceback(self):
         import contextlib
@@ -1070,16 +1019,9 @@ class LetteringTests(unittest.TestCase):
             shutil.copytree(FIXTURES / "valid-one-page", project)
             errors = io.StringIO()
             with contextlib.redirect_stderr(errors):
-                self.assertEqual(
-                    1,
-                    letter_main(
-                        [
-                            str(project),
-                            "--font",
-                            str(Path(temporary) / "missing.ttf"),
-                        ]
-                    ),
-                )
+                self.assertEqual(1, letter_main([
+                    str(project), "--font", str(Path(temporary) / "missing.ttf"),
+                ]))
             self.assertTrue(errors.getvalue().startswith("ERROR ValueError:"))
             self.assertIn("font", errors.getvalue().lower())
             self.assertNotIn("Traceback", errors.getvalue())
@@ -1096,8 +1038,7 @@ class LetteringTests(unittest.TestCase):
             storyboard_path = project / "plan/storyboard.json"
             storyboard = json.loads(storyboard_path.read_text("utf-8"))
             storyboard["pages"][0]["panels"][1]["text"][0]["speaker_anchor"] = [
-                float("inf"),
-                0.55,
+                float("inf"), 0.55,
             ]
             storyboard_path.write_text(json.dumps(storyboard), "utf-8")
 
@@ -1195,7 +1136,10 @@ class MultiSpeakerAttributionTests(unittest.TestCase):
                     "speaker_anchor": [0.22, 0.62],
                 },
             },
-            {placement["id"]: placement["attribution"] for placement in summary["placements"]},
+            {
+                placement["id"]: placement["attribution"]
+                for placement in summary["placements"]
+            },
         )
 
     def test_caption_beside_dialogue_carries_no_attribution(self):
@@ -1205,7 +1149,8 @@ class MultiSpeakerAttributionTests(unittest.TestCase):
         summary = self._letter(items)
 
         attribution = {
-            placement["id"]: placement["attribution"] for placement in summary["placements"]
+            placement["id"]: placement["attribution"]
+            for placement in summary["placements"]
         }
         self.assertIsNone(attribution["caption-3"])
         self.assertEqual("mira", attribution["dialogue-1"]["speaker"])
@@ -1217,7 +1162,9 @@ class MultiSpeakerAttributionTests(unittest.TestCase):
         second["speaker_anchor"] = [0.78, 0.35]
         before = self.panel.read_bytes()
 
-        with self.assertRaisesRegex(ValueError, r"dialogue-attribution-ambiguous: shared-anchor"):
+        with self.assertRaisesRegex(
+            ValueError, r"dialogue-attribution-ambiguous: shared-anchor"
+        ):
             self._letter([first, second])
         self.assertEqual(before, self.panel.read_bytes())
 
@@ -1225,7 +1172,9 @@ class MultiSpeakerAttributionTests(unittest.TestCase):
         first, second = self._two_speakers()
         second["speaker"] = "mira"
 
-        with self.assertRaisesRegex(ValueError, r"dialogue-attribution-ambiguous: split-anchor"):
+        with self.assertRaisesRegex(
+            ValueError, r"dialogue-attribution-ambiguous: split-anchor"
+        ):
             self._letter([first, second])
 
     def test_one_speaker_may_hold_two_balloons_at_the_same_anchor(self):
@@ -1269,10 +1218,7 @@ class MultiSpeakerAttributionTests(unittest.TestCase):
             ValueError, r"dialogue-attribution-ambiguous: display name 'Mira'"
         ):
             letter_panel(
-                str(self.panel),
-                800,
-                1000,
-                [item],
+                str(self.panel), 800, 1000, [item],
                 [{"id": "mira", "name": "Mira"}, {"id": "mira-prime", "name": "Mira"}],
             )
 
@@ -1281,10 +1227,7 @@ class MultiSpeakerAttributionTests(unittest.TestCase):
         item["speaker"] = "ren"
 
         summary = letter_panel(
-            str(self.panel),
-            800,
-            1000,
-            [item],
+            str(self.panel), 800, 1000, [item],
             [{"id": "ren", "name": "Ren"}, {"id": "mira", "name": "ren"}],
         )
 

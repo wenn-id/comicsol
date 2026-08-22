@@ -27,9 +27,7 @@ class DistributionContractTests(unittest.TestCase):
         self.assertIn("comic_sol_product/engine/page_quality.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/pdf_quality.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/quality_sample.py", REQUIRED_WHEEL_MEMBERS)
-        self.assertIn(
-            "comic_sol_product/assets/fonts/ComicNeue-Regular.ttf", REQUIRED_WHEEL_MEMBERS
-        )
+        self.assertIn("comic_sol_product/assets/fonts/ComicNeue-Regular.ttf", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/templates/manifest.json", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/skill/SKILL.md", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/skill/references/workflow.md", REQUIRED_WHEEL_MEMBERS)
@@ -71,8 +69,8 @@ class CleanInstallSmokeTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.output = self.root / "projects"
-        self.launcher = (
-            self.root / "bin with spaces" / ("comic-sol.exe" if os.name == "nt" else "comic-sol")
+        self.launcher = self.root / "bin with spaces" / (
+            "comic-sol.exe" if os.name == "nt" else "comic-sol"
         )
         self.launcher.parent.mkdir()
         self.launcher.write_bytes(b"launcher")
@@ -91,7 +89,9 @@ class CleanInstallSmokeTests(unittest.TestCase):
         expected_arguments = ["mcp", "--root", str(self.output.resolve())]
         self.write_codex_entry(str(self.launcher.resolve()), expected_arguments)
 
-        entry = clean_install_smoke.read_codex_entry(self.config, self.output, self.launcher)
+        entry = clean_install_smoke.read_codex_entry(
+            self.config, self.output, self.launcher
+        )
 
         self.assertEqual(
             {"command": str(self.launcher.resolve()), "args": expected_arguments},
@@ -99,10 +99,14 @@ class CleanInstallSmokeTests(unittest.TestCase):
         )
 
     def test_rejects_relative_persisted_command(self):
-        self.write_codex_entry("comic-sol", ["mcp", "--root", str(self.output.resolve())])
+        self.write_codex_entry(
+            "comic-sol", ["mcp", "--root", str(self.output.resolve())]
+        )
 
         with self.assertRaisesRegex(RuntimeError, "non-absolute"):
-            clean_install_smoke.read_codex_entry(self.config, self.output, self.launcher)
+            clean_install_smoke.read_codex_entry(
+                self.config, self.output, self.launcher
+            )
 
     def test_rejects_absolute_command_other_than_installed_launcher(self):
         other = self.root / "other" / self.launcher.name
@@ -114,7 +118,9 @@ class CleanInstallSmokeTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "unexpected MCP command"):
-            clean_install_smoke.read_codex_entry(self.config, self.output, self.launcher)
+            clean_install_smoke.read_codex_entry(
+                self.config, self.output, self.launcher
+            )
 
     def test_minimal_environment_excludes_the_installation_path(self):
         source = {
@@ -139,7 +145,8 @@ class CleanInstallSmokeTests(unittest.TestCase):
 
         self.assertEqual(["codex", "claude-desktop"], clients)
         self.assertEqual(
-            home / "Library/Application Support/Claude/claude_desktop_config.json",
+            home
+            / "Library/Application Support/Claude/claude_desktop_config.json",
             claude,
         )
         record = json.loads(claude.read_text(encoding="utf-8"))
@@ -151,7 +158,9 @@ class CleanInstallSmokeTests(unittest.TestCase):
         command = str(self.launcher.resolve())
         arguments = ["mcp", "--root", str(self.output.resolve())]
 
-        parsed = installed_mcp_smoke.parse_server_entry(command, json.dumps(arguments))
+        parsed = installed_mcp_smoke.parse_server_entry(
+            command, json.dumps(arguments)
+        )
 
         self.assertEqual((command, arguments), parsed)
         with self.assertRaisesRegex(ValueError, "JSON string array"):

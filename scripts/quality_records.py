@@ -7,7 +7,6 @@ import unicodedata
 from typing import Iterable
 
 from .core_primitives import PAGE_CHECK_IDS, PANEL_CHECK_IDS
-
 CHECK_IDS_BY_KIND = {
     "panel-qa": PANEL_CHECK_IDS,
     "page-qa": PAGE_CHECK_IDS,
@@ -29,7 +28,9 @@ def _normalized_evidence(value: object) -> str:
     return _normalized_text(value).casefold()
 
 
-def validate_quality_checks(checks: object, expected_ids: Iterable[str]) -> tuple[str, ...]:
+def validate_quality_checks(
+    checks: object, expected_ids: Iterable[str]
+) -> tuple[str, ...]:
     """Return stable issue categories for a quality-check collection."""
 
     issues: set[str] = set()
@@ -37,7 +38,10 @@ def validate_quality_checks(checks: object, expected_ids: Iterable[str]) -> tupl
     if not isinstance(checks, list):
         return ("quality-check-ids",)
 
-    ids = tuple(item.get("id") if isinstance(item, dict) else None for item in checks)
+    ids = tuple(
+        item.get("id") if isinstance(item, dict) else None
+        for item in checks
+    )
     if ids != expected:
         issues.add("quality-check-ids")
 

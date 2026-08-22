@@ -181,7 +181,10 @@ def normalized_text_material(text_items: object) -> object:
     """
     if not isinstance(text_items, Sequence) or isinstance(text_items, (str, bytes)):
         return text_items
-    return [sfx_material(item) if isinstance(item, Mapping) else item for item in text_items]
+    return [
+        sfx_material(item) if isinstance(item, Mapping) else item
+        for item in text_items
+    ]
 
 
 def sfx_items(text_items: object) -> list[Mapping[str, object]]:
@@ -291,43 +294,44 @@ def evaluate_sfx_flags(panel: Mapping[str, object]) -> list[dict[str, object]]:
     generated = [item for item in items if is_generated_sfx(item)]
 
     risky = [
-        (str(item.get("id", "")), _risky_codepoints(item.get("content"))) for item in generated
+        (str(item.get("id", "")), _risky_codepoints(item.get("content")))
+        for item in generated
     ]
     risky_items = [(item_id, codepoints) for item_id, codepoints in risky if codepoints]
     if risky_items:
         detail = "; ".join(
             f"{item_id}: {', '.join(codepoints)}" for item_id, codepoints in risky_items
         )
-        flags.append(
-            _flag(
-                "sfx-glyph-risk",
-                [item_id for item_id, _ in risky_items],
-                "Generated SFX uses codepoints outside the repertoire an image model "
-                f"letters reliably ({detail}).",
-                "author the effect with Latin letters, digits, and comic punctuation, "
-                f"or letter it with render_mode {DETERMINISTIC_LETTERING} under a font "
-                "policy that covers the script (letter_panels.py --font-script)",
-            )
-        )
+        flags.append(_flag(
+            "sfx-glyph-risk",
+            [item_id for item_id, _ in risky_items],
+            "Generated SFX uses codepoints outside the repertoire an image model "
+            f"letters reliably ({detail}).",
+            "author the effect with Latin letters, digits, and comic punctuation, "
+            f"or letter it with render_mode {DETERMINISTIC_LETTERING} under a font "
+            "policy that covers the script (letter_panels.py --font-script)",
+        ))
 
     seen: dict[str, list[str]] = {}
     for item in generated:
-        seen.setdefault(_comparable(item.get("content")), []).append(str(item.get("id", "")))
-    duplicates = sorted((content, ids) for content, ids in seen.items() if content and len(ids) > 1)
+        seen.setdefault(_comparable(item.get("content")), []).append(
+            str(item.get("id", ""))
+        )
+    duplicates = sorted(
+        (content, ids) for content, ids in seen.items() if content and len(ids) > 1
+    )
     if duplicates:
         detail = "; ".join(
             f"{', '.join(sorted(ids))} share {content!r}" for content, ids in duplicates
         )
-        flags.append(
-            _flag(
-                "sfx-duplicate-content",
-                [item_id for _, ids in duplicates for item_id in ids],
-                "Generated SFX items in one panel request the same effect, so a "
-                f"drawn effect cannot be attributed to one of them ({detail}).",
-                "give each effect distinct content, drop the duplicate, or letter one "
-                f"of them with render_mode {DETERMINISTIC_LETTERING}",
-            )
-        )
+        flags.append(_flag(
+            "sfx-duplicate-content",
+            [item_id for _, ids in duplicates for item_id in ids],
+            "Generated SFX items in one panel request the same effect, so a "
+            f"drawn effect cannot be attributed to one of them ({detail}).",
+            "give each effect distinct content, drop the duplicate, or letter one "
+            f"of them with render_mode {DETERMINISTIC_LETTERING}",
+        ))
 
     over_budget: list[tuple[str, str]] = []
     for item in generated:
@@ -337,44 +341,36 @@ def evaluate_sfx_flags(panel: Mapping[str, object]) -> list[dict[str, object]]:
         normalized = " ".join(unicodedata.normalize("NFC", content).split())
         longest = max((len(token) for token in normalized.split()), default=0)
         if longest > SFX_TOKEN_LENGTH_LIMIT:
-            over_budget.append(
-                (
-                    str(item.get("id", "")),
-                    f"{longest}-character token exceeds {SFX_TOKEN_LENGTH_LIMIT}",
-                )
-            )
+            over_budget.append((
+                str(item.get("id", "")),
+                f"{longest}-character token exceeds {SFX_TOKEN_LENGTH_LIMIT}",
+            ))
         elif len(normalized) > SFX_CONTENT_LENGTH_LIMIT:
-            over_budget.append(
-                (
-                    str(item.get("id", "")),
-                    f"{len(normalized)} characters exceed {SFX_CONTENT_LENGTH_LIMIT}",
-                )
-            )
+            over_budget.append((
+                str(item.get("id", "")),
+                f"{len(normalized)} characters exceed {SFX_CONTENT_LENGTH_LIMIT}",
+            ))
     if over_budget:
         detail = "; ".join(f"{item_id}: {reason}" for item_id, reason in over_budget)
-        flags.append(
-            _flag(
-                "sfx-legibility-budget",
-                [item_id for item_id, _ in over_budget],
-                "Generated SFX is long enough that the image model must compress it "
-                f"to fit the panel, which is where dropped letters come from ({detail}).",
-                "shorten the effect, split it across panels, or letter it with "
-                f"render_mode {DETERMINISTIC_LETTERING}",
-            )
-        )
+        flags.append(_flag(
+            "sfx-legibility-budget",
+            [item_id for item_id, _ in over_budget],
+            "Generated SFX is long enough that the image model must compress it "
+            f"to fit the panel, which is where dropped letters come from ({detail}).",
+            "shorten the effect, split it across panels, or letter it with "
+            f"render_mode {DETERMINISTIC_LETTERING}",
+        ))
 
     lettered = [item for item in items if is_deterministic_sfx(item)]
     if lettered and not negatives_prohibit_generated_sfx(panel):
-        flags.append(
-            _flag(
-                "sfx-unprohibited-generation",
-                [str(item.get("id", "")) for item in lettered],
-                "This panel letters its own SFX, but its negatives never prohibit "
-                "generated SFX, so regenerated artwork can bake an effect underneath "
-                "the drawn one.",
-                f"add a negative such as {DETERMINISTIC_SFX_NEGATIVE!r} to the panel",
-            )
-        )
+        flags.append(_flag(
+            "sfx-unprohibited-generation",
+            [str(item.get("id", "")) for item in lettered],
+            "This panel letters its own SFX, but its negatives never prohibit "
+            "generated SFX, so regenerated artwork can bake an effect underneath "
+            "the drawn one.",
+            f"add a negative such as {DETERMINISTIC_SFX_NEGATIVE!r} to the panel",
+        ))
 
     # Ordered by the declared vocabulary rather than lexically, because
     # `SFX_FLAG_IDS` is the normative order this record is compared against and a
@@ -436,17 +432,17 @@ def sfx_provenance(
         # an effect whose requested anchor was taken, and provenance reporting the
         # request next to the resulting box would contradict itself.
         anchor = placement.get("anchor") if placement is not None else None
-        items.append(
-            {
-                "anchor": item.get("anchor") if anchor is None else anchor,
-                "box": box,
-                "content": item.get("content"),
-                "id": item_id,
-                "origin": ORIGIN_LETTERING if lettered else ORIGIN_IMAGE_MODEL,
-                "render_mode": mode,
-                "verification": (VERIFICATION_DETERMINISTIC if lettered else VERIFICATION_REVIEWER),
-            }
-        )
+        items.append({
+            "anchor": item.get("anchor") if anchor is None else anchor,
+            "box": box,
+            "content": item.get("content"),
+            "id": item_id,
+            "origin": ORIGIN_LETTERING if lettered else ORIGIN_IMAGE_MODEL,
+            "render_mode": mode,
+            "verification": (
+                VERIFICATION_DETERMINISTIC if lettered else VERIFICATION_REVIEWER
+            ),
+        })
     return {
         "flags": evaluate_sfx_flags(panel),
         "items": items,

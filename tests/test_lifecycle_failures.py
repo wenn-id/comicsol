@@ -11,7 +11,7 @@ from unittest import mock
 from scripts import project_io
 from scripts.comic_sol import atomic_write_json, read_json, sha256_file
 from scripts.compose_pages import compose_all_pages
-from scripts.export_pdf import guarded_export
+from scripts.export_pdf import PdfExportError, guarded_export
 from scripts.letter_panels import letter_project
 from scripts.page_quality import (
     build_page_quality_record,
@@ -39,10 +39,14 @@ class LifecycleFailureInjectionTests(unittest.TestCase):
             self.project / "source/request.json",
             {"mode": "short_prompt", "language": "en"},
         )
-        manifest = json.loads((ROOT / "templates/manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads(
+            (ROOT / "templates/manifest.json").read_text(encoding="utf-8")
+        )
         manifest["project_id"] = "failure-fixture"
         manifest["status"] = "COMPOSED"
-        manifest["input"]["source_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+        manifest["input"]["source_sha256"] = hashlib.sha256(
+            source.read_bytes()
+        ).hexdigest()
         manifest["settings"].update({"page_count": 1, "panel_count": 1})
         manifest["panels"] = ["p01-01"]
         atomic_write_json(self.project / "project.json", manifest)
@@ -74,14 +78,18 @@ class LifecycleFailureInjectionTests(unittest.TestCase):
         transaction._phase = "publishing"
         transaction._write_journal()
         first = transaction._journal[0]
-        project_io.replace_contained(self.project, first["staged"], first["path"])
+        project_io.replace_contained(
+            self.project, first["staged"], first["path"]
+        )
         lock = transaction._lock
         if lock is None:
             self.fail("transaction lock was not acquired")
         lock.__exit__(None, None, None)
         transaction._lock = None
 
-        journal = read_json(self.project / "logs/transactions/1/journal.json")
+        journal = read_json(
+            self.project / "logs/transactions/1/journal.json"
+        )
         self.assertEqual("publishing", journal["phase"])
         self.assertEqual("LETTERED", read_json(self.project / "project.json")["status"])
 
@@ -151,11 +159,10 @@ class LifecycleFailureInjectionTests(unittest.TestCase):
                     raise OSError("injected disk full")
                 return real_os_replace(source, destination, *args, **kwargs)
 
-            with (
-                mock.patch.object(
-                    project_io, "replace_contained", side_effect=fail_verification_contained
-                ),
-                mock.patch.object(project_io.os, "replace", side_effect=fail_verification_os),
+            with mock.patch.object(
+                project_io, "replace_contained", side_effect=fail_verification_contained
+            ), mock.patch.object(
+                project_io.os, "replace", side_effect=fail_verification_os
             ):
                 with self.assertRaisesRegex(OSError, "disk full"):
                     guarded_export(project)

@@ -56,7 +56,9 @@ def compare_full_page(
 ) -> PdfPageMetrics:
     """Compare every source/decoded pixel using deterministic integer sums."""
     if source.size != decoded.size:
-        raise PdfQualityError(f"decoded PDF page {page_number} dimensions do not match source")
+        raise PdfQualityError(
+            f"decoded PDF page {page_number} dimensions do not match source"
+        )
     source_rgb = source.convert("RGB")
     decoded_rgb = decoded.convert("RGB")
     try:
@@ -67,14 +69,22 @@ def compare_full_page(
             total_error = sum(
                 value * count
                 for channel in range(3)
-                for value, count in enumerate(histogram[channel * 256 : (channel + 1) * 256])
+                for value, count in enumerate(
+                    histogram[channel * 256:(channel + 1) * 256]
+                )
             )
             high_error_lut = [
-                255 if value > HIGH_ERROR_CHANNEL_THRESHOLD else 0 for value in range(256)
+                255 if value > HIGH_ERROR_CHANNEL_THRESHOLD else 0
+                for value in range(256)
             ]
-            masks = [channel.point(high_error_lut) for channel in difference.split()]
+            masks = [
+                channel.point(high_error_lut)
+                for channel in difference.split()
+            ]
             try:
-                high_mask = ImageChops.lighter(ImageChops.lighter(masks[0], masks[1]), masks[2])
+                high_mask = ImageChops.lighter(
+                    ImageChops.lighter(masks[0], masks[1]), masks[2]
+                )
                 high_error_pixels = width * height - high_mask.histogram()[0]
                 high_mask.close()
             finally:
@@ -95,7 +105,7 @@ def compare_full_page(
                             value * count
                             for channel in range(3)
                             for value, count in enumerate(
-                                region_histogram[channel * 256 : (channel + 1) * 256]
+                                region_histogram[channel * 256:(channel + 1) * 256]
                             )
                         )
                         region_means.append(
@@ -138,12 +148,7 @@ def _decode_pdf_frames(payload: bytes) -> list[Image.Image]:
                     frame = image.convert("RGB")
                     frame.load()
                     frames.append(frame)
-        except (
-            OSError,
-            SyntaxError,
-            Image.DecompressionBombError,
-            Image.DecompressionBombWarning,
-        ) as error:
+        except (OSError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
             for frame in frames:
                 frame.close()
             raise PdfQualityError("PDF raster frame could not be decoded") from error
@@ -171,10 +176,16 @@ def verify_pdf_payload(
         if len(frames) != len(source_pages):
             raise PdfQualityError("written PDF page count does not match source pages")
         metrics: list[PdfPageMetrics] = []
-        for page_number, (source, decoded) in enumerate(zip(source_pages, frames), 1):
-            page_metrics = compare_full_page(source, decoded, page_number=page_number)
+        for page_number, (source, decoded) in enumerate(
+            zip(source_pages, frames), 1
+        ):
+            page_metrics = compare_full_page(
+                source, decoded, page_number=page_number
+            )
             if not _metrics_pass(page_metrics):
-                raise PdfQualityError(f"written PDF content mismatch at page {page_number}")
+                raise PdfQualityError(
+                    f"written PDF content mismatch at page {page_number}"
+                )
             metrics.append(page_metrics)
         return {
             "exporter_version": PDF_EXPORTER_VERSION,

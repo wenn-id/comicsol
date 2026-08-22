@@ -1564,12 +1564,7 @@ def _verify_raster(path: Path) -> tuple[int, int]:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
-            try:
-                payload = read_bytes_nofollow(path, max_bytes=MAX_ENCODED_RASTER_BYTES)
-            except InputResourceLimitError as error:
-                raise InputResourceLimitError(
-                    f"the encoded raster size limit of {MAX_ENCODED_RASTER_BYTES} bytes"
-                ) from error
+            payload = read_bytes_nofollow(path, max_bytes=MAX_ENCODED_RASTER_BYTES)
             with Image.open(io.BytesIO(payload)) as image:
                 if image.format not in {"PNG", "JPEG", "WEBP"}:
                     raise ValueError("attempt must be a readable raster")

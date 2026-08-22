@@ -40,7 +40,9 @@ def venv_paths(root: Path) -> tuple[Path, Path]:
     return root / "bin" / "python", root / "bin" / "comic-sol"
 
 
-def read_codex_entry(config: Path, output_root: Path, executable: Path) -> dict[str, object]:
+def read_codex_entry(
+    config: Path, output_root: Path, executable: Path
+) -> dict[str, object]:
     """Read and validate the exact MCP entry produced for Codex."""
     record = tomllib.loads(config.read_text(encoding="utf-8"))
     try:
@@ -88,7 +90,13 @@ def minimal_environment(environment: dict[str, str]) -> dict[str, str]:
 def prepare_client_configs(home: Path) -> tuple[list[str], Path]:
     """Create the existing native Claude fixture needed by the macOS smoke."""
     clients = ["codex"]
-    claude = home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    claude = (
+        home
+        / "Library"
+        / "Application Support"
+        / "Claude"
+        / "claude_desktop_config.json"
+    )
     if sys.platform == "darwin":
         claude.parent.mkdir(parents=True)
         claude.write_text(
@@ -130,17 +138,8 @@ def main() -> int:
         initialized = json.loads(
             run(
                 [
-                    str(executable),
-                    "--json",
-                    "init",
-                    "--output-root",
-                    str(output_root),
-                    "--title",
-                    "Clean Install",
-                    "--source",
-                    str(source),
-                    "--request-json",
-                    str(request),
+                    str(executable), "--json", "init", "--output-root", str(output_root),
+                    "--title", "Clean Install", "--source", str(source), "--request-json", str(request),
                 ],
                 cwd=root,
             )
@@ -168,7 +167,9 @@ def main() -> int:
         ]
         for client in clients:
             setup_command.extend(["--client", client])
-        setup = json.loads(run(setup_command, cwd=root, env=env))
+        setup = json.loads(
+            run(setup_command, cwd=root, env=env)
+        )
         setup_results = {result["client"]: result for result in setup["data"]}
         if any(setup_results[client]["status"] != "configured" for client in clients):
             raise RuntimeError("installed client setup did not configure selected clients")
@@ -188,7 +189,9 @@ def main() -> int:
         ]
         for client in clients:
             uninstall_command.extend(["--client", client])
-        uninstall = json.loads(run(uninstall_command, cwd=root, env=env))
+        uninstall = json.loads(
+            run(uninstall_command, cwd=root, env=env)
+        )
         uninstall_results = {result["client"]: result for result in uninstall["data"]}
         if (
             any(uninstall_results[client]["status"] != "removed" for client in clients)
@@ -199,12 +202,9 @@ def main() -> int:
         if arguments.mcp:
             run(
                 [
-                    str(python),
-                    str(repository / "scripts" / "installed_mcp_smoke.py"),
-                    "--command",
-                    entry["command"],
-                    "--args-json",
-                    json.dumps(entry["args"]),
+                    str(python), str(repository / "scripts" / "installed_mcp_smoke.py"),
+                    "--command", entry["command"],
+                    "--args-json", json.dumps(entry["args"]),
                 ],
                 cwd=root,
                 env=minimal_environment(env),

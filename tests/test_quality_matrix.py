@@ -133,14 +133,18 @@ def build_lifecycle_project(root: Path) -> Path:
     atomic_write_json(project / "plan/storyboard.json", valid_storyboard())
     prompt = project / "prompts/panels/p01-01.txt"
     prompt.write_text("local deterministic panel prompt\n", encoding="utf-8")
-    Image.new("RGB", (512, 512), "white").save(project / "references/characters/mira.png")
+    Image.new("RGB", (512, 512), "white").save(
+        project / "references/characters/mira.png"
+    )
     raw = project / "panels/raw/p01-01.png"
     image = Image.new("RGB", (736, 1136), (20, 30, 40))
     try:
         image.save(raw, format="PNG", optimize=False, compress_level=9)
     finally:
         image.close()
-    clean = normalize_panel(project, "p01-01", "panels/raw/p01-01.png", (736, 1136), "exact")
+    clean = normalize_panel(
+        project, "p01-01", "panels/raw/p01-01.png", (736, 1136), "exact"
+    )
     shutil.copyfile(clean, project / "panels/clean/p01-01.png")
     panel_record = valid_panel_record_v2()
     panel_record["bindings"]["raw_sha256"] = sha256_file(raw)
@@ -191,7 +195,9 @@ class QualityMatrixContractTests(unittest.TestCase):
                 second = build_quality_fixture(root / "second", scenario)
                 with self.subTest(scenario=scenario):
                     self.assertEqual(tree_digest(first), tree_digest(second))
-                    metadata = json.loads((first / "quality-fixture.json").read_text("utf-8"))
+                    metadata = json.loads(
+                        (first / "quality-fixture.json").read_text("utf-8")
+                    )
                     self.assertEqual(scenario, metadata["scenario"])
                     self.assertEqual("deterministic", metadata["evidence_mode"])
                     self.assertTrue(metadata["local_only"])
@@ -283,8 +289,12 @@ class EvidenceModeContractTests(unittest.TestCase):
                         ]
                     ),
                 )
-            hashed.assert_called_once_with(lexical_project / "panels/raw/attempt.png")
-            record = json.loads((project / "qa/evidence.json").read_text("utf-8"))
+            hashed.assert_called_once_with(
+                lexical_project / "panels/raw/attempt.png"
+            )
+            record = json.loads(
+                (project / "qa/evidence.json").read_text("utf-8")
+            )
             self.assertEqual("live-visual", record["mode"])
             self.assertEqual("test-model-v1", record["model"])
             self.assertEqual(
@@ -344,11 +354,8 @@ class DeterministicLifecycleTests(unittest.TestCase):
                 project,
                 1,
                 build_page_quality_record(
-                    project,
-                    1,
-                    page_reviewer_checks(project, 1),
-                    reviewer="fixture-reviewer",
-                    reviewed_at="2026-08-14T01:02:03Z",
+                    project, 1, page_reviewer_checks(project, 1),
+                    reviewer="fixture-reviewer", reviewed_at="2026-08-14T01:02:03Z",
                 ),
             )
             result = finalize_project(project)
@@ -373,11 +380,8 @@ class DeterministicLifecycleTests(unittest.TestCase):
                 project,
                 1,
                 build_page_quality_record(
-                    project,
-                    1,
-                    page_reviewer_checks(project, 1),
-                    reviewer="fixture-reviewer",
-                    reviewed_at="2026-08-14T01:02:03Z",
+                    project, 1, page_reviewer_checks(project, 1),
+                    reviewer="fixture-reviewer", reviewed_at="2026-08-14T01:02:03Z",
                 ),
             )
             first_result = finalize_project(project)

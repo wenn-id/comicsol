@@ -73,7 +73,9 @@ SOURCE = (
     "through an engine shed to a night market, so the same two faces have to survive "
     "every light of one working day.\n"
 )
-STYLE_ANCHOR = "original high-contrast manga/anime ink linework with restrained colour accents"
+STYLE_ANCHOR = (
+    "original high-contrast manga/anime ink linework with restrained colour accents"
+)
 CAPABILITY = (
     "Repeated character identity: two canonical characters carried across five camera "
     "views, nine expressions, four lighting conditions, and four backgrounds while every "
@@ -142,7 +144,8 @@ SCORE_SCALE = {
     "min": 0,
 }
 VISUAL_REASON = (
-    "identity drift is a reviewer judgement, so scored dimensions stay out of deterministic CI"
+    "identity drift is a reviewer judgement, so scored dimensions stay out of "
+    "deterministic CI"
 )
 VISUAL_LIMITATIONS = (
     "no image provider runs in CI, so this baseline renders no panel and scores no dimension",
@@ -182,48 +185,46 @@ BAYU_INVARIANTS = (
     "yellow ear-defenders around the neck",
 )
 
-CHARACTER_BIBLE = _bible(
-    [
-        _character(
-            "rani",
-            "Rani",
-            "salvage diver",
-            "adult, late twenties",
-            "she/her",
-            ("stubborn", "methodical"),
-            "recover the compass her mother dived with",
-            "short flat statements",
-            _fingerprint(
-                "compact square-shouldered build with a slight forward lean",
-                "round face with a crescent scar under the right eye",
-                "black hair in a blunt chin-length bob with a straight fringe",
-                "olive field jacket with a buttoned left chest pocket",
-                ("olive", "brick red", "bone white"),
-                ("brass compass on a bootlace",),
-                RANI_INVARIANTS,
-            ),
+CHARACTER_BIBLE = _bible([
+    _character(
+        "rani",
+        "Rani",
+        "salvage diver",
+        "adult, late twenties",
+        "she/her",
+        ("stubborn", "methodical"),
+        "recover the compass her mother dived with",
+        "short flat statements",
+        _fingerprint(
+            "compact square-shouldered build with a slight forward lean",
+            "round face with a crescent scar under the right eye",
+            "black hair in a blunt chin-length bob with a straight fringe",
+            "olive field jacket with a buttoned left chest pocket",
+            ("olive", "brick red", "bone white"),
+            ("brass compass on a bootlace",),
+            RANI_INVARIANTS,
         ),
-        _character(
-            "bayu",
-            "Bayu",
-            "deck hand",
-            "teen, seventeen",
-            "he/him",
-            ("eager", "literal"),
-            "prove he can hold a dive line",
-            "quick short questions",
-            _fingerprint(
-                "tall narrow build with long forearms",
-                "long face with a broad flat nose and a chipped front tooth",
-                "tight black curls cropped at the temples",
-                "faded blue mechanic coveralls tied at the waist",
-                ("faded blue", "steel grey", "ochre"),
-                ("yellow ear-defenders around the neck",),
-                BAYU_INVARIANTS,
-            ),
+    ),
+    _character(
+        "bayu",
+        "Bayu",
+        "deck hand",
+        "teen, seventeen",
+        "he/him",
+        ("eager", "literal"),
+        "prove he can hold a dive line",
+        "quick short questions",
+        _fingerprint(
+            "tall narrow build with long forearms",
+            "long face with a broad flat nose and a chipped front tooth",
+            "tight black curls cropped at the temples",
+            "faded blue mechanic coveralls tied at the waist",
+            ("faded blue", "steel grey", "ochre"),
+            ("yellow ear-defenders around the neck",),
+            BAYU_INVARIANTS,
         ),
-    ]
-)
+    ),
+])
 CHARACTERS = {character["id"]: character for character in CHARACTER_BIBLE["characters"]}
 
 
@@ -469,12 +470,14 @@ def _panel(row):
 PAGES = [
     _page(
         PAGE_LAYOUT,
-        [_panel(row) for row in MATRIX[start : start + PANELS_PER_PAGE]],
+        [_panel(row) for row in MATRIX[start:start + PANELS_PER_PAGE]],
     )
     for start in range(0, len(MATRIX), PANELS_PER_PAGE)
 ]
 STORYBOARD = build_storyboard(PAGES)
-PANEL_IDS = tuple(panel["id"] for page in STORYBOARD["pages"] for panel in page["panels"])
+PANEL_IDS = tuple(
+    panel["id"] for page in STORYBOARD["pages"] for panel in page["panels"]
+)
 MATRIX_BY_PANEL = dict(zip(PANEL_IDS, MATRIX))
 
 
@@ -521,7 +524,9 @@ def panel_prompt(panel_id):
     ]
     for character_id in row["characters"]:
         traits = immutable_traits(character_id)
-        lines.append(f"{CHARACTERS[character_id]['name']} - immutable identity, reproduce exactly:")
+        lines.append(
+            f"{CHARACTERS[character_id]['name']} - immutable identity, reproduce exactly:"
+        )
         lines.extend(f"- {dimension}: {traits[dimension]}" for dimension in CONSISTENCY_DIMENSIONS)
     prohibited = list(BASE_NEGATIVE) + list(PANEL_NEGATIVE)
     lines.append("Do not render: " + ", ".join(prohibited) + ".")
@@ -598,7 +603,9 @@ def definition():
         "characters": CHARACTER_BIBLE,
         "dimensions": {
             "order": list(CONSISTENCY_DIMENSIONS),
-            "sources": {dimension: list(path) for dimension, path in DIMENSION_SOURCES.items()},
+            "sources": {
+                dimension: list(path) for dimension, path in DIMENSION_SOURCES.items()
+            },
         },
         "matrix": [dict(row) for row in MATRIX],
         "prompts": {panel_id: panel_prompt(panel_id) for panel_id in PANEL_IDS},
@@ -816,9 +823,12 @@ def validate_scorecard(scorecard):
             problems.append(f"{location}: score must be an integer or null")
         elif not SCORE_SCALE["min"] <= score <= SCORE_SCALE["max"]:
             problems.append(
-                f"{location}: score must be between {SCORE_SCALE['min']} and {SCORE_SCALE['max']}"
+                f"{location}: score must be between {SCORE_SCALE['min']} and "
+                f"{SCORE_SCALE['max']}"
             )
-    scored = any(score is not None for _, _, _, score in _scorecard_scores(scorecard))
+    scored = any(
+        score is not None for _, _, _, score in _scorecard_scores(scorecard)
+    )
     review = scorecard.get("review")
     if scored and not isinstance(review, dict):
         problems.append("a scored scorecard must record review provenance")
@@ -913,18 +923,16 @@ def panel_qa_assessments(scorecard, panel_id):
                 result, severity = "warning", "warning"
             else:
                 result, severity = "fail", "error"
-            assessments.append(
-                {
-                    "character_id": character_id,
-                    "evidence": (
-                        f"CS-013 score {score}/{SCORE_SCALE['max']}: "
-                        f"{SCORE_SCALE['labels'][str(score)]}"
-                    ),
-                    "result": result,
-                    "severity": severity,
-                    "trait": trait,
-                }
-            )
+            assessments.append({
+                "character_id": character_id,
+                "evidence": (
+                    f"CS-013 score {score}/{SCORE_SCALE['max']}: "
+                    f"{SCORE_SCALE['labels'][str(score)]}"
+                ),
+                "result": result,
+                "severity": severity,
+                "trait": trait,
+            })
     return assessments
 
 
@@ -960,26 +968,24 @@ def build_consistency_project(root):
         "story_plan": "plan/story-plan.json",
         "storyboard": "plan/storyboard.json",
     }
-    manifest.update(
-        {
-            "project_id": SCENARIO,
-            "title": TITLE,
-            "panels": list(PANEL_IDS),
-            "artifacts": {
-                name: {"path": relative, "sha256": sha256_file(project / relative)}
-                for name, relative in descriptors.items()
-            },
-            "settings": {
-                **manifest["settings"],
-                "page_count": len(STORYBOARD["pages"]),
-                "panel_count": len(PANEL_IDS),
-            },
-            "input": {
-                **manifest["input"],
-                "source_sha256": sha256_file(project / "source/input.txt"),
-            },
-        }
-    )
+    manifest.update({
+        "project_id": SCENARIO,
+        "title": TITLE,
+        "panels": list(PANEL_IDS),
+        "artifacts": {
+            name: {"path": relative, "sha256": sha256_file(project / relative)}
+            for name, relative in descriptors.items()
+        },
+        "settings": {
+            **manifest["settings"],
+            "page_count": len(STORYBOARD["pages"]),
+            "panel_count": len(PANEL_IDS),
+        },
+        "input": {
+            **manifest["input"],
+            "source_sha256": sha256_file(project / "source/input.txt"),
+        },
+    })
     atomic_write_json(project / "project.json", manifest)
     transition(project, "PLANNED")
     transition(project, "SCRIPTED")
@@ -999,7 +1005,9 @@ def storyboard_validation(root):
         require_valid_project(project, "storyboard")
     except ProjectValidationError as error:
         return {
-            "issues": [f"{issue.path}:{issue.field}: {issue.message}" for issue in error.issues],
+            "issues": [
+                f"{issue.path}:{issue.field}: {issue.message}" for issue in error.issues
+            ],
             "result": "fail",
             "stage": "storyboard",
         }

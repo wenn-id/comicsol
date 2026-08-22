@@ -403,7 +403,9 @@ def comic_doctor() -> dict[str, object]:
 def comic_init(title: str, source_text: str, request_settings: dict[str, Any]) -> str:
     """Initialize a new isolated project folder."""
     try:
-        validate_narrative(title, message=TITLE_LIMIT_MESSAGE, max_chars=MAX_TITLE_CHARS)
+        validate_narrative(
+            title, message=TITLE_LIMIT_MESSAGE, max_chars=MAX_TITLE_CHARS
+        )
         if not isinstance(source_text, str) or len(source_text.encode("utf-8")) > 200 * 1024:
             raise ValueError("source must be at most 200 KiB as UTF-8 bytes")
         if not isinstance(request_settings, dict):
@@ -436,7 +438,9 @@ def comic_transition(project_id: str, target: str, warning: str | None = None) -
     _validate_target(target)
     if warning is not None:
         try:
-            validate_narrative(warning, message=WARNING_LIMIT_MESSAGE, max_chars=MAX_WARNING_CHARS)
+            validate_narrative(
+                warning, message=WARNING_LIMIT_MESSAGE, max_chars=MAX_WARNING_CHARS
+            )
         except Exception as e:
             raise _request_error(e) from None
     project_dir = _resolve_project(project_id)

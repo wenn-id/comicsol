@@ -23,8 +23,8 @@ class ClientSetupTests(unittest.TestCase):
         self.output = self.home / "Comic Sol Projects"
         self.output.mkdir(parents=True)
         (self.output / "keep.txt").write_text("project", encoding="utf-8")
-        self.launcher = (
-            self.home / "bin with spaces" / ("comic-sol.exe" if os.name == "nt" else "comic-sol")
+        self.launcher = self.home / "bin with spaces" / (
+            "comic-sol.exe" if os.name == "nt" else "comic-sol"
         )
         self.launcher.parent.mkdir()
         self.launcher.write_bytes(b"launcher")
@@ -39,7 +39,9 @@ class ClientSetupTests(unittest.TestCase):
             }
 
     def test_default_adapter_paths_are_platform_native(self):
-        with mock.patch.dict(os.environ, {"APPDATA": str(self.home / "Roaming")}):
+        with mock.patch.dict(
+            os.environ, {"APPDATA": str(self.home / "Roaming")}
+        ):
             windows = self.adapter_paths("win32")
         macos = self.adapter_paths("darwin")
         linux = self.adapter_paths("linux")
@@ -49,7 +51,8 @@ class ClientSetupTests(unittest.TestCase):
             windows["claude-desktop"],
         )
         self.assertEqual(
-            self.home / "Library/Application Support/Claude/claude_desktop_config.json",
+            self.home
+            / "Library/Application Support/Claude/claude_desktop_config.json",
             macos["claude-desktop"],
         )
         self.assertEqual(
@@ -97,10 +100,16 @@ class ClientSetupTests(unittest.TestCase):
         config.parent.mkdir(parents=True)
         config.write_text("{}\n", encoding="utf-8")
         adapter = JsonClientAdapter("cursor", config, "mcpServers")
-        with mock.patch("comic_sol_product.setup.shutil.which", return_value=str(self.launcher)):
-            first = setup_clients(self.output, adapters=[adapter], executable="comic-sol")[0]
+        with mock.patch(
+            "comic_sol_product.setup.shutil.which", return_value=str(self.launcher)
+        ):
+            first = setup_clients(
+                self.output, adapters=[adapter], executable="comic-sol"
+            )[0]
             first_bytes = config.read_bytes()
-            second = setup_clients(self.output, adapters=[adapter], executable="comic-sol")[0]
+            second = setup_clients(
+                self.output, adapters=[adapter], executable="comic-sol"
+            )[0]
 
         self.assertEqual(first.status, "configured")
         self.assertEqual(second.status, "unchanged")
@@ -126,9 +135,7 @@ class ClientSetupTests(unittest.TestCase):
         )
         adapter = JsonClientAdapter("cursor", config, "mcpServers")
 
-        with mock.patch.object(
-            client_setup, "_ConfigLock", side_effect=PermissionError("read-only")
-        ):
+        with mock.patch.object(client_setup, "_ConfigLock", side_effect=PermissionError("read-only")):
             result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
 
         self.assertEqual("unchanged", result.status)
@@ -251,6 +258,7 @@ class ClientSetupTests(unittest.TestCase):
         self.assertEqual("rolled-back", result.status)
         self.assertEqual(0o640, stat.S_IMODE(config.stat().st_mode))
         self.assertEqual(0o600, stat.S_IMODE(Path(result.backup_path).stat().st_mode))
+
 
     @unittest.skipIf(os.name == "nt", "POSIX symlink semantics are unavailable on Windows")
     def test_backup_collision_with_symlink_fails_without_following_or_overwriting_it(self):
@@ -540,22 +548,10 @@ class ClientSetupTests(unittest.TestCase):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)
         config.write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        "comic-sol": {
-                            "command": "comic-sol",
-                            "args": [
-                                "mcp",
-                                "--root",
-                                str(self.output.resolve()),
-                                "--root",
-                                str(self.output.resolve()),
-                            ],
-                        }
-                    }
-                }
-            ),
+            json.dumps({"mcpServers": {"comic-sol": {
+                "command": "comic-sol",
+                "args": ["mcp", "--root", str(self.output.resolve()), "--root", str(self.output.resolve())],
+            }}}),
             encoding="utf-8",
         )
         self.assertFalse(JsonClientAdapter("cursor", config, "mcpServers").verify())
@@ -584,17 +580,13 @@ class ClientSetupTests(unittest.TestCase):
             calls.append(True)
             return False
 
-        self.assertFalse(
-            JsonClientAdapter("cursor", config, "mcpServers", verify_hook=hook).verify({})
-        )
+        self.assertFalse(JsonClientAdapter("cursor", config, "mcpServers", verify_hook=hook).verify({}))
         self.assertEqual([True], calls)
 
     def test_codex_toml_preserves_existing_config_and_is_idempotent(self):
         config = self.home / ".codex" / "config.toml"
         config.parent.mkdir(parents=True)
-        config.write_text(
-            'model = "gpt-test"\n\n[mcp_servers.other]\ncommand = "other"\n', encoding="utf-8"
-        )
+        config.write_text('model = "gpt-test"\n\n[mcp_servers.other]\ncommand = "other"\n', encoding="utf-8")
         adapter = CodexAdapter(config)
 
         first = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
@@ -604,7 +596,7 @@ class ClientSetupTests(unittest.TestCase):
         self.assertEqual(first.status, "configured")
         self.assertEqual(second.status, "unchanged")
         self.assertIn('model = "gpt-test"', text)
-        self.assertIn("[mcp_servers.other]", text)
+        self.assertIn('[mcp_servers.other]', text)
         self.assertEqual(text.count("[mcp_servers.comic-sol]"), 1)
         self.assertIn('args = ["mcp", "--root",', text)
 
@@ -653,11 +645,11 @@ class ClientSetupTests(unittest.TestCase):
         config = self.home / ".codex" / "config.toml"
         config.parent.mkdir(parents=True)
         original = (
-            "[other]\n"
+            '[other]\n'
             'note = """\n'
-            "[mcp_servers.comic-sol]\n"
+            '[mcp_servers.comic-sol]\n'
             '"""\n\n'
-            "[kept_server]\n"
+            '[kept_server]\n'
             'command = "important-user-server"\n'
         ).encode("utf-8")
         config.write_bytes(original)
@@ -678,7 +670,7 @@ class ClientSetupTests(unittest.TestCase):
         config.parent.mkdir(parents=True)
         config.write_text(
             'model = "gpt-test"\n\n'
-            "[mcp_servers.comic-sol]\n"
+            '[mcp_servers.comic-sol]\n'
             'command = "comic-sol"\n'
             'args = ["mcp", "--root", "/tmp/comic-sol"]\n',
             encoding="utf-8",
@@ -695,10 +687,10 @@ class ClientSetupTests(unittest.TestCase):
         config = self.home / ".codex" / "config.toml"
         config.parent.mkdir(parents=True)
         config.write_text(
-            "[mcp_servers.comic-sol]\n"
+            '[mcp_servers.comic-sol]\n'
             'command = "comic-sol"\n'
             'args = ["mcp", "--root", "/tmp/comic-sol"]\n\n'
-            "# user note after integration\n",
+            '# user note after integration\n',
             encoding="utf-8",
         )
         adapter = CodexAdapter(config)
@@ -774,7 +766,7 @@ class ClientSetupTests(unittest.TestCase):
         config = self.home / ".codex" / "config.toml"
         config.parent.mkdir(parents=True)
         original = (
-            "[mcp_servers.comic-sol]\n"
+            '[mcp_servers.comic-sol]\n'
             'command = "comic-sol"\n'
             'args = ["mcp", "--root", "/tmp/comic-sol"]\n'
         ).encode("utf-8")
@@ -808,7 +800,7 @@ class ClientSetupTests(unittest.TestCase):
                 marker = "comic-sol\n"
                 if not config.endswith(marker):
                     return config, False
-                return config[: -len(marker)], True
+                return config[:-len(marker)], True
 
             def dump(self, config):
                 return config.encode("utf-8")
@@ -870,7 +862,9 @@ class ClientSetupTests(unittest.TestCase):
         config = self.home / ".cursor" / "mcp.json"
         adapter = JsonClientAdapter("cursor", config, "mcpServers")
 
-        with mock.patch("comic_sol_product.setup.shutil.which", return_value=None) as which:
+        with mock.patch(
+            "comic_sol_product.setup.shutil.which", return_value=None
+        ) as which:
             result = setup_clients(
                 self.output,
                 adapters=[adapter],
@@ -919,7 +913,9 @@ class ClientSetupTests(unittest.TestCase):
                 executable=console_path,
             )[0]
 
-        entry = json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["comic-sol"]
+        entry = json.loads(config.read_text(encoding="utf-8"))["mcpServers"][
+            "comic-sol"
+        ]
         self.assertEqual("configured", result.status)
         self.assertEqual(str(native_launcher.resolve()), entry["command"])
 

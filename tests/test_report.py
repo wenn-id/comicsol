@@ -20,23 +20,18 @@ from scripts.render_report import QaSummary, main, render_report, summarize_qa  
 from scripts import project_io  # noqa: E402
 
 
-def panel_record(
-    panel_id, *, attempts=1, decision="accept", warning=None, failing=False, override_reason=None
-):
-    checks = [
-        {
-            "id": check_id,
-            "result": "fail"
-            if failing and check_id == "technical"
-            else ("warning" if warning and check_id == "continuity" else "pass"),
-            "severity": "error" if failing or not warning else "warning",
-            "evidence": "pipe | line\nnext" if check_id == "composition" else f"{check_id} checked",
-        }
-        for check_id in PANEL_CHECK_IDS
-    ]
+def panel_record(panel_id, *, attempts=1, decision="accept", warning=None,
+                 failing=False, override_reason=None):
+    checks = [{
+        "id": check_id,
+        "result": "fail" if failing and check_id == "technical" else (
+            "warning" if warning and check_id == "continuity" else "pass"
+        ),
+        "severity": "error" if failing or not warning else "warning",
+        "evidence": "pipe | line\nnext" if check_id == "composition" else f"{check_id} checked",
+    } for check_id in PANEL_CHECK_IDS]
     record = {
-        "schema_version": "1.0",
-        "panel_id": panel_id,
+        "schema_version": "1.0", "panel_id": panel_id,
         "source_prompt_path": f"prompts/panels/{panel_id}.txt",
         "raw_path": f"panels/raw/{panel_id}.png",
         "clean_path": f"panels/clean/{panel_id}.png",
@@ -48,8 +43,7 @@ def panel_record(
             "reference_paths": ["references/characters/mira.png"],
             "completed_at": "2026-07-18T04:10:00Z",
         },
-        "checks": checks,
-        "decision": decision,
+        "checks": checks, "decision": decision,
         "retry_reason": "technical repair required" if decision == "regenerate" else None,
         "unresolved_warnings": [warning] if warning else [],
     }
@@ -68,38 +62,28 @@ class ReportTests(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.project = Path(self.temporary_directory.name) / "qa-comic"
         for relative in (
-            "qa/panels",
-            "pages",
-            "exports",
-            "logs",
-            "plan",
-            "prompts/panels",
-            "panels/raw",
-            "panels/clean",
+            "qa/panels", "pages", "exports", "logs", "plan",
+            "prompts/panels", "panels/raw", "panels/clean",
             "references/characters",
         ):
             (self.project / relative).mkdir(parents=True, exist_ok=True)
         self.records = [
             panel_record("p01-01"),
-            panel_record(
-                "p01-02", decision="accept_with_warnings", warning="Minor prop drift is visible."
-            ),
+            panel_record("p01-02", decision="accept_with_warnings", warning="Minor prop drift is visible."),
             panel_record("p01-03", attempts=2, decision="regenerate", failing=True),
-            panel_record(
-                "p01-04",
-                attempts=2,
-                decision="accept_with_warnings",
-                failing=True,
-                override_reason="User override: scarf hue differs.",
-            ),
+            panel_record("p01-04", attempts=2, decision="accept_with_warnings", failing=True, override_reason="User override: scarf hue differs."),
             panel_record("p01-05", attempts=3, decision="regenerate", failing=True),
         ]
         for record in reversed(self.records):
-            atomic_write_json(self.project / f"qa/panels/{record['panel_id']}.json", record)
+            atomic_write_json(
+                self.project / f"qa/panels/{record['panel_id']}.json", record
+            )
             (self.project / record["source_prompt_path"]).write_text("prompt\n", "utf-8")
             Image.new("RGB", (512, 768), "gray").save(self.project / record["raw_path"])
             Image.new("RGB", (512, 768), "gray").save(self.project / record["clean_path"])
-        Image.new("RGB", (512, 768), "orange").save(self.project / "references/characters/mira.png")
+        Image.new("RGB", (512, 768), "orange").save(
+            self.project / "references/characters/mira.png"
+        )
         page = self.project / "pages/page-001.png"
         Image.new("RGB", (1600, 2400), "white").save(page)
         pdf = self.project / "exports/qa-comic.pdf"
@@ -114,37 +98,19 @@ class ReportTests(unittest.TestCase):
         manifest["input"]["source_sha256"] = "b" * 64
         manifest["settings"].update({"page_count": 1, "panel_count": 5})
         manifest["panels"] = [record["panel_id"] for record in self.records]
-        manifest["capability"].update(
-            {
-                "status": "available",
-                "name": "agent-image-generation",
-                "supports_reference_images": False,
-                "supports_dimensions": True,
-                "detected_at": "2026-07-18T04:00:00Z",
-            }
-        )
+        manifest["capability"].update({
+            "status": "available", "name": "agent-image-generation",
+            "supports_reference_images": False, "supports_dimensions": True,
+            "detected_at": "2026-07-18T04:00:00Z",
+        })
         manifest["artifacts"] = {
-            "story_plan": {
-                "path": "plan/story-plan.json",
-                "sha256": hashlib.sha256(story.read_bytes()).hexdigest(),
-            },
-            "pdf": {
-                "path": "exports/qa-comic.pdf",
-                "sha256": hashlib.sha256(pdf.read_bytes()).hexdigest(),
-            },
+            "story_plan": {"path": "plan/story-plan.json", "sha256": hashlib.sha256(story.read_bytes()).hexdigest()},
+            "pdf": {"path": "exports/qa-comic.pdf", "sha256": hashlib.sha256(pdf.read_bytes()).hexdigest()},
         }
         atomic_write_json(self.project / "project.json", manifest)
         events = [
-            {
-                "event": "artifact.reused",
-                "details": {"artifact_path": "panels/raw/p01-01.png"},
-                "timestamp": "2026-07-18T05:00:00Z",
-            },
-            {
-                "event": "artifact.regenerated",
-                "details": {"artifact_path": "panels/raw/p01-03.png"},
-                "timestamp": "2026-07-18T05:01:00Z",
-            },
+            {"event": "artifact.reused", "details": {"artifact_path": "panels/raw/p01-01.png"}, "timestamp": "2026-07-18T05:00:00Z"},
+            {"event": "artifact.regenerated", "details": {"artifact_path": "panels/raw/p01-03.png"}, "timestamp": "2026-07-18T05:01:00Z"},
         ]
         (self.project / "logs/events.jsonl").write_bytes(
             b"".join(canonical_json_bytes(event) + b"\n" for event in events)
@@ -155,17 +121,10 @@ class ReportTests(unittest.TestCase):
 
     def test_summary_uses_panel_records_for_exact_aggregates(self):
         summary = summarize_qa(read_json(self.project / "project.json"), self.records)
-        self.assertEqual(
-            QaSummary(
-                pages=1,
-                panels=5,
-                generation_attempts=9,
-                regenerated_panels=3,
-                accepted_warnings=2,
-                hard_failures=1,
-            ),
-            summary,
-        )
+        self.assertEqual(QaSummary(
+            pages=1, panels=5, generation_attempts=9,
+            regenerated_panels=3, accepted_warnings=2, hard_failures=1,
+        ), summary)
 
     def test_integrity_handles_pillow_decompression_bomb(self):
         with mock.patch(
@@ -186,16 +145,9 @@ class ReportTests(unittest.TestCase):
         output = render_report(self.project)
         text = output.read_text("utf-8")
         for phrase in (
-            "Project summary",
-            "Capability",
-            "Panel QA",
-            "Unresolved warnings",
-            "Artifact integrity",
-            "Resume summary",
-            "accept_with_warnings",
-            "regenerate",
-            "override",
-            "BLOCKED",
+            "Project summary", "Capability", "Panel QA", "Unresolved warnings",
+            "Artifact integrity", "Resume summary", "accept_with_warnings",
+            "regenerate", "override", "BLOCKED",
         ):
             self.assertIn(phrase, text)
         self.assertNotIn("{{", text)
@@ -204,7 +156,9 @@ class ReportTests(unittest.TestCase):
 
     def test_report_preserves_double_braces_in_authored_evidence(self):
         self.records[0]["checks"][0]["evidence"] = "Observed {{sun gate}} intact."
-        atomic_write_json(self.project / "qa/panels/p01-01.json", self.records[0])
+        atomic_write_json(
+            self.project / "qa/panels/p01-01.json", self.records[0]
+        )
         report = render_report(self.project).read_text("utf-8")
         self.assertIn("{{sun gate}}", report)
 
@@ -281,41 +235,37 @@ class ReportTests(unittest.TestCase):
         checks = []
         for check_id in PAGE_CHECK_IDS:
             deterministic = check_id in DETERMINISTIC_PAGE_CHECK_IDS
-            checks.append(
-                {
-                    "id": check_id,
-                    "result": "pass",
-                    "severity": "error",
-                    "evidence": f"Bounded evidence for {check_id}.",
-                    "method": (
-                        "deterministic-geometry-v1" if deterministic else "bounded-visual-review"
-                    ),
-                    "reviewer": "comic-sol" if deterministic else "fixture-reviewer",
-                    "regions": [] if deterministic else [{"scope": "page"}],
-                }
-            )
-        atomic_write_json(
-            page_dir / "page-001.json",
-            {
-                "bindings": {
-                    "layout_name": "four-grid",
-                    "layout_version": "1",
-                    "page_path": "pages/page-001.png",
-                    "page_sha256": "a" * 64,
-                },
-                "checks": checks,
-                "decision": "accept",
-                "kind": "page-qa",
-                "review": {
-                    "method": "deterministic-plus-bounded-visual-review",
-                    "reviewed_at": "2026-08-14T01:02:03Z",
-                    "reviewer": "fixture-reviewer",
-                },
-                "schema_version": CURRENT_PAGE_QA_SCHEMA_VERSION,
-                "subject_id": "page-001",
-                "unresolved_warnings": [],
+            checks.append({
+                "id": check_id,
+                "result": "pass",
+                "severity": "error",
+                "evidence": f"Bounded evidence for {check_id}.",
+                "method": (
+                    "deterministic-geometry-v1"
+                    if deterministic else "bounded-visual-review"
+                ),
+                "reviewer": "comic-sol" if deterministic else "fixture-reviewer",
+                "regions": [] if deterministic else [{"scope": "page"}],
+            })
+        atomic_write_json(page_dir / "page-001.json", {
+            "bindings": {
+                "layout_name": "four-grid",
+                "layout_version": "1",
+                "page_path": "pages/page-001.png",
+                "page_sha256": "a" * 64,
             },
-        )
+            "checks": checks,
+            "decision": "accept",
+            "kind": "page-qa",
+            "review": {
+                "method": "deterministic-plus-bounded-visual-review",
+                "reviewed_at": "2026-08-14T01:02:03Z",
+                "reviewer": "fixture-reviewer",
+            },
+            "schema_version": CURRENT_PAGE_QA_SCHEMA_VERSION,
+            "subject_id": "page-001",
+            "unresolved_warnings": [],
+        })
 
         text = render_report(self.project).read_text("utf-8")
         self.assertIn("Page QA", text)
@@ -327,16 +277,13 @@ class ReportTests(unittest.TestCase):
     def test_report_retains_legacy_page_record_as_migration_required(self):
         page_dir = self.project / "qa/pages"
         page_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(
-            page_dir / "page-001.json",
-            {
-                "schema_version": "1.0",
-                "page": 1,
-                "page_path": "pages/page-001.png",
-                "page_sha256": "a" * 64,
-                "status": "reviewed",
-            },
-        )
+        atomic_write_json(page_dir / "page-001.json", {
+            "schema_version": "1.0",
+            "page": 1,
+            "page_path": "pages/page-001.png",
+            "page_sha256": "a" * 64,
+            "status": "reviewed",
+        })
 
         text = render_report(self.project).read_text("utf-8")
 
@@ -363,9 +310,7 @@ class ReportTests(unittest.TestCase):
         page_dir.mkdir(parents=True, exist_ok=True)
         cases = {
             "superseded check set": {
-                "kind": "page-qa",
-                "schema_version": "2.0",
-                "subject_id": "page-001",
+                "kind": "page-qa", "schema_version": "2.0", "subject_id": "page-001",
             },
             "wrong kind at the current version": {
                 "kind": "panel-qa",
@@ -377,9 +322,7 @@ class ReportTests(unittest.TestCase):
                 "subject_id": "page-001",
             },
             "unknown version": {
-                "kind": "page-qa",
-                "schema_version": "9.9",
-                "subject_id": "page-001",
+                "kind": "page-qa", "schema_version": "9.9", "subject_id": "page-001",
             },
         }
         for label, record in cases.items():
@@ -394,16 +337,13 @@ class ReportTests(unittest.TestCase):
     def test_report_retains_malformed_legacy_page_as_migration_required(self):
         page_dir = self.project / "qa/pages"
         page_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(
-            page_dir / "page-001.json",
-            {
-                "schema_version": "1.0",
-                "page": "not-a-number",
-                "page_path": "pages/page-001.png",
-                "page_sha256": "a" * 64,
-                "status": "reviewed",
-            },
-        )
+        atomic_write_json(page_dir / "page-001.json", {
+            "schema_version": "1.0",
+            "page": "not-a-number",
+            "page_path": "pages/page-001.png",
+            "page_sha256": "a" * 64,
+            "status": "reviewed",
+        })
 
         text = render_report(self.project).read_text("utf-8")
 
@@ -485,9 +425,7 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(cli_output.is_file())
 
         broken_template = self.project / "broken.tmpl"
-        broken_template.write_text(
-            (ROOT / "templates/qa-report.md.tmpl").read_text("utf-8") + "\n{{UNKNOWN}}\n", "utf-8"
-        )
+        broken_template.write_text((ROOT / "templates/qa-report.md.tmpl").read_text("utf-8") + "\n{{UNKNOWN}}\n", "utf-8")
         before = custom.read_bytes()
         with mock.patch("scripts.render_report.TEMPLATE_PATH", broken_template):
             with self.assertRaisesRegex(ValueError, "template token"):

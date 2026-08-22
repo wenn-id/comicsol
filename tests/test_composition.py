@@ -24,32 +24,26 @@ class CompositionTests(unittest.TestCase):
             (self.project / relative).mkdir(parents=True, exist_ok=True)
         self.storyboard = {
             "schema_version": "1.0",
-            "pages": [
-                {
-                    "number": 1,
-                    "layout": "two-horizontal",
-                    "panels": [
-                        {"id": "p01-01", "rect": {"x": 64, "y": 64, "width": 1472, "height": 1120}},
-                        {
-                            "id": "p01-02",
-                            "rect": {"x": 64, "y": 1216, "width": 1472, "height": 1120},
-                        },
-                    ],
-                }
-            ],
+            "pages": [{
+                "number": 1,
+                "layout": "two-horizontal",
+                "panels": [
+                    {"id": "p01-01", "rect": {"x": 64, "y": 64, "width": 1472, "height": 1120}},
+                    {"id": "p01-02", "rect": {"x": 64, "y": 1216, "width": 1472, "height": 1120}},
+                ],
+            }],
         }
         self.settings = {"page_width": 1600, "page_height": 2400, "page_count": 1}
-        Image.new("RGB", (800, 800), "red").save(self.project / "panels/p01-01/lettered.png")
-        Image.new("RGB", (800, 800), "green").save(self.project / "panels/p01-02/lettered.png")
-        atomic_write_json(self.project / "plan/storyboard.json", self.storyboard)
-        atomic_write_json(
-            self.project / "project.json",
-            {
-                "settings": self.settings,
-                "artifacts": {},
-                "project_id": "composition-test",
-            },
+        Image.new("RGB", (800, 800), "red").save(
+            self.project / "panels/p01-01/lettered.png"
         )
+        Image.new("RGB", (800, 800), "green").save(
+            self.project / "panels/p01-02/lettered.png"
+        )
+        atomic_write_json(self.project / "plan/storyboard.json", self.storyboard)
+        atomic_write_json(self.project / "project.json", {
+            "settings": self.settings, "artifacts": {}, "project_id": "composition-test",
+        })
 
     def tearDown(self):
         self.temporary_directory.cleanup()
@@ -128,10 +122,7 @@ class CompositionTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "escapes|symlinks"):
             compose_page(
-                self.project,
-                1,
-                self.storyboard,
-                self.settings,
+                self.project, 1, self.storyboard, self.settings,
                 {"p01-01": {"path": "panels/linked.png"}},
             )
 
@@ -171,25 +162,29 @@ class CompositionTests(unittest.TestCase):
     def test_four_grid_golden_slots_gutters_borders_and_order(self):
         colors = ((255, 0, 0), (0, 128, 0), (0, 0, 255), (255, 255, 0))
         panels = []
-        for index, ((x, y, width, height), color) in enumerate(zip(FOUR_GRID_RECTS, colors), 1):
+        for index, ((x, y, width, height), color) in enumerate(
+            zip(FOUR_GRID_RECTS, colors), 1
+        ):
             panel_id = f"p01-{index:02d}"
             panel_dir = self.project / "panels" / panel_id
             panel_dir.mkdir(parents=True, exist_ok=True)
-            Image.new("RGB", (width, height), color).save(panel_dir / "lettered.png")
-            panels.append(
-                {
-                    "id": panel_id,
-                    "order": index,
-                    "rect": {"x": x, "y": y, "width": width, "height": height},
-                }
+            Image.new("RGB", (width, height), color).save(
+                panel_dir / "lettered.png"
             )
+            panels.append({
+                "id": panel_id,
+                "order": index,
+                "rect": {"x": x, "y": y, "width": width, "height": height},
+            })
         self.storyboard["pages"][0] = {
             "number": 1,
             "layout": "four-grid",
             "panels": panels,
         }
 
-        page_path = compose_page(self.project, 1, self.storyboard, self.settings, {})
+        page_path = compose_page(
+            self.project, 1, self.storyboard, self.settings, {}
+        )
         with Image.open(page_path) as page:
             self.assertEqual((1600, 2400), page.size)
             for rectangle, color in zip(FOUR_GRID_RECTS, colors):
@@ -215,9 +210,8 @@ class CompositionTests(unittest.TestCase):
         self.assertEqual("1", page["layout"]["version"])
         self.assertEqual(["p01-01", "p01-02"], page["panel_ids"])
         self.assertEqual(2, len(page["ordered_lettered_sha256s"]))
-        self.assertTrue(
-            all(len(value.split(":", 1)[1]) == 64 for value in page["ordered_lettered_sha256s"])
-        )
+        self.assertTrue(all(len(value.split(":", 1)[1]) == 64
+                            for value in page["ordered_lettered_sha256s"]))
         self.assertRegex(page["storyboard_page_sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(page["settings_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual([1600, 2400], page["output"]["dimensions"])
@@ -236,12 +230,10 @@ class CompositionTests(unittest.TestCase):
         self.storyboard["pages"][0] = {
             "number": 1,
             "layout": "full-page",
-            "panels": [
-                {
-                    "id": "p01-01",
-                    "rect": {"x": 64, "y": 64, "width": 1472, "height": 2272},
-                }
-            ],
+            "panels": [{
+                "id": "p01-01",
+                "rect": {"x": 64, "y": 64, "width": 1472, "height": 2272},
+            }],
         }
         atomic_write_json(self.project / "plan/storyboard.json", self.storyboard)
 
@@ -260,14 +252,15 @@ class CompositionTests(unittest.TestCase):
 
     def test_all_pages_returns_numeric_paths_and_writes_each_file(self):
         second = {
-            "number": 2,
-            "layout": "full-page",
+            "number": 2, "layout": "full-page",
             "panels": [{"id": "p02-01", "rect": {"x": 64, "y": 64, "width": 1472, "height": 2272}}],
         }
         self.storyboard["pages"].append(second)
         self.settings["page_count"] = 2
         (self.project / "panels/p02-01").mkdir(parents=True)
-        Image.new("RGB", (512, 768), "blue").save(self.project / "panels/p02-01/lettered.png")
+        Image.new("RGB", (512, 768), "blue").save(
+            self.project / "panels/p02-01/lettered.png"
+        )
         atomic_write_json(self.project / "plan/storyboard.json", self.storyboard)
         manifest = json.loads((self.project / "project.json").read_text("utf-8"))
         manifest["settings"] = self.settings
@@ -281,8 +274,7 @@ class CompositionTests(unittest.TestCase):
     def test_failed_second_page_preserves_entire_prior_page_set(self):
         # Setup two pages
         second = {
-            "number": 2,
-            "layout": "full-page",
+            "number": 2, "layout": "full-page",
             "panels": [{"id": "p02-01", "rect": {"x": 64, "y": 64, "width": 1472, "height": 2272}}],
         }
         self.storyboard["pages"].append(second)

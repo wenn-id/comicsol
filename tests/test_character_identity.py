@@ -130,7 +130,9 @@ class DerivationTests(IdentityPackHarness):
             ["amber scarf", "circular brass bag clasp"],
             mira["immutable_traits"]["invariants"],
         )
-        self.assertEqual("cream courier jacket and dark trousers", mira["wardrobe"]["base"])
+        self.assertEqual(
+            "cream courier jacket and dark trousers", mira["wardrobe"]["base"]
+        )
         self.assertEqual(["rectangular courier case"], mira["wardrobe"]["accessories"])
         self.assertEqual(["charcoal", "cream", "amber"], mira["wardrobe"]["palette"])
         self.assertEqual("short compact build", mira["proportions"]["build"])
@@ -165,7 +167,9 @@ class ValidationTests(IdentityPackHarness):
 
         self.assertEqual(
             (),
-            validate_identity_pack(pack, character_bible=self.bible, project_dir=self.project),
+            validate_identity_pack(
+                pack, character_bible=self.bible, project_dir=self.project
+            ),
         )
 
     def test_unknown_and_missing_fields_are_reported(self):
@@ -210,7 +214,9 @@ class ValidationTests(IdentityPackHarness):
 
         issues = validate_identity_pack(pack, project_dir=self.project)
 
-        self.assertTrue(any("POSIX relative project path" in issue for issue in issues), issues)
+        self.assertTrue(
+            any("POSIX relative project path" in issue for issue in issues), issues
+        )
 
     def test_missing_reference_file_is_reported_before_generation(self):
         pack = derive_identity_pack(self.bible)
@@ -252,7 +258,8 @@ class ValidationTests(IdentityPackHarness):
 
         self.assertEqual(
             (
-                "character-identity-pack character 'mira' avoid must match the bible verbatim",
+                "character-identity-pack character 'mira' avoid must match the bible "
+                "verbatim",
                 "character-identity-pack character 'mira' wardrobe.accessories must "
                 "match the bible verbatim",
                 "character-identity-pack character 'mira' wardrobe.base must match the "
@@ -317,7 +324,9 @@ class ValidationTests(IdentityPackHarness):
 
         issues = validate_identity_pack(pack, character_bible=self.bible)
 
-        self.assertIn("character-identity-pack is missing bible character 'ren'", issues)
+        self.assertIn(
+            "character-identity-pack is missing bible character 'ren'", issues
+        )
 
 
 class PromptContextTests(IdentityPackHarness):

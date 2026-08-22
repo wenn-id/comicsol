@@ -1,5 +1,6 @@
 """Official example projects build, validate, and stay documented."""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -70,7 +71,10 @@ class ExampleBuildTests(unittest.TestCase):
     def setUpClass(cls):
         cls._temporary_directory = tempfile.TemporaryDirectory()
         root = Path(cls._temporary_directory.name)
-        cls.built = {example.name: build_example(example, root) for example in discover_examples()}
+        cls.built = {
+            example.name: build_example(example, root)
+            for example in discover_examples()
+        }
 
     @classmethod
     def tearDownClass(cls):
@@ -104,8 +108,7 @@ class ExampleBuildTests(unittest.TestCase):
                     for check_id in ("text-free", "technical"):
                         self.assertEqual(("pass", "error"), results[check_id])
                     unreviewed = [
-                        check
-                        for check in record["checks"]
+                        check for check in record["checks"]
                         if check["id"] not in {"text-free", "technical"}
                     ]
                     self.assertEqual(5, len(unreviewed))
@@ -130,7 +133,9 @@ class ExampleBuildTests(unittest.TestCase):
                 with self.subTest(example=name, page=record_path.stem):
                     record = read_json(record_path)
                     self.assertEqual("accept-warning", record["decision"])
-                    results = {check["id"]: check["result"] for check in record["checks"]}
+                    results = {
+                        check["id"]: check["result"] for check in record["checks"]
+                    }
                     for check_id in (
                         "face-action-obstruction",
                         "accidental-text-watermark",
@@ -143,7 +148,9 @@ class ExampleBuildTests(unittest.TestCase):
             with self.subTest(example=name):
                 manifest_warnings = read_json(project / "project.json")["warnings"]
                 report = (project / "qa/report.md").read_text(encoding="utf-8")
-                record = read_json(sorted((project / "qa/panels").glob("*.json"))[0])
+                record = read_json(
+                    sorted((project / "qa/panels").glob("*.json"))[0]
+                )
                 for warning in record["unresolved_warnings"]:
                     self.assertIn(warning, manifest_warnings)
                     self.assertIn(warning, report)
@@ -166,7 +173,9 @@ class ExampleBuildTests(unittest.TestCase):
                 pages = sorted((project / "pages").glob("page-*.png"))
                 self.assertEqual(contract["page_count"], len(pages))
                 for page_number in range(1, contract["page_count"] + 1):
-                    self.assertTrue((project / f"qa/pages/page-{page_number:03d}.json").is_file())
+                    self.assertTrue(
+                        (project / f"qa/pages/page-{page_number:03d}.json").is_file()
+                    )
 
     def test_each_example_labels_itself_as_deterministic_evidence(self):
         for name, project in self.built.items():

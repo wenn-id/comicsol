@@ -33,18 +33,12 @@ def _valid_mcp_entry(entry: object, expected: dict[str, Any] | None = None) -> b
     args = entry.get("args")
     if not isinstance(command, str) or not command.strip():
         return False
-    if Path(command).name not in {"comic-sol", "comic-sol.exe"} and PureWindowsPath(
-        command
-    ).name not in {
+    if Path(command).name not in {"comic-sol", "comic-sol.exe"} and PureWindowsPath(command).name not in {
         "comic-sol",
         "comic-sol.exe",
     }:
         return False
-    if (
-        not isinstance(args, list)
-        or len(args) != 3
-        or not all(isinstance(item, str) for item in args)
-    ):
+    if not isinstance(args, list) or len(args) != 3 or not all(isinstance(item, str) for item in args):
         return False
     if args[0] != "mcp" or args[1] != "--root" or not isinstance(args[2], str):
         return False
@@ -76,7 +70,6 @@ class ClientAdapter(Protocol):
     def remove(self, config: Any) -> tuple[Any, bool]: ...
     def dump(self, config: Any) -> bytes: ...
     def verify(self, expected: dict[str, Any] | None = None) -> bool: ...
-
 
 class JsonClientAdapter:
     """Adapter for clients with a verified JSON MCP server mapping."""
@@ -127,9 +120,7 @@ class JsonClientAdapter:
         return updated, True
 
     def dump(self, config: dict[str, Any]) -> bytes:
-        return (json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
-            "utf-8"
-        )
+        return (json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
     def verify(self, expected: dict[str, Any] | None = None) -> bool:
         if self._verify_hook is not None:
@@ -277,11 +268,7 @@ class CodexAdapter:
         if not matches:
             if not replacement:
                 return text, False
-            separator = (
-                ""
-                if not text or text.endswith("\n\n")
-                else ("\n" if text.endswith("\n") else "\n\n")
-            )
+            separator = "" if not text or text.endswith("\n\n") else ("\n" if text.endswith("\n") else "\n\n")
             return text + separator + replacement, True
         start, _ = matches[0]
         next_sections = [span for span in _section_spans(text, _ANY_SECTION_RE) if span[0] > start]

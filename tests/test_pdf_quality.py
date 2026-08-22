@@ -136,7 +136,9 @@ class PdfCorruptionTests(unittest.TestCase):
             warnings.warn("unsafe dimensions", Image.DecompressionBombWarning)
             return decoded
 
-        with mock.patch("scripts.pdf_quality.Image.open", side_effect=open_with_warning):
+        with mock.patch(
+            "scripts.pdf_quality.Image.open", side_effect=open_with_warning
+        ):
             with self.assertRaisesRegex(PdfQualityError, "decode"):
                 verify_pdf_payload(payload, [self.first])
         decoded.convert.return_value.close()

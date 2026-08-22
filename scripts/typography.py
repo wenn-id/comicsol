@@ -136,10 +136,14 @@ def display_content(kind: object, text: str) -> str:
 def _style_spans(text: str) -> tuple[tuple[str, str], ...]:
     """Return validated styled text spans for lettering."""
     parts = text.split("**")
-    if len(parts) % 2 == 0 or any(not parts[index].strip() for index in range(1, len(parts), 2)):
+    if len(parts) % 2 == 0 or any(
+        not parts[index].strip() for index in range(1, len(parts), 2)
+    ):
         return ((text, "regular"),)
     return tuple(
-        (part, "bold" if index % 2 else "regular") for index, part in enumerate(parts) if part
+        (part, "bold" if index % 2 else "regular")
+        for index, part in enumerate(parts)
+        if part
     )
 
 
@@ -235,13 +239,17 @@ def _font_policy(font_policy: Mapping[str, object]) -> tuple[dict[str, Path], di
             # Glyphs alone do not make a script letterable: refusing here keeps a
             # bidirectional or reordering script from appearing to be supported
             # merely because a covering face was configured for it.
-            raise ValueError(f"font policy script extension cannot be lettered: {script}")
+            raise ValueError(
+                f"font policy script extension cannot be lettered: {script}"
+            )
         value = extensions[script]
         if not isinstance(value, (str, Path)):
             raise ValueError(f"font policy script extension {script} requires a path")
         path = Path(value)
         if not path.is_file():
-            raise ValueError(f"font policy script extension {script} is unavailable: {path.name}")
+            raise ValueError(
+                f"font policy script extension {script} is unavailable: {path.name}"
+            )
         role = script_role(script)
         paths[role] = path
         identifiers[role] = path.name
@@ -290,23 +298,19 @@ def preflight_text_items(
             for character in span:
                 codepoint = f"U+{ord(character):04X}"
                 if character == "\n":
-                    non_glyphs.append(
-                        {
-                            "codepoint": codepoint,
-                            "item_id": item_id,
-                            "policy": "line-break",
-                        }
-                    )
+                    non_glyphs.append({
+                        "codepoint": codepoint,
+                        "item_id": item_id,
+                        "policy": "line-break",
+                    })
                     base_face = None
                     continue
                 if character.isspace():
-                    non_glyphs.append(
-                        {
-                            "codepoint": codepoint,
-                            "item_id": item_id,
-                            "policy": "normalized-space",
-                        }
-                    )
+                    non_glyphs.append({
+                        "codepoint": codepoint,
+                        "item_id": item_id,
+                        "policy": "normalized-space",
+                    })
                     base_face = None
                     continue
                 script = script_for_codepoint(ord(character))
@@ -317,13 +321,16 @@ def preflight_text_items(
                 # interjections in the comic voice rather than in the CJK face.
                 candidates = (role, "fallback", script_role(script))
                 checked = tuple(
-                    identifiers[candidate] for candidate in candidates if candidate in identifiers
+                    identifiers[candidate]
+                    for candidate in candidates
+                    if candidate in identifiers
                 )
                 selected_role: str | None = next(
                     (
                         candidate
                         for candidate in candidates
-                        if candidate in paths and font_supports(paths[candidate], character)
+                        if candidate in paths
+                        and font_supports(paths[candidate], character)
                     ),
                     None,
                 )
@@ -335,38 +342,36 @@ def preflight_text_items(
                 else:
                     # Coverage is settled, so the resolved face is known and the
                     # mark can be checked against the base it will attach to.
-                    mark_reason = _combining_refusal(character, selected_role, base_face)
+                    mark_reason = _combining_refusal(
+                        character, selected_role, base_face
+                    )
                     if mark_reason:
                         category = "unsupported-shaping"
                         reason = mark_reason
                 if category is not None:
-                    issues.append(
-                        TypographyIssue(
-                            category=category,
-                            item_id=item_id,
-                            codepoint=codepoint,
-                            character=character,
-                            style=style,
-                            checked_fonts=checked,
-                            remediation=_remediation(category, script),
-                            script=script,
-                            reason=reason,
-                        )
-                    )
+                    issues.append(TypographyIssue(
+                        category=category,
+                        item_id=item_id,
+                        codepoint=codepoint,
+                        character=character,
+                        style=style,
+                        checked_fonts=checked,
+                        remediation=_remediation(category, script),
+                        script=script,
+                        reason=reason,
+                    ))
                     continue
                 assert selected_role is not None
-                glyphs.append(
-                    {
-                        "character": character,
-                        "codepoint": codepoint,
-                        "coverage": "supported",
-                        "font_id": identifiers[selected_role],
-                        "item_id": item_id,
-                        "script": script,
-                        "shaping": "supported",
-                        "style": style,
-                    }
-                )
+                glyphs.append({
+                    "character": character,
+                    "codepoint": codepoint,
+                    "coverage": "supported",
+                    "font_id": identifiers[selected_role],
+                    "item_id": item_id,
+                    "script": script,
+                    "shaping": "supported",
+                    "style": style,
+                })
                 base_face = (character, selected_role)
 
     if issues:
@@ -455,6 +460,8 @@ def write_typography_preflight(
     """Write typography preflight evidence for a project."""
     if re.fullmatch(r"p[0-9]{2}-[0-9]{2}", panel_id) is None:
         raise ValueError("invalid panel ID")
-    destination = contained_project_path(Path(project_dir), f"panels/{panel_id}/typography.json")
+    destination = contained_project_path(
+        Path(project_dir), f"panels/{panel_id}/typography.json"
+    )
     atomic_write_json(destination, dict(result))
     return destination

@@ -28,7 +28,7 @@ def unicode_cmap_subtables(path: str) -> tuple[bytes, ...]:
         if tag == b"cmap":
             if offset + length > len(data):
                 raise OSError(f"invalid cmap table: {Path(path).name}")
-            cmap = data[offset : offset + length]
+            cmap = data[offset:offset + length]
             break
     if cmap is None or len(cmap) < 4:
         return ()
@@ -53,7 +53,7 @@ def unicode_cmap_subtables(path: str) -> tuple[bytes, ...]:
         else:
             length = struct.unpack_from(">H", cmap, offset + 2)[0]
         if length >= 4 and offset + length <= len(cmap):
-            subtables.append(cmap[offset : offset + length])
+            subtables.append(cmap[offset:offset + length])
     return tuple(subtables)
 
 
@@ -96,22 +96,14 @@ def cmap_glyph_id(table: bytes, codepoint: int) -> int:
         first, count = struct.unpack_from(">HH", table, 6)
         index = codepoint - first
         position = 10 + index * 2
-        return (
-            struct.unpack_from(">H", table, position)[0]
-            if 0 <= index < count and position + 2 <= len(table)
-            else 0
-        )
+        return struct.unpack_from(">H", table, position)[0] if 0 <= index < count and position + 2 <= len(table) else 0
     if format_number == 10:
         if len(table) < 20:
             return 0
         first, count = struct.unpack_from(">II", table, 12)
         index = codepoint - first
         position = 20 + index * 2
-        return (
-            struct.unpack_from(">H", table, position)[0]
-            if 0 <= index < count and position + 2 <= len(table)
-            else 0
-        )
+        return struct.unpack_from(">H", table, position)[0] if 0 <= index < count and position + 2 <= len(table) else 0
     if format_number in {12, 13}:
         if len(table) < 16:
             return 0
@@ -133,15 +125,11 @@ def font_supports(path: Path, character: str) -> bool:
     """Report whether a font supports every requested character."""
     if len(character) != 1:
         raise ValueError("glyph coverage requires exactly one character")
-    return any(
-        cmap_glyph_id(table, ord(character)) != 0 for table in unicode_cmap_subtables(str(path))
-    )
+    return any(cmap_glyph_id(table, ord(character)) != 0 for table in unicode_cmap_subtables(str(path)))
 
 
 if __name__ == "__main__":
-    assert font_supports(
-        Path(__file__).resolve().parents[1] / "assets/fonts/ComicNeue-Regular.ttf", "A"
-    )
+    assert font_supports(Path(__file__).resolve().parents[1] / "assets/fonts/ComicNeue-Regular.ttf", "A")
     print("font-cmap-ok")
 
 

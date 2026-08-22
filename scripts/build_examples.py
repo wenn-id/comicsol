@@ -132,9 +132,7 @@ class ExampleError(ValueError):
     """Raised when an example contract or its committed inputs are unusable."""
 
 
-def _seeded_color(
-    seed: int, key: str, *, floor: int = 24, ceiling: int = 210
-) -> tuple[int, int, int]:
+def _seeded_color(seed: int, key: str, *, floor: int = 24, ceiling: int = 210) -> tuple[int, int, int]:
     """Return one deterministic RGB triple for a seed and key."""
     digest = hashlib.sha256(f"{seed}:{key}".encode("utf-8")).digest()
     span = ceiling - floor
@@ -159,9 +157,7 @@ def _synthetic_raster(size: tuple[int, int], color: tuple[int, int, int]) -> Ima
         outline=shadow,
         width=max(2, inset // 3),
     )
-    draw.line(
-        (inset, height - inset - 1, width - inset - 1, inset), fill=accent, width=max(2, inset // 4)
-    )
+    draw.line((inset, height - inset - 1, width - inset - 1, inset), fill=accent, width=max(2, inset // 4))
     draw.ellipse(
         (
             width // 2 - width // 6,
@@ -175,7 +171,9 @@ def _synthetic_raster(size: tuple[int, int], color: tuple[int, int, int]) -> Ima
     return image
 
 
-def _verified_panel_evidence(project: Path, panel_id: str, size: tuple[int, int]) -> dict[str, str]:
+def _verified_panel_evidence(
+    project: Path, panel_id: str, size: tuple[int, int]
+) -> dict[str, str]:
     """Prove the two decidable panel checks and return their earned evidence.
 
     Nothing here is asserted on trust. The raster is measured, and a mismatch
@@ -211,9 +209,7 @@ def _read_contract(example_dir: Path) -> dict[str, object]:
     """Load and check one example contract."""
     contract_path = example_dir / "example.json"
     if not contract_path.is_file():
-        raise ExampleError(
-            f"missing example contract: {contract_path.relative_to(ROOT).as_posix()}"
-        )
+        raise ExampleError(f"missing example contract: {contract_path.relative_to(ROOT).as_posix()}")
     contract = read_json(contract_path)
     if not isinstance(contract, dict):
         raise ExampleError("example.json must contain an object")
@@ -227,9 +223,7 @@ def _read_contract(example_dir: Path) -> dict[str, object]:
     return contract
 
 
-def _storyboard_panels(
-    storyboard: dict[str, object],
-) -> tuple[tuple[int, str, dict[str, object]], ...]:
+def _storyboard_panels(storyboard: dict[str, object]) -> tuple[tuple[int, str, dict[str, object]], ...]:
     """Return (page_number, layout, panel) triples in reading order."""
     pages = storyboard.get("pages")
     if not isinstance(pages, list) or not pages:
@@ -290,32 +284,30 @@ def _stage_inputs(example_dir: Path, project: Path, seed: int) -> None:
 def _prepare_manifest(project: Path, contract: dict[str, object], panel_ids: Sequence[str]) -> None:
     """Record committed plan provenance and advance to REFERENCES_READY."""
     manifest = read_json(project / "project.json")
-    manifest.update(
-        {
-            "title": str(contract["title"]),
-            "panels": list(panel_ids),
-            "artifacts": {
-                name: {"path": relative, "sha256": sha256_file(project / relative)}
-                for name, relative in sorted(PLAN_ARTIFACTS.items())
-            },
-            "capability": {
-                "detected_at": REVIEWED_AT,
-                "name": "deterministic-example-build",
-                "status": "available",
-                "supports_dimensions": True,
-                "supports_reference_images": True,
-            },
-            "settings": {
-                **manifest["settings"],
-                "page_count": int(contract["page_count"]),
-                "panel_count": len(panel_ids),
-            },
-            "input": {
-                **manifest["input"],
-                "source_sha256": sha256_file(project / "source/input.txt"),
-            },
-        }
-    )
+    manifest.update({
+        "title": str(contract["title"]),
+        "panels": list(panel_ids),
+        "artifacts": {
+            name: {"path": relative, "sha256": sha256_file(project / relative)}
+            for name, relative in sorted(PLAN_ARTIFACTS.items())
+        },
+        "capability": {
+            "detected_at": REVIEWED_AT,
+            "name": "deterministic-example-build",
+            "status": "available",
+            "supports_dimensions": True,
+            "supports_reference_images": True,
+        },
+        "settings": {
+            **manifest["settings"],
+            "page_count": int(contract["page_count"]),
+            "panel_count": len(panel_ids),
+        },
+        "input": {
+            **manifest["input"],
+            "source_sha256": sha256_file(project / "source/input.txt"),
+        },
+    })
     atomic_write_json(project / "project.json", manifest)
     for status in ("PLANNED", "SCRIPTED", "STORYBOARDED", "REFERENCES_READY"):
         transition(project, status)
@@ -363,55 +355,48 @@ def _build_panels(
     for _page_number, _layout, panel in panels:
         panel_id = str(panel["id"])
         record = json.loads(json.dumps(template))
-        record.update(
-            {
-                "subject_id": panel_id,
-                "decision": "accept-warning",
-                "unresolved_warnings": [
-                    UNREVIEWED_PANEL_EVIDENCE[check_id]
-                    for check_id in PANEL_CHECK_IDS
-                    if check_id in UNREVIEWED_PANEL_EVIDENCE
-                ],
-                "review": {
-                    "method": REVIEW_METHOD,
-                    "reviewer": REVIEWER,
-                    "reviewed_at": REVIEWED_AT,
-                },
-            }
-        )
+        record.update({
+            "subject_id": panel_id,
+            "decision": "accept-warning",
+            "unresolved_warnings": [
+                UNREVIEWED_PANEL_EVIDENCE[check_id]
+                for check_id in PANEL_CHECK_IDS
+                if check_id in UNREVIEWED_PANEL_EVIDENCE
+            ],
+            "review": {
+                "method": REVIEW_METHOD,
+                "reviewer": REVIEWER,
+                "reviewed_at": REVIEWED_AT,
+            },
+        })
         width, height = _panel_size(panel)
-        record["bindings"].update(
-            {
-                "clean_height": height,
-                "clean_path": f"panels/{panel_id}/clean.png",
-                "clean_sha256": sha256_file(project / f"panels/{panel_id}/clean.png"),
-                "clean_width": width,
-                "normalization_path": f"panels/{panel_id}/normalization.json",
-                "normalization_sha256": sha256_file(
-                    project / f"panels/{panel_id}/normalization.json"
-                ),
-                "raw_height": height,
-                "raw_path": f"panels/raw/{panel_id}.png",
-                "raw_sha256": sha256_file(project / f"panels/raw/{panel_id}.png"),
-                "raw_width": width,
-            }
-        )
+        record["bindings"].update({
+            "clean_height": height,
+            "clean_path": f"panels/{panel_id}/clean.png",
+            "clean_sha256": sha256_file(project / f"panels/{panel_id}/clean.png"),
+            "clean_width": width,
+            "normalization_path": f"panels/{panel_id}/normalization.json",
+            "normalization_sha256": sha256_file(project / f"panels/{panel_id}/normalization.json"),
+            "raw_height": height,
+            "raw_path": f"panels/raw/{panel_id}.png",
+            "raw_sha256": sha256_file(project / f"panels/raw/{panel_id}.png"),
+            "raw_width": width,
+        })
         verified = _verified_panel_evidence(project, panel_id, (width, height))
         by_id = {check["id"]: check for check in record["checks"]}
         for check_id in PANEL_CHECK_IDS:
             reviewed = check_id in VERIFIED_PANEL_CHECK_IDS
-            by_id[check_id].update(
-                {
-                    "result": "pass" if reviewed else "warning",
-                    "severity": "error" if reviewed else "warning",
-                    "evidence": (
-                        verified[check_id] if reviewed else UNREVIEWED_PANEL_EVIDENCE[check_id]
-                    ),
-                    "method": REVIEW_METHOD,
-                    "reviewer": REVIEWER,
-                    "regions": [],
-                }
-            )
+            by_id[check_id].update({
+                "result": "pass" if reviewed else "warning",
+                "severity": "error" if reviewed else "warning",
+                "evidence": (
+                    verified[check_id] if reviewed
+                    else UNREVIEWED_PANEL_EVIDENCE[check_id]
+                ),
+                "method": REVIEW_METHOD,
+                "reviewer": REVIEWER,
+                "regions": [],
+            })
         record["checks"] = [by_id[check_id] for check_id in PANEL_CHECK_IDS]
         atomic_write_json(project / f"qa/panels/{panel_id}.json", record)
 
@@ -432,17 +417,15 @@ def _tail_regions(project: Path, page_number: int) -> list[dict[str, object]]:
         geometry = read_json(project / f"panels/{panel['id']}/lettering.json")
         placed = {item["id"]: item for item in geometry["items"]}
         for item in dialogue:
-            regions.append(
-                {
-                    "panel_id": panel["id"],
-                    "text_id": item["id"],
-                    "speaker": item["speaker"],
-                    "voice_source": item["voice_source"],
-                    "speaker_anchor": item["speaker_anchor"],
-                    "tip": placed[item["id"]]["tail"]["tip"],
-                    "result": "pass",
-                }
-            )
+            regions.append({
+                "panel_id": panel["id"],
+                "text_id": item["id"],
+                "speaker": item["speaker"],
+                "voice_source": item["voice_source"],
+                "speaker_anchor": item["speaker_anchor"],
+                "tip": placed[item["id"]]["tail"]["tip"],
+                "result": "pass",
+            })
     return regions
 
 
@@ -458,9 +441,12 @@ def _write_page_records(project: Path, page_numbers: Iterable[int]) -> None:
             {
                 "id": check_id,
                 "result": "pass" if check_id in VERIFIED_PAGE_EVIDENCE else "warning",
-                "severity": ("error" if check_id in VERIFIED_PAGE_EVIDENCE else "warning"),
+                "severity": (
+                    "error" if check_id in VERIFIED_PAGE_EVIDENCE else "warning"
+                ),
                 "evidence": (
-                    VERIFIED_PAGE_EVIDENCE.get(check_id) or UNREVIEWED_PAGE_EVIDENCE[check_id]
+                    VERIFIED_PAGE_EVIDENCE.get(check_id)
+                    or UNREVIEWED_PAGE_EVIDENCE[check_id]
                 ),
                 "method": REVIEW_METHOD,
                 "reviewer": REVIEWER,
@@ -560,7 +546,10 @@ def build_example(example_dir: Path, output_root: Path) -> Path:
 
 def discover_examples() -> tuple[Path, ...]:
     """Return every committed deterministic example directory."""
-    return tuple(sorted(path.parent for path in SAMPLES.glob("*/example.json")))
+    return tuple(sorted(
+        path.parent
+        for path in SAMPLES.glob("*/example.json")
+    ))
 
 
 def _summarize(project: Path) -> str:

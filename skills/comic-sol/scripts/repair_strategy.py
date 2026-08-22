@@ -58,7 +58,7 @@ from .core_primitives import (
     PANEL_ID_PATTERN,
     canonical_artifact_bytes,
 )
-from .input_limits import InputResourceLimitError, MAX_JSON_BYTES, loads_bounded_json
+from .input_limits import MAX_JSON_BYTES, loads_bounded_json
 from .project_io import (
     ProjectTransaction,
     contained_project_path,
@@ -634,8 +634,6 @@ def _read_document(project_dir: Path, relative: str) -> Mapping[str, Any]:
             ),
             source=relative,
         )
-    except InputResourceLimitError:
-        raise
     except (OSError, UnicodeDecodeError, ValueError) as error:
         raise RepairStrategyError(
             f"{relative} cannot be read as JSON: {type(error).__name__}"

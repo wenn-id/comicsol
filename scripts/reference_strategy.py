@@ -134,7 +134,6 @@ SHOT_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
 )
 
-
 # A framing word inside a longer word is a different word, so a cue must begin and
 # end on a word boundary. Hyphens stay allowed on both sides because authored prose
 # compounds framing words (`medium-wide shot`), and a trailing plural is allowed
@@ -145,7 +144,8 @@ def _cue_matcher(cue: str) -> re.Pattern[str]:
 
 
 SHOT_CUE_MATCHERS: tuple[tuple[str, tuple[tuple[str, re.Pattern[str]], ...]], ...] = tuple(
-    (shot_class, tuple((cue, _cue_matcher(cue)) for cue in cues)) for shot_class, cues in SHOT_CUES
+    (shot_class, tuple((cue, _cue_matcher(cue)) for cue in cues))
+    for shot_class, cues in SHOT_CUES
 )
 
 # A cue the author explicitly rules out is not the panel's framing. Only the words
@@ -283,7 +283,9 @@ class PanelReferencePlan:
 def _negated(text: str, position: int) -> bool:
     """Report whether a negation word governs the cue found at ``position``."""
     preceding = text[:position].split()[-NEGATION_LOOKBEHIND_WORDS:]
-    return any(token.strip(_TOKEN_EDGE_CHARACTERS) in NEGATION_TOKENS for token in preceding)
+    return any(
+        token.strip(_TOKEN_EDGE_CHARACTERS) in NEGATION_TOKENS for token in preceding
+    )
 
 
 def classify_shot(shot: object) -> tuple[str, str | None]:
@@ -317,7 +319,9 @@ def classify_shot(shot: object) -> tuple[str, str | None]:
 # --------------------------------------------------------------------------- #
 
 
-def pack_entries(pack: Mapping[str, Any], character_ids: Iterable[str]) -> list[Mapping[str, Any]]:
+def pack_entries(
+    pack: Mapping[str, Any], character_ids: Iterable[str]
+) -> list[Mapping[str, Any]]:
     """Return the requested identity-pack entries in pack order.
 
     Pack order, not panel order, keeps one character's reference ordering stable
@@ -336,11 +340,15 @@ def pack_entries(pack: Mapping[str, Any], character_ids: Iterable[str]) -> list[
     requested = set(character_ids)
     unknown = sorted(requested - set(entries))
     if unknown:
-        raise ReferenceStrategyError("identity pack has no entry for: " + ", ".join(unknown))
+        raise ReferenceStrategyError(
+            "identity pack has no entry for: " + ", ".join(unknown)
+        )
     return [entry for key, entry in entries.items() if key in requested]
 
 
-def ranked_views(entry: Mapping[str, Any], shot_class: str) -> list[tuple[str, str, str]]:
+def ranked_views(
+    entry: Mapping[str, Any], shot_class: str
+) -> list[tuple[str, str, str]]:
     """Return one character's ``(view, path, reason)`` candidates, best first.
 
     Ranking is total and deterministic: the preference order decides first, then
@@ -384,14 +392,18 @@ def _validated_budget(reference_budget: object) -> int | None:
         or isinstance(reference_budget, bool)
         or reference_budget < 0
     ):
-        raise ReferenceStrategyError("reference budget must be None or a non-negative integer")
+        raise ReferenceStrategyError(
+            "reference budget must be None or a non-negative integer"
+        )
     return reference_budget
 
 
 def _panel_character_ids(panel: Mapping[str, Any]) -> tuple[str, ...]:
     """Return a panel's unique character IDs in authored order."""
     characters = panel.get("characters")
-    if not isinstance(characters, list) or any(not isinstance(item, str) for item in characters):
+    if not isinstance(characters, list) or any(
+        not isinstance(item, str) for item in characters
+    ):
         raise ReferenceStrategyError(
             f"storyboard panel '{panel.get('id')}' characters must be an array of IDs"
         )
@@ -415,7 +427,9 @@ def _plan_panel(
         raise ReferenceStrategyError("storyboard panel id must be a string")
     shot_class, shot_cue = classify_shot(panel.get("shot"))
     entries = pack_entries(pack, _panel_character_ids(panel))
-    candidates = [(str(entry["id"]), ranked_views(entry, shot_class)) for entry in entries]
+    candidates = [
+        (str(entry["id"]), ranked_views(entry, shot_class)) for entry in entries
+    ]
 
     selected: list[ReferenceSelection] = []
     omitted: list[ReferenceOmission] = []
@@ -427,16 +441,26 @@ def _plan_panel(
                 continue
             view, path, reason = views[index]
             if reference_budget == 0:
-                omitted.append(ReferenceOmission(character_id, view, path, REFERENCES_UNSUPPORTED))
+                omitted.append(
+                    ReferenceOmission(character_id, view, path, REFERENCES_UNSUPPORTED)
+                )
                 continue
             if path in attached:
-                omitted.append(ReferenceOmission(character_id, view, path, DUPLICATE_PATH))
+                omitted.append(
+                    ReferenceOmission(character_id, view, path, DUPLICATE_PATH)
+                )
                 continue
             if reference_budget is not None and len(selected) >= reference_budget:
-                omitted.append(ReferenceOmission(character_id, view, path, REFERENCE_BUDGET))
+                omitted.append(
+                    ReferenceOmission(character_id, view, path, REFERENCE_BUDGET)
+                )
                 continue
             attached.add(path)
-            selected.append(ReferenceSelection(character_id, view, path, reason, len(selected) + 1))
+            selected.append(
+                ReferenceSelection(
+                    character_id, view, path, reason, len(selected) + 1
+                )
+            )
 
     return PanelReferencePlan(
         panel_id=panel_id,
@@ -508,7 +532,9 @@ def panel_reference_plans(
 ) -> tuple[PanelReferencePlan, ...]:
     """Return every panel's reference plan in storyboard order."""
     budget = _validated_budget(reference_budget)
-    return tuple(_plan_panel(pack, panel, budget) for panel in _storyboard_panels(storyboard))
+    return tuple(
+        _plan_panel(pack, panel, budget) for panel in _storyboard_panels(storyboard)
+    )
 
 
 def project_reference_plan(
@@ -521,7 +547,9 @@ def project_reference_plan(
     return {
         "panels": [
             plan.as_record()
-            for plan in panel_reference_plans(pack, storyboard, reference_budget=reference_budget)
+            for plan in panel_reference_plans(
+                pack, storyboard, reference_budget=reference_budget
+            )
         ],
         "schema_version": REFERENCE_PLAN_SCHEMA_VERSION,
     }
@@ -549,7 +577,8 @@ def reference_plan_block(plan: PanelReferencePlan) -> str:
     ]
     if plan.selected:
         lines.extend(
-            f"  {item.rank}. {item.character_id} {item.view}={item.path} ({item.reason})"
+            f"  {item.rank}. {item.character_id} {item.view}={item.path} "
+            f"({item.reason})"
             for item in plan.selected
         )
     else:
@@ -573,11 +602,15 @@ def read_storyboard(project_dir: Path) -> Mapping[str, Any]:
     path = contained_project_path(Path(project_dir), STORYBOARD_PATH)
     try:
         value = loads_bounded_json(
-            read_contained_bytes(Path(project_dir), STORYBOARD_PATH, max_bytes=MAX_JSON_BYTES),
+            read_contained_bytes(
+                Path(project_dir), STORYBOARD_PATH, max_bytes=MAX_JSON_BYTES
+            ),
             source=STORYBOARD_PATH,
         )
     except json.JSONDecodeError as error:
-        raise ReferenceStrategyError(f"{STORYBOARD_PATH} is not valid JSON: {error}") from error
+        raise ReferenceStrategyError(
+            f"{STORYBOARD_PATH} is not valid JSON: {error}"
+        ) from error
     if not isinstance(value, dict):
         raise ReferenceStrategyError(f"{STORYBOARD_PATH} must contain a JSON object")
     return value
@@ -627,7 +660,9 @@ def plan_and_write_reference_plan(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description=("Plan which character references each panel receives, and record why."),
+        description=(
+            "Plan which character references each panel receives, and record why."
+        ),
     )
     parser.add_argument("project_dir", type=Path, help="generated project directory")
     parser.add_argument(

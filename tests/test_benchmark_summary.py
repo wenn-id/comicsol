@@ -149,7 +149,9 @@ class TemporaryRootTestCase(unittest.TestCase):
     def _json(self, payload, name):
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+        )
         return path
 
 
@@ -157,8 +159,12 @@ class ConsistencyPlaneTests(TemporaryRootTestCase):
     def test_committed_release_baseline_folds_into_reported_metrics(self):
         self.assertTrue(RELEASE_BASELINE.is_file(), RELEASE_BASELINE)
         report = consistency_report(baseline=load_consistency_baseline(RELEASE_BASELINE))
-        self.assertEqual(1.0, report["metrics"]["consistency_invariant_pinning"]["value"])
-        self.assertEqual(1.0, report["metrics"]["consistency_trait_restatement"]["value"])
+        self.assertEqual(
+            1.0, report["metrics"]["consistency_invariant_pinning"]["value"]
+        )
+        self.assertEqual(
+            1.0, report["metrics"]["consistency_trait_restatement"]["value"]
+        )
         self.assertEqual(0.0, report["metrics"]["consistency_visual_coverage"]["value"])
         self.assertNotIn(
             "consistency_visual_score",
@@ -173,7 +179,9 @@ class ConsistencyPlaneTests(TemporaryRootTestCase):
     def test_unscored_release_scorecard_matches_the_release_baseline(self):
         from tests.consistency_benchmark import scorecard_template
 
-        scorecard = load_consistency_scorecard(self._json(scorecard_template(), "scorecard.json"))
+        scorecard = load_consistency_scorecard(
+            self._json(scorecard_template(), "scorecard.json")
+        )
         report = consistency_report(
             baseline=load_consistency_baseline(RELEASE_BASELINE), scorecard=scorecard
         )
@@ -233,7 +241,9 @@ class ConsistencyPlaneTests(TemporaryRootTestCase):
 
     def test_foreign_and_malformed_baselines_are_refused(self):
         with self.assertRaisesRegex(ValueError, "kind must be"):
-            load_consistency_baseline(self._json(_baseline(kind="something-else"), "foreign.json"))
+            load_consistency_baseline(
+                self._json(_baseline(kind="something-else"), "foreign.json")
+            )
         over_recorded = _baseline(
             structural={
                 **_baseline()["structural"],
@@ -343,7 +353,9 @@ class SummaryTests(TemporaryRootTestCase):
     def test_consistency_baseline_engine_must_match_result_engine(self):
         self._publish(_result("case-one"))
         baseline_path = self.root / "foreign-engine-baseline.json"
-        baseline_path.write_text(json.dumps(_baseline(engine_version="2.0.0rc3")), encoding="utf-8")
+        baseline_path.write_text(
+            json.dumps(_baseline(engine_version="2.0.0rc3")), encoding="utf-8"
+        )
         summary = summarize_results(self.results, consistency_baseline=baseline_path)
         self.assertEqual("failed", summary["status"])
         self.assertTrue(
@@ -423,7 +435,9 @@ class SummaryTests(TemporaryRootTestCase):
 
     def test_a_broken_consistency_artifact_is_reported_not_swallowed(self):
         self._publish(_result("case-one"))
-        summary = summarize_results(self.results, consistency_baseline=self.root / "missing.json")
+        summary = summarize_results(
+            self.results, consistency_baseline=self.root / "missing.json"
+        )
         self.assertEqual("failed", summary["status"])
         self.assertIsNone(summary["consistency"])
         self.assertTrue(
@@ -465,7 +479,9 @@ class SummaryDeltaTests(TemporaryRootTestCase):
         self.assertEqual([], delta["regressions"])
         self.assertEqual("unchanged", delta["metrics"]["panel_acceptance"]["verdict"])
         self.assertEqual("passed", delta["cases"]["case-one"]["status"])
-        self.assertIn("NO REGRESSION", (self.root / "delta.md").read_text(encoding="utf-8"))
+        self.assertIn(
+            "NO REGRESSION", (self.root / "delta.md").read_text(encoding="utf-8")
+        )
 
     def test_case_metric_regression_is_not_hidden_by_equal_pooling(self):
         baseline = self._summary(
@@ -504,28 +520,42 @@ class SummaryDeltaTests(TemporaryRootTestCase):
         self.assertIn("panel_acceptance", delta["regressions"])
         self.assertIn("repair_rate", delta["regressions"])
         self.assertIn("case-one/status", delta["regressions"])
-        self.assertEqual(round(2 / 3 - 1, 6), delta["metrics"]["panel_acceptance"]["delta"])
+        self.assertEqual(
+            round(2 / 3 - 1, 6), delta["metrics"]["panel_acceptance"]["delta"]
+        )
         self.assertEqual("failed", delta["cases"]["case-one"]["status"])
 
     def test_improvements_are_reported_without_blocking(self):
-        baseline = self._summary("baseline", [_result("case-one", {"repair_rate": (3, 3)})])
+        baseline = self._summary(
+            "baseline", [_result("case-one", {"repair_rate": (3, 3)})]
+        )
         candidate = self._summary("candidate", [_result("case-one")])
         delta = diff_summaries(baseline, candidate, self.root / "delta.json")
         self.assertEqual("passed", delta["status"])
         self.assertEqual(["case-one/repair_rate", "repair_rate"], delta["improvements"])
 
     def test_tolerance_absorbs_noise_but_not_real_regressions(self):
-        baseline = self._summary("baseline", [_result("case-one", {"repair_rate": (0, 100)})])
-        candidate = self._summary("candidate", [_result("case-one", {"repair_rate": (1, 100)})])
-        absorbed = diff_summaries(baseline, candidate, self.root / "absorbed.json", tolerance=0.02)
+        baseline = self._summary(
+            "baseline", [_result("case-one", {"repair_rate": (0, 100)})]
+        )
+        candidate = self._summary(
+            "candidate", [_result("case-one", {"repair_rate": (1, 100)})]
+        )
+        absorbed = diff_summaries(
+            baseline, candidate, self.root / "absorbed.json", tolerance=0.02
+        )
         self.assertEqual("passed", absorbed["status"])
-        self.assertEqual("unchanged", absorbed["metrics"]["dialogue_correctness"]["verdict"])
+        self.assertEqual(
+            "unchanged", absorbed["metrics"]["dialogue_correctness"]["verdict"]
+        )
         strict = diff_summaries(baseline, candidate, self.root / "strict.json")
         self.assertEqual("failed", strict["status"])
         with self.assertRaises(ValueError):
             diff_summaries(baseline, candidate, self.root / "bad.json", tolerance=-1)
         with self.assertRaises(ValueError):
-            diff_summaries(baseline, candidate, self.root / "nan.json", tolerance=float("nan"))
+            diff_summaries(
+                baseline, candidate, self.root / "nan.json", tolerance=float("nan")
+            )
 
     def test_different_case_digests_are_not_comparable(self):
         baseline = self._summary("baseline", [_result("case-one", case_sha256="b" * 64)])
@@ -536,7 +566,9 @@ class SummaryDeltaTests(TemporaryRootTestCase):
 
     def test_failed_summary_status_and_exceptions_block_delta(self):
         baseline = self._summary("baseline", [_result("case-one")])
-        candidate = self._summary("candidate", [_result("case-one", harness="foreign-harness")])
+        candidate = self._summary(
+            "candidate", [_result("case-one", harness="foreign-harness")]
+        )
         delta = diff_summaries(baseline, candidate, self.root / "delta.json")
         self.assertEqual("failed", delta["status"])
         self.assertTrue(any("candidate" in item for item in delta["exceptions"]))
@@ -557,8 +589,12 @@ class SummaryDeltaTests(TemporaryRootTestCase):
             load_summary(summary_path)
 
     def test_differing_case_sets_are_not_comparable(self):
-        baseline = self._summary("baseline", [_result("case-one"), _result("case-two")])
-        candidate = self._summary("candidate", [_result("case-one"), _result("case-three")])
+        baseline = self._summary(
+            "baseline", [_result("case-one"), _result("case-two")]
+        )
+        candidate = self._summary(
+            "candidate", [_result("case-one"), _result("case-three")]
+        )
         delta = diff_summaries(baseline, candidate, self.root / "delta.json")
         self.assertEqual("failed", delta["status"])
         self.assertEqual(["case-two"], delta["missing_cases"])
@@ -579,7 +615,9 @@ class SummaryDeltaTests(TemporaryRootTestCase):
             any(item.startswith("candidate:") for item in delta["exceptions"]),
             delta["exceptions"],
         )
-        missing = diff_summaries(self.root / "absent.json", baseline, self.root / "missing.json")
+        missing = diff_summaries(
+            self.root / "absent.json", baseline, self.root / "missing.json"
+        )
         self.assertEqual("failed", missing["status"])
         self.assertTrue(
             any(item.startswith("baseline:") for item in missing["exceptions"]),
@@ -590,12 +628,16 @@ class SummaryDeltaTests(TemporaryRootTestCase):
         baseline = self._summary(
             "baseline",
             [_result("case-one")],
-            consistency_scorecard=self._json(_scorecard({"face": 4, "hair": 4}), "good.json"),
+            consistency_scorecard=self._json(
+                _scorecard({"face": 4, "hair": 4}), "good.json"
+            ),
         )
         candidate = self._summary(
             "candidate",
             [_result("case-one")],
-            consistency_scorecard=self._json(_scorecard({"face": 1, "hair": 1}), "drifted.json"),
+            consistency_scorecard=self._json(
+                _scorecard({"face": 1, "hair": 1}), "drifted.json"
+            ),
         )
         delta = diff_summaries(baseline, candidate, self.root / "delta.json")
         self.assertEqual(
@@ -609,7 +651,9 @@ class SummaryDeltaTests(TemporaryRootTestCase):
             "regressed",
             delta["consistency"]["metrics"]["consistency_visual_score"]["verdict"],
         )
-        self.assertIn("advisory", (self.root / "delta.md").read_text(encoding="utf-8").lower())
+        self.assertIn(
+            "advisory", (self.root / "delta.md").read_text(encoding="utf-8").lower()
+        )
 
     def test_one_sided_consistency_metrics_are_reported_not_fatal(self):
         baseline = self._summary("baseline", [_result("case-one")])
@@ -621,7 +665,9 @@ class SummaryDeltaTests(TemporaryRootTestCase):
         delta = diff_summaries(baseline, candidate, self.root / "delta.json")
         self.assertEqual("passed", delta["status"])
         self.assertEqual([], delta["exceptions"])
-        self.assertIn("consistency_invariant_pinning", delta["consistency"]["unavailable"])
+        self.assertIn(
+            "consistency_invariant_pinning", delta["consistency"]["unavailable"]
+        )
         self.assertIn("consistency_invariant_pinning/unavailable", delta["advisory"])
 
 
@@ -631,7 +677,9 @@ class SummaryCommandTests(TemporaryRootTestCase):
         write_result(_result("case-one"), results)
         summary_path = self.root / "summary.json"
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(0, main(["--results", str(results), "--output", str(summary_path)]))
+            self.assertEqual(
+                0, main(["--results", str(results), "--output", str(summary_path)])
+            )
         self.assertEqual("passed", load_summary(summary_path)["status"])
         self.assertTrue((self.root / "summary.md").is_file())
         with contextlib.redirect_stdout(io.StringIO()):
@@ -654,7 +702,9 @@ class SummaryCommandTests(TemporaryRootTestCase):
         write_result(_result("case-one", status="failed"), results)
         output = self.root / "summary.json"
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(1, main(["--results", str(results), "--output", str(output)]))
+            self.assertEqual(
+                1, main(["--results", str(results), "--output", str(output)])
+            )
         self.assertEqual("failed", load_summary(output)["status"])
         self.assertIn("case-one", output.read_text(encoding="utf-8"))
 
@@ -691,8 +741,12 @@ class SummaryIntegrationTests(unittest.TestCase):
 
         self.assertNotIn("benchmark_summary.py", BUNDLED_SCRIPTS)
         self.assertFalse((ROOT / "skills/comic-sol/scripts/benchmark_summary.py").exists())
-        self.assertIn('"benchmark_summary.py"', (ROOT / "setup.py").read_text(encoding="utf-8"))
-        self.assertIn("comic_sol_product/engine/benchmark_summary.py", FORBIDDEN_WHEEL_MEMBERS)
+        self.assertIn(
+            '"benchmark_summary.py"', (ROOT / "setup.py").read_text(encoding="utf-8")
+        )
+        self.assertIn(
+            "comic_sol_product/engine/benchmark_summary.py", FORBIDDEN_WHEEL_MEMBERS
+        )
 
     def test_gating_metrics_are_every_metric_except_the_repair_rate(self):
         self.assertEqual(set(METRIC_IDS) - {"repair_rate"}, set(GATING_METRIC_IDS))
@@ -737,7 +791,7 @@ class SummaryIntegrationTests(unittest.TestCase):
             "benchmark/candidate-summary.md",
             "benchmark/baseline-summary.md",
             "benchmark/summary-delta.md",
-            'cat "${report}" >> "$GITHUB_STEP_SUMMARY"',
+            'cat \"${report}\" >> \"$GITHUB_STEP_SUMMARY\"',
         ):
             with self.subTest(token=token, source="workflow"):
                 self.assertIn(token, workflow)

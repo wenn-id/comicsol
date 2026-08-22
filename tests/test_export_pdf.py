@@ -73,7 +73,9 @@ class PdfExportTests(unittest.TestCase):
         )
 
     def test_discover_pages_uses_numeric_filename_order_only(self):
-        Image.new("RGB", (1600, 2400), "black").save(self.project / "pages/page-final.png")
+        Image.new("RGB", (1600, 2400), "black").save(
+            self.project / "pages/page-final.png"
+        )
         self.assertEqual(
             ["page-001.png", "page-002.png", "page-003.png"],
             [path.name for path in discover_pages(self.project)],
@@ -105,7 +107,9 @@ class PdfExportTests(unittest.TestCase):
             self.assertAlmostEqual(150.0, effective_y, delta=0.2)
 
     def test_detailed_page_survives_pdf_fidelity_gate(self):
-        noise = Image.frombytes("L", (320, 480), random.Random(0).randbytes(320 * 480))
+        noise = Image.frombytes(
+            "L", (320, 480), random.Random(0).randbytes(320 * 480)
+        )
         page = ImageOps.colorize(
             noise.resize((1600, 2400), Image.Resampling.LANCZOS),
             (4, 12, 28),
@@ -141,7 +145,9 @@ class PdfExportTests(unittest.TestCase):
         from scripts import export_pdf as export_pdf_module
 
         real_writer = export_pdf_module.durable_atomic_write
-        with mock.patch("scripts.export_pdf.durable_atomic_write", wraps=real_writer) as writer:
+        with mock.patch(
+            "scripts.export_pdf.durable_atomic_write", wraps=real_writer
+        ) as writer:
             self.assertEqual(destination, export_pdf(self.project, destination))
         writer.assert_called_once()
         self.assertEqual(destination, writer.call_args.args[0])
@@ -166,14 +172,22 @@ class PdfExportTests(unittest.TestCase):
             export_pdf(self.project)
         self.assertEqual(b"previous-good-pdf", output.read_bytes())
 
-        Image.new("RGB", (1600, 2400), self.colors[1]).save(self.project / "pages/page-002.png")
-        (self.project / "pages/page-003.png").rename(self.project / "pages/page-004.png")
+        Image.new("RGB", (1600, 2400), self.colors[1]).save(
+            self.project / "pages/page-002.png"
+        )
+        (self.project / "pages/page-003.png").rename(
+            self.project / "pages/page-004.png"
+        )
         with self.assertRaisesRegex(PdfExportError, "contiguous|page-003"):
             export_pdf(self.project)
         self.assertEqual(b"previous-good-pdf", output.read_bytes())
 
-        (self.project / "pages/page-004.png").rename(self.project / "pages/page-003.png")
-        Image.new("RGB", (800, 1200), "blue").save(self.project / "pages/page-003.png")
+        (self.project / "pages/page-004.png").rename(
+            self.project / "pages/page-003.png"
+        )
+        Image.new("RGB", (800, 1200), "blue").save(
+            self.project / "pages/page-003.png"
+        )
         with self.assertRaisesRegex(PdfExportError, "page-003.*1600.*2400"):
             export_pdf(self.project)
         self.assertEqual(b"previous-good-pdf", output.read_bytes())

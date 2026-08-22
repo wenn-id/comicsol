@@ -29,17 +29,25 @@ def materialize_sample(project: Path = DEFAULT_SAMPLE) -> tuple[Path, ...]:
         not isinstance(panels, list)
         or not panels
         or any(
-            not isinstance(panel_id, str) or PANEL_ID.fullmatch(panel_id) is None
+            not isinstance(panel_id, str)
+            or PANEL_ID.fullmatch(panel_id) is None
             for panel_id in panels
         )
         or len(set(panels)) != len(panels)
     ):
-        raise ValueError("project.json panels must contain unique canonical panel IDs")
-    sources = tuple((panel_id, f"panels/{panel_id}/clean.png") for panel_id in panels)
+        raise ValueError(
+            "project.json panels must contain unique canonical panel IDs"
+        )
+    sources = tuple(
+        (panel_id, f"panels/{panel_id}/clean.png")
+        for panel_id in panels
+    )
     payloads: dict[str, bytes] = {}
     for panel_id, source_relative in sources:
         try:
-            source = contained_project_path(project, source_relative, must_exist=True)
+            source = contained_project_path(
+                project, source_relative, must_exist=True
+            )
         except FileNotFoundError:
             raise FileNotFoundError(f"missing canonical panel: {panel_id}")
         if not source.is_file():

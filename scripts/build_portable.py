@@ -29,14 +29,8 @@ def install_locked(python: Path, lock: Path, cwd: Path) -> None:
     """Install locked dependencies into the target environment."""
     run(
         [
-            str(python),
-            "-m",
-            "pip",
-            "install",
-            "--disable-pip-version-check",
-            "--require-hashes",
-            "-r",
-            str(lock),
+            str(python), "-m", "pip", "install", "--disable-pip-version-check",
+            "--require-hashes", "-r", str(lock),
         ],
         cwd,
     )
@@ -126,17 +120,7 @@ def main() -> int:
         entrypoint = ROOT / "packaging/entrypoint.py"
         shutil.copy2(spec, temporary / spec.name)
         shutil.copy2(entrypoint, temporary / entrypoint.name)
-        run(
-            [
-                str(python),
-                "-m",
-                "PyInstaller",
-                "--clean",
-                "--noconfirm",
-                str(temporary / spec.name),
-            ],
-            temporary,
-        )
+        run([str(python), "-m", "PyInstaller", "--clean", "--noconfirm", str(temporary / spec.name)], temporary)
         built = temporary / "dist/comic-sol"
         target = output / "comic-sol"
         if target.exists():
@@ -144,9 +128,7 @@ def main() -> int:
         shutil.copytree(built, target)
         generator = temporary / "sbom-venv"
         venv.EnvBuilder(with_pip=True, clear=True).create(generator)
-        generator_python = generator / (
-            "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
-        )
+        generator_python = generator / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
         install_locked(generator_python, lock, temporary)
         write_environment_sbom(
             python,

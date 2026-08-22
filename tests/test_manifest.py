@@ -290,10 +290,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_init_rejects_unknown_and_sensitive_request_settings_before_allocation(self):
         for request, message in (
-            (
-                {"mode": "short_prompt", "language": "en", "unexpected": True},
-                "unsupported request setting",
-            ),
+            ({"mode": "short_prompt", "language": "en", "unexpected": True}, "unsupported request setting"),
             ({"api_key": "do-not-persist"}, "sensitive request setting"),
             ({"metadata": {"token": "do-not-persist"}}, "sensitive request setting"),
         ):
@@ -350,7 +347,9 @@ class ManifestTests(unittest.TestCase):
         # This test isolates transition-graph behavior; final artifact gating is
         # covered by GuardedOperationTests.
         with mock.patch("scripts.validate_project.require_valid_project"):
-            terminal = transition(export_project, "COMPLETE_WITH_WARNINGS", "minor prop drift")
+            terminal = transition(
+                export_project, "COMPLETE_WITH_WARNINGS", "minor prop drift"
+            )
         self.assertEqual("COMPLETE_WITH_WARNINGS", terminal["status"])
         self.assertIn("minor prop drift", terminal["warnings"])
 
@@ -527,9 +526,7 @@ class ManifestTests(unittest.TestCase):
             "templates",
             "output root",
         ):
-            self.assertTrue(
-                any(message.startswith("PASS") and label in message for message in messages), label
-            )
+            self.assertTrue(any(message.startswith("PASS") and label in message for message in messages), label)
         self.assertIn("INFO image capability: inspect in agent session", messages)
 
     def test_doctor_accepts_newer_supported_python(self):
@@ -564,15 +561,9 @@ class ManifestTests(unittest.TestCase):
             healthy, messages = doctor(self.root / "doctor-output")
 
         self.assertFalse(healthy)
-        self.assertTrue(
-            any(message.startswith("PASS font Comic Neue Regular") for message in messages)
-        )
-        self.assertTrue(
-            any(message.startswith("FAIL font Comic Neue Bold") for message in messages)
-        )
-        self.assertTrue(
-            any(message.startswith("PASS font Noto Sans fallback") for message in messages)
-        )
+        self.assertTrue(any(message.startswith("PASS font Comic Neue Regular") for message in messages))
+        self.assertTrue(any(message.startswith("FAIL font Comic Neue Bold") for message in messages))
+        self.assertTrue(any(message.startswith("PASS font Noto Sans fallback") for message in messages))
 
     def test_font_paths_expose_comic_neue_and_noto_fallback(self):
         regular = ROOT / "assets/fonts/ComicNeue-Regular.ttf"
@@ -664,19 +655,11 @@ class SourceBoundaryTests(unittest.TestCase):
                 source.write_bytes(b"story")
                 atomic_write_json(request, {})
 
-                result = main(
-                    [
-                        "init",
-                        "--output-root",
-                        os.fspath(output_root),
-                        "--title",
-                        "Bad Source",
-                        "--source",
-                        os.fspath(source),
-                        "--request-json",
-                        os.fspath(request),
-                    ]
-                )
+                result = main([
+                    "init", "--output-root", os.fspath(output_root),
+                    "--title", "Bad Source", "--source", os.fspath(source),
+                    "--request-json", os.fspath(request),
+                ])
 
                 self.assertEqual(1, result)
                 self.assertFalse(output_root.exists())

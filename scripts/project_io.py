@@ -14,7 +14,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Iterator, cast
+from typing import BinaryIO, Iterator
 
 from .core_primitives import canonical_json_bytes
 from .input_limits import (
@@ -104,7 +104,9 @@ class ProjectLock:
                         if not self._retryable(error):
                             raise
                     if deadline is not None and time.monotonic() >= deadline:
-                        raise TimeoutError("project is locked by another process")
+                        raise TimeoutError(
+                            "project is locked by another process"
+                        )
                 else:
                     try:
                         self._lock(handle)
@@ -114,7 +116,9 @@ class ProjectLock:
                         if not self._retryable(error):
                             raise
                         if deadline is not None and time.monotonic() >= deadline:
-                            raise TimeoutError("project is locked by another process") from error
+                            raise TimeoutError(
+                                "project is locked by another process"
+                            ) from error
                 if deadline is None:
                     remaining = _LOCK_RETRY_SECONDS
                 else:
@@ -165,7 +169,7 @@ class ProjectLock:
             import msvcrt
 
             handle.seek(_LOCK_BYTE_OFFSET)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         else:
             import fcntl
 
@@ -185,7 +189,7 @@ class ProjectLock:
             import msvcrt
 
             handle.seek(_LOCK_BYTE_OFFSET)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
         else:
             import fcntl
 
@@ -252,11 +256,15 @@ def contained_project_path(
             raise ValueError("project path must not contain symlinks")
         if os.name == "nt":
             try:
-                attributes = getattr(current.stat(follow_symlinks=False), "st_file_attributes", 0)
+                attributes = getattr(
+                    current.stat(follow_symlinks=False), "st_file_attributes", 0
+                )
             except FileNotFoundError:
                 attributes = 0
             if attributes & _REPARSE_POINT:
-                raise ValueError("project path must not contain symlinks or reparse points")
+                raise ValueError(
+                    "project path must not contain symlinks or reparse points"
+                )
         current = current.parent
     candidate = unresolved.resolve(strict=must_exist)
     if candidate != root and root not in candidate.parents:
@@ -309,9 +317,7 @@ def _open_parent_fd(project_dir: Path, parts: tuple[str, ...], *, create: bool) 
 
 
 @contextmanager
-def open_contained(
-    project_dir: Path, relative: str | Path, *, flags: int = os.O_RDONLY, mode: int = 0
-) -> Iterator[BinaryIO]:
+def open_contained(project_dir: Path, relative: str | Path, *, flags: int = os.O_RDONLY, mode: int = 0) -> Iterator[BinaryIO]:
     """Open project file without following symlinked path components on POSIX."""
     parts = _relative_parts(relative)
     if os.name == "nt" or not _HAS_NOFOLLOW:
@@ -328,7 +334,7 @@ def open_contained(
             descriptor = os.open(name, flags | _O_NOFOLLOW, mode, dir_fd=parent_fd)
         finally:
             os.close(parent_fd)
-    stream = cast(BinaryIO, os.fdopen(descriptor, _stream_mode(flags)))
+    stream = os.fdopen(descriptor, _stream_mode(flags))
     try:
         yield stream
     finally:
@@ -359,18 +365,18 @@ def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -
                 attributes = 0
             if attributes & _REPARSE_POINT:
                 raise ValueError("path must not contain symlinks or reparse points")
-        return cast(BinaryIO, os.fdopen(os.open(absolute, flags, mode), _stream_mode(flags)))
+        return os.fdopen(os.open(absolute, flags, mode), _stream_mode(flags))
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _O_NOFOLLOW
-    directory_fd = os.open(parts[0], directory_flags)
+    current = os.open(parts[0], directory_flags)
     try:
         for part in parts[1:-1]:
-            child_fd = os.open(part, directory_flags, dir_fd=directory_fd)
-            os.close(directory_fd)
-            directory_fd = child_fd
-        descriptor = os.open(parts[-1], flags | _O_NOFOLLOW, mode, dir_fd=directory_fd)
+            child = os.open(part, directory_flags, dir_fd=current)
+            os.close(current)
+            current = child
+        descriptor = os.open(parts[-1], flags | _O_NOFOLLOW, mode, dir_fd=current)
     finally:
-        os.close(directory_fd)
-    return cast(BinaryIO, os.fdopen(descriptor, _stream_mode(flags)))
+        os.close(current)
+    return os.fdopen(descriptor, _stream_mode(flags))
 
 
 def _read_bounded_stream(stream: BinaryIO, *, max_bytes: int) -> bytes:
@@ -385,14 +391,20 @@ def _read_bounded_stream(stream: BinaryIO, *, max_bytes: int) -> bytes:
         raise InputResourceLimitError("the regular file requirement")
     size = st.st_size
     if size > max_bytes:
-        raise InputResourceLimitError(f"the file size limit of {max_bytes} bytes")
+        raise InputResourceLimitError(
+            f"the file size limit of {max_bytes} bytes"
+        )
     payload = stream.read(max_bytes + 1)
     if len(payload) > max_bytes:
-        raise InputResourceLimitError(f"the file size limit of {max_bytes} bytes")
+        raise InputResourceLimitError(
+            f"the file size limit of {max_bytes} bytes"
+        )
     return payload
 
 
-def read_bytes_nofollow(path: Path, *, max_bytes: int = MAX_READ_BYTES) -> bytes:
+def read_bytes_nofollow(
+    path: Path, *, max_bytes: int = MAX_READ_BYTES
+) -> bytes:
     """Read bounded bytes from an absolute path without following symlinks."""
     with open_path_nofollow(Path(path)) as stream:
         return _read_bounded_stream(stream, max_bytes=max_bytes)
@@ -458,13 +470,9 @@ def replace_contained(project_dir: Path, source: str | Path, destination: str | 
         return
     source_fd, source_name = _open_parent_fd(project_dir, source_parts, create=False)
     try:
-        destination_fd, destination_name = _open_parent_fd(
-            project_dir, destination_parts, create=True
-        )
+        destination_fd, destination_name = _open_parent_fd(project_dir, destination_parts, create=True)
         try:
-            os.replace(
-                source_name, destination_name, src_dir_fd=source_fd, dst_dir_fd=destination_fd
-            )
+            os.replace(source_name, destination_name, src_dir_fd=source_fd, dst_dir_fd=destination_fd)
         finally:
             os.close(destination_fd)
     finally:
@@ -550,7 +558,9 @@ class ProjectTransaction:
 
     def __enter__(self) -> "ProjectTransaction":
         """Start a transaction while holding the project lock."""
-        self._lock = ProjectLock(self.project_dir, timeout=self.lock_timeout).__enter__()
+        self._lock = ProjectLock(
+            self.project_dir, timeout=self.lock_timeout
+        ).__enter__()
         try:
             base = contained_project_path(self.project_dir, "logs/transactions")
             base.mkdir(parents=True, exist_ok=True)
@@ -595,7 +605,10 @@ class ProjectTransaction:
         durable_atomic_write(staged_path, payload)
         entry = {
             "path": relative,
-            "backup": (f"logs/transactions/{self._id}/{backup_name}" if dest.is_file() else None),
+            "backup": (
+                f"logs/transactions/{self._id}/{backup_name}"
+                if dest.is_file() else None
+            ),
             "staged": f"logs/transactions/{self._id}/{staged_name}",
         }
         self._journal.append(entry)
@@ -759,7 +772,9 @@ class ProjectTransaction:
                     self._apply_append(entry)
                     continue
                 dest = contained_project_path(self.project_dir, entry["path"])
-                staged = contained_project_path(self.project_dir, entry["staged"], must_exist=True)
+                staged = contained_project_path(
+                    self.project_dir, entry["staged"], must_exist=True
+                )
                 if os.name == "nt" or not _HAS_NOFOLLOW:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(staged, dest)
@@ -878,7 +893,7 @@ class ProjectTransaction:
                         if not isinstance(entry.get("path"), str):
                             valid = False
                             break
-                        operation = entry.get("operation", "write")
+                        operation = entry.get("operation")
                         if operation not in {"write", "append"}:
                             valid = False
                             break

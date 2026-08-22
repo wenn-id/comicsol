@@ -44,7 +44,6 @@ try:
         definition_digest as canonical_definition_digest,
         structural_baseline as canonical_structural_baseline,
     )
-
     CANONICAL_DEFINITION_ERROR = None
 except ImportError as error:  # pragma: no cover - packaged runtime has no test tree
     CANONICAL_CONSISTENCY_DIMENSIONS = ()
@@ -108,7 +107,9 @@ def _require_canonical_definition() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _ratio(metric_id: str, numerator: float, denominator: int, direction: str) -> dict[str, Any]:
+def _ratio(
+    metric_id: str, numerator: float, denominator: int, direction: str
+) -> dict[str, Any]:
     """Return one pooled ratio metric carrying its comparison direction."""
     denominator = int(denominator)
     if denominator > 0:
@@ -143,7 +144,9 @@ def aggregate_metrics(
             metric = cast(Mapping[str, Any], record["metrics"])[metric_id]
             numerator += cast(float, metric["numerator"])
             denominator += int(cast(int, metric["denominator"]))
-        aggregate = _ratio(metric_id, numerator, denominator, METRIC_DIRECTIONS[metric_id])
+        aggregate = _ratio(
+            metric_id, numerator, denominator, METRIC_DIRECTIONS[metric_id]
+        )
         aggregate["cases"] = len(records)
         aggregates[metric_id] = aggregate
     return aggregates
@@ -246,7 +249,9 @@ def _has_valid_provenance(review: object, fields: tuple[str, ...]) -> bool:
     return True
 
 
-def _metric_contract_problems(metric_id: str, metric: object, *, location: str = "") -> list[str]:
+def _metric_contract_problems(
+    metric_id: str, metric: object, *, location: str = ""
+) -> list[str]:
     """Validate one archived ratio metric before it enters a comparison."""
     prefix = f"{location}{metric_id}"
     problems: list[str] = []
@@ -318,17 +323,8 @@ def load_consistency_baseline(path: Path) -> dict[str, Any]:
     else:
         canonical = cast(Mapping[str, Any], canonical_structural_baseline())
         for field in (
-            "backgrounds",
-            "characters",
-            "dimensions",
-            "expressions",
-            "lighting_conditions",
-            "layouts",
-            "page_count",
-            "panel_count",
-            "panels",
-            "text_item_count",
-            "views",
+            "backgrounds", "characters", "dimensions", "expressions", "lighting_conditions",
+            "layouts", "page_count", "panel_count", "panels", "text_item_count", "views",
             "views_per_character",
         ):
             if structural.get(field) != canonical.get(field):
@@ -359,18 +355,15 @@ def load_consistency_baseline(path: Path) -> dict[str, Any]:
             if not _is_count(visual.get(field)):
                 visual_counts_valid = False
                 problems.append(f"visual.{field} must be a non-negative integer")
-        if visual_counts_valid and int(visual["scored_dimensions"]) > int(
-            visual["total_dimensions"]
-        ):
+        if visual_counts_valid and int(visual["scored_dimensions"]) > int(visual["total_dimensions"]):
             problems.append("visual.scored_dimensions must not exceed total_dimensions")
-        canonical_total = cast(Mapping[str, Any], canonical_structural_baseline())[
-            "trait_restatements"
-        ]["expected"]
+        canonical_total = cast(Mapping[str, Any], canonical_structural_baseline())["trait_restatements"]["expected"]
         if visual.get("total_dimensions") != canonical_total:
             problems.append("visual.total_dimensions does not match the canonical definition")
     if problems:
         raise ValueError(
-            f"{Path(path).name}: invalid character consistency baseline: " + "; ".join(problems)
+            f"{Path(path).name}: invalid character consistency baseline: "
+            + "; ".join(problems)
         )
     return baseline
 
@@ -391,7 +384,9 @@ def _scorecard_entries(scorecard: Mapping[str, Any]) -> list[tuple[str, object]]
             if not isinstance(scores, Mapping):
                 continue
             for dimension in sorted(scores):
-                entries.append((f"{panel_id}/{character_id}/{dimension}", scores[dimension]))
+                entries.append(
+                    (f"{panel_id}/{character_id}/{dimension}", scores[dimension])
+                )
     return entries
 
 
@@ -467,14 +462,17 @@ def load_consistency_scorecard(path: Path) -> dict[str, Any]:
             problems.append(f"{location}: score is outside the published scale")
     review = scorecard.get("review")
     scored = any(score is not None for _, score in _scorecard_entries(scorecard))
-    if scored and not _has_valid_provenance(review, ("engine_version", "method", "reviewer")):
+    if scored and not _has_valid_provenance(
+        review, ("engine_version", "method", "reviewer")
+    ):
         problems.append(
             "a scored scorecard must name review.engine_version, review.method and "
             "review.reviewer, because an unattributable score is not evidence"
         )
     if problems:
         raise ValueError(
-            f"{Path(path).name}: invalid character consistency scorecard: " + "; ".join(problems)
+            f"{Path(path).name}: invalid character consistency scorecard: "
+            + "; ".join(problems)
         )
     return scorecard
 
@@ -524,13 +522,11 @@ def consistency_report(
             )
         report["engine_version"] = baseline["engine_version"]
         report["definition_sha256"] = (
-            canonical_definition_digest()
-            if canonical_definition_digest is not None
-            else baseline.get("definition_sha256")
+            canonical_definition_digest() if canonical_definition_digest is not None else baseline.get("definition_sha256")
         )
-        report["project_validation"] = cast(Mapping[str, Any], baseline["project_validation"])[
-            "result"
-        ]
+        report["project_validation"] = cast(
+            Mapping[str, Any], baseline["project_validation"]
+        )["result"]
         report["structural"] = {
             "background_count": len(cast(list, structural["backgrounds"])),
             "character_count": structural["character_count"],
@@ -636,9 +632,7 @@ def summarize_results(
                 and consistency_engine != result_engine
             ):
                 source_label = (
-                    "scorecard"
-                    if consistency_scorecard is not None and consistency_baseline is None
-                    else "baseline"
+                    "scorecard" if consistency_scorecard is not None and consistency_baseline is None else "baseline"
                 )
                 exceptions.append(
                     f"character consistency {source_label} engine version "
@@ -646,23 +640,25 @@ def summarize_results(
                     f"{result_engine!r}"
                 )
             elif result_engine == "unknown":
-                exceptions.append(
-                    "result engine version is unknown; consistency evidence is not comparable"
-                )
+                exceptions.append("result engine version is unknown; consistency evidence is not comparable")
 
     metrics = aggregate_metrics(records)
     cases = {
         case_id: {
             "case_sha256": records[case_id].get("case_sha256"),
             "metrics": {
-                metric_id: cast(Mapping[str, Any], records[case_id]["metrics"])[metric_id]["value"]
+                metric_id: cast(Mapping[str, Any], records[case_id]["metrics"])[metric_id][
+                    "value"
+                ]
                 for metric_id in METRIC_IDS
             },
             "status": records[case_id].get("status"),
         }
         for case_id in sorted(records)
     }
-    failed_cases = sorted(case_id for case_id, case in cases.items() if case["status"] != "passed")
+    failed_cases = sorted(
+        case_id for case_id, case in cases.items() if case["status"] != "passed"
+    )
     limitations = {SUMMARY_LIMITATION}
     if consistency is not None:
         limitations.add(CONSISTENCY_LIMITATION)
@@ -744,7 +740,9 @@ def load_summary(path: Path) -> dict[str, Any]:
     if consistency is not None and not isinstance(consistency, Mapping):
         problems.append("summary consistency must be a JSON object or null")
     if problems:
-        raise ValueError(f"{Path(path).name}: invalid benchmark summary: " + "; ".join(problems))
+        raise ValueError(
+            f"{Path(path).name}: invalid benchmark summary: " + "; ".join(problems)
+        )
     return summary
 
 
@@ -1003,7 +1001,9 @@ def diff_summaries(
             )
             cases[case_id] = {
                 "baseline_case_sha256": (
-                    baseline_case.get("case_sha256") if isinstance(baseline_case, Mapping) else None
+                    baseline_case.get("case_sha256")
+                    if isinstance(baseline_case, Mapping)
+                    else None
                 ),
                 "candidate_case_sha256": (
                     candidate_case.get("case_sha256")
@@ -1132,7 +1132,9 @@ def render_delta_markdown(delta: Mapping[str, Any]) -> str:
             ]
         )
     if delta["cases"]:
-        lines.extend(["## Cases", "", "| case | baseline | candidate |", "| --- | --- | --- |"])
+        lines.extend(
+            ["## Cases", "", "| case | baseline | candidate |", "| --- | --- | --- |"]
+        )
         for case_id, case in cast(Mapping[str, Any], delta["cases"]).items():
             lines.append(
                 f"| `{case_id}` | {case['baseline_status']} | {case['candidate_status']} |"
@@ -1205,7 +1207,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if delta["status"] == "passed" else 1
 
     if arguments.results is None:
-        parser.error("supply --results to summarize, or --baseline and --candidate to compare")
+        parser.error(
+            "supply --results to summarize, or --baseline and --candidate to compare"
+        )
     try:
         summary = summarize_results(
             arguments.results,

@@ -22,19 +22,10 @@ class DoctorDiagnosticContractTests(unittest.TestCase):
         self.assertIsInstance(report["messages"], list)
         self.assertGreaterEqual(len(report["checks"]), 8)
         ids = {check["id"] for check in report["checks"]}
-        self.assertTrue(
-            {
-                "runtime",
-                "pillow",
-                "fonts",
-                "templates",
-                "references",
-                "output-root",
-                "mcp",
-                "image-capability",
-            }
-            <= ids
-        )
+        self.assertTrue({
+            "runtime", "pillow", "fonts", "templates", "references",
+            "output-root", "mcp", "image-capability",
+        } <= ids)
         for check in report["checks"]:
             self.assertEqual({"id", "status", "message", "remediation"}, set(check))
             self.assertIn(check["status"], {"pass", "warn", "fail"})
@@ -46,13 +37,7 @@ class DoctorDiagnosticContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             templates = Path(raw) / "templates"
             templates.mkdir()
-            for name in (
-                "manifest.json",
-                "character-bible.json",
-                "story-plan.json",
-                "storyboard.json",
-                "panel-record.json",
-            ):
+            for name in ("manifest.json", "character-bible.json", "story-plan.json", "storyboard.json", "panel-record.json"):
                 (templates / name).write_text("{}\n", encoding="utf-8")
             with mock.patch.object(comic_sol, "TEMPLATES", templates):
                 report = comic_sol.doctor_report(Path(raw) / "output")
@@ -67,13 +52,7 @@ class DoctorDiagnosticContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             templates = Path(raw) / "templates"
             templates.mkdir()
-            for name in (
-                "manifest.json",
-                "character-bible.json",
-                "story-plan.json",
-                "storyboard.json",
-                "panel-record.json",
-            ):
+            for name in ("manifest.json", "character-bible.json", "story-plan.json", "storyboard.json", "panel-record.json"):
                 (templates / name).write_text('{"placeholder": true}\n', encoding="utf-8")
             (templates / "qa-report.md.tmpl").write_text("{{PROJECT_SUMMARY}}\n", encoding="utf-8")
             for content in ("{}\n", "{"):
@@ -87,9 +66,7 @@ class DoctorDiagnosticContractTests(unittest.TestCase):
 
     def test_doctor_reports_unusable_mcp_installation(self):
         with tempfile.TemporaryDirectory() as raw:
-            with mock.patch.object(
-                comic_sol.importlib, "import_module", side_effect=ImportError("partial MCP")
-            ):
+            with mock.patch.object(comic_sol.importlib, "import_module", side_effect=ImportError("partial MCP")):
                 report = comic_sol.doctor_report(Path(raw) / "output")
         checks = cast(list[dict[str, object]], report["checks"])
         mcp_check = next(check for check in checks if check["id"] == "mcp")
@@ -126,9 +103,7 @@ class DoctorDiagnosticContractTests(unittest.TestCase):
             self.assertEqual(0, human_code)
             self.assertEqual("", stderr.getvalue())
             self.assertIn("READY", stdout.getvalue())
-            self.assertEqual(
-                len(payload["data"]["messages"]), len(set(payload["data"]["messages"]))
-            )
+            self.assertEqual(len(payload["data"]["messages"]), len(set(payload["data"]["messages"])))
 
 
 if __name__ == "__main__":

@@ -165,7 +165,9 @@ def derive_character_entry(character: Mapping[str, Any]) -> dict[str, Any]:
 
     fingerprint = character.get("visual_fingerprint")
     if not isinstance(fingerprint, Mapping):
-        raise IdentityPackError(f"character {character_id} has no visual_fingerprint object")
+        raise IdentityPackError(
+            f"character {character_id} has no visual_fingerprint object"
+        )
     reference_path = character.get("reference_path")
     if not isinstance(reference_path, str) or not reference_path.strip():
         raise IdentityPackError(f"character {character_id} has no reference_path")
@@ -183,7 +185,9 @@ def derive_character_entry(character: Mapping[str, Any]) -> dict[str, Any]:
             "build": fingerprint.get("silhouette"),
             "notes": [],
         },
-        "reference_views": [{"path": reference_path.replace("\\", "/"), "view": CANONICAL_VIEW}],
+        "reference_views": [
+            {"path": reference_path.replace("\\", "/"), "view": CANONICAL_VIEW}
+        ],
         "source_fingerprint_sha256": fingerprint_digest(fingerprint),
         "wardrobe": {
             "accessories": _strings(fingerprint.get("signature_props")),
@@ -385,11 +389,15 @@ def _validate_entry(
             maximum=MAX_INVARIANTS,
         )
 
-    wardrobe = _check_object(record.get("wardrobe"), WARDROBE_FIELDS, issues, f"{prefix}.wardrobe")
+    wardrobe = _check_object(
+        record.get("wardrobe"), WARDROBE_FIELDS, issues, f"{prefix}.wardrobe"
+    )
     if wardrobe is not None:
         _check_text(wardrobe.get("base"), issues, f"{prefix}.wardrobe.base")
         _check_text_list(wardrobe.get("accessories"), issues, f"{prefix}.wardrobe.accessories")
-        _check_text_list(wardrobe.get("palette"), issues, f"{prefix}.wardrobe.palette", minimum=1)
+        _check_text_list(
+            wardrobe.get("palette"), issues, f"{prefix}.wardrobe.palette", minimum=1
+        )
 
     proportions = _check_object(
         record.get("proportions"), PROPORTION_FIELDS, issues, f"{prefix}.proportions"
@@ -504,7 +512,9 @@ def _bible_issues(
         entry = packed[character_id]
         fingerprint = bible[character_id].get("visual_fingerprint")
         if not isinstance(fingerprint, Mapping):
-            issues.append(f"character bible character '{character_id}' has no visual_fingerprint")
+            issues.append(
+                f"character bible character '{character_id}' has no visual_fingerprint"
+            )
             continue
         if entry.get("source_fingerprint_sha256") != fingerprint_digest(fingerprint):
             issues.append(
@@ -585,7 +595,9 @@ def _selected(
     requested = set(character_ids)
     unknown = sorted(requested - set(entries))
     if unknown:
-        raise IdentityPackError("identity pack has no entry for: " + ", ".join(unknown))
+        raise IdentityPackError(
+            "identity pack has no entry for: " + ", ".join(unknown)
+        )
     return [entry for key, entry in entries.items() if key in requested]
 
 
@@ -614,7 +626,10 @@ def identity_prompt_block(
         lines.append(f"- {entry['id']}")
         lines.append(
             "  immutable: "
-            + "; ".join(str(traits.get(field, "")) for field in ("silhouette", "face", "hair"))
+            + "; ".join(
+                str(traits.get(field, ""))
+                for field in ("silhouette", "face", "hair")
+            )
         )
         lines.append("  invariants: " + _join(traits.get("invariants")))
         build = proportions.get("build")

@@ -27,12 +27,7 @@ from .core_primitives import (
     rectangles_overlap,
     subject_keepout_radius,
 )
-from .project_io import (
-    ProjectTransaction,
-    contained_project_path,
-    open_path_nofollow,
-    read_contained_bytes,
-)
+from .project_io import ProjectTransaction, contained_project_path, open_path_nofollow, read_contained_bytes
 from .raster_limits import MAX_DECODED_PIXELS
 from .sfx_verification import (
     is_deterministic_sfx,
@@ -109,7 +104,9 @@ def normalized_word_count(text: str) -> int:
 def _parse_emphasis(text: str) -> list[tuple[str, bool]]:
     """Parse complete ``**bold**`` spans into text and emphasis chunks."""
     parts = text.split("**")
-    if len(parts) % 2 == 0 or any(not parts[index].strip() for index in range(1, len(parts), 2)):
+    if len(parts) % 2 == 0 or any(
+        not parts[index].strip() for index in range(1, len(parts), 2)
+    ):
         return [(text, False)]
     return [(part, index % 2 != 0) for index, part in enumerate(parts) if part]
 
@@ -243,7 +240,10 @@ def _measure_styled_line(
     runs = _merge_font_tokens(tokens)
     width = sum(draw.textlength(text, font=run_font) for text, run_font in runs)
     if runs:
-        boxes = [draw.textbbox((0, 0), text, font=run_font, anchor="ls") for text, run_font in runs]
+        boxes = [
+            draw.textbbox((0, 0), text, font=run_font, anchor="ls")
+            for text, run_font in runs
+        ]
     else:
         boxes = [draw.textbbox((0, 0), "Ag", font=regular_font, anchor="ls")]
     return _StyledLine(
@@ -346,11 +346,7 @@ def _draw_font_runs(
     x, y = position
     for text, run_font in runs:
         draw.text(
-            (x, y),
-            text,
-            font=run_font,
-            fill=fill,
-            anchor="ls",
+            (x, y), text, font=run_font, fill=fill, anchor="ls",
             stroke_width=stroke_width,
             stroke_fill=fill if stroke_fill is None else stroke_fill,
         )
@@ -406,16 +402,14 @@ def _resolve_speaker(character_bible: list[dict], speaker: object) -> tuple[str,
     ]
     if speaker in identified:
         return speaker, "declared"
-    named = sorted(
-        {
-            character["id"]
-            for character in character_bible
-            if isinstance(character, dict)
-            and character.get("name") == speaker
-            and isinstance(character.get("id"), str)
-            and character.get("id")
-        }
-    )
+    named = sorted({
+        character["id"]
+        for character in character_bible
+        if isinstance(character, dict)
+        and character.get("name") == speaker
+        and isinstance(character.get("id"), str)
+        and character.get("id")
+    })
     if len(named) > 1:
         raise ValueError(
             "dialogue-attribution-ambiguous: display name "
@@ -446,7 +440,9 @@ def _panel_attributions(
             # Placements, page-QA regions, and reviewer evidence all address a
             # balloon by text ID, so a balloon without one cannot carry
             # attribution anything downstream is able to verify.
-            raise ValueError("dialogue-attribution-required: every spoken balloon needs a text ID")
+            raise ValueError(
+                "dialogue-attribution-required: every spoken balloon needs a text ID"
+            )
         if key in attributions:
             # Placements and page-QA regions are both keyed by text ID, so a
             # duplicate ID leaves one of the two balloons attributed to the
@@ -460,15 +456,14 @@ def _panel_attributions(
             "speaker": speaker,
             "speaker_anchor": item.get("speaker_anchor"),
         }
-    conflicts = dialogue_attribution_conflicts(
-        [
-            (item_id, str(record["speaker"]), record["speaker_anchor"])
-            for item_id, record in attributions.items()
-        ]
-    )
+    conflicts = dialogue_attribution_conflicts([
+        (item_id, str(record["speaker"]), record["speaker_anchor"])
+        for item_id, record in attributions.items()
+    ])
     if conflicts:
         detail = "; ".join(
-            f"{reason} between {first} and {second}" for reason, first, second in conflicts
+            f"{reason} between {first} and {second}"
+            for reason, first, second in conflicts
         )
         raise ValueError(f"dialogue-attribution-ambiguous: {detail}")
     return attributions
@@ -620,13 +615,17 @@ def _organic_tail_geometry(
     radius_y = max(0.5, rect["height"] / 2)
     delta_x = target_x - center_x
     delta_y = target_y - center_y
-    normalized_distance = math.sqrt((delta_x / radius_x) ** 2 + (delta_y / radius_y) ** 2)
+    normalized_distance = math.sqrt(
+        (delta_x / radius_x) ** 2 + (delta_y / radius_y) ** 2
+    )
     if normalized_distance <= 1.08:
         raise ValueError("speaker anchor must remain outside the balloon outline")
     scale = 1 / normalized_distance
     attachment_x = center_x + delta_x * scale
     attachment_y = center_y + delta_y * scale
-    source_distance = math.hypot(target_x - attachment_x, target_y - attachment_y)
+    source_distance = math.hypot(
+        target_x - attachment_x, target_y - attachment_y
+    )
     # The gap reserved here is the same clearance page QA requires between a
     # balloon and a protected subject anchor, so this balloon can never fail the
     # balloon-subject-obstruction audit against the anchor it speaks from. Other
@@ -720,11 +719,7 @@ def _draw_antialiased_balloon(
         base = tail.get("base")
         control = tail.get("control")
         tip_value = tail.get("tip")
-        if (
-            not isinstance(base, list)
-            or not isinstance(control, list)
-            or not isinstance(tip_value, list)
-        ):
+        if not isinstance(base, list) or not isinstance(control, list) or not isinstance(tip_value, list):
             raise ValueError("tail geometry has an invalid point record")
         points.extend(tuple(point) for point in base)
         points.extend(tuple(point) for side in control for point in side)
@@ -744,14 +739,12 @@ def _draw_antialiased_balloon(
         base = tail.get("base")
         control = tail.get("control")
         tip_value = tail.get("tip")
-        if (
-            not isinstance(base, list)
-            or not isinstance(control, list)
-            or not isinstance(tip_value, list)
-        ):
+        if not isinstance(base, list) or not isinstance(control, list) or not isinstance(tip_value, list):
             raise ValueError("tail geometry has an invalid point record")
         base_one, base_two = (tuple(point) for point in base)
-        first_control, second_control = (tuple(tuple(point) for point in side) for side in control)
+        first_control, second_control = (
+            tuple(tuple(point) for point in side) for side in control
+        )
         tip = tuple(tip_value)
 
         def cubic_points(start, controls, end):
@@ -760,18 +753,16 @@ def _draw_antialiased_balloon(
             for index in range(25):
                 t = index / 24
                 inverse = 1 - t
-                result.append(
-                    (
-                        inverse**3 * start[0]
-                        + 3 * inverse**2 * t * first[0]
-                        + 3 * inverse * t**2 * second[0]
-                        + t**3 * end[0],
-                        inverse**3 * start[1]
-                        + 3 * inverse**2 * t * first[1]
-                        + 3 * inverse * t**2 * second[1]
-                        + t**3 * end[1],
-                    )
-                )
+                result.append((
+                    inverse ** 3 * start[0]
+                    + 3 * inverse ** 2 * t * first[0]
+                    + 3 * inverse * t ** 2 * second[0]
+                    + t ** 3 * end[0],
+                    inverse ** 3 * start[1]
+                    + 3 * inverse ** 2 * t * first[1]
+                    + 3 * inverse * t ** 2 * second[1]
+                    + t ** 3 * end[1],
+                ))
             return result
 
         first_side = cubic_points(base_one, first_control, tip)
@@ -779,7 +770,8 @@ def _draw_antialiased_balloon(
         silhouette = first_side + list(reversed(second_side))
         mask_draw.polygon(tuple(scaled_point(point) for point in silhouette), fill=255)
     mask_draw.ellipse(
-        ((x0 - left) * scale, (y0 - top) * scale, (x1 - left) * scale, (y1 - top) * scale),
+        ((x0 - left) * scale, (y0 - top) * scale,
+         (x1 - left) * scale, (y1 - top) * scale),
         fill=255,
     )
 
@@ -892,11 +884,7 @@ def render_text_item(
     if kind == "dialogue":
         tail = item.get("speaker_anchor")
         voice_source = item.get("voice_source")
-        if (
-            isinstance(tail, list)
-            and len(tail) == 2
-            and all(isinstance(value, (int, float)) for value in tail)
-        ):
+        if isinstance(tail, list) and len(tail) == 2 and all(isinstance(value, (int, float)) for value in tail):
             if not isinstance(voice_source, str):
                 raise ValueError("dialogue voice source must be human or device")
             tail_geometry = _organic_tail_geometry(
@@ -920,9 +908,7 @@ def render_text_item(
     elif kind == "caption":
         draw.rectangle(
             (x0, y0, x1, y1),
-            fill=(255, 255, 255, 200),
-            outline=(15, 15, 15, 200),
-            width=2,
+            fill=(255, 255, 255, 200), outline=(15, 15, 15, 200), width=2,
         )
         assert layout is not None
         _draw_styled_layout(
@@ -952,7 +938,9 @@ def _validate_decoded_pixels(size: tuple[int, int], path: Path) -> None:
     """Reject panel images whose decoded pixel count exceeds the project cap."""
     width, height = size
     if width * height > MAX_DECODED_PIXELS:
-        raise ValueError(f"panel exceeds the {MAX_DECODED_PIXELS} pixel decode limit: {path}")
+        raise ValueError(
+            f"panel exceeds the {MAX_DECODED_PIXELS} pixel decode limit: {path}"
+        )
 
 
 def letter_panel(
@@ -965,12 +953,7 @@ def letter_panel(
     source_bytes: bytes | None = None,
 ) -> dict:
     """Letter a panel atomically and return a compact output summary."""
-    if (
-        not isinstance(panel_width, int)
-        or not isinstance(panel_height, int)
-        or panel_width <= 0
-        or panel_height <= 0
-    ):
+    if not isinstance(panel_width, int) or not isinstance(panel_height, int) or panel_width <= 0 or panel_height <= 0:
         raise ValueError("panel dimensions must be positive integers")
     if not isinstance(text_items, list) or not isinstance(character_bible, list):
         raise TypeError("text_items and character_bible must be lists")
@@ -981,9 +964,7 @@ def letter_panel(
             _validate_decoded_pixels(source.size, path)
             base = ImageOps.exif_transpose(source).convert("RGBA")
             if base.size != (panel_width, panel_height):
-                base = ImageOps.fit(
-                    base, (panel_width, panel_height), method=Image.Resampling.LANCZOS
-                )
+                base = ImageOps.fit(base, (panel_width, panel_height), method=Image.Resampling.LANCZOS)
     except (OSError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
         detail = type(error).__name__
         errno_value = getattr(error, "errno", None)
@@ -1026,7 +1007,8 @@ def letter_panel(
         render_mode_issue = render_mode_problem(item)
         if render_mode_issue is not None:
             raise ValueError(
-                f"text item {item.get('id', 'unknown')} render_mode {render_mode_issue}"
+                f"text item {item.get('id', 'unknown')} render_mode "
+                f"{render_mode_issue}"
             )
         content = normalize_content(item.get("content", ""))
         limit = {"dialogue": 32, "caption": 45, "sfx": 3}.get(item.get("kind"))
@@ -1043,11 +1025,15 @@ def letter_panel(
     # SFX the storyboard routed to deterministic lettering is renderable like any
     # other item, so it is placed, reserved, and reported as a placement.
     renderable = [
-        item for item in ordered if item.get("kind") != "sfx" or is_deterministic_sfx(item)
+        item
+        for item in ordered
+        if item.get("kind") != "sfx" or is_deterministic_sfx(item)
     ]
     rendered_text_count = len(renderable)
     sfx_items_total = [item for item in ordered if item.get("kind") == "sfx"]
-    lettered_sfx_count = len([item for item in sfx_items_total if is_deterministic_sfx(item)])
+    lettered_sfx_count = len(
+        [item for item in sfx_items_total if is_deterministic_sfx(item)]
+    )
     word_count = sum(normalized_word_count(item["content"]) for item in ordered)
     summary = {
         "font_used": str(Path(_load_font(12).path)),
@@ -1087,9 +1073,7 @@ def letter_panel(
                 selected_anchor = candidate_anchor
                 break
         if rect is None:
-            raise ValueError(
-                f"text item {item.get('id', 'unknown')} has no non-overlapping placement"
-            )
+            raise ValueError(f"text item {item.get('id', 'unknown')} has no non-overlapping placement")
         assert font is not None
         assert selected_anchor is not None
         render_text_item(draw, item, rect, font, character_bible, canvas=canvas)
@@ -1105,7 +1089,11 @@ def letter_panel(
         font_runs = [
             {
                 "font_id": Path(run_font.path).name,
-                "style": ("bold" if Path(run_font.path) == FONT_PATH_BOLD else "regular"),
+                "style": (
+                    "bold"
+                    if Path(run_font.path) == FONT_PATH_BOLD
+                    else "regular"
+                ),
                 "text": run_text,
             }
             for run_text, run_font in drawn_runs
@@ -1128,18 +1116,16 @@ def letter_panel(
                 panel_height,
                 voice_source,
             )
-        summary["placements"].append(
-            {
-                "anchor": selected_anchor,
-                "attribution": attributions.get(item.get("id")),
-                "box": {key: int(rect[key]) for key in ("x", "y", "width", "height")},
-                "font_runs": font_runs,
-                "id": item.get("id"),
-                "kind": item.get("kind"),
-                "reading_order": reading_order,
-                "tail": tail_geometry,
-            }
-        )
+        summary["placements"].append({
+            "anchor": selected_anchor,
+            "attribution": attributions.get(item.get("id")),
+            "box": {key: int(rect[key]) for key in ("x", "y", "width", "height")},
+            "font_runs": font_runs,
+            "id": item.get("id"),
+            "kind": item.get("kind"),
+            "reading_order": reading_order,
+            "tail": tail_geometry,
+        })
         occupied.append(rect)
 
     encoded = io.BytesIO()
@@ -1172,10 +1158,7 @@ def _letter_project_with_summaries(
                     f"storyboard page {page_index + 1} panel {panel_index + 1} must be an object"
                 )
             panel_id = panel.get("id")
-            if (
-                not isinstance(panel_id, str)
-                or re.fullmatch(r"p[0-9]{2}-[0-9]{2}", panel_id) is None
-            ):
+            if not isinstance(panel_id, str) or re.fullmatch(r"p[0-9]{2}-[0-9]{2}", panel_id) is None:
                 raise ValueError(
                     f"storyboard page {page_index + 1} panel {panel_index + 1} has an invalid ID"
                 )
@@ -1196,12 +1179,16 @@ def _letter_project_with_summaries(
     }
     preflights: dict[str, dict[str, object]] = {}
     for panel in panels:
-        preflights[panel["id"]] = preflight_text_items(panel.get("text", []), font_policy)
+        preflights[panel["id"]] = preflight_text_items(
+            panel.get("text", []), font_policy
+        )
 
     outputs: list[Path] = []
     summaries: list[dict] = []
     staged: list[tuple[str, bytes, bytes, bytes, dict]] = []
-    storyboard_path = contained_project_path(project_dir, "plan/storyboard.json", must_exist=True)
+    storyboard_path = contained_project_path(
+        project_dir, "plan/storyboard.json", must_exist=True
+    )
     storyboard_sha256 = sha256_file(storyboard_path)
     with tempfile.TemporaryDirectory(prefix="comic-sol-lettering-") as temporary:
         temporary_root = Path(temporary)
@@ -1221,20 +1208,11 @@ def _letter_project_with_summaries(
                     _validate_decoded_pixels(image.size, source)
                     image.load()
                     width, height = image.size
-            except (
-                OSError,
-                SyntaxError,
-                Image.DecompressionBombError,
-                Image.DecompressionBombWarning,
-            ) as error:
+            except (OSError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
                 raise ValueError(f"panel {panel_id} is not a readable image") from error
             staged_path = temporary_root / f"{panel_id}.png"
             summary = letter_panel(
-                str(staged_path),
-                width,
-                height,
-                panel.get("text", []),
-                bible,
+                str(staged_path), width, height, panel.get("text", []), bible,
                 source_bytes=source_bytes,
             )
             destination_relative = f"panels/{panel_id}/lettered.png"
@@ -1271,29 +1249,31 @@ def _letter_project_with_summaries(
             # of the command that lettered the panel rather than only inside an
             # artifact somebody has to know to open.
             summary["sfx_flags"] = geometry["sfx"]["flags"]
-            staged.append(
-                (
-                    panel_id,
-                    lettered_payload,
-                    canonical_artifact_bytes(preflight),
-                    canonical_artifact_bytes(geometry),
-                    summary,
-                )
-            )
+            staged.append((
+                panel_id,
+                lettered_payload,
+                canonical_artifact_bytes(preflight),
+                canonical_artifact_bytes(geometry),
+                summary,
+            ))
 
         with ProjectTransaction(project_dir, "lettering") as transaction:
             for panel_id, image_payload, preflight_payload, geometry_payload, _ in staged:
-                transaction.stage_bytes(f"panels/{panel_id}/lettered.png", image_payload)
-                transaction.stage_bytes(f"panels/{panel_id}/typography.json", preflight_payload)
-                transaction.stage_bytes(f"panels/{panel_id}/lettering.json", geometry_payload)
+                transaction.stage_bytes(
+                    f"panels/{panel_id}/lettered.png", image_payload
+                )
+                transaction.stage_bytes(
+                    f"panels/{panel_id}/typography.json", preflight_payload
+                )
+                transaction.stage_bytes(
+                    f"panels/{panel_id}/lettering.json", geometry_payload
+                )
             transaction.commit()
 
         for panel_id, _, _, _, summary in staged:
-            outputs.append(
-                contained_project_path(
-                    project_dir, f"panels/{panel_id}/lettered.png", must_exist=True
-                )
-            )
+            outputs.append(contained_project_path(
+                project_dir, f"panels/{panel_id}/lettered.png", must_exist=True
+            ))
             summaries.append(summary)
     return outputs, summaries
 
@@ -1341,7 +1321,8 @@ def _parse_script_extensions(entries: list[str]) -> dict[str, Path]:
             _load_font_path(str(path), 12)
         except OSError as error:
             raise ValueError(
-                f"font script override {script} is not a readable TrueType/OpenType file: {path}"
+                f"font script override {script} is not a readable "
+                f"TrueType/OpenType file: {path}"
             ) from error
         extensions[script] = path
     return extensions
@@ -1356,9 +1337,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             _load_font_path(str(arguments.font), 12)
         except OSError as error:
-            raise ValueError(
-                f"font is not a readable TrueType/OpenType file: {arguments.font}"
-            ) from error
+            raise ValueError(f"font is not a readable TrueType/OpenType file: {arguments.font}") from error
         FONT_PATH = arguments.font
         # Preflight rejects a script that cannot be lettered even with a covering
         # face, so an unusable override fails before any output is written.

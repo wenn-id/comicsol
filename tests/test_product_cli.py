@@ -38,14 +38,12 @@ class ProductCliTests(unittest.TestCase):
 
     def test_json_doctor_returns_stable_success_envelope(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
-            code, stdout, stderr = self.invoke(
-                [
-                    "--json",
-                    "doctor",
-                    "--output-root",
-                    str(Path(temporary_directory) / "output"),
-                ]
-            )
+            code, stdout, stderr = self.invoke([
+                "--json",
+                "doctor",
+                "--output-root",
+                str(Path(temporary_directory) / "output"),
+            ])
         self.assertEqual(0, code)
         self.assertEqual("", stderr)
         payload = json.loads(stdout)
@@ -76,20 +74,18 @@ class ProductCliTests(unittest.TestCase):
             request.write_text('{"language":"en","mode":"short_prompt"}', encoding="utf-8")
             output = root / "output"
 
-            code, stdout, stderr = self.invoke(
-                [
-                    "--json",
-                    "init",
-                    "--output-root",
-                    str(output),
-                    "--title",
-                    "Rejected Source",
-                    "--source",
-                    str(source),
-                    "--request-json",
-                    str(request),
-                ]
-            )
+            code, stdout, stderr = self.invoke([
+                "--json",
+                "init",
+                "--output-root",
+                str(output),
+                "--title",
+                "Rejected Source",
+                "--source",
+                str(source),
+                "--request-json",
+                str(request),
+            ])
 
             self.assertEqual(2, code)
             self.assertEqual("", stderr)
@@ -139,8 +135,12 @@ class ProductCliTests(unittest.TestCase):
                     [command, "--output-root", "/tmp/projects", "--client", "codex"]
                 )
                 with (
-                    mock.patch.object(cli.sys, "argv", ["/opt/Comic Sol/bin/comic-sol"]),
-                    mock.patch("comic_sol_product.setup.setup_clients", return_value=[]) as setup,
+                    mock.patch.object(
+                        cli.sys, "argv", ["/opt/Comic Sol/bin/comic-sol"]
+                    ),
+                    mock.patch(
+                        "comic_sol_product.setup.setup_clients", return_value=[]
+                    ) as setup,
                 ):
                     self.assertEqual([], cli._run(arguments))
 
@@ -158,7 +158,9 @@ class ProductCliTests(unittest.TestCase):
         with (
             mock.patch.object(cli.sys, "frozen", True, create=True),
             mock.patch.object(cli.sys, "executable", launcher),
-            mock.patch("comic_sol_product.setup.setup_clients", return_value=[]) as setup,
+            mock.patch(
+                "comic_sol_product.setup.setup_clients", return_value=[]
+            ) as setup,
         ):
             self.assertEqual([], cli._run(arguments))
 
@@ -170,35 +172,16 @@ class ProductCliTests(unittest.TestCase):
 
     def test_human_lifecycle_progress_is_stage_aware_and_plain(self):
         events = [
-            {
-                "status": "working",
-                "stage": "lettering",
-                "completed": [],
-                "remaining": ["composition", "export"],
-            },
-            {
-                "status": "working",
-                "stage": "composition",
-                "completed": ["lettering"],
-                "remaining": ["export"],
-            },
-            {
-                "status": "complete",
-                "stage": "export",
-                "completed": ["lettering", "composition", "export"],
-                "remaining": [],
-            },
+            {"status": "working", "stage": "lettering", "completed": [], "remaining": ["composition", "export"]},
+            {"status": "working", "stage": "composition", "completed": ["lettering"], "remaining": ["export"]},
+            {"status": "complete", "stage": "export", "completed": ["lettering", "composition", "export"], "remaining": []},
         ]
 
         class FakeEngine:
             def finalize_project(self, project_dir, *, progress=None):
                 for event in events:
                     progress(event)
-                return {
-                    "status": "COMPLETE",
-                    "pdf": "exports/project.pdf",
-                    "report": "qa/report.md",
-                }
+                return {"status": "COMPLETE", "pdf": "exports/project.pdf", "report": "qa/report.md"}
 
         with mock.patch.object(cli, "_load_engine", return_value=FakeEngine()):
             code, stdout, stderr = self.invoke(["finalize", "/tmp/project"])
@@ -217,11 +200,7 @@ class ProductCliTests(unittest.TestCase):
             def finalize_project(self, project_dir, *, progress=None):
                 seen.append(progress)
                 progress({"status": "working", "stage": "export", "completed": [], "remaining": []})
-                return {
-                    "status": "COMPLETE",
-                    "pdf": "exports/project.pdf",
-                    "report": "qa/report.md",
-                }
+                return {"status": "COMPLETE", "pdf": "exports/project.pdf", "report": "qa/report.md"}
 
         with mock.patch.object(cli, "_load_engine", return_value=FakeEngine()):
             code, stdout, stderr = self.invoke(["--json", "finalize", "/tmp/project"])
@@ -261,7 +240,9 @@ class ProductCliTests(unittest.TestCase):
         reporter = cli._ProgressReporter(as_json=False, stream=BrokenStream())
         reporter({"status": "working", "stage": "export"})
         reporter.failure()
-        self.assertEqual(["WORKING stage=export", "FAILED stage=export"], reporter.lines)
+        self.assertEqual(
+            ["WORKING stage=export", "FAILED stage=export"], reporter.lines
+        )
 
     def test_resume_intermediate_status_is_not_reported_as_complete(self):
         class FakeEngine:

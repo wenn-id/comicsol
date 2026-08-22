@@ -13,13 +13,15 @@ class ReleaseDocumentationTests(unittest.TestCase):
         cls.readme = (cls.root / "README.md").read_text(encoding="utf-8")
         cls.install = (cls.root / "docs/install.md").read_text(encoding="utf-8")
         cls.changelog = (cls.root / "CHANGELOG.md").read_text(encoding="utf-8")
-        cls.notes = (cls.root / f"docs/releases/v{__version__}.md").read_text(encoding="utf-8")
-        cls.release_workflow = (cls.root / ".github/workflows/release.yml").read_text(
-            encoding="utf-8"
-        )
-        cls.stable_criteria = (cls.root / "docs/releases/v2.0-stable-criteria.md").read_text(
-            encoding="utf-8"
-        )
+        cls.notes = (
+            cls.root / f"docs/releases/v{__version__}.md"
+        ).read_text(encoding="utf-8")
+        cls.release_workflow = (
+            cls.root / ".github/workflows/release.yml"
+        ).read_text(encoding="utf-8")
+        cls.stable_criteria = (
+            cls.root / "docs/releases/v2.0-stable-criteria.md"
+        ).read_text(encoding="utf-8")
 
     def test_release_workflow_resolves_tag_prefixed_notes_in_prepare(self):
         expected_notes = self.root / f"docs/releases/v{__version__}.md"
@@ -126,24 +128,19 @@ class ReleaseDocumentationTests(unittest.TestCase):
         self.assertIn("prerelease", self.notes.lower())
         self.assertIn("17", self.notes)
         for phrase in (
-            "normalization",
-            "typography",
-            "four-grid",
-            "page QA",
-            "full-content PDF",
-            "quality matrix",
-            "mechanics only",
+            "normalization", "typography", "four-grid", "page QA",
+            "full-content PDF", "quality matrix", "mechanics only",
         ):
             self.assertIn(phrase.lower(), self.notes.lower())
         self.assertIn("2.0.0rc1", self.changelog)
 
     def test_public_docs_describe_provider_and_pdf_contracts(self):
-        provider_setup = (self.root / "references/image-provider-setup.md").read_text(
-            encoding="utf-8"
-        )
-        workflow = (self.root / "skills/comic-sol/references/workflow.md").read_text(
-            encoding="utf-8"
-        )
+        provider_setup = (
+            self.root / "references/image-provider-setup.md"
+        ).read_text(encoding="utf-8")
+        workflow = (
+            self.root / "skills/comic-sol/references/workflow.md"
+        ).read_text(encoding="utf-8")
         listing = (self.root / "submission/listing.md").read_text(encoding="utf-8")
         cases = (self.root / "submission/test-cases.md").read_text(encoding="utf-8")
         public_docs = " ".join("\n".join((self.readme, listing, cases)).split())
@@ -195,12 +192,18 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
 
     def _changelog_sections(self):
         """Return `{heading: body}` for every `## ` section of the changelog."""
-        headings = list(re.finditer(r"(?m)^##[ \t]+(?P<name>\S.*?)[ \t]*$", self.changelog))
+        headings = list(
+            re.finditer(r"(?m)^##[ \t]+(?P<name>\S.*?)[ \t]*$", self.changelog)
+        )
         self.assertTrue(headings, "the changelog has no section headings")
         sections = {}
         for index, match in enumerate(headings):
-            end = headings[index + 1].start() if index + 1 < len(headings) else len(self.changelog)
-            sections[match.group("name")] = self.changelog[match.end() : end]
+            end = (
+                headings[index + 1].start()
+                if index + 1 < len(headings)
+                else len(self.changelog)
+            )
+            sections[match.group("name")] = self.changelog[match.end():end]
         return sections
 
     def _carrying_section(self, released):
@@ -271,7 +274,11 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         )
         index = names.index("Unreleased")
         start = headings[index].end()
-        end = headings[index + 1].start() if index + 1 < len(headings) else len(self.changelog)
+        end = (
+            headings[index + 1].start()
+            if index + 1 < len(headings)
+            else len(self.changelog)
+        )
         self.assertIn(
             self.RELEASE_BOUNDARY,
             self.changelog[end:],
@@ -303,13 +310,11 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
                 continue
             identifier = re.search(r"`(CS-\d+)`", line)
             pull = re.findall(r"\[#(\d+)\]\(\S+/pull/\d+\)", line)
-            rows.append(
-                (
-                    int(issue.group(1)),
-                    identifier.group(1) if identifier else None,
-                    int(pull[0]) if pull else None,
-                )
-            )
+            rows.append((
+                int(issue.group(1)),
+                identifier.group(1) if identifier else None,
+                int(pull[0]) if pull else None,
+            ))
         return rows
 
     def test_every_milestone_has_a_section(self):
@@ -329,7 +334,8 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
             self.assertEqual(
                 summary[milestone],
                 len(listed),
-                f"{milestone}: summary says {summary[milestone]}, table lists {len(listed)}",
+                f"{milestone}: summary says {summary[milestone]}, "
+                f"table lists {len(listed)}",
             )
 
     def test_no_issue_is_recorded_twice(self):
@@ -361,7 +367,9 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
             )
         )
         published = dict(
-            re.findall(r"\|\s*`(\d+\.\d+\.\d+rc\d+)`\s*\|\s*(\d{4}-\d{2}-\d{2})\s*\|", self.record)
+            re.findall(
+                r"\|\s*`(\d+\.\d+\.\d+rc\d+)`\s*\|\s*(\d{4}-\d{2}-\d{2})\s*\|", self.record
+            )
         )
         return {name.strip(): date for name, date in merged.items()}, published
 
@@ -565,7 +573,9 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
             unmatched = self._unmatched_issues(evidence, owner, released)
             self.assertEqual(1, len(unmatched), unmatched)
             self.assertIn(unmatched[0][0], evidence)
-            with self.assertRaisesRegex(AssertionError, "has no CHANGELOG entry of its own"):
+            with self.assertRaisesRegex(
+                AssertionError, "has no CHANGELOG entry of its own"
+            ):
                 self._assert_each_issue_owns_a_distinct_entry(evidence, owner, released)
 
         separate = (
@@ -665,7 +675,9 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         # formatting detail, not a missing entry.
         released = self._released_by_milestone()
         bodies = {
-            milestone: " ".join(self._carrying_section(released[milestone]).lower().split())
+            milestone: " ".join(
+                self._carrying_section(released[milestone]).lower().split()
+            )
             for milestone in self.DELIVERED
         }
         owner = {
@@ -709,7 +721,9 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         for milestone in self.DELIVERED:
             bullets = [
                 " ".join(bullet.lower().split())
-                for bullet in re.split(r"\n(?=- )", self._carrying_section(released[milestone]))
+                for bullet in re.split(
+                    r"\n(?=- )", self._carrying_section(released[milestone])
+                )
             ]
             candidates = {
                 identifier: {

@@ -164,7 +164,7 @@ def is_normalized_point(value: object) -> bool:
     outside this range names a voice source that is not in the artwork at all.
     """
     return is_geometry_point(value) and all(
-        0.0 <= float(item) <= 1.0 for item in value  # type: ignore[union-attr, attr-defined]
+        0.0 <= float(item) <= 1.0 for item in value  # type: ignore[union-attr]
     )
 
 

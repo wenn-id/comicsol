@@ -24,12 +24,8 @@ class ContainedProjectPathTests(unittest.TestCase):
 
     def test_rejects_absolute_traversal_and_windows_drive_paths(self):
         for bad in (
-            "../outside.png",
-            "/tmp/outside.png",
-            "C:/outside.png",
-            "C:outside.png",
-            r"\\server\share\file.png",
-            "//server/share/file.png",
+            "../outside.png", "/tmp/outside.png", "C:/outside.png",
+            "C:outside.png", r"\\server\share\file.png", "//server/share/file.png",
         ):
             with self.subTest(path=bad):
                 with self.assertRaisesRegex(ValueError, "relative project path"):
@@ -73,9 +69,7 @@ class ContainedProjectPathTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "symlinks|reparse"):
             contained_project_path(self.project, "panels/image.png")
 
-    @unittest.skipUnless(
-        os.name == "nt", "Windows junction/reparse behavior requires native Windows"
-    )
+    @unittest.skipUnless(os.name == "nt", "Windows junction/reparse behavior requires native Windows")
     def test_rejects_windows_directory_junction_escape(self):
         outside = self.root / "outside-junction-target"
         outside.mkdir()
@@ -180,7 +174,9 @@ class DurableWriteTests(unittest.TestCase):
 
         destination = Path("/destination/output.bin")
         with (
-            mock.patch.object(project_io.tempfile, "NamedTemporaryFile", return_value=Handle()),
+            mock.patch.object(
+                project_io.tempfile, "NamedTemporaryFile", return_value=Handle()
+            ),
             mock.patch.object(
                 project_io.os,
                 "fsync",
@@ -189,7 +185,9 @@ class DurableWriteTests(unittest.TestCase):
             mock.patch.object(
                 project_io.os,
                 "replace",
-                side_effect=lambda source, target: events.append(("replace", Path(source), target)),
+                side_effect=lambda source, target: events.append(
+                    ("replace", Path(source), target)
+                ),
             ),
             mock.patch.object(
                 project_io,
@@ -216,7 +214,9 @@ class DurableWriteTests(unittest.TestCase):
             directory = Path(temporary)
             destination = directory / "artifact.bin"
             destination.write_bytes(b"original")
-            with mock.patch.object(project_io.os, "replace", side_effect=OSError("replace failed")):
+            with mock.patch.object(
+                project_io.os, "replace", side_effect=OSError("replace failed")
+            ):
                 with self.assertRaisesRegex(OSError, "replace failed"):
                     project_io.durable_atomic_write(destination, b"replacement")
             self.assertEqual(b"original", destination.read_bytes())
@@ -249,9 +249,7 @@ class ProjectTransactionTests(unittest.TestCase):
             return real_replace(source, destination, **kwargs)
 
         with self.assertRaisesRegex(OSError, "injected second publish failure"):
-            with mock.patch.object(
-                project_io.os, "replace", side_effect=fail_second_staged_replace
-            ):
+            with mock.patch.object(project_io.os, "replace", side_effect=fail_second_staged_replace):
                 with project_io.ProjectTransaction(self.project, "composition") as transaction:
                     transaction.stage_bytes("pages/page-001.png", b"new-one")
                     transaction.stage_bytes("pages/page-002.png", b"new-two")
@@ -294,7 +292,6 @@ class ProjectTransactionTests(unittest.TestCase):
     def test_rollback_removes_newly_created_targets_without_backup(self):
         real_replace = project_io.os.replace
         staged_calls = 0
-
         def fail_second_publish(source, destination, **kwargs):
             nonlocal staged_calls
             if Path(source).name.startswith("staged-"):
@@ -302,7 +299,6 @@ class ProjectTransactionTests(unittest.TestCase):
                 if staged_calls == 2:
                     raise OSError("injected second publish failure")
             return real_replace(source, destination, **kwargs)
-
         with self.assertRaisesRegex(OSError, "injected second publish failure"):
             with mock.patch.object(project_io.os, "replace", side_effect=fail_second_publish):
                 with project_io.ProjectTransaction(self.project, "composition") as transaction:
@@ -319,7 +315,6 @@ class ProjectTransactionTests(unittest.TestCase):
         (self.project / "pages/page-002.png").unlink()
         real_replace = project_io.os.replace
         calls = 0
-
         def interrupt_after_first(source, destination, **kwargs):
             nonlocal calls
             source_path = Path(source)
@@ -328,7 +323,6 @@ class ProjectTransactionTests(unittest.TestCase):
                 if calls == 1:
                     raise KeyboardInterrupt("simulated interruption")
             return real_replace(source, destination, **kwargs)
-
         tx = project_io.ProjectTransaction(self.project, "first-composition")
         tx.__enter__()
         tx.stage_bytes("pages/page-001.png", b"page-one")
@@ -372,7 +366,9 @@ class ProjectTransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(OSError, "injected replacement failure"):
             with mock.patch.object(project_io.os, "replace", side_effect=fail_staged_replace):
                 with project_io.ProjectTransaction(self.project, "append") as transaction:
-                    transaction.append_bytes("logs/events.jsonl", b'{"event":"after"}\n')
+                    transaction.append_bytes(
+                        "logs/events.jsonl", b'{"event":"after"}\n'
+                    )
                     transaction.stage_bytes("pages/page-001.png", b"new-one")
 
         self.assertEqual(before, event_path.read_bytes())

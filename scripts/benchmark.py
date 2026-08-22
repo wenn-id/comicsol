@@ -82,7 +82,6 @@ from .validate_project import ProjectValidationError, require_valid_project
 try:
     from .core_primitives import tail_geometry_result
 except ImportError:
-
     def _is_point(value: object) -> bool:
         return (
             isinstance(value, (list, tuple))
@@ -134,7 +133,6 @@ except ImportError:
             return "fail"
         return "pass"
 
-
 ROOT = Path(__file__).resolve().parents[1]
 CASES_ROOT = ROOT / "benchmarks/cases"
 
@@ -154,22 +152,10 @@ EVIDENCE_MODES = ("deterministic", "live-visual")
 # Rewinding planning, storyboard, or generation lands a project in a state only
 # an agent can leave, so a headless benchmark can only drill the command stages.
 RESUMABLE_STAGES = ("lettering", "composition", "export")
-CASE_REQUIRED_FIELDS = frozenset(
-    {
-        "case_id",
-        "dialogue_count",
-        "evidence_mode",
-        "fixture",
-        "kind",
-        "page_count",
-        "panels",
-        "repair_panels",
-        "resume_stage",
-        "schema_version",
-        "seed",
-        "title",
-    }
-)
+CASE_REQUIRED_FIELDS = frozenset({
+    "case_id", "dialogue_count", "evidence_mode", "fixture", "kind", "page_count",
+    "panels", "repair_panels", "resume_stage", "schema_version", "seed", "title",
+})
 FIXTURE_REQUIRED_FILES = ("source/input.txt", "source/request.json")
 FIXTURE_REQUIRED_PLAN = (
     "plan/story-plan.json",
@@ -208,7 +194,9 @@ TAIL_CHECK_ID = "bubble-tail-direction"
 REVIEWER = "comic-sol-benchmark"
 REVIEW_TIMESTAMP = "1970-01-01T00:00:00Z"
 DETERMINISTIC_METHOD = "benchmark-deterministic-v1"
-DETERMINISTIC_PANEL_WARNING = "benchmark-deterministic-mode-does-not-prove-visual-quality"
+DETERMINISTIC_PANEL_WARNING = (
+    "benchmark-deterministic-mode-does-not-prove-visual-quality"
+)
 # Mechanically provable for a harness-synthesized raster: no glyphs are drawn and
 # the raster is decoded and dimension-checked before it is retained.
 MECHANICAL_PANEL_CHECK_IDS = frozenset({"text-free", "technical"})
@@ -291,7 +279,8 @@ LIMITATIONS = {
     "live-visual": (
         "Live runs consume caller-supplied retained rasters and caller-asserted review "
         "provenance; the harness does not itself invoke an image provider.",
-        "Live runs are not byte-reproducible because provider output varies between runs.",
+        "Live runs are not byte-reproducible because provider output varies between "
+        "runs.",
     ),
 }
 
@@ -412,7 +401,8 @@ def case_digest(case: Mapping[str, Any]) -> str:
 def _slug(value: str) -> str:
     """Return the canonical identifier form used for case IDs and file names."""
     return "".join(
-        character if character.isalnum() or character == "-" else "-" for character in value.lower()
+        character if character.isalnum() or character == "-" else "-"
+        for character in value.lower()
     ).strip("-")
 
 
@@ -447,7 +437,9 @@ def engine_revision(project_dir: Path | None = None) -> dict[str, Any]:
     if project_dir is not None:
         versions = read_json(Path(project_dir) / "project.json").get("stage_versions")
         if isinstance(versions, dict):
-            revision["stage_versions"] = {str(stage): versions[stage] for stage in sorted(versions)}
+            revision["stage_versions"] = {
+                str(stage): versions[stage] for stage in sorted(versions)
+            }
     return revision
 
 
@@ -472,9 +464,7 @@ def _git_revision() -> str:
 # --------------------------------------------------------------------------- #
 
 
-def synthesize_panel_raster(
-    seed: int, panel_id: str, revision: int, size: tuple[int, int]
-) -> bytes:
+def synthesize_panel_raster(seed: int, panel_id: str, revision: int, size: tuple[int, int]) -> bytes:
     """Return a seeded, glyph-free RGB PNG for one panel attempt."""
     width, height = size
     if width < 512 or height < 512:
@@ -491,9 +481,7 @@ def synthesize_panel_raster(
         offset = index * step
         level = 70 + digest[(index + 3) % len(digest)] // 2
         draw.line((offset, 0, 0, offset), fill=(level, level, level), width=3)
-        draw.line(
-            (width - offset, height, width, height - offset), fill=(level, level, level), width=3
-        )
+        draw.line((width - offset, height, width, height - offset), fill=(level, level, level), width=3)
     inset = min(width, height) // 6
     draw.ellipse(
         (inset, inset, width - inset - 1, height - inset - 1),
@@ -627,12 +615,16 @@ def _panel_attempts(
             payload = _attempt_payload(case, panel_id, revision, size, attempt_root=attempt_root)
             with Image.open(io.BytesIO(payload)) as image:
                 width, height = image.size
-            retain_generation_attempt(project, panel_id, kind, payload, "image/png", width, height)
+            retain_generation_attempt(
+                project, panel_id, kind, payload, "image/png", width, height
+            )
             sequence = 1
             attempt = project / f"panels/attempts/{panel_id}/{kind}-{sequence}.png"
             promote_attempt(project, panel_id, attempt.relative_to(project))
             promoted_attempts[panel_id] = attempt.relative_to(project)
-        normalize_panel(project, panel_id, f"panels/raw/{panel_id}.png", size, "exact")
+        normalize_panel(
+            project, panel_id, f"panels/raw/{panel_id}.png", size, "exact"
+        )
     return promoted_attempts
 
 
@@ -678,24 +670,24 @@ def _panel_checks(
             or not isinstance(assertion.get("evidence"), str)
             or not assertion["evidence"].strip()
         ):
-            raise ValueError(f"live-visual evidence requires a passing assertion for {check_id}")
+            raise ValueError(
+                f"live-visual evidence requires a passing assertion for {check_id}"
+            )
         proven = mode == "live-visual" or check_id in MECHANICAL_PANEL_CHECK_IDS
         evidence = (
             str(cast(Mapping[str, str], assertion)["evidence"])
             if mode == "live-visual"
             else PANEL_CHECK_EVIDENCE[check_id]
         )
-        checks.append(
-            {
-                "evidence": evidence,
-                "id": check_id,
-                "method": method if proven or mode == "live-visual" else DETERMINISTIC_METHOD,
-                "regions": [],
-                "result": "pass" if proven else "warning",
-                "reviewer": REVIEWER,
-                "severity": "error" if proven else "warning",
-            }
-        )
+        checks.append({
+            "evidence": evidence,
+            "id": check_id,
+            "method": method if proven or mode == "live-visual" else DETERMINISTIC_METHOD,
+            "regions": [],
+            "result": "pass" if proven else "warning",
+            "reviewer": REVIEWER,
+            "severity": "error" if proven else "warning",
+        })
     return checks
 
 
@@ -787,7 +779,9 @@ def dialogue_tail_regions(project: Path, page_number: int) -> list[dict[str, Any
         panel_id = panel["id"]
         geometry = read_json(project / f"panels/{panel_id}/lettering.json")
         placed = {
-            item.get("id"): item for item in geometry.get("items", []) if isinstance(item, dict)
+            item.get("id"): item
+            for item in geometry.get("items", [])
+            if isinstance(item, dict)
         }
         normalization = read_json(project / f"panels/{panel_id}/normalization.json")
         clean = normalization.get("clean")
@@ -801,19 +795,17 @@ def dialogue_tail_regions(project: Path, page_number: int) -> list[dict[str, Any
             tail = placement.get("tail") if isinstance(placement, dict) else None
             if not isinstance(tail, dict):
                 raise ValueError(f"dialogue tail geometry is missing for panel {panel_id}")
-            regions.append(
-                {
-                    "panel_id": panel_id,
-                    "result": tail_direction_result(
-                        tail, item.get("speaker_anchor"), int(size[0]), int(size[1])
-                    ),
-                    "speaker": item.get("speaker"),
-                    "speaker_anchor": item.get("speaker_anchor"),
-                    "text_id": item.get("id"),
-                    "tip": tail.get("tip"),
-                    "voice_source": item.get("voice_source"),
-                }
-            )
+            regions.append({
+                "panel_id": panel_id,
+                "result": tail_direction_result(
+                    tail, item.get("speaker_anchor"), int(size[0]), int(size[1])
+                ),
+                "speaker": item.get("speaker"),
+                "speaker_anchor": item.get("speaker_anchor"),
+                "text_id": item.get("id"),
+                "tip": tail.get("tip"),
+                "voice_source": item.get("voice_source"),
+            })
     return regions
 
 
@@ -938,7 +930,9 @@ def _dialogue_counts(project: Path, case: Mapping[str, Any]) -> tuple[int, int]:
         page = pages.get(page_number)
         dialogue_items = [
             item
-            for storyboard_panel in (page.get("panels", []) if isinstance(page, Mapping) else [])
+            for storyboard_panel in (
+                page.get("panels", []) if isinstance(page, Mapping) else []
+            )
             if isinstance(storyboard_panel, dict)
             for item in storyboard_panel.get("text", [])
             if isinstance(item, dict) and item.get("kind") == "dialogue"
@@ -1079,9 +1073,9 @@ def _resume_drill(project: Path, case: Mapping[str, Any]) -> dict[str, Any]:
         return observation
     result = finalize_project(project)
     observation["refinalized_status"] = result.get("status")
-    observation["succeeded"] = result.get(
-        "status"
-    ) in TERMINAL_STATUSES and not _final_validation_issues(project)
+    observation["succeeded"] = (
+        result.get("status") in TERMINAL_STATUSES and not _final_validation_issues(project)
+    )
     return observation
 
 
@@ -1161,7 +1155,9 @@ def run_case(
         "resume_success": _metric("resume_success", 1 if resume.get("succeeded") else 0, 1),
         "repair_rate": _metric("repair_rate", extras, panel_count),
         "panel_acceptance": _metric("panel_acceptance", accepted, panel_count),
-        "dialogue_correctness": _metric("dialogue_correctness", dialogue_passed, dialogue_total),
+        "dialogue_correctness": _metric(
+            "dialogue_correctness", dialogue_passed, dialogue_total
+        ),
         "export_success": _metric("export_success", verified_pages, expected_pages),
     }
     observations = {
@@ -1334,9 +1330,9 @@ def _validate_result_record(record: object) -> str | None:
         numerator = cast(float | int, metric["numerator"])
         value = cast(float | int, metric["value"])
         expected_value = (
-            round(float(numerator) / denominator, 6)
-            if denominator
-            else (1.0 if metric_id == "dialogue_correctness" else 0.0)
+            round(float(numerator) / denominator, 6) if denominator else (
+                1.0 if metric_id == "dialogue_correctness" else 0.0
+            )
         )
         if value != expected_value:
             return f"metric value is inconsistent: {metric_id}"
@@ -1404,7 +1400,9 @@ def diff_results(
             "baseline_status": before.get("status"),
             "candidate_status": candidate_status,
             "metrics": comparisons,
-            "status": ("failed" if case_regressed or candidate_status != "passed" else "passed"),
+            "status": (
+                "failed" if case_regressed or candidate_status != "passed" else "passed"
+            ),
         }
         if candidate_status != "passed":
             regressions.append(f"{case_id}/status")
@@ -1462,13 +1460,9 @@ def _compare_metric(
     delta = round(float(after_value) - float(before_value), 6)
     direction = METRIC_DIRECTIONS[metric_id]
     if direction == "higher-is-better":
-        verdict = (
-            "regressed" if delta < -tolerance else "improved" if delta > tolerance else "unchanged"
-        )
+        verdict = "regressed" if delta < -tolerance else "improved" if delta > tolerance else "unchanged"
     else:
-        verdict = (
-            "regressed" if delta > tolerance else "improved" if delta < -tolerance else "unchanged"
-        )
+        verdict = "regressed" if delta > tolerance else "improved" if delta < -tolerance else "unchanged"
     return {
         "baseline": float(before_value),
         "candidate": float(after_value),
@@ -1577,11 +1571,7 @@ def main(argv: list[str] | None = None) -> int:
         for value in (arguments.baseline, arguments.candidate, arguments.diff_output)
     )
     if diff_requested:
-        if (
-            arguments.baseline is None
-            or arguments.candidate is None
-            or arguments.diff_output is None
-        ):
+        if arguments.baseline is None or arguments.candidate is None or arguments.diff_output is None:
             parser.error("--baseline, --candidate, and --diff-output must be supplied together")
         try:
             result = diff_results(
@@ -1607,10 +1597,14 @@ def main(argv: list[str] | None = None) -> int:
 
     review_assertions: Mapping[str, Mapping[str, Mapping[str, str]]] | None = None
     if arguments.review_assertions is not None:
-        loaded_assertions = json.loads(arguments.review_assertions.read_text(encoding="utf-8"))
+        loaded_assertions = json.loads(
+            arguments.review_assertions.read_text(encoding="utf-8")
+        )
         if not isinstance(loaded_assertions, Mapping):
             parser.error("--review-assertions must contain a JSON object")
-        review_assertions = cast(Mapping[str, Mapping[str, Mapping[str, str]]], loaded_assertions)
+        review_assertions = cast(
+            Mapping[str, Mapping[str, Mapping[str, str]]], loaded_assertions
+        )
 
     status = 0
     for path in dict.fromkeys(case_paths):

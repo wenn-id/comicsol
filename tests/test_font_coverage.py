@@ -193,9 +193,9 @@ class ScriptFontSelectionTests(unittest.TestCase):
         for script, character in samples.items():
             with self.subTest(script=script):
                 displayed = display_content("dialogue", character)
-                resolved = {script_for_codepoint(ord(glyph)) for glyph in displayed} | {
-                    script_for_codepoint(ord(character))
-                }
+                resolved = {
+                    script_for_codepoint(ord(glyph)) for glyph in displayed
+                } | {script_for_codepoint(ord(character))}
                 self.assertEqual({script}, resolved)
 
 
@@ -221,15 +221,21 @@ class CoverageEnumerationTests(unittest.TestCase):
                 self.assertLessEqual(max(covered), 0xFFFF)
 
     def test_ranges_condense_and_format_without_losing_codepoints(self):
-        self.assertEqual(((1, 3), (7, 7), (9, 10)), condense_ranges([3, 1, 2, 7, 10, 9]))
+        self.assertEqual(
+            ((1, 3), (7, 7), (9, 10)), condense_ranges([3, 1, 2, 7, 10, 9])
+        )
         self.assertEqual((), condense_ranges([]))
-        self.assertEqual(("U+0001-U+0003", "U+0007"), format_ranges(((1, 3), (7, 7))))
+        self.assertEqual(
+            ("U+0001-U+0003", "U+0007"), format_ranges(((1, 3), (7, 7)))
+        )
 
 
 class CoverageInventoryTests(unittest.TestCase):
     def setUp(self):
         self.inventory = coverage_inventory(BUNDLED_POLICY)
-        self.scripts = {entry["script"]: entry for entry in self.inventory["scripts"]}
+        self.scripts = {
+            entry["script"]: entry for entry in self.inventory["scripts"]
+        }
 
     def test_inventory_reports_every_declared_script_once(self):
         self.assertEqual("font-coverage-inventory", self.inventory["kind"])
@@ -247,6 +253,7 @@ class CoverageInventoryTests(unittest.TestCase):
                 self.assertEqual(SHAPING_LINEAR, entry["shaping"])
                 self.assertIn(entry["status"], {"covered", "partial"})
                 self.assertGreater(entry["covered"], 0)
+
 
     def test_extension_target_scripts_are_admitted_but_uncovered(self):
         for script in EXTENSION_TARGET_SCRIPTS:
@@ -278,7 +285,9 @@ class CoverageInventoryTests(unittest.TestCase):
                 self.assertEqual(BUNDLED_POLICY[role].name, entry["font_id"])
                 self.assertGreater(entry["codepoints"], 0)
                 self.assertTrue(entry["ranges"])
-        self.assertGreater(fonts["fallback"]["codepoints"], fonts["regular"]["codepoints"])
+        self.assertGreater(
+            fonts["fallback"]["codepoints"], fonts["regular"]["codepoints"]
+        )
 
     def test_inventory_is_deterministic_and_json_serializable(self):
         again = coverage_inventory(BUNDLED_POLICY)
@@ -300,11 +309,15 @@ class CoverageProbeTests(unittest.TestCase):
         self.assertEqual({}, missing_coverage_probes(BUNDLED_POLICY))
 
     def test_probes_cover_the_alphabets_dialogue_cannot_avoid(self):
-        self.assertEqual(sorted(BUNDLED_TARGET_SCRIPTS), sorted(BUNDLED_COVERAGE_PROBES))
+        self.assertEqual(
+            sorted(BUNDLED_TARGET_SCRIPTS), sorted(BUNDLED_COVERAGE_PROBES)
+        )
         for script, codepoints in BUNDLED_COVERAGE_PROBES.items():
             with self.subTest(script=script):
                 self.assertEqual(len(set(codepoints)), len(codepoints))
-                self.assertTrue(all(script_for_codepoint(c) == script for c in codepoints))
+                self.assertTrue(
+                    all(script_for_codepoint(c) == script for c in codepoints)
+                )
 
     def test_a_face_keeping_a_token_glyph_does_not_pass_as_coverage(self):
         """A count-above-zero check would call Comic Neue alone Greek-capable."""
@@ -313,12 +326,13 @@ class CoverageProbeTests(unittest.TestCase):
         self.assertNotIn("latin", missing)
         for script in ("greek", "cyrillic"):
             with self.subTest(script=script):
-                self.assertEqual(len(BUNDLED_COVERAGE_PROBES[script]), len(missing[script]))
+                self.assertEqual(
+                    len(BUNDLED_COVERAGE_PROBES[script]), len(missing[script])
+                )
 
     def test_probe_check_refuses_a_policy_entry_that_is_not_a_path(self):
         with self.assertRaises(TypeError):
             missing_coverage_probes({"regular": 42})
-
 
 class InventoryCommandTests(unittest.TestCase):
     def test_default_invocation_prints_the_bundled_inventory(self):
@@ -327,7 +341,9 @@ class InventoryCommandTests(unittest.TestCase):
             self.assertEqual(0, main([]))
         inventory = json.loads(stream.getvalue())
         self.assertEqual("font-coverage-inventory", inventory["kind"])
-        self.assertEqual(["bold", "fallback", "regular"], sorted(inventory["fonts"]))
+        self.assertEqual(
+            ["bold", "fallback", "regular"], sorted(inventory["fonts"])
+        )
 
     def test_explicit_policy_is_inventoried(self):
         stream = io.StringIO()

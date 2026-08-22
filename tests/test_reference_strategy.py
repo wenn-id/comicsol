@@ -134,7 +134,8 @@ def with_views(pack, character_id, *views):
     """Append authored reference views to one pack entry, as an author would."""
     entry = next(item for item in pack["characters"] if item["id"] == character_id)
     entry["reference_views"] = entry["reference_views"] + [
-        {"path": f"references/characters/{character_id}-{view}.png", "view": view} for view in views
+        {"path": f"references/characters/{character_id}-{view}.png", "view": view}
+        for view in views
     ]
     return pack
 
@@ -181,8 +182,12 @@ class ShotClassificationTests(unittest.TestCase):
     def test_a_cue_inside_a_longer_word_is_not_a_framing(self):
         # `profiled` is not the profile cue, and an overhead shot looking down at
         # the room is emphatically not the `head shot` it contains.
-        self.assertEqual((UNCLASSIFIED, None), classify_shot("profiled character against the wall"))
-        self.assertEqual((UNCLASSIFIED, None), classify_shot("overhead shot from the rafters"))
+        self.assertEqual(
+            (UNCLASSIFIED, None), classify_shot("profiled character against the wall")
+        )
+        self.assertEqual(
+            (UNCLASSIFIED, None), classify_shot("overhead shot from the rafters")
+        )
 
     def test_a_compound_or_plural_cue_still_counts(self):
         self.assertEqual(
@@ -195,8 +200,12 @@ class ShotClassificationTests(unittest.TestCase):
         )
 
     def test_a_negated_cue_does_not_declare_the_framing(self):
-        self.assertEqual((UNCLASSIFIED, None), classify_shot("not a close-up; hold the whole room"))
-        self.assertEqual((UNCLASSIFIED, None), classify_shot("stay wide, without a profile"))
+        self.assertEqual(
+            (UNCLASSIFIED, None), classify_shot("not a close-up; hold the whole room")
+        )
+        self.assertEqual(
+            (UNCLASSIFIED, None), classify_shot("stay wide, without a profile")
+        )
 
     def test_a_negated_cue_yields_to_the_next_declared_cue(self):
         self.assertEqual(
@@ -280,7 +289,9 @@ class SelectionRuleTests(unittest.TestCase):
     def test_selection_order_follows_the_pack_not_the_panel(self):
         plan = panel_reference_plan(self.pack, self.storyboard, "p01-01")
 
-        self.assertEqual(["ren", "mira"], self.storyboard["pages"][0]["panels"][0]["characters"])
+        self.assertEqual(
+            ["ren", "mira"], self.storyboard["pages"][0]["panels"][0]["characters"]
+        )
         self.assertEqual(("mira", "ren"), plan.character_ids)
         self.assertEqual(
             ("references/characters/mira.png", "references/characters/ren.png"),
@@ -297,7 +308,9 @@ class BudgetTests(unittest.TestCase):
         with_views(self.pack, "mira", "profile")
         with_views(self.pack, "ren", "profile")
 
-        plan = panel_reference_plan(self.pack, self.storyboard, "p01-01", reference_budget=3)
+        plan = panel_reference_plan(
+            self.pack, self.storyboard, "p01-01", reference_budget=3
+        )
 
         self.assertEqual(
             [
@@ -310,7 +323,9 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual([("ren", "profile", REFERENCE_BUDGET)], omissions_of(plan))
 
     def test_a_budget_below_the_cast_size_is_recorded_not_hidden(self):
-        plan = panel_reference_plan(self.pack, self.storyboard, "p01-01", reference_budget=1)
+        plan = panel_reference_plan(
+            self.pack, self.storyboard, "p01-01", reference_budget=1
+        )
 
         self.assertEqual([("mira", "canonical", CANONICAL_ANCHOR)], views_of(plan))
         self.assertEqual([("ren", "canonical", REFERENCE_BUDGET)], omissions_of(plan))
@@ -321,7 +336,9 @@ class BudgetTests(unittest.TestCase):
         entry["reference_views"] = [{"path": shared, "view": "canonical"}]
         with_views(self.pack, "mira", "profile")
 
-        plan = panel_reference_plan(self.pack, self.storyboard, "p01-01", reference_budget=2)
+        plan = panel_reference_plan(
+            self.pack, self.storyboard, "p01-01", reference_budget=2
+        )
 
         self.assertIn(("ren", "canonical", DUPLICATE_PATH), omissions_of(plan))
         # The duplicate did not consume the budget, so mira's second view still fits.
@@ -338,7 +355,9 @@ class BudgetTests(unittest.TestCase):
         )
 
     def test_a_zero_budget_records_every_reference_as_unsupported(self):
-        plan = panel_reference_plan(self.pack, self.storyboard, "p01-01", reference_budget=0)
+        plan = panel_reference_plan(
+            self.pack, self.storyboard, "p01-01", reference_budget=0
+        )
 
         self.assertEqual([], views_of(plan))
         self.assertEqual((), plan.attachment_paths)
@@ -369,48 +388,62 @@ class MalformedStoryboardTests(unittest.TestCase):
         board = storyboard()
         board["pages"][1] = "full-page"
 
-        with self.assertRaisesRegex(ReferenceStrategyError, r"pages\[1\] must be an object"):
+        with self.assertRaisesRegex(
+            ReferenceStrategyError, r"pages\[1\] must be an object"
+        ):
             project_reference_plan(self.pack, board)
 
     def test_a_page_without_a_panel_array_is_rejected(self):
         board = storyboard()
         del board["pages"][1]["panels"]
 
-        with self.assertRaisesRegex(ReferenceStrategyError, r"pages\[1\]\.panels must be an array"):
+        with self.assertRaisesRegex(
+            ReferenceStrategyError, r"pages\[1\]\.panels must be an array"
+        ):
             project_reference_plan(self.pack, board)
 
     def test_a_panel_that_is_not_an_object_is_rejected(self):
         board = storyboard()
         board["pages"][1]["panels"][0] = "p02-01"
 
-        with self.assertRaisesRegex(ReferenceStrategyError, r"panels\[0\] must be an object"):
+        with self.assertRaisesRegex(
+            ReferenceStrategyError, r"panels\[0\] must be an object"
+        ):
             project_reference_plan(self.pack, board)
 
     def test_a_panel_without_a_string_id_is_rejected(self):
         board = storyboard()
         board["pages"][1]["panels"][0]["id"] = 201
 
-        with self.assertRaisesRegex(ReferenceStrategyError, r"panels\[0\]\.id must be a string"):
+        with self.assertRaisesRegex(
+            ReferenceStrategyError, r"panels\[0\]\.id must be a string"
+        ):
             project_reference_plan(self.pack, board)
 
     def test_a_repeated_panel_id_is_rejected(self):
         board = storyboard()
         board["pages"][1]["panels"][0]["id"] = "p01-01"
 
-        with self.assertRaisesRegex(ReferenceStrategyError, "must not repeat a panel id"):
+        with self.assertRaisesRegex(
+            ReferenceStrategyError, "must not repeat a panel id"
+        ):
             project_reference_plan(self.pack, board)
 
     def test_the_single_panel_lookup_validates_the_whole_storyboard(self):
         board = storyboard()
         board["pages"][0]["panels"][1] = None
 
-        with self.assertRaisesRegex(ReferenceStrategyError, r"panels\[1\] must be an object"):
+        with self.assertRaisesRegex(
+            ReferenceStrategyError, r"panels\[1\] must be an object"
+        ):
             panel_reference_plan(self.pack, board, "p01-01")
 
 
 class ProvenanceTests(unittest.TestCase):
     def setUp(self):
-        self.pack = with_views(derive_identity_pack(character_bible()), "mira", "profile")
+        self.pack = with_views(
+            derive_identity_pack(character_bible()), "mira", "profile"
+        )
         self.storyboard = storyboard()
 
     def test_document_records_every_panel_in_storyboard_order(self):
@@ -508,7 +541,9 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual((), plan.omitted)
 
     def test_block_is_deterministic_plain_text(self):
-        plan = panel_reference_plan(self.pack, self.storyboard, "p01-01", reference_budget=2)
+        plan = panel_reference_plan(
+            self.pack, self.storyboard, "p01-01", reference_budget=2
+        )
 
         block = reference_plan_block(plan)
 
@@ -521,10 +556,13 @@ class ProvenanceTests(unittest.TestCase):
                     "- shot class: close-up (cue: close shot)",
                     "- reference budget: 2",
                     "- attach in this order:",
-                    "  1. mira canonical=references/characters/mira.png (canonical-anchor)",
-                    "  2. ren canonical=references/characters/ren.png (canonical-anchor)",
+                    "  1. mira canonical=references/characters/mira.png "
+                    "(canonical-anchor)",
+                    "  2. ren canonical=references/characters/ren.png "
+                    "(canonical-anchor)",
                     "- omitted:",
-                    "  mira profile=references/characters/mira-profile.png (reference-budget)",
+                    "  mira profile=references/characters/mira-profile.png "
+                    "(reference-budget)",
                 ]
             ),
             block,
@@ -555,7 +593,9 @@ class ReferencePlanProjectHarness(unittest.TestCase):
             encoding="utf-8",
         )
         for name in ("mira", "ren"):
-            (self.project / f"references/characters/{name}.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+            (self.project / f"references/characters/{name}.png").write_bytes(
+                b"\x89PNG\r\n\x1a\n"
+            )
 
 
 class PersistenceTests(ReferencePlanProjectHarness):
@@ -587,7 +627,9 @@ class PersistenceTests(ReferencePlanProjectHarness):
     def test_planning_refuses_a_missing_identity_pack(self):
         path, issues = plan_and_write_reference_plan(self.project)
 
-        self.assertEqual((f"{IDENTITY_PACK_PATH} is missing; derive it before generation",), issues)
+        self.assertEqual(
+            (f"{IDENTITY_PACK_PATH} is missing; derive it before generation",), issues
+        )
         self.assertFalse(path.exists())
 
     def test_planning_refuses_a_pack_whose_reference_is_missing(self):
@@ -601,7 +643,9 @@ class PersistenceTests(ReferencePlanProjectHarness):
 
     def test_corrupt_storyboard_fails_closed(self):
         derive_and_write_identity_pack(self.project)
-        (self.project / "plan/storyboard.json").write_text("{ not json", encoding="utf-8")
+        (self.project / "plan/storyboard.json").write_text(
+            "{ not json", encoding="utf-8"
+        )
 
         with self.assertRaisesRegex(ReferenceStrategyError, "is not valid JSON"):
             plan_and_write_reference_plan(self.project)

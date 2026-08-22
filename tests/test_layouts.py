@@ -48,7 +48,8 @@ class LayoutRegistryTests(unittest.TestCase):
         )
         self.assertEqual(FOUR_GRID_RECTS, get_layout("four-grid").rectangles)
         self.assertEqual(
-            [dict(zip(("x", "y", "width", "height"), rectangle)) for rectangle in FOUR_GRID_RECTS],
+            [dict(zip(("x", "y", "width", "height"), rectangle))
+             for rectangle in FOUR_GRID_RECTS],
             layout_rects("four-grid"),
         )
 
@@ -58,12 +59,8 @@ class LayoutRegistryTests(unittest.TestCase):
                 layout = get_layout(name)
                 validate_custom_layout(layout.rectangles, layout.reading_order)
                 for x, y, width, height in layout.rectangles:
-                    self.assertTrue(
-                        all(
-                            isinstance(value, int) and not isinstance(value, bool)
-                            for value in (x, y, width, height)
-                        )
-                    )
+                    self.assertTrue(all(isinstance(value, int) and not isinstance(value, bool)
+                                        for value in (x, y, width, height)))
                     self.assertGreaterEqual(x, 0)
                     self.assertGreaterEqual(y, 0)
                     self.assertGreater(width, 0)
@@ -91,7 +88,8 @@ class LayoutRegistryTests(unittest.TestCase):
             layout = get_layout(name)
             self.assertEqual(name, match_layout(layout.rectangles))
             dictionaries = tuple(
-                {"height": h, "x": x, "width": w, "y": y} for x, y, w, h in layout.rectangles
+                {"height": h, "x": x, "width": w, "y": y}
+                for x, y, w, h in layout.rectangles
             )
             self.assertEqual(name, match_layout(dictionaries))
         self.assertEqual(

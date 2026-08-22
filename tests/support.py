@@ -37,8 +37,12 @@ QUALITY_SCENARIOS = {
         "layout:three-bottom",
         "layout:four-grid",
     ),
-    "dense-text": _scenario("dense-text", "text:dense-dialogue", "text:caption", "text:sfx"),
-    "orientations": _scenario("orientations", "orientation:portrait", "orientation:landscape"),
+    "dense-text": _scenario(
+        "dense-text", "text:dense-dialogue", "text:caption", "text:sfx"
+    ),
+    "orientations": _scenario(
+        "orientations", "orientation:portrait", "orientation:landscape"
+    ),
     "image-formats": _scenario(
         "image-formats", "format:png", "format:jpeg", "format:webp", "format:exif"
     ),
@@ -53,11 +57,15 @@ QUALITY_SCENARIOS = {
         "typography:cyrillic-extended",
         "typography:script-extension",
     ),
-    "retry-paths": _scenario("retry-paths", "retry:transient-repeat", "retry:visual-retry"),
+    "retry-paths": _scenario(
+        "retry-paths", "retry:transient-repeat", "retry:visual-retry"
+    ),
     "terminal-outcomes": _scenario(
         "terminal-outcomes", "outcome:accepted-warning", "outcome:hard-failure"
     ),
-    "interrupted-resume": _scenario("interrupted-resume", "resume:interrupted"),
+    "interrupted-resume": _scenario(
+        "interrupted-resume", "resume:interrupted"
+    ),
 }
 
 
@@ -79,14 +87,12 @@ def write_multi_speaker_panel(project: Path) -> tuple[str, ...]:
     bible = json.loads(bible_path.read_text("utf-8"))
     if not any(character["id"] == "ren" for character in bible["characters"]):
         gatekeeper = dict(bible["characters"][0])
-        gatekeeper.update(
-            {
-                "id": "ren",
-                "name": "Ren",
-                "role": "gatekeeper",
-                "reference_path": "references/characters/ren.png",
-            }
-        )
+        gatekeeper.update({
+            "id": "ren",
+            "name": "Ren",
+            "role": "gatekeeper",
+            "reference_path": "references/characters/ren.png",
+        })
         bible["characters"].append(gatekeeper)
         _write_json(bible_path, bible)
 
@@ -100,27 +106,23 @@ def write_multi_speaker_panel(project: Path) -> tuple[str, ...]:
     )
     panel["characters"] = ["mira", "ren"]
     first = dict(panel["text"][0])
-    first.update(
-        {
-            "id": MULTI_SPEAKER_TEXT_IDS[0],
-            "anchor": "top-left",
-            "content": "No bridge.",
-            "priority": 1,
-            "speaker": "mira",
-            "speaker_anchor": [0.78, 0.34],
-        }
-    )
+    first.update({
+        "id": MULTI_SPEAKER_TEXT_IDS[0],
+        "anchor": "top-left",
+        "content": "No bridge.",
+        "priority": 1,
+        "speaker": "mira",
+        "speaker_anchor": [0.78, 0.34],
+    })
     second = dict(first)
-    second.update(
-        {
-            "id": MULTI_SPEAKER_TEXT_IDS[1],
-            "anchor": "bottom-right",
-            "content": "Then I hold the gate.",
-            "priority": 2,
-            "speaker": "ren",
-            "speaker_anchor": [0.22, 0.62],
-        }
-    )
+    second.update({
+        "id": MULTI_SPEAKER_TEXT_IDS[1],
+        "anchor": "bottom-right",
+        "content": "Then I hold the gate.",
+        "priority": 2,
+        "speaker": "ren",
+        "speaker_anchor": [0.22, 0.62],
+    })
     panel["text"] = [first, second]
     _write_json(storyboard_path, storyboard)
     return MULTI_SPEAKER_TEXT_IDS
@@ -137,7 +139,9 @@ def _write_json(path: Path, value: object) -> None:
 def bounded_tail_regions(project: Path, page_number: int) -> list[dict[str, object]]:
     """Build exact test-only tail regions from current storyboard and geometry."""
     storyboard = json.loads((Path(project) / "plan/storyboard.json").read_text("utf-8"))
-    page = next(page for page in storyboard["pages"] if page.get("number") == page_number)
+    page = next(
+        page for page in storyboard["pages"] if page.get("number") == page_number
+    )
     regions: list[dict[str, object]] = []
     for panel in page["panels"]:
         geometry = json.loads(
@@ -148,17 +152,15 @@ def bounded_tail_regions(project: Path, page_number: int) -> list[dict[str, obje
             if item.get("kind") != "dialogue":
                 continue
             tail = placed[item["id"]]["tail"]
-            regions.append(
-                {
-                    "panel_id": panel["id"],
-                    "text_id": item["id"],
-                    "speaker": item["speaker"],
-                    "voice_source": item["voice_source"],
-                    "speaker_anchor": item["speaker_anchor"],
-                    "tip": tail["tip"],
-                    "result": "pass",
-                }
-            )
+            regions.append({
+                "panel_id": panel["id"],
+                "text_id": item["id"],
+                "speaker": item["speaker"],
+                "voice_source": item["voice_source"],
+                "speaker_anchor": item["speaker_anchor"],
+                "tip": tail["tip"],
+                "result": "pass",
+            })
     return regions
 
 
@@ -195,24 +197,15 @@ def build_quality_fixture(root: Path, scenario: str) -> Path:
     try:
         portrait.save(sources / "portrait.png", format="PNG", optimize=False)
         landscape.save(
-            sources / "landscape.jpg",
-            format="JPEG",
-            quality=90,
-            subsampling=0,
-            optimize=False,
-            progressive=False,
+            sources / "landscape.jpg", format="JPEG", quality=90,
+            subsampling=0, optimize=False, progressive=False,
         )
         portrait.save(sources / "panel.webp", format="WEBP", lossless=True, method=0)
         exif = Image.Exif()
         exif[274] = 6
         landscape.save(
-            sources / "oriented.jpg",
-            format="JPEG",
-            quality=90,
-            subsampling=0,
-            optimize=False,
-            progressive=False,
-            exif=exif,
+            sources / "oriented.jpg", format="JPEG", quality=90,
+            subsampling=0, optimize=False, progressive=False, exif=exif,
         )
     finally:
         portrait.close()

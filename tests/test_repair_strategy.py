@@ -66,7 +66,8 @@ def trait_region(character_id, trait, *, result="pass", severity="error"):
         "evidence": f"{character_id} {trait} observed as flat grey",
         "expected": deepcopy(EXPECTED_TRAIT_VALUES[trait]),
         "repair_guidance": (
-            f"Repair {character_id} {trait} to match canonical {trait}; observed: flat grey"
+            f"Repair {character_id} {trait} to match canonical {trait}; "
+            f"observed: flat grey"
             if failing
             else None
         ),
@@ -82,7 +83,9 @@ def identity_check(*, characters=("mira", "ren"), failures=(), warnings=()):
     for character_id in characters:
         for trait in CHARACTER_TRAITS:
             if (character_id, trait) in failures:
-                regions.append(trait_region(character_id, trait, result="fail", severity="error"))
+                regions.append(
+                    trait_region(character_id, trait, result="fail", severity="error")
+                )
             elif (character_id, trait) in warnings:
                 regions.append(
                     trait_region(character_id, trait, result="warning", severity="warning")
@@ -327,7 +330,9 @@ class DefectClassificationTests(unittest.TestCase):
 
     def test_a_warning_region_is_still_repairable(self):
         record = failing_record(
-            identity=identity_check(failures={("mira", "face")}, warnings={("mira", "hair")})
+            identity=identity_check(
+                failures={("mira", "face")}, warnings={("mira", "hair")}
+            )
         )
 
         plan = panel_repair_plan(record, localized_edit_supported=True)
@@ -416,7 +421,9 @@ class FallbackTests(unittest.TestCase):
         self.assertEqual(STALE_BINDINGS, plan.fallback_reason)
 
     def test_a_missing_capability_outranks_an_unlocalized_defect(self):
-        record = failing_record(overrides={"anatomy": {"result": "fail", "severity": "error"}})
+        record = failing_record(
+            overrides={"anatomy": {"result": "fail", "severity": "error"}}
+        )
 
         plan = panel_repair_plan(record, localized_edit_supported=False)
 
@@ -510,21 +517,27 @@ class TrustedIdentityEvidenceTests(unittest.TestCase):
         identity.update({"result": "fail", "severity": "error"})
 
         with self.assertRaisesRegex(RepairStrategyError, "character-check-outcome"):
-            panel_repair_plan(failing_record(identity=identity), localized_edit_supported=True)
+            panel_repair_plan(
+                failing_record(identity=identity), localized_edit_supported=True
+            )
 
     def test_a_malformed_trait_region_is_refused(self):
         identity = identity_check(failures={("ren", "hair")})
         del identity["regions"][0]["expected"]
 
         with self.assertRaisesRegex(RepairStrategyError, "cannot be trusted"):
-            panel_repair_plan(failing_record(identity=identity), localized_edit_supported=True)
+            panel_repair_plan(
+                failing_record(identity=identity), localized_edit_supported=True
+            )
 
     def test_an_invalid_trait_severity_is_refused(self):
         identity = identity_check(failures={("ren", "hair")})
         identity["regions"][0]["severity"] = "info"
 
         with self.assertRaisesRegex(RepairStrategyError, "cannot be trusted"):
-            panel_repair_plan(failing_record(identity=identity), localized_edit_supported=True)
+            panel_repair_plan(
+                failing_record(identity=identity), localized_edit_supported=True
+            )
 
     def test_provenance_for_another_panel_is_refused(self):
         record = failing_record(identity=identity_check(failures={("ren", "hair")}))
@@ -557,7 +570,9 @@ class TrustedIdentityEvidenceTests(unittest.TestCase):
                     }
                 )
 
-                with self.assertRaisesRegex(RepairStrategyError, "did not cover: 'stranger'"):
+                with self.assertRaisesRegex(
+                    RepairStrategyError, "did not cover: 'stranger'"
+                ):
                     panel_repair_plan(record, localized_edit_supported=True)
 
     def test_a_subject_region_needs_a_trait_review_to_establish_the_cast(self):
@@ -653,7 +668,9 @@ class UntrustedInputTests(unittest.TestCase):
         region = defect_region(area="top-left")
         region["evidence"] = "ok"
         record = failing_record(
-            overrides={"text-free": {"result": "fail", "severity": "error", "regions": [region]}}
+            overrides={
+                "text-free": {"result": "fail", "severity": "error", "regions": [region]}
+            }
         )
 
         with self.assertRaisesRegex(RepairStrategyError, "specific evidence"):
@@ -663,7 +680,9 @@ class UntrustedInputTests(unittest.TestCase):
         region = defect_region(area="top-left")
         region["repair_guidance"] = None
         record = failing_record(
-            overrides={"text-free": {"result": "fail", "severity": "error", "regions": [region]}}
+            overrides={
+                "text-free": {"result": "fail", "severity": "error", "regions": [region]}
+            }
         )
 
         with self.assertRaisesRegex(RepairStrategyError, "repair guidance"):
@@ -724,7 +743,9 @@ class DefectRegionValidationTests(unittest.TestCase):
         }
         for category, region in cases.items():
             with self.subTest(category=category):
-                faulted = check("text-free", result="fail", severity="error", regions=[region])
+                faulted = check(
+                    "text-free", result="fail", severity="error", regions=[region]
+                )
 
                 self.assertIn(category, validate_defect_regions(faulted))
 
@@ -739,7 +760,9 @@ class RenderingTests(unittest.TestCase):
     def test_a_selective_block_names_targets_and_preserved_content(self):
         record = failing_record(identity=identity_check(failures={("ren", "hair")}))
 
-        block = repair_plan_block(panel_repair_plan(record, localized_edit_supported=True))
+        block = repair_plan_block(
+            panel_repair_plan(record, localized_edit_supported=True)
+        )
 
         self.assertIn(f"REPAIR PLAN (repair-plan {REPAIR_PLAN_SCHEMA_VERSION})", block)
         self.assertIn("- strategy: selective-repair", block)
@@ -750,7 +773,9 @@ class RenderingTests(unittest.TestCase):
     def test_a_fallback_block_states_its_reason(self):
         record = failing_record(identity=identity_check(failures={("ren", "hair")}))
 
-        block = repair_plan_block(panel_repair_plan(record, localized_edit_supported=False))
+        block = repair_plan_block(
+            panel_repair_plan(record, localized_edit_supported=False)
+        )
 
         self.assertIn(f"- strategy: full-regeneration ({EDITING_UNSUPPORTED})", block)
         self.assertIn("regenerate the whole panel", block)
@@ -758,7 +783,9 @@ class RenderingTests(unittest.TestCase):
     def test_a_rendered_block_names_no_provider(self):
         record = failing_record(identity=identity_check(failures={("ren", "hair")}))
 
-        block = repair_plan_block(panel_repair_plan(record, localized_edit_supported=True))
+        block = repair_plan_block(
+            panel_repair_plan(record, localized_edit_supported=True)
+        )
 
         lowered = block.casefold()
         for forbidden in ("http", "api", "token", "model", "endpoint", "key="):
@@ -810,7 +837,9 @@ class RepairPlanProjectHarness(unittest.TestCase):
         (self.project / f"panels/{panel_id}").mkdir(parents=True, exist_ok=True)
         (self.project / f"panels/raw/{panel_id}.png").write_bytes(raw)
         (self.project / f"panels/{panel_id}/clean.png").write_bytes(clean)
-        normalization_path = self._write(f"panels/{panel_id}/normalization.json", normalization)
+        normalization_path = self._write(
+            f"panels/{panel_id}/normalization.json", normalization
+        )
         record = deepcopy(record)
         record["bindings"].update(
             {
@@ -848,7 +877,9 @@ class AcceptedContentTests(RepairPlanProjectHarness):
         self.assertTrue(accepted_content_is_stale(self.project, record))
 
     def test_stale_accepted_content_falls_back_in_the_project_plan(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         (self.project / "panels/raw/p01-01.png").write_bytes(b"different bytes")
 
         document = project_repair_plan(self.project, localized_edit_supported=True)
@@ -859,7 +890,9 @@ class AcceptedContentTests(RepairPlanProjectHarness):
 
 class PersistenceTests(RepairPlanProjectHarness):
     def test_the_plan_publishes_a_canonical_artifact_in_storyboard_order(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         self._publish_record(panel_record(panel_id="p01-02"))
 
         path = plan_and_write_repair_plan(self.project, localized_edit_supported=True)
@@ -869,37 +902,49 @@ class PersistenceTests(RepairPlanProjectHarness):
         self.assertTrue(payload.endswith(b"\n"))
         document = json.loads(payload)
         self.assertEqual(REPAIR_PLAN_SCHEMA_VERSION, document["schema_version"])
-        self.assertEqual(["p01-01", "p01-02"], [entry["panel_id"] for entry in document["panels"]])
+        self.assertEqual(
+            ["p01-01", "p01-02"], [entry["panel_id"] for entry in document["panels"]]
+        )
         self.assertEqual(SELECTIVE_REPAIR, document["panels"][0]["strategy"])
         self.assertEqual(NO_REPAIR, document["panels"][1]["strategy"])
 
     def test_an_unreviewed_panel_carries_no_plan(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
 
         document = project_repair_plan(self.project, localized_edit_supported=True)
 
         self.assertEqual(["p01-01"], [entry["panel_id"] for entry in document["panels"]])
 
     def test_reviews_are_hashed_while_the_project_lock_is_held(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         observed = []
         real_check = repair_strategy.accepted_content_is_stale
 
         def probe(project_dir, record):
             """Record whether the project lock is held while bindings are hashed."""
             observed.append(
-                ProjectLock(Path(project_dir))._held_locks().get(Path(project_dir).resolve())
+                ProjectLock(Path(project_dir))._held_locks().get(
+                    Path(project_dir).resolve()
+                )
                 is not None
             )
             return real_check(project_dir, record)
 
-        with patch("scripts.repair_strategy.accepted_content_is_stale", side_effect=probe):
+        with patch(
+            "scripts.repair_strategy.accepted_content_is_stale", side_effect=probe
+        ):
             plan_and_write_repair_plan(self.project, localized_edit_supported=True)
 
         self.assertEqual([True], observed)
 
     def test_a_resume_rewrites_byte_identical_content(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         path = plan_and_write_repair_plan(self.project, localized_edit_supported=True)
         first = path.read_bytes()
 
@@ -908,7 +953,9 @@ class PersistenceTests(RepairPlanProjectHarness):
         self.assertEqual(first, path.read_bytes())
 
     def test_an_inaccessible_review_is_not_mistaken_for_an_absent_one(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         # A directory where a review belongs is present but unreadable, which is
         # a different thing from a panel nobody has reviewed yet.
         (self.project / "qa/panels/p01-02.json").mkdir()
@@ -936,7 +983,9 @@ class PersistenceTests(RepairPlanProjectHarness):
         self.assertFalse((self.project / REPAIR_PLAN_PATH).exists())
 
     def test_an_unreadable_review_fails_before_publication(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         (self.project / "qa/panels/p01-01.json").write_text("not json", encoding="utf-8")
 
         with self.assertRaises(RepairStrategyError):
@@ -972,13 +1021,17 @@ class RepairPlanValidationTests(RepairPlanProjectHarness):
         )
 
     def test_a_freshly_published_plan_is_valid(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         self._publish_plan()
 
         self.assertEqual((), validate_repair_plan(self.project))
 
     def test_a_succeeded_repair_leaves_its_entry_as_history(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         self._publish_plan()
         # The repair worked, so the panel is accepted again. The entry now
         # describes something that already happened rather than a stale claim.
@@ -987,21 +1040,29 @@ class RepairPlanValidationTests(RepairPlanProjectHarness):
         self.assertEqual((), validate_repair_plan(self.project))
 
     def test_a_plan_is_stale_after_a_new_review(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         self._publish_plan()
-        self._publish_record(failing_record(identity=identity_check(failures={("mira", "face")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("mira", "face")}))
+        )
 
         self.assertIn("repair-plan-stale", validate_repair_plan(self.project))
 
     def test_a_plan_is_stale_after_the_accepted_bytes_change(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         self._publish_plan()
         (self.project / "panels/raw/p01-01.png").write_bytes(b"different bytes")
 
         self.assertIn("repair-plan-stale", validate_repair_plan(self.project))
 
     def test_a_plan_for_an_unknown_panel_is_reported(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         self._publish_plan()
         document = json.loads((self.project / REPAIR_PLAN_PATH).read_text("utf-8"))
         document["panels"][0]["panel_id"] = "p09-09"
@@ -1010,16 +1071,22 @@ class RepairPlanValidationTests(RepairPlanProjectHarness):
         self.assertIn("repair-plan-panel-unknown", validate_repair_plan(self.project))
 
     def test_a_plan_with_a_missing_review_is_reported(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         self._publish_plan()
         (self.project / "qa/panels/p01-01.json").unlink()
 
         self.assertIn("repair-plan-record-missing", validate_repair_plan(self.project))
 
     def test_a_repeated_or_reordered_entry_is_reported(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
         self._publish_record(
-            failing_record(panel_id="p01-02", identity=identity_check(failures={("mira", "face")}))
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
+        self._publish_record(
+            failing_record(
+                panel_id="p01-02", identity=identity_check(failures={("mira", "face")})
+            )
         )
         self._publish_plan()
         document = json.loads((self.project / REPAIR_PLAN_PATH).read_text("utf-8"))
@@ -1034,9 +1101,13 @@ class RepairPlanValidationTests(RepairPlanProjectHarness):
         self.assertIn("repair-plan-panel-duplicate", validate_repair_plan(self.project))
 
     def test_a_plan_omitting_a_panel_awaiting_repair_is_reported(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
         self._publish_record(
-            failing_record(panel_id="p01-02", identity=identity_check(failures={("mira", "face")}))
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
+        self._publish_record(
+            failing_record(
+                panel_id="p01-02", identity=identity_check(failures={("mira", "face")})
+            )
         )
         self._publish_plan()
         document = json.loads((self.project / REPAIR_PLAN_PATH).read_text("utf-8"))
@@ -1048,7 +1119,9 @@ class RepairPlanValidationTests(RepairPlanProjectHarness):
         self.assertIn("repair-plan-incomplete", validate_repair_plan(self.project))
 
     def test_a_plan_omitting_an_accepted_panel_stays_valid(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         self._publish_record(panel_record(panel_id="p01-02"))
         self._publish_plan()
         document = json.loads((self.project / REPAIR_PLAN_PATH).read_text("utf-8"))
@@ -1060,29 +1133,39 @@ class RepairPlanValidationTests(RepairPlanProjectHarness):
         self.assertEqual((), validate_repair_plan(self.project))
 
     def test_an_uncoverable_review_outside_the_plan_is_reported(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         self._publish_plan()
         (self.project / "qa/panels/p01-02.json").write_text("not json", encoding="utf-8")
 
         self.assertIn("repair-plan-incomplete", validate_repair_plan(self.project))
 
     def test_an_untrusted_review_is_reported_as_invalid_not_stale(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         self._publish_plan()
         record = json.loads((self.project / "qa/panels/p01-01.json").read_text("utf-8"))
         record["checks"][0]["regions"][1]["severity"] = "info"
         self._publish_record(record)
 
-        self.assertEqual(("repair-plan-record-invalid",), validate_repair_plan(self.project))
+        self.assertEqual(
+            ("repair-plan-record-invalid",), validate_repair_plan(self.project)
+        )
 
     def test_an_unknown_schema_version_is_reported(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         self._publish_plan()
         document = json.loads((self.project / REPAIR_PLAN_PATH).read_text("utf-8"))
         document["schema_version"] = "9.0"
         self._write(REPAIR_PLAN_PATH, document)
 
-        self.assertEqual(("repair-plan-schema-version",), validate_repair_plan(self.project))
+        self.assertEqual(
+            ("repair-plan-schema-version",), validate_repair_plan(self.project)
+        )
 
     def test_a_malformed_document_is_reported(self):
         self._write(REPAIR_PLAN_PATH, {"panels": []})
@@ -1090,7 +1173,9 @@ class RepairPlanValidationTests(RepairPlanProjectHarness):
         self.assertEqual(("repair-plan-structure",), validate_repair_plan(self.project))
 
     def test_a_recorded_capability_flag_is_replanned_as_recorded(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
         self._publish_plan(localized_edit_supported=False)
 
         self.assertEqual((), validate_repair_plan(self.project))
@@ -1101,7 +1186,9 @@ class RepairPlanValidationTests(RepairPlanProjectHarness):
 
 class CommandLineTests(RepairPlanProjectHarness):
     def test_plan_and_panel_exit_zero_on_a_reviewed_project(self):
-        self._publish_record(failing_record(identity=identity_check(failures={("ren", "hair")})))
+        self._publish_record(
+            failing_record(identity=identity_check(failures={("ren", "hair")}))
+        )
 
         self.assertEqual(0, main([str(self.project), "--plan", "--localized-edit"]))
         self.assertEqual(0, main([str(self.project), "--panel", "p01-01"]))
