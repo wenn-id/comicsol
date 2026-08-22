@@ -36,8 +36,18 @@ class QualityGateContractTests(unittest.TestCase):
         self.assertIn("coverage report", workflow)
         self.assertIn("coverage.xml", workflow)
         self.assertIn("actions/upload-artifact@", workflow)
-        self.assertIn("continue-on-error: true", workflow)
+        self.assertIn("workflow_call:", workflow)
+        self.assertIn("blocking_quality:", workflow)
+        self.assertIn("continue-on-error: ${{ !inputs.blocking_quality }}", workflow)
         self.assertIn("coverage-baseline", workflow)
+
+    def test_release_caller_enables_blocking_quality_for_exact_sha(self):
+        release = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("uses: ./.github/workflows/tests.yml", release)
+        self.assertIn("candidate_sha: ${{ needs.prepare.outputs.sha }}", release)
+        self.assertIn("blocking_quality: true", release)
 
 
 if __name__ == "__main__":

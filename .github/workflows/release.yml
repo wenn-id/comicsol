@@ -1,14 +1,12 @@
 name: Native Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing release tag to build and publish (must equal package version, e.g. vX.Y.Z)"
-        required: true
-        type: string
   push:
     tags: [ 'v*' ]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -24,11 +22,10 @@ jobs:
       tag: ${{ steps.identity.outputs.tag }}
       version: ${{ steps.identity.outputs.version }}
       sha: ${{ steps.identity.outputs.sha }}
-      prerelease: ${{ steps.identity.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ github.ref }}
           fetch-depth: 0
       - name: Verify v2.0 stable release gate is present
         shell: bash
@@ -36,6 +33,45 @@ jobs:
           set -eu
           test -f docs/releases/v2.0-stable-criteria.md
           grep -Fq "authoritative release gate" docs/releases/v2.0-stable-criteria.md
+      - name: Verify active release-tag immutability rules
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir tag-rulesets
+          gh api "repos/${GITHUB_REPOSITORY}/rulesets?includes_parents=true&per_page=100" > rulesets.json
+          jq -r '.[] | select(.target == "tag" and .enforcement == "active") | .id' rulesets.json \
+            | while read -r ruleset_id; do
+                gh api "repos/${GITHUB_REPOSITORY}/rulesets/${ruleset_id}" \
+                  > "tag-rulesets/${ruleset_id}.json"
+              done
+          python3 - <<'PY'
+          import fnmatch
+          import json
+          import os
+          from pathlib import Path
+
+          release_ref = f"refs/tags/{os.environ['RELEASE_TAG']}"
+          protected = []
+          for path in Path("tag-rulesets").glob("*.json"):
+              ruleset = json.loads(path.read_text(encoding="utf-8"))
+              ref_names = ruleset.get("conditions", {}).get("ref_name", {})
+              includes = ref_names.get("include", [])
+              excludes = ref_names.get("exclude", [])
+              included = "~ALL" in includes or any(
+                  fnmatch.fnmatchcase(release_ref, pattern) for pattern in includes
+              )
+              excluded = any(fnmatch.fnmatchcase(release_ref, pattern) for pattern in excludes)
+              rule_types = {rule.get("type") for rule in ruleset.get("rules", [])}
+              if included and not excluded and {"update", "deletion"} <= rule_types:
+                  protected.append(ruleset.get("id"))
+          if not protected:
+              raise RuntimeError(
+                  "an active tag ruleset matching refs/tags/v* must restrict updates and deletions"
+              )
+          PY
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: '3.11.15'
@@ -45,7 +81,9 @@ jobs:
         id: identity
         shell: bash
         env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          TRIGGER_REF: ${{ github.ref }}
+          TRIGGER_SHA: ${{ github.sha }}
         run: |
           set -eu
           TAG="$RELEASE_TAG"
@@ -53,32 +91,64 @@ jobs:
             v[0-9]*.[0-9]*.[0-9]*) ;;
             *) echo "invalid release tag: $TAG" >&2; exit 1 ;;
           esac
+          test "$TRIGGER_REF" = "refs/tags/$TAG"
           git show-ref --verify --quiet "refs/tags/$TAG"
           SHA="$(git rev-parse "${TAG}^{commit}")"
+          test "$(git rev-parse "${TRIGGER_SHA}^{commit}")" = "$SHA"
+          test "$(git rev-parse HEAD)" = "$SHA"
           VERSION="${TAG#v}"
+          NORMALIZED="$(RELEASE_VERSION="$VERSION" python -c 'import os; from packaging.version import Version; print(Version(os.environ["RELEASE_VERSION"]))')"
+          test "$VERSION" = "$NORMALIZED"
           DETECTED="$(python -c 'from comic_sol_product import __version__; print(__version__)')"
           if [ "$VERSION" != "$DETECTED" ]; then
             echo "release tag $VERSION does not match package version $DETECTED" >&2
             exit 1
           fi
-          PRERELEASE="$(RELEASE_VERSION="$VERSION" python -c 'import os; from packaging.version import Version; print(str(Version(os.environ["RELEASE_VERSION"]).is_prerelease).lower())')"
           {
             echo "tag=$TAG"
             echo "version=$VERSION"
             echo "sha=$SHA"
-            echo "prerelease=$PRERELEASE"
           } >> "$GITHUB_OUTPUT"
       - name: Verify release notes exist
         shell: bash
         env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -eu
           NOTES="docs/releases/${RELEASE_TAG}.md"
           test -f "$NOTES"
 
-  native:
+  full-tests:
+    name: Exact-candidate tests, pip-audit, and blocking quality
     needs: prepare
+    uses: ./.github/workflows/tests.yml
+    with:
+      candidate_sha: ${{ needs.prepare.outputs.sha }}
+      blocking_quality: true
+
+  codeql:
+    name: Exact-candidate CodeQL
+    needs: prepare
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+      security-events: write
+    uses: ./.github/workflows/codeql.yml
+    with:
+      candidate_sha: ${{ needs.prepare.outputs.sha }}
+      candidate_ref: ${{ format('refs/tags/{0}', needs.prepare.outputs.tag) }}
+
+  benchmark:
+    name: Exact-candidate benchmark
+    needs: prepare
+    uses: ./.github/workflows/benchmark.yml
+    with:
+      candidate_sha: ${{ needs.prepare.outputs.sha }}
+      baseline: ${{ format('{0}^', needs.prepare.outputs.sha) }}
+
+  native:
+    needs: [prepare, full-tests, codeql, benchmark]
     strategy:
       fail-fast: false
       # Interpreter pins differ per leg on purpose. CPython 3.11 is in
@@ -138,7 +208,7 @@ jobs:
           if-no-files-found: error
 
   container:
-    needs: prepare
+    needs: [prepare, full-tests, codeql, benchmark]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -146,13 +216,26 @@ jobs:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
-      - name: Build OCI image from locked source
+      - name: Build OCI image from locked source once
         run: docker build --build-arg DOCKER_BASE_DIGEST="$DOCKER_BASE_DIGEST" -t comic-sol:${{ needs.prepare.outputs.version }} .
       - name: Smoke OCI image
         run: docker run --rm --entrypoint comic-sol comic-sol:${{ needs.prepare.outputs.version }} doctor --output-root /data/doctor
+      - name: Export exact candidate container image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir container-assets
+          docker save comic-sol:${{ needs.prepare.outputs.version }} \
+            --output container-assets/comic-sol-${{ needs.prepare.outputs.version }}-linux-x86_64.container.tar
+      - name: Upload candidate container image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: comic-sol-container
+          path: container-assets/*
+          if-no-files-found: error
 
   source:
-    needs: prepare
+    needs: [prepare, full-tests, codeql, benchmark]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -162,7 +245,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: '3.11.15'
-      - name: Build and validate source packages
+      - name: Build and validate source packages once
         run: |
           python -m pip install --require-hashes -r requirements/locks/release-linux-x86_64.txt
           python -m build --no-isolation
@@ -176,18 +259,23 @@ jobs:
           path: source-assets/*
           if-no-files-found: error
 
-  publish:
-    needs: [prepare, native, container, source]
+  candidate:
+    name: Publish immutable prerelease candidate
+    needs: [prepare, full-tests, codeql, benchmark, native, container, source]
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
       id-token: write
       attestations: write
+    outputs:
+      release_url: ${{ steps.identity.outputs.release_url }}
+      manifest_sha256: ${{ steps.identity.outputs.manifest_sha256 }}
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-      RELEASE_PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+      CANDIDATE_SHA: ${{ needs.prepare.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -202,7 +290,7 @@ jobs:
         with:
           pattern: comic-sol-*
           path: bundles
-      - name: Verify bundles and create global SHA256SUMS
+      - name: Verify Actions artifacts and create global SHA256SUMS
         shell: bash
         run: |
           python - <<'PY'
@@ -219,18 +307,19 @@ jobs:
               validate_sbom_schema(bundle / f"{identity.stem}.sbom.json")
               for path in sorted(bundle.iterdir()):
                   if path.name != "SHA256SUMS":
-                      records.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}")
-          for path in sorted((root / "comic-sol-source").iterdir()):
-              records.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}")
-          (root / "SHA256SUMS").write_text("\n".join(sorted(records)) + "\n", encoding="utf-8", newline="\n")
+                      records.append((path.name, hashlib.sha256(path.read_bytes()).hexdigest()))
+          for artifact_dir in (root / "comic-sol-source", root / "comic-sol-container"):
+              for path in sorted(artifact_dir.iterdir()):
+                  records.append((path.name, hashlib.sha256(path.read_bytes()).hexdigest()))
+          names = [name for name, _ in records]
+          if len(names) != len(set(names)):
+              raise RuntimeError("release asset names must be globally unique")
+          (root / "SHA256SUMS").write_text(
+              "".join(f"{digest}  {name}\n" for name, digest in sorted(records)),
+              encoding="utf-8",
+              newline="\n",
+          )
           PY
-      - name: Attest release archives and source packages
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
-        with:
-          subject-path: |
-            bundles/**/*.zip
-            bundles/**/*.whl
-            bundles/**/*.tar.gz
       - name: Install cosign for release checksum signing
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
         with:
@@ -240,12 +329,528 @@ jobs:
         run: |
           set -eu
           cosign sign-blob --yes --bundle bundles/SHA256SUMS.sigstore.json bundles/SHA256SUMS
-      - name: Publish immutable release assets
+      - name: Capture current-run Actions artifact identities
         shell: bash
         run: |
+          set -euo pipefail
+          mkdir -p evidence-work
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+            > evidence-work/actions-artifacts.json
+      - name: Create immutable candidate identity
+        id: identity
+        shell: bash
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          root = Path("bundles")
+          payloads = []
+          for line in (root / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
+              digest, name = line.split("  ", 1)
+              payloads.append({"name": name, "sha256": digest})
+          manifest_sha = hashlib.sha256((root / "SHA256SUMS").read_bytes()).hexdigest()
+          signature_sha = hashlib.sha256((root / "SHA256SUMS.sigstore.json").read_bytes()).hexdigest()
+          artifact_response = json.loads(
+              Path("evidence-work/actions-artifacts.json").read_text(encoding="utf-8")
+          )
+          expected_artifacts = {
+              "benchmark-results",
+              "comic-sol-container",
+              "comic-sol-linux-x86_64",
+              "comic-sol-macos-arm64",
+              "comic-sol-source",
+              "comic-sol-windows-x86_64",
+          }
+          artifacts_by_name = {}
+          for artifact in artifact_response.get("artifacts", []):
+              name = artifact.get("name")
+              if name in expected_artifacts:
+                  if name in artifacts_by_name:
+                      raise RuntimeError(f"duplicate Actions artifact for current run: {name}")
+                  if artifact.get("expired"):
+                      raise RuntimeError(f"Actions artifact already expired: {name}")
+                  artifacts_by_name[name] = artifact
+          if set(artifacts_by_name) != expected_artifacts:
+              raise RuntimeError(
+                  f"current-run Actions artifact identity mismatch: "
+                  f"{sorted(expected_artifacts ^ set(artifacts_by_name))}"
+              )
+          actions_artifacts = []
+          for name in sorted(artifacts_by_name):
+              artifact = artifacts_by_name[name]
+              actions_artifacts.append(
+                  {
+                      key: artifact.get(key)
+                      for key in ("id", "name", "digest", "url", "archive_download_url")
+                      if artifact.get(key) is not None
+                  }
+              )
+          record = {
+              "schema_version": 1,
+              "state": "candidate",
+              "tag": os.environ["RELEASE_TAG"],
+              "version": os.environ["RELEASE_VERSION"],
+              "candidate_commit": os.environ["CANDIDATE_SHA"],
+              "workflow_run_url": os.environ["RUN_URL"],
+              "actions_artifacts": actions_artifacts,
+              "release_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/tag/{os.environ['RELEASE_TAG']}",
+              "checksum_manifest": {"name": "SHA256SUMS", "sha256": manifest_sha},
+              "supporting_assets": [
+                  {"name": "SHA256SUMS", "sha256": manifest_sha},
+                  {"name": "SHA256SUMS.sigstore.json", "sha256": signature_sha},
+              ],
+              "payloads": payloads,
+              "attestations_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/attestations",
+          }
+          identity = root / "candidate-identity.json"
+          identity.write_text(json.dumps(record, sort_keys=True, indent=2) + "\n", encoding="utf-8", newline="\n")
+          identity_sha = hashlib.sha256(identity.read_bytes()).hexdigest()
+          (root / "candidate-identity.json.sha256").write_text(
+              f"{identity_sha}  candidate-identity.json\n", encoding="utf-8", newline="\n"
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"release_url={record['release_url']}\n")
+              output.write(f"manifest_sha256={manifest_sha}\n")
+          PY
+      - name: Preserve candidate identity as run evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: candidate-identity
+          path: |
+            bundles/candidate-identity.json
+            bundles/candidate-identity.json.sha256
+          if-no-files-found: error
+      - name: Attest every payload named by the signed manifest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-checksums: bundles/SHA256SUMS
+      - name: Assemble and publish the immutable candidate atomically
+        shell: bash
+        run: |
+          set -euo pipefail
+          releases_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100")"
+          if [ "$(printf '%s' "$releases_json" | jq --arg tag "$RELEASE_TAG" '[.[] | select(.tag_name == $tag)] | length')" -ne 0 ]; then
+            echo "release ${RELEASE_TAG} already exists; use a fresh tag instead of replacing candidate bytes" >&2
+            exit 1
+          fi
+
+          release_id=""
+          owner_marker="comic-sol-release-owner:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}"
+          cleanup_failed_candidate() {
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              if [ -z "$release_id" ]; then
+                mapfile -t matching_ids < <(
+                  gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" 2>/dev/null \
+                    | jq -r --arg tag "$RELEASE_TAG" --arg marker "$owner_marker" \
+                        '.[] | select(.tag_name == $tag and ((.body // "") | contains($marker))) | .id' \
+                    || true
+                )
+                if [ "${#matching_ids[@]}" -eq 1 ]; then
+                  release_id="${matching_ids[0]}"
+                fi
+              fi
+              if [ -n "$release_id" ]; then
+                release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" 2>/dev/null || true)"
+                if printf '%s' "$release_json" | jq -e --arg marker "$owner_marker" \
+                  '((.body // "") | contains($marker)) and (.draft == true or .immutable != true)' \
+                  >/dev/null 2>&1; then
+                  gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" --method DELETE || true
+                fi
+              fi
+            fi
+            exit "$status"
+          }
+          trap cleanup_failed_candidate EXIT
+
           NOTES="docs/releases/${RELEASE_TAG}.md"
-          EXTRA=""
-          if [ "$RELEASE_PRERELEASE" = true ]; then EXTRA="--prerelease"; fi
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag $EXTRA --title "Comic Sol ${RELEASE_VERSION}" --notes-file "$NOTES"
-          find bundles -type f ! -name SHA256SUMS ! -name SHA256SUMS.sigstore.json -print0 | xargs -0 gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber
-          gh release upload "$RELEASE_TAG" bundles/SHA256SUMS bundles/SHA256SUMS.sigstore.json --repo "$GITHUB_REPOSITORY" --clobber
+          remote_refs="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}")"
+          direct="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/${RELEASE_TAG}" '$2 == ref {print $1}')"
+          peeled="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/${RELEASE_TAG}^{}" '$2 == ref {print $1}')"
+          test "$(printf '%s\n' "$direct" | grep -c .)" -eq 1
+          test "$(printf '%s\n' "$peeled" | grep -c . || true)" -le 1
+          test "${peeled:-$direct}" = "$CANDIDATE_SHA"
+          created_release="$(mktemp)"
+          draft_body="$(mktemp)"
+          cat "$NOTES" > "$draft_body"
+          printf '\n\n<!-- %s -->\n' "$owner_marker" >> "$draft_body"
+          gh api "repos/${GITHUB_REPOSITORY}/releases" --method POST \
+            -f tag_name="$RELEASE_TAG" \
+            -f target_commitish="$CANDIDATE_SHA" \
+            -f name="Comic Sol ${RELEASE_VERSION} candidate" \
+            --raw-field "body=$(cat "$draft_body")" \
+            -F draft=true \
+            -F prerelease=true \
+            -f make_latest=false > "$created_release"
+          release_id="$(jq -er '.id' "$created_release")"
+
+          find bundles -type f ! -name SHA256SUMS -print0 \
+            | xargs -0 gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
+          gh release upload "$RELEASE_TAG" bundles/SHA256SUMS --repo "$GITHUB_REPOSITORY"
+
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" > draft-assets.json
+          mkdir draft-verification
+          jq -r '.[] | [.id, .name] | @tsv' draft-assets.json \
+            | while IFS=$'\t' read -r asset_id asset_name; do
+                gh api -H 'Accept: application/octet-stream' \
+                  "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+                  > "draft-verification/${asset_name}"
+              done
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("draft-verification")
+          identity = json.loads((root / "candidate-identity.json").read_text(encoding="utf-8"))
+          expected = {"candidate-identity.json", "candidate-identity.json.sha256"}
+          records = [*identity["supporting_assets"], *identity["payloads"]]
+          for item in records:
+              name = item["name"]
+              if Path(name).name != name:
+                  raise RuntimeError(f"invalid release asset name: {name}")
+              path = root / name
+              if hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
+                  raise RuntimeError(f"draft asset digest mismatch: {name}")
+              expected.add(name)
+          actual = {path.name for path in root.iterdir() if path.is_file()}
+          if actual != expected:
+              raise RuntimeError(f"draft candidate asset set mismatch: {sorted(actual ^ expected)}")
+          sidecar = (root / "candidate-identity.json.sha256").read_text(encoding="utf-8").split()
+          if sidecar != [hashlib.sha256((root / "candidate-identity.json").read_bytes()).hexdigest(), "candidate-identity.json"]:
+              raise RuntimeError("draft candidate identity digest mismatch")
+          PY
+
+          publication_refs="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}")"
+          publication_direct="$(printf '%s\n' "$publication_refs" | awk -v ref="refs/tags/${RELEASE_TAG}" '$2 == ref {print $1}')"
+          publication_peeled="$(printf '%s\n' "$publication_refs" | awk -v ref="refs/tags/${RELEASE_TAG}^{}" '$2 == ref {print $1}')"
+          test "$(printf '%s\n' "$publication_direct" | grep -c .)" -eq 1
+          test "$(printf '%s\n' "$publication_peeled" | grep -c . || true)" -le 1
+          test "${publication_peeled:-$publication_direct}" = "$CANDIDATE_SHA"
+          published_release="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" --method PATCH \
+            -F draft=false -F prerelease=true)"
+          test "$(printf '%s' "$published_release" | jq -r .draft)" = false
+          test "$(printf '%s' "$published_release" | jq -r .prerelease)" = true
+          if [ "$(printf '%s' "$published_release" | jq -r .immutable)" != true ]; then
+            echo "repository release immutability is required before candidate publication" >&2
+            exit 1
+          fi
+          immutable_refs="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}")"
+          immutable_direct="$(printf '%s\n' "$immutable_refs" | awk -v ref="refs/tags/${RELEASE_TAG}" '$2 == ref {print $1}')"
+          immutable_peeled="$(printf '%s\n' "$immutable_refs" | awk -v ref="refs/tags/${RELEASE_TAG}^{}" '$2 == ref {print $1}')"
+          test "$(printf '%s\n' "$immutable_direct" | grep -c .)" -eq 1
+          test "$(printf '%s\n' "$immutable_peeled" | grep -c . || true)" -le 1
+          test "${immutable_peeled:-$immutable_direct}" = "$CANDIDATE_SHA"
+          trap - EXIT
+
+  qualification:
+    name: Qualify exact published candidate bytes
+    needs: [prepare, candidate]
+    permissions:
+      contents: read
+      attestations: read
+    uses: ./.github/workflows/release-qualification.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+      candidate_sha: ${{ needs.prepare.outputs.sha }}
+
+  promote:
+    name: Revalidate bytes and promote release state
+    needs: [prepare, full-tests, codeql, benchmark, native, container, source, candidate, qualification]
+    runs-on: ubuntu-latest
+    environment:
+      name: release-production
+      url: ${{ needs.candidate.outputs.release_url }}
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      deployments: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      CANDIDATE_SHA: ${{ needs.prepare.outputs.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Fail closed unless the production Environment is protected
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/environments/release-production" > environment.json
+          jq -e '[.protection_rules[]? | select(.type == "required_reviewers") | .reviewers | length] | add > 0' environment.json
+          jq -e '[.protection_rules[]? | select(.type == "required_reviewers") | .prevent_self_review] | any' environment.json
+          jq -c '[
+            .protection_rules[]?
+            | select(.type == "required_reviewers")
+            | .reviewers[]
+            | {
+                type,
+                id: .reviewer.id,
+                login: (.reviewer.login // null),
+                name: (.reviewer.name // null),
+                slug: (.reviewer.slug // null),
+                html_url: (.reviewer.html_url // null)
+              }
+          ] | sort_by(.type, .login, .name, .slug, .id)' environment.json > required-reviewers.json
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: candidate-identity
+          path: evidence-input/candidate
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: benchmark-results
+          path: evidence-input/benchmark
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-qualification-summary
+          path: evidence-input/qualification
+      - name: Bind current-run Actions artifacts and protected deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+            > run-artifacts.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          response = json.loads(Path("run-artifacts.json").read_text(encoding="utf-8"))
+          expected = {
+              "benchmark-results",
+              "candidate-identity",
+              "release-qualification-summary",
+          }
+          selected = {}
+          for artifact in response.get("artifacts", []):
+              name = artifact.get("name")
+              if name in expected:
+                  if name in selected:
+                      raise RuntimeError(f"duplicate current-run Actions artifact: {name}")
+                  if artifact.get("expired"):
+                      raise RuntimeError(f"current-run Actions artifact expired: {name}")
+                  selected[name] = {
+                      key: artifact.get(key)
+                      for key in ("id", "name", "digest", "url", "archive_download_url")
+                      if artifact.get(key) is not None
+                  }
+          if set(selected) != expected:
+              raise RuntimeError(f"current-run Actions artifact mismatch: {sorted(expected ^ set(selected))}")
+          Path("evidence-actions-artifacts.json").write_text(
+              json.dumps([selected[name] for name in sorted(selected)], sort_keys=True, indent=2) + "\n",
+              encoding="utf-8",
+              newline="\n",
+          )
+          PY
+          gh api "repos/${GITHUB_REPOSITORY}/deployments?sha=${CANDIDATE_SHA}&environment=release-production&per_page=100" \
+            > deployments.json
+          mkdir deployment-statuses
+          jq -r '.[].id' deployments.json | while read -r deployment_id; do
+            gh api "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses?per_page=100" \
+              > "deployment-statuses/${deployment_id}.json"
+          done
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          deployments = json.loads(Path("deployments.json").read_text(encoding="utf-8"))
+          matches = []
+          for deployment in deployments:
+              statuses = json.loads(
+                  (Path("deployment-statuses") / f"{deployment['id']}.json").read_text(encoding="utf-8")
+              )
+              run_statuses = [
+                  status
+                  for status in statuses
+                  if isinstance(status.get("log_url"), str)
+                  and status["log_url"].startswith(os.environ["RUN_URL"])
+              ]
+              if run_statuses:
+                  latest = max(run_statuses, key=lambda status: status["id"])
+                  matches.append((deployment, latest))
+          if not matches:
+              raise RuntimeError("no deployment status was bound to the current workflow run")
+          deployment, status = max(
+              matches,
+              key=lambda item: (item[1]["id"], item[0]["id"]),
+          )
+          record = {
+              "id": deployment["id"],
+              "sha": deployment["sha"],
+              "ref": deployment["ref"],
+              "environment": deployment["environment"],
+              "api_url": deployment["url"],
+              "statuses_api_url": deployment["statuses_url"],
+              "status_id": status["id"],
+              "status_state": status["state"],
+              "html_audit_url": status["log_url"],
+              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+          }
+          Path("deployment-identity.json").write_text(
+              json.dumps(record, sort_keys=True, indent=2) + "\n",
+              encoding="utf-8",
+              newline="\n",
+          )
+          PY
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.0.6
+      - name: Download and revalidate every published candidate byte
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$CANDIDATE_SHA"
+          mkdir published
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir published
+          cmp evidence-input/candidate/candidate-identity.json published/candidate-identity.json
+          cmp evidence-input/candidate/candidate-identity.json.sha256 published/candidate-identity.json.sha256
+          (cd published && sha256sum -c candidate-identity.json.sha256)
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          root = Path("published")
+          identity = json.loads((root / "candidate-identity.json").read_text(encoding="utf-8"))
+          if identity["candidate_commit"] != os.environ["CANDIDATE_SHA"] or identity["tag"] != os.environ["RELEASE_TAG"]:
+              raise RuntimeError("published candidate identity does not match prepared release")
+          manifest = root / "SHA256SUMS"
+          actual_manifest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+          if actual_manifest != identity["checksum_manifest"]["sha256"]:
+              raise RuntimeError("published checksum manifest identity changed")
+          expected = {"candidate-identity.json", "candidate-identity.json.sha256"}
+          for item in identity["supporting_assets"]:
+              path = root / item["name"]
+              if hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
+                  raise RuntimeError(f"published supporting evidence changed: {path.name}")
+              expected.add(path.name)
+          for item in identity["payloads"]:
+              path = root / item["name"]
+              if hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]:
+                  raise RuntimeError(f"published payload identity changed: {path.name}")
+              expected.add(path.name)
+          actual = {path.name for path in root.iterdir() if path.is_file()}
+          if actual != expected:
+              raise RuntimeError(
+                  f"published candidate asset set changed: {sorted(actual ^ expected)}"
+              )
+          PY
+          cosign verify-blob \
+            --bundle published/SHA256SUMS.sigstore.json \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$' \
+            published/SHA256SUMS
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")"
+          test "$(printf '%s' "$release_json" | jq -r .prerelease)" = true
+          test "$(printf '%s' "$release_json" | jq -r .immutable)" = true
+          test "$(printf '%s' "$release_json" | jq -r .tag_name)" = "$RELEASE_TAG"
+      - name: Verify gate evidence outputs and generate promotion evidence
+        shell: bash
+        env:
+          TRIGGER_ACTOR: ${{ github.triggering_actor }}
+          EXPECTED_BENCHMARK_DECISION: ${{ needs.benchmark.outputs.decision }}
+          EXPECTED_BENCHMARK_SHA256: ${{ needs.benchmark.outputs.summary_sha256 }}
+          EXPECTED_QUALIFICATION_DECISION: ${{ needs.qualification.outputs.decision }}
+          EXPECTED_QUALIFICATION_SHA256: ${{ needs.qualification.outputs.summary_sha256 }}
+        run: |
+          set -euo pipefail
+          benchmark_file=evidence-input/benchmark/summary-delta.json
+          qualification_file=evidence-input/qualification/release-summary.json
+          test "$EXPECTED_BENCHMARK_DECISION" = "NO REGRESSION"
+          test "$EXPECTED_QUALIFICATION_DECISION" = "RELEASE READY"
+          test "$(sha256sum "$benchmark_file" | cut -d' ' -f1)" = "$EXPECTED_BENCHMARK_SHA256"
+          test "$(sha256sum "$qualification_file" | cut -d' ' -f1)" = "$EXPECTED_QUALIFICATION_SHA256"
+          test "$(jq -r .decision "$benchmark_file")" = "$EXPECTED_BENCHMARK_DECISION"
+          test "$(jq -r .decision "$qualification_file")" = "$EXPECTED_QUALIFICATION_DECISION"
+          test "$(jq -r .candidate_sha "$benchmark_file")" = "$CANDIDATE_SHA"
+          test "$(jq -r .candidate.commit_sha "$qualification_file")" = "$CANDIDATE_SHA"
+          python scripts/release_evidence.py \
+            --candidate-identity evidence-input/candidate/candidate-identity.json \
+            --qualification "$qualification_file" \
+            --qualification-sha256 "$EXPECTED_QUALIFICATION_SHA256" \
+            --benchmark-delta "$benchmark_file" \
+            --benchmark-sha256 "$EXPECTED_BENCHMARK_SHA256" \
+            --actions-artifacts evidence-actions-artifacts.json \
+            --deployment deployment-identity.json \
+            --required-reviewers required-reviewers.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-url "$RUN_URL" \
+            --environment release-production \
+            --trigger-actor "$TRIGGER_ACTOR" \
+            --json-output release-evidence.json \
+            --markdown-output release-evidence.md
+          sha256sum release-evidence.json release-evidence.md > release-evidence.sha256
+      - name: Preserve promotion evidence as a current-run artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-evidence-${{ github.run_attempt }}
+          path: |
+            release-evidence.json
+            release-evidence.md
+            release-evidence.sha256
+          if-no-files-found: error
+          retention-days: 90
+      - name: Attest promotion evidence under the release workflow identity
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-checksums: release-evidence.sha256
+      - name: Revalidate immutable release and record promotion as final mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum -c release-evidence.sha256
+          release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")"
+          release_id="$(printf '%s' "$release_json" | jq -r .id)"
+          test "$(printf '%s' "$release_json" | jq -r .draft)" = false
+          test "$(printf '%s' "$release_json" | jq -r .prerelease)" = true
+          test "$(printf '%s' "$release_json" | jq -r .immutable)" = true
+          test "$(printf '%s' "$release_json" | jq -r .tag_name)" = "$RELEASE_TAG"
+
+          remote_refs="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}")"
+          direct="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/${RELEASE_TAG}" '$2 == ref {print $1}')"
+          peeled="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/${RELEASE_TAG}^{}" '$2 == ref {print $1}')"
+          test "$(printf '%s\n' "$direct" | grep -c .)" -eq 1
+          test "$(printf '%s\n' "$peeled" | grep -c . || true)" -le 1
+          test "${peeled:-$direct}" = "$CANDIDATE_SHA"
+
+          evidence_sha256="$(sha256sum release-evidence.json | cut -d' ' -f1)"
+          {
+            cat "docs/releases/${RELEASE_TAG}.md"
+            cat <<EOF
+
+          ## Production promotion
+
+          - Status: approved through the protected \`release-production\` Environment
+          - Candidate commit: \`${CANDIDATE_SHA}\`
+          - Promotion run and evidence artifact: ${RUN_URL}#artifacts
+          - Evidence JSON SHA-256: \`${evidence_sha256}\`
+          - Evidence attestations: https://github.com/${GITHUB_REPOSITORY}/attestations
+
+          The immutable release remains marked as a prerelease because GitHub permits only
+          title and release-note edits after publication. Production status is the protected
+          deployment and attested evidence above; assets and tag are unchanged.
+          EOF
+          } > promoted-release-notes.md
+
+          # Immutability locks both the verified asset set and this tag between
+          # the final checks and the allowed title/notes-only promotion marker.
+          boundary_release="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}")"
+          test "$(printf '%s' "$boundary_release" | jq -r .draft)" = false
+          test "$(printf '%s' "$boundary_release" | jq -r .prerelease)" = true
+          test "$(printf '%s' "$boundary_release" | jq -r .immutable)" = true
+          test "$(printf '%s' "$boundary_release" | jq -r .tag_name)" = "$RELEASE_TAG"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" --method PATCH \
+            -f name="Comic Sol ${RELEASE_VERSION} — production approved" \
+            --raw-field "body=$(cat promoted-release-notes.md)" >/dev/null

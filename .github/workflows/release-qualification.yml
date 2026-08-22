@@ -4,16 +4,59 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag whose published assets must be qualified (for example v2.0.0rc4)"
+        description: "Existing candidate tag whose published assets must be qualified"
         required: true
         type: string
+      candidate_sha:
+        description: "Exact commit the candidate tag and published bytes must represent"
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        description: "Existing candidate tag whose published assets must be qualified"
+        required: true
+        type: string
+      candidate_sha:
+        description: "Exact commit the candidate tag and published bytes must represent"
+        required: true
+        type: string
+    outputs:
+      decision:
+        description: "Fail-closed aggregate qualification decision"
+        value: ${{ jobs.aggregate.outputs.decision }}
+      summary_sha256:
+        description: "Digest of the aggregate qualification JSON"
+        value: ${{ jobs.aggregate.outputs.summary_sha256 }}
 
 permissions:
   contents: read
+  attestations: read
 
 jobs:
+  identity:
+    name: Verify candidate tag identity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+      - name: Bind qualification to the exact published candidate commit
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$CANDIDATE_SHA"
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .prerelease)" = true
+
   native:
     name: qualify (${{ matrix.platform }})
+    needs: identity
     strategy:
       fail-fast: false
       matrix:
@@ -34,7 +77,10 @@ jobs:
             installer: install.ps1
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Download published release asset and qualification harness
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download exact published release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -58,15 +104,36 @@ jobs:
             --pattern "$metadata" \
             --pattern "$sbom" \
             --dir qualification
-          gh api "repos/$GITHUB_REPOSITORY/contents/scripts/release_qualification.py?ref=$RELEASE_TAG" \
-            --jq .content | base64 --decode > qualification/release_qualification.py
           test -s "qualification/$archive"
           test -s qualification/SHA256SUMS
           test -s qualification/SHA256SUMS.sigstore.json
           test -s "qualification/$INSTALLER"
           test -s "qualification/$metadata"
           test -s "qualification/$sbom"
-          test -s qualification/release_qualification.py
+      - name: Verify build provenance for the published native payloads
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+          INSTALLER: ${{ matrix.installer }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          for subject in \
+            "qualification/comic-sol-${version}-${PLATFORM}-${ARCH}.zip" \
+            "qualification/comic-sol-${version}-${PLATFORM}-${ARCH}.metadata.json" \
+            "qualification/comic-sol-${version}-${PLATFORM}-${ARCH}.sbom.json" \
+            "qualification/${INSTALLER}"; do
+            gh attestation verify "$subject" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow wenn-id/comicsol/.github/workflows/release.yml \
+              --source-digest "$CANDIDATE_SHA" \
+              --source-ref "refs/tags/$RELEASE_TAG" \
+              --deny-self-hosted-runners
+          done
       - name: Install cosign verifier
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
         with:
@@ -84,7 +151,7 @@ jobs:
           archive="qualification/comic-sol-${version}-${PLATFORM}-${ARCH}.zip"
           metadata="qualification/comic-sol-${version}-${PLATFORM}-${ARCH}.metadata.json"
           sbom="qualification/comic-sol-${version}-${PLATFORM}-${ARCH}.sbom.json"
-          python qualification/release_qualification.py \
+          python scripts/release_qualification.py \
             --archive "$archive" \
             --installer "qualification/$INSTALLER" \
             --sha256 qualification/SHA256SUMS \
@@ -106,9 +173,13 @@ jobs:
   # Platform-specific exceptions are written to each summary; an unavailable WSL2 runner is exception, not pass.
   wsl:
     name: qualify (wsl)
+    needs: identity
     runs-on: windows-latest
     steps:
-      - name: Download published Linux release asset and qualification harness
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+      - name: Download published Linux release asset
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -130,8 +201,6 @@ jobs:
             --pattern "$metadata" \
             --pattern "$sbom" \
             --dir qualification
-          gh api "repos/$GITHUB_REPOSITORY/contents/scripts/release_qualification.py?ref=$RELEASE_TAG" \
-            --jq .content | base64 --decode > qualification/release_qualification.py
       - name: Install cosign verifier
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
         with:
@@ -165,9 +234,10 @@ jobs:
           $archive = "$qualificationRoot/comic-sol-$version-linux-$architecture.zip"
           $metadata = "$qualificationRoot/comic-sol-$version-linux-$architecture.metadata.json"
           $sbom = "$qualificationRoot/comic-sol-$version-linux-$architecture.sbom.json"
+          $script = (& wsl.exe wslpath -a (Resolve-Path scripts/release_qualification.py).Path).Trim()
           $cosignPath = (Get-Command cosign.exe).Source
           $wslCosignPath = (& wsl.exe wslpath -a $cosignPath).Trim()
-          & wsl.exe -- bash -lc "COMIC_SOL_COSIGN='$wslCosignPath' python3 '$qualificationRoot/release_qualification.py' --archive '$archive' --installer '$qualificationRoot/install.sh' --sha256 '$qualificationRoot/SHA256SUMS' --signature '$qualificationRoot/SHA256SUMS.sigstore.json' --version '$version' --metadata '$metadata' --sbom '$sbom' --platform wsl --architecture '$architecture' --summary '$qualificationRoot/summary-wsl.json'"
+          & wsl.exe -- bash -lc "COMIC_SOL_COSIGN='$wslCosignPath' python3 '$script' --archive '$archive' --installer '$qualificationRoot/install.sh' --sha256 '$qualificationRoot/SHA256SUMS' --signature '$qualificationRoot/SHA256SUMS.sigstore.json' --version '$version' --metadata '$metadata' --sbom '$sbom' --platform wsl --architecture '$architecture' --summary '$qualificationRoot/summary-wsl.json'"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload WSL qualification summary
         if: always()
@@ -178,16 +248,30 @@ jobs:
           if-no-files-found: error
 
   source:
-    name: qualify (source P0 gates)
+    name: qualify (published source, container, and P0 gates)
+    needs: identity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.candidate_sha }}
           fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: '3.11.15'
+      - name: Download published source, installer, and container bytes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir qualification
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.whl' --pattern '*.tar.gz' --pattern '*.container.tar' \
+            --pattern install.sh --pattern install.ps1 \
+            --pattern SHA256SUMS --pattern SHA256SUMS.sigstore.json \
+            --dir qualification
       - name: Install locked release and audit tools
         shell: bash
         run: |
@@ -195,6 +279,45 @@ jobs:
           python -m pip install --require-hashes -r requirements/locks/release-linux-x86_64.txt
           python -m venv "${RUNNER_TEMP}/comic-sol-audit"
           "${RUNNER_TEMP}/comic-sol-audit/bin/python" -m pip install --require-hashes -r requirements/locks/audit-python311.txt
+      - name: Install cosign verifier
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        with:
+          cosign-release: v3.0.6
+      - name: Verify signed manifest, checksums, provenance, packages, and container bytes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          cosign verify-blob \
+            --bundle qualification/SHA256SUMS.sigstore.json \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$' \
+            qualification/SHA256SUMS
+          python - <<'PY'
+          from pathlib import Path
+          from scripts.release_qualification import verify_payload_checksums
+          root = Path("qualification")
+          payloads = sorted(
+              path for path in root.iterdir()
+              if path.name not in {"SHA256SUMS", "SHA256SUMS.sigstore.json"}
+          )
+          verify_payload_checksums(root / "SHA256SUMS", payloads)
+          PY
+          python -m comic_sol_product.release qualification/*.whl qualification/*.tar.gz
+          for subject in qualification/*.whl qualification/*.tar.gz qualification/*.container.tar qualification/install.sh qualification/install.ps1; do
+            gh attestation verify "$subject" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow wenn-id/comicsol/.github/workflows/release.yml \
+              --source-digest "$CANDIDATE_SHA" \
+              --source-ref "refs/tags/$RELEASE_TAG" \
+              --deny-self-hosted-runners
+          done
+          docker load --input qualification/*.container.tar
+          docker run --rm --entrypoint comic-sol "comic-sol:${RELEASE_TAG#v}" --version
+          docker run --rm --entrypoint comic-sol "comic-sol:${RELEASE_TAG#v}" doctor --output-root /data/doctor
       - name: Run pip-audit security gate and source P0 qualification gates
         shell: bash
         run: |
@@ -219,7 +342,10 @@ jobs:
           record = {
               "platform": "source",
               "status": os.environ["QUALIFY_STATUS"],
-              "checks": ["unit-integration", "golden", "resume", "failure-injection", "security", "artifact-contract"],
+              "checks": [
+                  "published-source-bytes", "published-container-bytes", "provenance",
+                  "unit-integration", "golden", "resume", "failure-injection", "security", "artifact-contract",
+              ],
               "exceptions": os.environ["QUALIFY_FAILURES"].split() if os.environ["QUALIFY_FAILURES"] else [],
           }
           with open("summary-source.json", "w", encoding="utf-8") as handle:
@@ -238,27 +364,68 @@ jobs:
   aggregate:
     name: release qualification decision
     if: always()
-    needs: [native, wsl, source]
+    needs: [identity, native, wsl, source]
     runs-on: ubuntu-latest
+    outputs:
+      decision: ${{ steps.aggregate.outputs.decision }}
+      summary_sha256: ${{ steps.aggregate.outputs.summary_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.candidate_sha }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: qualification-summary-*
           path: qualification
           merge-multiple: true
       - name: Aggregate P0 qualification summaries
+        id: aggregate
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
         run: |
           set -euo pipefail
+          mkdir qualification-identity
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern candidate-identity.json \
+            --pattern candidate-identity.json.sha256 \
+            --dir qualification-identity
+          (cd qualification-identity && sha256sum -c candidate-identity.json.sha256)
           # The harness emits RELEASE READY or RELEASE BLOCKED and exits non-zero when blocked.
           python scripts/release_qualification.py \
             --aggregate-root qualification \
             --aggregate-output qualification/release-summary.json \
             --require-source
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          identity = json.loads(
+              Path("qualification-identity/candidate-identity.json").read_text(encoding="utf-8")
+          )
+          if identity.get("tag") != os.environ["RELEASE_TAG"]:
+              raise RuntimeError("candidate identity tag does not match qualification input")
+          if identity.get("candidate_commit") != os.environ["CANDIDATE_SHA"]:
+              raise RuntimeError("candidate identity commit does not match qualification input")
+          path = Path("qualification/release-summary.json")
+          summary = json.loads(path.read_text(encoding="utf-8"))
+          summary["candidate"] = {
+              "tag": identity["tag"],
+              "commit_sha": identity["candidate_commit"],
+              "checksum_manifest_sha256": identity["checksum_manifest"]["sha256"],
+          }
+          path.write_text(
+              json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+              encoding="utf-8",
+              newline="\n",
+          )
+          PY
           grep -Fq "RELEASE READY" qualification/release-summary.md
+          echo "decision=RELEASE READY" >> "$GITHUB_OUTPUT"
+          echo "summary_sha256=$(sha256sum qualification/release-summary.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - name: Upload final qualification decision
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
