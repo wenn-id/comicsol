@@ -35,18 +35,12 @@ MAX_WARNING_CHARS = 500
 MAX_OVERRIDE_REASON_CHARS = 1000
 
 TITLE_LIMIT_MESSAGE = "title must be a non-empty string of at most 200 characters"
-REQUEST_TITLE_LIMIT_MESSAGE = (
-    "request title must be a non-empty string of at most 200 characters"
-)
-WARNING_LIMIT_MESSAGE = (
-    "transition warning must be a non-empty string of at most 500 characters"
-)
+REQUEST_TITLE_LIMIT_MESSAGE = "request title must be a non-empty string of at most 200 characters"
+WARNING_LIMIT_MESSAGE = "transition warning must be a non-empty string of at most 500 characters"
 OVERRIDE_REASON_LIMIT_MESSAGE = (
     "override reason must be a non-empty string of at most 1000 characters"
 )
-NARRATIVE_SECRET_MESSAGE = (
-    "narrative field must not contain secrets or credentials"
-)
+NARRATIVE_SECRET_MESSAGE = "narrative field must not contain secrets or credentials"
 
 # Obvious credential shapes. Narrative fields are operator notes, so anything
 # token-shaped or key-shaped is rejected outright rather than redacted: a
@@ -141,9 +135,7 @@ def _validate_loaded_value(value: Any) -> None:
         current, depth = stack.pop()
         if isinstance(current, dict):
             if depth > MAX_JSON_DEPTH:
-                raise InputResourceLimitError(
-                    f"the JSON nesting depth limit of {MAX_JSON_DEPTH}"
-                )
+                raise InputResourceLimitError(f"the JSON nesting depth limit of {MAX_JSON_DEPTH}")
             if len(current) > MAX_JSON_ENTRIES:
                 raise InputResourceLimitError(
                     f"the JSON collection size limit of {MAX_JSON_ENTRIES} entries"
@@ -151,9 +143,7 @@ def _validate_loaded_value(value: Any) -> None:
             stack.extend((item, depth + 1) for item in current.values())
         elif isinstance(current, list):
             if depth > MAX_JSON_DEPTH:
-                raise InputResourceLimitError(
-                    f"the JSON nesting depth limit of {MAX_JSON_DEPTH}"
-                )
+                raise InputResourceLimitError(f"the JSON nesting depth limit of {MAX_JSON_DEPTH}")
             if len(current) > MAX_JSON_ENTRIES:
                 raise InputResourceLimitError(
                     f"the JSON collection size limit of {MAX_JSON_ENTRIES} entries"
@@ -165,9 +155,7 @@ def _validate_loaded_value(value: Any) -> None:
             )
 
 
-def loads_bounded_json(
-    payload: bytes | str, *, source: str = "JSON document"
-) -> Any:
+def loads_bounded_json(payload: bytes | str, *, source: str = "JSON document") -> Any:
     """Parse one JSON document under every documented input bound.
 
     Rejects payloads over ``MAX_JSON_BYTES``, nesting deeper than
@@ -188,9 +176,7 @@ def loads_bounded_json(
     else:
         raise TypeError("JSON payload must be bytes or str")
     if encoded_size > MAX_JSON_BYTES:
-        raise InputResourceLimitError(
-            f"the JSON size limit of {MAX_JSON_BYTES} bytes for {source}"
-        )
+        raise InputResourceLimitError(f"the JSON size limit of {MAX_JSON_BYTES} bytes for {source}")
     if _structural_depth_exceeds(text, MAX_JSON_DEPTH):
         raise InputResourceLimitError(
             f"the JSON nesting depth limit of {MAX_JSON_DEPTH} for {source}"

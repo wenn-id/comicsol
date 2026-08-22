@@ -38,7 +38,6 @@ from .project_io import (
     ProjectLock,
     ProjectTransaction,
     contained_project_path,
-    open_path_nofollow,
     read_bytes_nofollow,
 )
 from .quality_records import PAGE_CHECK_IDS, validate_quality_checks
@@ -50,32 +49,45 @@ from .schema import UnsupportedSchemaVersionError
 # so a record written by the previous engine is reported as needing migration
 # rather than as malformed.
 CURRENT_PAGE_QA_SCHEMA_VERSION = "2.1"
-DETERMINISTIC_PAGE_CHECK_IDS = frozenset({
-    "clipped-text",
-    "text-overlap",
-    "reading-order",
-    "layout-border-integrity",
-    "balloon-subject-obstruction",
-    "bubble-tail-geometry",
-    "balloon-crowding",
-})
+DETERMINISTIC_PAGE_CHECK_IDS = frozenset(
+    {
+        "clipped-text",
+        "text-overlap",
+        "reading-order",
+        "layout-border-integrity",
+        "balloon-subject-obstruction",
+        "bubble-tail-geometry",
+        "balloon-crowding",
+    }
+)
 SUBJECTIVE_PAGE_CHECK_IDS = tuple(
-    check_id for check_id in PAGE_CHECK_IDS
-    if check_id not in DETERMINISTIC_PAGE_CHECK_IDS
+    check_id for check_id in PAGE_CHECK_IDS if check_id not in DETERMINISTIC_PAGE_CHECK_IDS
 )
-TIMESTAMP_PATTERN = re.compile(
-    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
-)
+TIMESTAMP_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 PAGE_RECORD_FIELDS = {
-    "bindings", "checks", "decision", "kind", "review", "schema_version",
-    "subject_id", "unresolved_warnings",
+    "bindings",
+    "checks",
+    "decision",
+    "kind",
+    "review",
+    "schema_version",
+    "subject_id",
+    "unresolved_warnings",
 }
 PAGE_REVIEW_FIELDS = {"method", "reviewer", "reviewed_at"}
 PAGE_BINDING_FIELDS = {
-    "composition_cache_path", "composition_cache_sha256", "layout_name",
-    "layout_version", "lettering_sha256s", "normalization_sha256s", "page_height",
-    "page_path", "page_sha256", "page_width", "storyboard_path",
+    "composition_cache_path",
+    "composition_cache_sha256",
+    "layout_name",
+    "layout_version",
+    "lettering_sha256s",
+    "normalization_sha256s",
+    "page_height",
+    "page_path",
+    "page_sha256",
+    "page_width",
+    "storyboard_path",
     "storyboard_sha256",
 }
 
@@ -193,7 +205,9 @@ def _storyboard_page(storyboard: Mapping[str, object], page_number: int) -> dict
     pages = storyboard.get("pages")
     if not isinstance(pages, list):
         raise ValueError("storyboard pages must be an array")
-    matches = [page for page in pages if isinstance(page, dict) and page.get("number") == page_number]
+    matches = [
+        page for page in pages if isinstance(page, dict) and page.get("number") == page_number
+    ]
     if len(matches) != 1:
         raise ValueError(f"storyboard page {page_number} was not found exactly once")
     return matches[0]
@@ -205,14 +219,14 @@ def _rect_tuple(panel: Mapping[str, object]) -> tuple[int, int, int, int]:
     if not isinstance(rect, dict):
         raise ValueError("storyboard panel rectangle is missing")
     values = tuple(rect.get(key) for key in ("x", "y", "width", "height"))
-    if len(values) != 4 or any(not isinstance(value, int) or isinstance(value, bool) for value in values):
+    if len(values) != 4 or any(
+        not isinstance(value, int) or isinstance(value, bool) for value in values
+    ):
         raise ValueError("storyboard panel rectangle must contain integers")
     return values  # type: ignore[return-value]
 
 
-def _json_snapshot(
-    path: Path, artifacts: _ArtifactSnapshots
-) -> tuple[dict[str, object], str]:
+def _json_snapshot(path: Path, artifacts: _ArtifactSnapshots) -> tuple[dict[str, object], str]:
     """Read one JSON artifact and digest the exact bytes that were parsed.
 
     A separate read for the value and the digest opens the file twice, so the
@@ -243,19 +257,14 @@ def _clean_raster(
     try:
         path = contained_project_path(project_dir, relative, must_exist=True)
     except (OSError, ValueError) as error:
-        raise ValueError(
-            f"normalization record is missing for panel {panel_id}"
-        ) from error
+        raise ValueError(f"normalization record is missing for panel {panel_id}") from error
     normalization, digest = _json_snapshot(path, artifacts)
     clean = normalization.get("clean") if isinstance(normalization, dict) else None
     size = clean.get("size") if isinstance(clean, dict) else None
     if (
         not isinstance(size, list)
         or len(size) != 2
-        or any(
-            not isinstance(value, int) or isinstance(value, bool) or value < 1
-            for value in size
-        )
+        or any(not isinstance(value, int) or isinstance(value, bool) or value < 1 for value in size)
     ):
         raise ValueError(f"normalization record is invalid for panel {panel_id}")
     return (size[0], size[1]), digest
@@ -318,19 +327,13 @@ def _page_context(
         try:
             path = contained_project_path(project_dir, relative, must_exist=True)
         except (OSError, ValueError) as error:
-            raise ValueError(
-                f"lettering geometry is missing for panel {panel_id}"
-            ) from error
+            raise ValueError(f"lettering geometry is missing for panel {panel_id}") from error
         try:
             geometry, geometry_digest = _json_snapshot(path, artifacts)
         except ValueError as error:
-            raise ValueError(
-                f"lettering geometry is invalid for panel {panel_id}"
-            ) from error
+            raise ValueError(f"lettering geometry is invalid for panel {panel_id}") from error
         lettering.append((panel_id, geometry_digest, geometry))
-        clean_size, normalization_digest = _clean_raster(
-            project_dir, panel_id, artifacts
-        )
+        clean_size, normalization_digest = _clean_raster(project_dir, panel_id, artifacts)
         clean_sizes.append(clean_size)
         normalization.append((panel_id, normalization_digest))
 
@@ -388,11 +391,13 @@ def _protected_anchors(
         ):
             continue
         text_id = item.get("id")
-        anchors.append((
-            text_id if isinstance(text_id, str) else "unknown",
-            round(float(anchor[0]) * width),
-            round(float(anchor[1]) * height),
-        ))
+        anchors.append(
+            (
+                text_id if isinstance(text_id, str) else "unknown",
+                round(float(anchor[0]) * width),
+                round(float(anchor[1]) * height),
+            )
+        )
     return anchors
 
 
@@ -414,13 +419,15 @@ def _subject_obstruction_regions(
                 box, (anchor_x, anchor_y), ellipse=kind == "dialogue"
             )
             if clearance < required:
-                regions.append({
-                    "clearance": round(clearance, 4),
-                    "item_id": item_id,
-                    "panel_id": panel_id,
-                    "required_clearance": round(required, 4),
-                    "subject_text_id": text_id,
-                })
+                regions.append(
+                    {
+                        "clearance": round(clearance, 4),
+                        "item_id": item_id,
+                        "panel_id": panel_id,
+                        "required_clearance": round(required, 4),
+                        "subject_text_id": text_id,
+                    }
+                )
     return regions
 
 
@@ -532,11 +539,13 @@ def _tail_geometry_regions(
             reason = "attribution-anchor-mismatch"
         else:
             continue
-        regions.append({
-            "panel_id": panel_id,
-            "reason": reason,
-            "text_id": text_id if isinstance(text_id, str) else "unknown",
-        })
+        regions.append(
+            {
+                "panel_id": panel_id,
+                "reason": reason,
+                "text_id": text_id if isinstance(text_id, str) else "unknown",
+            }
+        )
     return regions
 
 
@@ -561,23 +570,27 @@ def _crowding_regions(
     required_separation = balloon_separation_minimum(width, height)
     tight: list[dict[str, object]] = []
     for index, (item_id, box, _) in enumerate(boxes):
-        for other_id, other_box, _ in boxes[index + 1:]:
+        for other_id, other_box, _ in boxes[index + 1 :]:
             separation = rectangle_separation(box, other_box)
             if separation < required_separation:
-                tight.append({
-                    "items": [item_id, other_id],
-                    "separation": round(separation, 4),
-                })
+                tight.append(
+                    {
+                        "items": [item_id, other_id],
+                        "separation": round(separation, 4),
+                    }
+                )
     if coverage <= BALLOON_COVERAGE_WARNING_RATIO and not tight:
         return []
-    return [{
-        "balloons": len(boxes),
-        "coverage_limit": BALLOON_COVERAGE_WARNING_RATIO,
-        "coverage_ratio": round(coverage, 4),
-        "panel_id": panel_id,
-        "required_separation": round(required_separation, 4),
-        "tight_pairs": tight,
-    }]
+    return [
+        {
+            "balloons": len(boxes),
+            "coverage_limit": BALLOON_COVERAGE_WARNING_RATIO,
+            "coverage_ratio": round(coverage, 4),
+            "panel_id": panel_id,
+            "required_separation": round(required_separation, 4),
+            "tight_pairs": tight,
+        }
+    ]
 
 
 def _crowding_check(regions: Sequence[Mapping[str, object]]) -> dict[str, object]:
@@ -610,9 +623,7 @@ def _crowding_check(regions: Sequence[Mapping[str, object]]) -> dict[str, object
             "and balloons sit closer than the readable separation"
         )
     elif crowded:
-        observed = (
-            f"balloon coverage exceeds {BALLOON_COVERAGE_WARNING_RATIO:.0%} of the panel"
-        )
+        observed = f"balloon coverage exceeds {BALLOON_COVERAGE_WARNING_RATIO:.0%} of the panel"
     else:
         observed = "two balloons sit closer than the readable separation"
     return {
@@ -660,16 +671,24 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
             if isinstance(order, int) and not isinstance(order, bool):
                 orders.append(order)
             if not isinstance(box, dict):
-                clipped_regions.append({"panel_id": panel_id, "item_id": item_id, "reason": "missing-box"})
+                clipped_regions.append(
+                    {"panel_id": panel_id, "item_id": item_id, "reason": "missing-box"}
+                )
                 continue
             values = tuple(box.get(key) for key in ("x", "y", "width", "height"))
             if not all(isinstance(value, int) and not isinstance(value, bool) for value in values):
-                clipped_regions.append({"panel_id": panel_id, "item_id": item_id, "reason": "invalid-box"})
+                clipped_regions.append(
+                    {"panel_id": panel_id, "item_id": item_id, "reason": "invalid-box"}
+                )
                 continue
             x, y, width, height = values
             clipped = (
-                x < 0 or y < 0 or width <= 0 or height <= 0
-                or x + width > panel_width or y + height > panel_height
+                x < 0
+                or y < 0
+                or width <= 0
+                or height <= 0
+                or x + width > panel_width
+                or y + height > panel_height
             )
             if clipped:
                 clipped_regions.append({"panel_id": panel_id, "item_id": item_id, "box": box})
@@ -685,12 +704,14 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
                     width * height,
                     int(prior_box["width"]) * int(prior_box["height"]),
                 )
-                overlap_regions.append({
-                    "items": [prior_id, item_id],
-                    "overlap_area": shared,
-                    "overlap_ratio": round(shared / smallest, 4) if smallest > 0 else 1.0,
-                    "panel_id": panel_id,
-                })
+                overlap_regions.append(
+                    {
+                        "items": [prior_id, item_id],
+                        "overlap_area": shared,
+                        "overlap_ratio": round(shared / smallest, 4) if smallest > 0 else 1.0,
+                        "panel_id": panel_id,
+                    }
+                )
             boxes.append((item_id, box, item.get("kind")))
         if orders != list(range(1, len(items) + 1)):
             order_regions.append({"panel_id": panel_id, "observed": orders})
@@ -708,46 +729,63 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
         # pages, so they see balloons only.
         balloons = [entry for entry in boxes if entry[2] != "sfx"]
         obstruction_regions.extend(
-            _subject_obstruction_regions(
-                panel_id, anchors, balloons, panel_width, panel_height
-            )
+            _subject_obstruction_regions(panel_id, anchors, balloons, panel_width, panel_height)
         )
         tail_regions.extend(
-            _tail_geometry_regions(
-                panel_id, panel, placements, panel_width, panel_height
-            )
+            _tail_geometry_regions(panel_id, panel, placements, panel_width, panel_height)
         )
-        crowding_regions.extend(
-            _crowding_regions(panel_id, balloons, panel_width, panel_height)
-        )
+        crowding_regions.extend(_crowding_regions(panel_id, balloons, panel_width, panel_height))
 
-    layout_regions = [{
-        "layout": context.declared_layout,
-        "matched_layout": context.matched_layout,
-        "rectangles": [list(rectangle) for rectangle in context.rectangles],
-    }]
+    layout_regions = [
+        {
+            "layout": context.declared_layout,
+            "matched_layout": context.matched_layout,
+            "rectangles": [list(rectangle) for rectangle in context.rectangles],
+        }
+    ]
     definitions = (
-        ("clipped-text", clipped_regions, "All lettering boxes remain inside their source panel bounds."),
+        (
+            "clipped-text",
+            clipped_regions,
+            "All lettering boxes remain inside their source panel bounds.",
+        ),
         ("text-overlap", overlap_regions, "No lettering boxes overlap within any source panel."),
-        ("reading-order", order_regions, "Every panel uses a contiguous one-based lettering reading order."),
-        ("layout-border-integrity", [] if context.declared_layout == context.matched_layout else layout_regions,
-         "Storyboard rectangles are contained, non-overlapping, and match the declared layout."),
-        ("balloon-subject-obstruction", obstruction_regions,
-         "Every balloon clears the protected speaker anchors authored in its panel."),
-        ("bubble-tail-geometry", tail_regions,
-         "Every dialogue tail attaches to its balloon and points at its authored speaker anchor inside the panel."),
+        (
+            "reading-order",
+            order_regions,
+            "Every panel uses a contiguous one-based lettering reading order.",
+        ),
+        (
+            "layout-border-integrity",
+            [] if context.declared_layout == context.matched_layout else layout_regions,
+            "Storyboard rectangles are contained, non-overlapping, and match the declared layout.",
+        ),
+        (
+            "balloon-subject-obstruction",
+            obstruction_regions,
+            "Every balloon clears the protected speaker anchors authored in its panel.",
+        ),
+        (
+            "bubble-tail-geometry",
+            tail_regions,
+            "Every dialogue tail attaches to its balloon and points at its authored speaker anchor inside the panel.",
+        ),
     )
     checks = []
     for check_id, failures, evidence in definitions:
-        checks.append({
-            "id": check_id,
-            "result": "fail" if failures else "pass",
-            "severity": "error",
-            "evidence": evidence if not failures else f"Deterministic geometry found {len(failures)} failure region(s) for {check_id}.",
-            "method": "deterministic-geometry-v1",
-            "reviewer": "comic-sol",
-            "regions": failures,
-        })
+        checks.append(
+            {
+                "id": check_id,
+                "result": "fail" if failures else "pass",
+                "severity": "error",
+                "evidence": evidence
+                if not failures
+                else f"Deterministic geometry found {len(failures)} failure region(s) for {check_id}.",
+                "method": "deterministic-geometry-v1",
+                "reviewer": "comic-sol",
+                "regions": failures,
+            }
+        )
     checks.append(_crowding_check(crowding_regions))
     return checks
 
@@ -773,10 +811,7 @@ def _validate_tail_evidence(context: PageContext, checks: Sequence[Mapping[str, 
     if not isinstance(regions, list):
         raise ValueError("bubble-tail-evidence-mismatch: regions must be an array")
 
-    geometry_by_panel = {
-        panel_id: geometry
-        for panel_id, _, geometry in context.lettering
-    }
+    geometry_by_panel = {panel_id: geometry for panel_id, _, geometry in context.lettering}
     expected: dict[tuple[str, str], dict[str, object]] = {}
     for panel in context.panels:
         if not isinstance(panel.get("id"), str):
@@ -813,8 +848,13 @@ def _validate_tail_evidence(context: PageContext, checks: Sequence[Mapping[str, 
 
     observed: dict[tuple[str, str], Mapping[str, object]] = {}
     required_fields = {
-        "panel_id", "text_id", "speaker", "voice_source",
-        "speaker_anchor", "tip", "result",
+        "panel_id",
+        "text_id",
+        "speaker",
+        "voice_source",
+        "speaker_anchor",
+        "tip",
+        "result",
     }
     for region in regions:
         if not isinstance(region, dict) or set(region) != required_fields:
@@ -838,9 +878,10 @@ def _validate_tail_evidence(context: PageContext, checks: Sequence[Mapping[str, 
     results = [region.get("result") for region in observed.values()]
     check_result = tail_check.get("result")
     is_warning = check_result == "warning" or tail_check.get("severity") == "warning"
-    if (check_result == "pass" and any(result != "pass" for result in results)) or (
-        check_result == "fail" and results and all(result == "pass" for result in results)
-    ) or (is_warning and not any(result == "fail" for result in results)
+    if (
+        (check_result == "pass" and any(result != "pass" for result in results))
+        or (check_result == "fail" and results and all(result == "pass" for result in results))
+        or (is_warning and not any(result == "fail" for result in results))
     ):
         raise ValueError("bubble-tail-evidence-mismatch: check result is inconsistent")
 
@@ -873,9 +914,7 @@ def _page_bindings(context: PageContext) -> dict[str, object]:
         "composition_cache_sha256": context.cache_sha256,
         "layout_name": context.declared_layout,
         "layout_version": LAYOUT_VERSION,
-        "lettering_sha256s": [
-            f"{panel_id}:{digest}" for panel_id, digest, _ in context.lettering
-        ],
+        "lettering_sha256s": [f"{panel_id}:{digest}" for panel_id, digest, _ in context.lettering],
         "normalization_sha256s": [
             f"{panel_id}:{digest}" for panel_id, digest in context.normalization
         ],
@@ -897,11 +936,13 @@ def _compose_page_record(
 ) -> dict[str, object]:
     """Assemble a current page-QA record, deriving its decision from its checks."""
     failures = [
-        check for check in checks
+        check
+        for check in checks
         if check.get("result") == "fail" and check.get("severity") == "error"
     ]
     warnings = [
-        check for check in checks
+        check
+        for check in checks
         if check.get("result") == "warning" or check.get("severity") == "warning"
     ]
     return {
@@ -998,9 +1039,7 @@ def _write_page_quality_record_locked(
     project_dir: Path, page_number: int, record: Mapping[str, object]
 ) -> Path:
     """Publish a page-QA record with the project lock held."""
-    destination = contained_project_path(
-        project_dir, f"qa/pages/{_page_id(page_number)}.json"
-    )
+    destination = contained_project_path(project_dir, f"qa/pages/{_page_id(page_number)}.json")
     atomic_write_json(destination, dict(record))
     return destination
 
@@ -1056,9 +1095,7 @@ class PageQualityRebase:
     subject_id: str
 
 
-PageQualityMigration = Callable[
-    [Mapping[str, object], PageQualityRebase], dict[str, object]
-]
+PageQualityMigration = Callable[[Mapping[str, object], PageQualityRebase], dict[str, object]]
 # The ordered check tuple a schema-2.0 record was written against, before CS-023
 # added the three deterministic balloon checks. A migration verifies its input
 # against the shape of its own source version, so a record that was already
@@ -1080,7 +1117,8 @@ def _carried_reviewer_checks(record: Mapping[str, object]) -> list[dict[str, obj
     if not isinstance(checks, list):
         raise PageQualityMigrationError("page QA checks must be an array")
     present = [
-        check for check in checks
+        check
+        for check in checks
         if isinstance(check, dict) and check.get("id") in SUBJECTIVE_PAGE_CHECK_IDS
     ]
     carried = {check["id"]: dict(check) for check in present}
@@ -1088,9 +1126,7 @@ def _carried_reviewer_checks(record: Mapping[str, object]) -> list[dict[str, obj
     # silently normalize a non-canonical tuple into a valid record.
     if len(carried) != len(present):
         raise PageQualityMigrationError("page QA record repeats a reviewer check")
-    missing = [
-        check_id for check_id in SUBJECTIVE_PAGE_CHECK_IDS if check_id not in carried
-    ]
+    missing = [check_id for check_id in SUBJECTIVE_PAGE_CHECK_IDS if check_id not in carried]
     if missing:
         raise PageQualityMigrationError(
             f"page QA record is missing reviewer checks: {', '.join(missing)}"
@@ -1131,9 +1167,7 @@ def _migrate_page_qa_2_0_to_2_1(
             f"page QA record is not a valid schema-2.0 record: {', '.join(categories)}"
         )
     carried = _carried_reviewer_checks(record)
-    checks_by_id = {
-        check["id"]: check for check in [*rebase.deterministic_checks, *carried]
-    }
+    checks_by_id = {check["id"]: check for check in [*rebase.deterministic_checks, *carried]}
     return _compose_page_record(
         [checks_by_id[check_id] for check_id in PAGE_CHECK_IDS],
         bindings=rebase.bindings,
@@ -1149,9 +1183,7 @@ PAGE_QA_MIGRATIONS: dict[tuple[str, str], PageQualityMigration] = {
     ("2.0", CURRENT_PAGE_QA_SCHEMA_VERSION): _migrate_page_qa_2_0_to_2_1,
 }
 PAGE_QA_MIGRATION_SOURCES = frozenset(
-    source
-    for source, target in PAGE_QA_MIGRATIONS
-    if target == CURRENT_PAGE_QA_SCHEMA_VERSION
+    source for source, target in PAGE_QA_MIGRATIONS if target == CURRENT_PAGE_QA_SCHEMA_VERSION
 )
 
 
@@ -1215,18 +1247,14 @@ def migrate_page_quality_record(project_dir: Path, page_number: int) -> dict[str
         source_version = record.get("schema_version")
         if source_version == CURRENT_PAGE_QA_SCHEMA_VERSION:
             return record
-        migration = PAGE_QA_MIGRATIONS.get(
-            (str(source_version), CURRENT_PAGE_QA_SCHEMA_VERSION)
-        )
+        migration = PAGE_QA_MIGRATIONS.get((str(source_version), CURRENT_PAGE_QA_SCHEMA_VERSION))
         if migration is None:
             raise UnsupportedSchemaVersionError(source_version, artifact="page QA")
         context = _page_context(project_dir, page_number, _ArtifactSnapshots())
         bindings = _page_bindings(context)
         recorded_bindings = record.get("bindings")
         recorded_page_digest = (
-            recorded_bindings.get("page_sha256")
-            if isinstance(recorded_bindings, dict)
-            else None
+            recorded_bindings.get("page_sha256") if isinstance(recorded_bindings, dict) else None
         )
         migrated = migration(
             record,
@@ -1238,9 +1266,7 @@ def migrate_page_quality_record(project_dir: Path, page_number: int) -> dict[str
             ),
         )
         if not isinstance(migrated, dict):
-            raise PageQualityMigrationError(
-                "page QA migration must return a JSON object"
-            )
+            raise PageQualityMigrationError("page QA migration must return a JSON object")
         migrated["schema_version"] = CURRENT_PAGE_QA_SCHEMA_VERSION
         _require_publishable(context, migrated)
         transaction.stage_bytes(relative, canonical_artifact_bytes(migrated))
@@ -1358,11 +1384,16 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
 
     if isinstance(checks, list):
         failures = [
-            check for check in checks if isinstance(check, dict)
-            and check.get("result") == "fail" and check.get("severity") == "error"
+            check
+            for check in checks
+            if isinstance(check, dict)
+            and check.get("result") == "fail"
+            and check.get("severity") == "error"
         ]
         warnings = [
-            check for check in checks if isinstance(check, dict)
+            check
+            for check in checks
+            if isinstance(check, dict)
             and (check.get("result") == "warning" or check.get("severity") == "warning")
         ]
         expected_decision = "regenerate" if failures else "accept-warning" if warnings else "accept"
@@ -1386,9 +1417,14 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
         if not isinstance(bindings.get(field), str):
             stale(f"bindings.{field}", "bound artifact path must be a string")
     for field in (
-        "composition_cache_sha256", "page_sha256", "storyboard_sha256",
+        "composition_cache_sha256",
+        "page_sha256",
+        "storyboard_sha256",
     ):
-        if not isinstance(bindings.get(field), str) or SHA256_PATTERN.fullmatch(bindings[field]) is None:
+        if (
+            not isinstance(bindings.get(field), str)
+            or SHA256_PATTERN.fullmatch(bindings[field]) is None
+        ):
             stale(f"bindings.{field}", "bound artifact hash must be a lowercase SHA-256")
     for field in ("page_width", "page_height"):
         value = bindings.get(field)
@@ -1455,9 +1491,7 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
             )
 
     verify_per_panel_bindings("lettering_sha256s", "lettering.json", "lettering")
-    verify_per_panel_bindings(
-        "normalization_sha256s", "normalization.json", "normalization"
-    )
+    verify_per_panel_bindings("normalization_sha256s", "normalization.json", "normalization")
     try:
         context = _page_context(project_dir, page_number, artifacts)
     except (OSError, ValueError, json.JSONDecodeError):

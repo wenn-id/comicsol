@@ -336,10 +336,10 @@ class PageQualityTests(unittest.TestCase):
         reads = {}
         real_read = page_quality._read_and_digest
 
-        def counted_read(path):
+        def counted_read(path, **kwargs):
             key = Path(path).resolve()
             reads[key] = reads.get(key, 0) + 1
-            return real_read(path)
+            return real_read(path, **kwargs)
 
         def counted_digest(path):
             return counted_read(path)[1]
