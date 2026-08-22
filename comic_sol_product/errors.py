@@ -114,6 +114,13 @@ _DEFINITIONS = (
         "Remove the unsafe input and retry from a trusted project directory.",
     ),
     ErrorDefinition(
+        "CS-SEC-002",
+        "security-error",
+        "The project input exceeded a resource limit.",
+        "A project JSON document, raster, or narrative field exceeded a documented size, depth, or length limit.",
+        "Shrink or simplify the input to the documented limit and retry.",
+    ),
+    ErrorDefinition(
         "CS-IMG-001",
         "image-error",
         "An image operation could not complete.",
@@ -192,7 +199,9 @@ def classify_exception(
 ) -> ClassifiedError:
     """Map an internal exception to one canonical public error definition."""
     raw = _safe_raw_message(error)
-    if raw.startswith("security-error"):
+    if raw.startswith("security-error: input exceeds"):
+        definition = ERROR_DEFINITIONS["CS-SEC-002"]
+    elif raw.startswith("security-error"):
         definition = ERROR_DEFINITIONS["CS-SEC-001"]
     elif request or raw.startswith(
         ("invalid project id", "unknown validation stage", "attempt path")

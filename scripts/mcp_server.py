@@ -23,6 +23,15 @@ except ModuleNotFoundError:
 # Import core business logic from scripts/
 from .core_primitives import PANEL_ID_PATTERN
 from comic_sol_product.errors import error_payload
+from .input_limits import (
+    MAX_OVERRIDE_REASON_CHARS,
+    MAX_TITLE_CHARS,
+    MAX_WARNING_CHARS,
+    OVERRIDE_REASON_LIMIT_MESSAGE,
+    TITLE_LIMIT_MESSAGE,
+    WARNING_LIMIT_MESSAGE,
+    validate_narrative,
+)
 from .comic_sol import (
     ALL_STATUSES,
     RESUME_STAGES,
@@ -75,6 +84,9 @@ _REQUEST_ERROR_PREFIXES = (
     "request mode must be one of short_prompt, pasted_story, source_file, or resume",
     "request language must be a non-empty language tag",
     "request title must be a non-empty string of at most 200 characters",
+    "transition warning must be a non-empty string of at most 500 characters",
+    "override reason must be a non-empty string of at most 1000 characters",
+    "narrative field must not contain secrets or credentials",
 )
 
 
@@ -391,8 +403,7 @@ def comic_doctor() -> dict[str, object]:
 def comic_init(title: str, source_text: str, request_settings: dict[str, Any]) -> str:
     """Initialize a new isolated project folder."""
     try:
-        if not isinstance(title, str) or not title.strip() or len(title) > 200:
-            raise ValueError("title must be a non-empty string of at most 200 characters")
+        validate_narrative(title, message=TITLE_LIMIT_MESSAGE, max_chars=MAX_TITLE_CHARS)
         if not isinstance(source_text, str) or len(source_text.encode("utf-8")) > 200 * 1024:
             raise ValueError("source must be at most 200 KiB as UTF-8 bytes")
         if not isinstance(request_settings, dict):
@@ -423,6 +434,11 @@ def comic_transition(project_id: str, target: str, warning: str | None = None) -
     """Move the project to the next state."""
     _validate_project_id(project_id)
     _validate_target(target)
+    if warning is not None:
+        try:
+            validate_narrative(warning, message=WARNING_LIMIT_MESSAGE, max_chars=MAX_WARNING_CHARS)
+        except Exception as e:
+            raise _request_error(e) from None
     project_dir = _resolve_project(project_id)
     try:
         manifest = transition(project_dir, target, warning)
@@ -539,6 +555,14 @@ def comic_override_panel(project_id: str, panel_id: str, reason: str) -> str:
     """Force accept a panel with warnings."""
     _validate_project_id(project_id)
     _validate_panel_id(panel_id)
+    try:
+        validate_narrative(
+            reason,
+            message=OVERRIDE_REASON_LIMIT_MESSAGE,
+            max_chars=MAX_OVERRIDE_REASON_CHARS,
+        )
+    except Exception as e:
+        raise _request_error(e) from None
     project_dir = _resolve_project(project_id)
     try:
         record_override(project_dir, panel_id, reason)

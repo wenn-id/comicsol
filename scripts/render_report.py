@@ -24,8 +24,14 @@ from .comic_sol import (
     read_json,
     sha256_file,
 )
+from .input_limits import MAX_EVENT_LOG_BYTES, loads_bounded_json
 from .page_quality import CURRENT_PAGE_QA_SCHEMA_VERSION
-from .project_io import ProjectLock, contained_project_path, open_path_nofollow
+from .project_io import (
+    ProjectLock,
+    contained_project_path,
+    open_path_nofollow,
+    read_bytes_nofollow,
+)
 from .quality_records import PANEL_CHECK_IDS
 from .schema import read_project_manifest
 
@@ -81,7 +87,11 @@ def summarize_qa(
     pages = settings.get("page_count", 0) if isinstance(settings, dict) else 0
     pages = pages if isinstance(pages, int) and not isinstance(pages, bool) and pages >= 0 else 0
     maximum_retries = settings.get("max_panel_retries", 2) if isinstance(settings, dict) else 2
-    if not isinstance(maximum_retries, int) or isinstance(maximum_retries, bool) or maximum_retries < 0:
+    if (
+        not isinstance(maximum_retries, int)
+        or isinstance(maximum_retries, bool)
+        or maximum_retries < 0
+    ):
         maximum_retries = 2
     hard_categories = {"corrupt", "corrupt_image", "safety", "safety_refusal"}
     return QaSummary(
@@ -95,17 +105,21 @@ def summarize_qa(
         ),
         hard_failures=sum(
             record.get("failure_category") in hard_categories
-            or (
-                _has_error_failure(record)
-                and _attempts(record) >= maximum_retries + 1
-            )
+            or (_has_error_failure(record) and _attempts(record) >= maximum_retries + 1)
             for record in panel_records
         ),
     )
 
 
 def _escape_table(value: object) -> str:
-    return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\r\n", "<br>").replace("\n", "<br>").replace("\r", "<br>")
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("\r\n", "<br>")
+        .replace("\n", "<br>")
+        .replace("\r", "<br>")
+    )
 
 
 def _load_records(project_dir: Path) -> list[dict[str, object]]:
@@ -144,6 +158,7 @@ def _load_page_records(project_dir: Path) -> list[dict[str, object]]:
             # as complete for a page whose review the validator rejects.
             record["quality-migration-required"] = True
             records.append(record)
+
     def sort_key(record: dict[str, object]) -> tuple[str, str]:
         """Order page-QA records without trusting legacy page field types."""
         if isinstance(record.get("subject_id"), str):
@@ -151,7 +166,8 @@ def _load_page_records(project_dir: Path) -> list[dict[str, object]]:
         page = record.get("page")
         return (
             "v1",
-            f"page-{page:03d}" if isinstance(page, int) and not isinstance(page, bool)
+            f"page-{page:03d}"
+            if isinstance(page, int) and not isinstance(page, bool)
             else f"page-{page}",
         )
 
@@ -175,10 +191,12 @@ def _final_status(manifest: dict[str, object]) -> object:
 
 
 def _project_summary(manifest: dict[str, object]) -> str:
-    return "\n".join((
-        f"- Project: {_escape_table(manifest.get('title', 'Untitled'))} (`{manifest.get('project_id', 'unknown')}`)",
-        f"- Final status: **{_final_status(manifest)}**",
-    ))
+    return "\n".join(
+        (
+            f"- Project: {_escape_table(manifest.get('title', 'Untitled'))} (`{manifest.get('project_id', 'unknown')}`)",
+            f"- Final status: **{_final_status(manifest)}**",
+        )
+    )
 
 
 def _capability(manifest: dict[str, object]) -> str:
@@ -193,7 +211,9 @@ def _capability(manifest: dict[str, object]) -> str:
         f"- Explicit dimensions supported: {'yes' if capability.get('supports_dimensions') is True else 'no'}",
     ]
     if not supported:
-        lines.append("- Consistency: degraded consistency mode because reference images are unsupported; canonical text anchors were used instead.")
+        lines.append(
+            "- Consistency: degraded consistency mode because reference images are unsupported; canonical text anchors were used instead."
+        )
     lines.append(
         "- Privacy: external provider policies govern transmitted prompts and references; Comic Sol stores no provider credentials."
     )
@@ -205,43 +225,44 @@ def _plural(count: int, singular: str, plural: str | None = None) -> str:
 
 
 def _counts(summary: QaSummary) -> str:
-    return "\n".join((
-        f"- {_plural(summary.pages, 'page')}",
-        f"- {_plural(summary.panels, 'panel')}",
-        f"- {_plural(summary.generation_attempts, 'generation attempt')}",
-        f"- {_plural(summary.regenerated_panels, 'regenerated panel')}",
-        f"- {_plural(summary.accepted_warnings, 'accepted warning')}",
-        f"- {_plural(summary.hard_failures, 'hard failure')}",
-    ))
+    return "\n".join(
+        (
+            f"- {_plural(summary.pages, 'page')}",
+            f"- {_plural(summary.panels, 'panel')}",
+            f"- {_plural(summary.generation_attempts, 'generation attempt')}",
+            f"- {_plural(summary.regenerated_panels, 'regenerated panel')}",
+            f"- {_plural(summary.accepted_warnings, 'accepted warning')}",
+            f"- {_plural(summary.hard_failures, 'hard failure')}",
+        )
+    )
 
 
 def _evidence_provenance(project_dir: Path) -> str:
     path = project_dir / "qa/evidence.json"
     if not path.is_file():
-        return (
-            "- Mode: unavailable\n"
-            "- Scope: no explicit evidence provenance record was supplied."
-        )
+        return "- Mode: unavailable\n- Scope: no explicit evidence provenance record was supplied."
     record = read_json(path)
     mode = record.get("mode")
     if mode == "deterministic":
-        return "\n".join((
-            "- Mode: deterministic",
-            f"- Scope: {record.get('scope', 'mechanics-only')}",
-            "- Claim boundary: deterministic evidence proves mechanics only and "
-            "does not prove live visual quality.",
-        ))
+        return "\n".join(
+            (
+                "- Mode: deterministic",
+                f"- Scope: {record.get('scope', 'mechanics-only')}",
+                "- Claim boundary: deterministic evidence proves mechanics only and "
+                "does not prove live visual quality.",
+            )
+        )
     if mode != "live-visual":
         raise ValueError("qa/evidence.json has an unsupported evidence mode")
 
     required = (
-        "retained_attempt", "attempt_sha256", "provider", "model",
+        "retained_attempt",
+        "attempt_sha256",
+        "provider",
+        "model",
         "reviewer_method",
     )
-    if any(
-        not isinstance(record.get(name), str) or not record[name]
-        for name in required
-    ):
+    if any(not isinstance(record.get(name), str) or not record[name] for name in required):
         raise ValueError("qa/evidence.json live-visual provenance is incomplete")
 
     def joined(name: str) -> str:
@@ -250,16 +271,18 @@ def _evidence_provenance(project_dir: Path) -> str:
             return "none"
         return ", ".join(_escape_table(value) for value in values) or "none"
 
-    return "\n".join((
-        "- Mode: live-visual",
-        f"- Scope: {_escape_table(record.get('scope', 'retained-attempt-visual-review'))}",
-        f"- Provider/model: {_escape_table(record['provider'])} / {_escape_table(record['model'])}",
-        f"- Retained attempt: `{_escape_table(record['retained_attempt'])}`",
-        f"- Attempt SHA-256: `{_escape_table(record['attempt_sha256'])}`",
-        f"- References: {joined('references')}",
-        f"- Reviewer method: {_escape_table(record['reviewer_method'])}",
-        f"- Known limitations: {joined('limitations')}",
-    ))
+    return "\n".join(
+        (
+            "- Mode: live-visual",
+            f"- Scope: {_escape_table(record.get('scope', 'retained-attempt-visual-review'))}",
+            f"- Provider/model: {_escape_table(record['provider'])} / {_escape_table(record['model'])}",
+            f"- Retained attempt: `{_escape_table(record['retained_attempt'])}`",
+            f"- Attempt SHA-256: `{_escape_table(record['attempt_sha256'])}`",
+            f"- References: {joined('references')}",
+            f"- Reviewer method: {_escape_table(record['reviewer_method'])}",
+            f"- Known limitations: {joined('limitations')}",
+        )
+    )
 
 
 def _panel_table(records: list[dict[str, object]]) -> str:
@@ -270,11 +293,15 @@ def _panel_table(records: list[dict[str, object]]) -> str:
     ]
     for record in records:
         checks = record.get("checks", [])
-        check_map = {
-            check.get("id"): check
-            for check in checks
-            if isinstance(check, dict) and isinstance(check.get("id"), str)
-        } if isinstance(checks, list) else {}
+        check_map = (
+            {
+                check.get("id"): check
+                for check in checks
+                if isinstance(check, dict) and isinstance(check.get("id"), str)
+            }
+            if isinstance(checks, list)
+            else {}
+        )
         decision = str(record.get("decision", "unknown"))
         override = record.get("override_reason")
         if isinstance(override, str) and override:
@@ -288,11 +315,15 @@ def _panel_table(records: list[dict[str, object]]) -> str:
             results.append(result)
         evidence = "; ".join(
             f"{check_id}: {check_map[check_id].get('evidence', '')}"
-            for check_id in PANEL_CHECK_IDS if check_id in check_map
+            for check_id in PANEL_CHECK_IDS
+            if check_id in check_map
         )
         cells = (
-            _panel_id(record) or "unknown", _attempts(record), decision,
-            *results, evidence,
+            _panel_id(record) or "unknown",
+            _attempts(record),
+            decision,
+            *results,
+            evidence,
         )
         lines.append("| " + " | ".join(_escape_table(cell) for cell in cells) + " |")
     return "\n".join(lines)
@@ -310,11 +341,7 @@ def _normalization_table(
     for record in records:
         panel_id = _panel_id(record) or "unknown"
         bindings = record.get("bindings")
-        relative = (
-            bindings.get("normalization_path")
-            if isinstance(bindings, dict)
-            else None
-        )
+        relative = bindings.get("normalization_path") if isinstance(bindings, dict) else None
         path = _contained_or_none(project_dir, relative)
         mode = source_size = target_size = "unavailable"
         if path is not None and path.is_file():
@@ -341,10 +368,11 @@ def _normalization_table(
             ):
                 target_size = f"{target[0]}×{target[1]}"
         lines.append(
-            "| " + " | ".join(
-                _escape_table(value)
-                for value in (panel_id, mode, source_size, target_size)
-            ) + " |"
+            "| "
+            + " | ".join(
+                _escape_table(value) for value in (panel_id, mode, source_size, target_size)
+            )
+            + " |"
         )
     return "\n".join(lines)
 
@@ -359,20 +387,31 @@ def _page_qa_table(records: list[dict[str, object]]) -> str:
         if record.get("quality-migration-required"):
             subject_id = record.get("subject_id")
             page_label = (
-                subject_id if isinstance(subject_id, str) and subject_id
+                subject_id
+                if isinstance(subject_id, str) and subject_id
                 else f"page-{record.get('page', 'unknown')}"
             )
             lines.append(
-                "| " + " | ".join(_escape_table(cell) for cell in (
-                    page_label,
-                    "quality-migration-required", "migration-required", "missing",
-                    "migration-required", "migration-required",
-                )) + " |"
+                "| "
+                + " | ".join(
+                    _escape_table(cell)
+                    for cell in (
+                        page_label,
+                        "quality-migration-required",
+                        "migration-required",
+                        "missing",
+                        "migration-required",
+                        "migration-required",
+                    )
+                )
+                + " |"
             )
             continue
         bindings = record.get("bindings")
         layout = bindings.get("layout_name", "unknown") if isinstance(bindings, dict) else "unknown"
-        version = bindings.get("layout_version", "unknown") if isinstance(bindings, dict) else "unknown"
+        version = (
+            bindings.get("layout_version", "unknown") if isinstance(bindings, dict) else "unknown"
+        )
         checks = record.get("checks")
         if not isinstance(checks, list):
             checks = []
@@ -387,9 +426,7 @@ def _page_qa_table(records: list[dict[str, object]]) -> str:
                 check.get("method", "missing"),
                 check.get("reviewer", "missing"),
             )
-            lines.append(
-                "| " + " | ".join(_escape_table(cell) for cell in cells) + " |"
-            )
+            lines.append("| " + " | ".join(_escape_table(cell) for cell in cells) + " |")
     if len(lines) == 2:
         lines.append(
             "| none | unavailable | unavailable | unavailable | unavailable | unavailable |"
@@ -423,8 +460,7 @@ def _warnings(
     if not warnings:
         return "No unresolved warnings."
     return "\n".join(
-        f"- `{', '.join(sources)}`: {warning}"
-        for warning, sources in warnings.items()
+        f"- `{', '.join(sources)}`: {warning}" for warning, sources in warnings.items()
     )
 
 
@@ -485,10 +521,15 @@ def _integrity(
                 f"- `{relative}` — exists: {'yes' if exists else 'no'}; hash: `{expected}`; hash matches: {'yes' if matches else 'no'}"
             )
 
-    pages = sorted(
-        path for path in (project_dir / "pages").glob("page-*.png")
-        if PAGE_PATTERN.fullmatch(path.name)
-    ) if (project_dir / "pages").is_dir() else []
+    pages = (
+        sorted(
+            path
+            for path in (project_dir / "pages").glob("page-*.png")
+            if PAGE_PATTERN.fullmatch(path.name)
+        )
+        if (project_dir / "pages").is_dir()
+        else []
+    )
     for page in pages:
         try:
             with open_path_nofollow(page) as stream, Image.open(stream) as image:
@@ -501,15 +542,18 @@ def _integrity(
             f"- `{_relative(project_dir, page)}` — dimensions: {dimensions}; valid page: {'yes' if valid else 'no'}; sha256: `{sha256_file(page) if page.is_file() else 'missing'}`"
         )
 
-    references = sorted({
-        reference
-        for record in records
-        for reference in (
-            record.get("generation", {}).get("reference_paths", [])
-            if isinstance(record.get("generation"), dict) else []
-        )
-        if isinstance(reference, str)
-    })
+    references = sorted(
+        {
+            reference
+            for record in records
+            for reference in (
+                record.get("generation", {}).get("reference_paths", [])
+                if isinstance(record.get("generation"), dict)
+                else []
+            )
+            if isinstance(reference, str)
+        }
+    )
     for reference in references:
         path = _contained_or_none(project_dir, reference)
         valid = path is not None and path.is_file()
@@ -517,7 +561,11 @@ def _integrity(
 
     project_id = manifest.get("project_id", "")
     pdf_descriptor = artifacts.get("pdf") if isinstance(artifacts, dict) else None
-    pdf_relative = pdf_descriptor.get("path") if isinstance(pdf_descriptor, dict) else f"exports/{project_id}.pdf"
+    pdf_relative = (
+        pdf_descriptor.get("path")
+        if isinstance(pdf_descriptor, dict)
+        else f"exports/{project_id}.pdf"
+    )
     pdf_path = _contained_or_none(project_dir, pdf_relative)
     readable = pdf_path is not None and _pdf_readable(pdf_path, len(pages))
     lines.append(
@@ -537,10 +585,14 @@ def _resume(project_dir: Path) -> str:
     reused: set[str] = set()
     regenerated: set[str] = set()
     if event_path.is_file():
-        for line in event_path.read_text("utf-8").splitlines():
+        try:
+            payload = read_bytes_nofollow(event_path, max_bytes=MAX_EVENT_LOG_BYTES)
+        except (OSError, ValueError):
+            payload = b""
+        for line in payload.decode("utf-8", errors="replace").splitlines():
             try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
+                event = loads_bounded_json(line, source="events.jsonl")
+            except (json.JSONDecodeError, ValueError):
                 continue
             if not isinstance(event, dict) or not isinstance(event.get("details"), dict):
                 continue
@@ -552,10 +604,12 @@ def _resume(project_dir: Path) -> str:
                 reused.add(artifact)
             elif name == "artifact.regenerated":
                 regenerated.add(artifact)
-    return "\n".join((
-        "- Reused: " + (", ".join(sorted(reused)) if reused else "none"),
-        "- Regenerated: " + (", ".join(sorted(regenerated)) if regenerated else "none"),
-    ))
+    return "\n".join(
+        (
+            "- Reused: " + (", ".join(sorted(reused)) if reused else "none"),
+            "- Regenerated: " + (", ".join(sorted(regenerated)) if regenerated else "none"),
+        )
+    )
 
 
 def _render_report_locked(project_dir: Path, output_path: Path | None = None) -> Path:

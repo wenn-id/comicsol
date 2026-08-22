@@ -28,7 +28,15 @@ from .character_quality import (
 )
 from .core_primitives import PANEL_ID_PATTERN as CORE_PANEL_ID_PATTERN
 from .core_primitives import dialogue_attribution_conflicts, is_normalized_point
-from .project_io import contained_project_path, open_path_nofollow
+from .project_io import contained_project_path, open_path_nofollow, read_bytes_nofollow
+from .input_limits import (
+    MAX_JSON_BYTES,
+    MAX_OVERRIDE_REASON_CHARS,
+    MAX_TITLE_CHARS,
+    MAX_WARNING_CHARS,
+    looks_like_secret,
+    loads_bounded_json,
+)
 from .raster_limits import MAX_DECODED_PIXELS
 from .repair_strategy import (
     REPAIR_PLAN_PATH,
@@ -89,8 +97,14 @@ LAYOUTS = {
     "four-grid",
 }
 ANCHORS = {
-    "top-left", "top-center", "top-right", "middle-left", "middle-right",
-    "bottom-left", "bottom-center", "bottom-right",
+    "top-left",
+    "top-center",
+    "top-right",
+    "middle-left",
+    "middle-right",
+    "bottom-left",
+    "bottom-center",
+    "bottom-right",
 }
 MAX_PAGES = 4
 MAX_PANELS = 12
@@ -139,14 +153,38 @@ def _object(
     return value
 
 
-def _nonempty_string(
-    value: object, issues: list[ValidationIssue], path: str, field: str
-) -> bool:
+def _nonempty_string(value: object, issues: list[ValidationIssue], path: str, field: str) -> bool:
     """Validate a non-empty string field."""
     if not isinstance(value, str) or not value.strip():
         _add(issues, path, field, "must be a non-empty string")
         return False
     return True
+
+
+def _narrative_field(
+    value: object,
+    issues: list[ValidationIssue],
+    path: str,
+    field: str,
+    *,
+    max_chars: int,
+) -> bool:
+    """Validate one persisted narrative field for length and secret hygiene."""
+    if not _nonempty_string(value, issues, path, field):
+        return False
+    valid = True
+    if len(value) > max_chars:  # type: ignore[arg-type]
+        _add(issues, path, field, f"must be at most {max_chars} characters")
+        valid = False
+    if looks_like_secret(value):  # type: ignore[arg-type]
+        _add(
+            issues,
+            path,
+            field,
+            "must not contain secrets or credentials",
+        )
+        valid = False
+    return valid
 
 
 def _identifier(value: object, issues: list[ValidationIssue], path: str, field: str) -> bool:
@@ -189,7 +227,11 @@ def _relative_path(
         _add(issues, path, field, "must use POSIX separators")
         return False
     parts = value.split("/")
-    if value.startswith("/") or re.match(r"^[A-Za-z]:/", value) or any(part in {"", ".", ".."} for part in parts):
+    if (
+        value.startswith("/")
+        or re.match(r"^[A-Za-z]:/", value)
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
         _add(issues, path, field, "must be a normalized relative project path without traversal")
         return False
     return True
@@ -239,6 +281,7 @@ def _string_list(
     field: str,
     minimum: int = 0,
     maximum: int | None = None,
+    entry_max_chars: int | None = None,
 ) -> list[str] | None:
     """Validate a list of non-empty string values."""
     if not isinstance(value, list):
@@ -248,7 +291,13 @@ def _string_list(
         upper = "unbounded" if maximum is None else str(maximum)
         _add(issues, path, field, f"must contain {minimum} to {upper} items")
     for index, item in enumerate(value):
-        _nonempty_string(item, issues, path, f"{field}[{index}]")
+        entry = f"{field}[{index}]"
+        if not _nonempty_string(item, issues, path, entry):
+            continue
+        if entry_max_chars is not None and len(item) > entry_max_chars:  # type: ignore[arg-type]
+            _add(issues, path, entry, f"must be at most {entry_max_chars} characters")
+        if looks_like_secret(item):  # type: ignore[arg-type]
+            _add(issues, path, entry, "must not contain secrets or credentials")
     return [item for item in value if isinstance(item, str)]
 
 
@@ -257,9 +306,18 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
     path = "project.json"
     issues: list[ValidationIssue] = []
     required_fields = {
-        "project_id", "title", "created_at", "updated_at",
-        "status", "input", "settings", "capability", "artifacts",
-        "stage_versions", "panels", "warnings",
+        "project_id",
+        "title",
+        "created_at",
+        "updated_at",
+        "status",
+        "input",
+        "settings",
+        "capability",
+        "artifacts",
+        "stage_versions",
+        "panels",
+        "warnings",
     }
     fields = required_fields | {"schema_version", "blocked_from", "blocked_reason"}
     root = _object(data, fields, required_fields, issues, path, "")
@@ -281,7 +339,7 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
             ),
         )
     _identifier(root.get("project_id"), issues, path, "project_id")
-    _nonempty_string(root.get("title"), issues, path, "title")
+    _narrative_field(root.get("title"), issues, path, "title", max_chars=MAX_TITLE_CHARS)
     _timestamp(root.get("created_at"), issues, path, "created_at")
     _timestamp(root.get("updated_at"), issues, path, "updated_at")
     if root.get("status") not in ALL_STATUSES:
@@ -290,10 +348,7 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         if root.get("blocked_from") not in LINEAR_STATUSES:
             _add(issues, path, "blocked_from", "must be a normal pipeline status")
         blocked_reason = root.get("blocked_reason")
-        if (
-            not isinstance(blocked_reason, str)
-            or CATEGORY.fullmatch(blocked_reason) is None
-        ):
+        if not isinstance(blocked_reason, str) or CATEGORY.fullmatch(blocked_reason) is None:
             _add(issues, path, "blocked_reason", "must be a stable category")
     elif root.get("blocked_from") is not None or root.get("blocked_reason") is not None:
         _add(issues, path, "status", "blocked fields must be null when not BLOCKED")
@@ -313,10 +368,17 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         _nonempty_string(input_data.get("language"), issues, path, "input.language")
 
     setting_fields = {
-        "page_width", "page_height", "reading_direction", "page_count",
-        "panel_count", "style_anchor", "max_panel_retries",
+        "page_width",
+        "page_height",
+        "reading_direction",
+        "page_count",
+        "panel_count",
+        "style_anchor",
+        "max_panel_retries",
     }
-    settings = _object(root.get("settings"), setting_fields, setting_fields, issues, path, "settings")
+    settings = _object(
+        root.get("settings"), setting_fields, setting_fields, issues, path, "settings"
+    )
     if settings is not None:
         exact = {"page_width": PAGE_WIDTH, "page_height": PAGE_HEIGHT, "max_panel_retries": 2}
         for field, expected in exact.items():
@@ -329,9 +391,15 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         _nonempty_string(settings.get("style_anchor"), issues, path, "settings.style_anchor")
 
     capability_fields = {
-        "status", "name", "supports_reference_images", "supports_dimensions", "detected_at",
+        "status",
+        "name",
+        "supports_reference_images",
+        "supports_dimensions",
+        "detected_at",
     }
-    capability = _object(root.get("capability"), capability_fields, capability_fields, issues, path, "capability")
+    capability = _object(
+        root.get("capability"), capability_fields, capability_fields, issues, path, "capability"
+    )
     if capability is not None:
         if capability.get("status") not in {"not_checked", "available", "unavailable"}:
             _add(issues, path, "capability.status", "unknown capability status")
@@ -342,20 +410,49 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         for field in ("supports_reference_images", "supports_dimensions"):
             if not isinstance(capability.get(field), bool):
                 _add(issues, path, f"capability.{field}", "must be boolean")
-        _timestamp(capability.get("detected_at"), issues, path, "capability.detected_at", nullable=True)
-        if capability.get("status") in {"available", "unavailable"} and capability.get("detected_at") is None:
+        _timestamp(
+            capability.get("detected_at"), issues, path, "capability.detected_at", nullable=True
+        )
+        if (
+            capability.get("status") in {"available", "unavailable"}
+            and capability.get("detected_at") is None
+        ):
             _add(issues, path, "capability.detected_at", "is required after capability detection")
 
-    artifacts = _object(root.get("artifacts"), {"story_plan", "character_bible", "storyboard", "qa_report", "pdf", "pdf_verification", "composition_cache"}, set(), issues, path, "artifacts")
+    artifacts = _object(
+        root.get("artifacts"),
+        {
+            "story_plan",
+            "character_bible",
+            "storyboard",
+            "qa_report",
+            "pdf",
+            "pdf_verification",
+            "composition_cache",
+        },
+        set(),
+        issues,
+        path,
+        "artifacts",
+    )
     if artifacts is not None:
         for name, descriptor in artifacts.items():
-            item = _object(descriptor, {"path", "sha256"}, {"path", "sha256"}, issues, path, f"artifacts.{name}")
+            item = _object(
+                descriptor,
+                {"path", "sha256"},
+                {"path", "sha256"},
+                issues,
+                path,
+                f"artifacts.{name}",
+            )
             if item is not None:
                 _relative_path(item.get("path"), issues, path, f"artifacts.{name}.path")
                 _sha256(item.get("sha256"), issues, path, f"artifacts.{name}.sha256")
 
     version_fields = {"planning", "storyboard", "generation", "lettering", "composition", "export"}
-    versions = _object(root.get("stage_versions"), version_fields, version_fields, issues, path, "stage_versions")
+    versions = _object(
+        root.get("stage_versions"), version_fields, version_fields, issues, path, "stage_versions"
+    )
     if versions is not None:
         for name, value in versions.items():
             if not isinstance(value, str) or not value.isdecimal():
@@ -367,7 +464,13 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
                 _add(issues, path, f"panels[{index}]", "must match pNN-NN")
         if len(set(panels)) != len(panels):
             _add(issues, path, "panels", "panel IDs must be unique")
-    warnings = _string_list(root.get("warnings"), issues, path, "warnings")
+    warnings = _string_list(
+        root.get("warnings"),
+        issues,
+        path,
+        "warnings",
+        entry_max_chars=MAX_WARNING_CHARS,
+    )
     if root.get("status") == "COMPLETE" and warnings:
         _add(issues, path, "status", "must be COMPLETE_WITH_WARNINGS while warnings remain")
     if root.get("status") == "COMPLETE_WITH_WARNINGS" and warnings == []:
@@ -379,7 +482,9 @@ def validate_character_bible(data: dict[str, object]) -> list[ValidationIssue]:
     """Validate the character bible artifact."""
     path = "plan/character-bible.json"
     issues: list[ValidationIssue] = []
-    root = _object(data, {"schema_version", "characters"}, {"schema_version", "characters"}, issues, path, "")
+    root = _object(
+        data, {"schema_version", "characters"}, {"schema_version", "characters"}, issues, path, ""
+    )
     if root is None:
         return _sorted(issues)
     if root.get("schema_version") != "1.0":
@@ -390,12 +495,26 @@ def validate_character_bible(data: dict[str, object]) -> list[ValidationIssue]:
         return _sorted(issues)
     ids: list[str] = []
     character_fields = {
-        "id", "name", "role", "age_band", "pronouns", "visual_fingerprint",
-        "personality", "motivation", "speech", "reference_path",
+        "id",
+        "name",
+        "role",
+        "age_band",
+        "pronouns",
+        "visual_fingerprint",
+        "personality",
+        "motivation",
+        "speech",
+        "reference_path",
     }
     fingerprint_fields = {
-        "silhouette", "face", "hair", "wardrobe", "palette",
-        "signature_props", "invariants", "avoid",
+        "silhouette",
+        "face",
+        "hair",
+        "wardrobe",
+        "palette",
+        "signature_props",
+        "invariants",
+        "avoid",
     }
     for index, value in enumerate(characters):
         prefix = f"characters[{index}]"
@@ -408,19 +527,53 @@ def validate_character_bible(data: dict[str, object]) -> list[ValidationIssue]:
             _nonempty_string(character.get(field), issues, path, f"{prefix}.{field}")
         _string_list(character.get("personality"), issues, path, f"{prefix}.personality", minimum=1)
         _relative_path(character.get("reference_path"), issues, path, f"{prefix}.reference_path")
-        if isinstance(character.get("id"), str) and character.get("reference_path") != f"references/characters/{character['id']}.png":
+        if (
+            isinstance(character.get("id"), str)
+            and character.get("reference_path") != f"references/characters/{character['id']}.png"
+        ):
             _add(issues, path, f"{prefix}.reference_path", "must match the character ID")
         fingerprint = _object(
-            character.get("visual_fingerprint"), fingerprint_fields, fingerprint_fields,
-            issues, path, f"{prefix}.visual_fingerprint",
+            character.get("visual_fingerprint"),
+            fingerprint_fields,
+            fingerprint_fields,
+            issues,
+            path,
+            f"{prefix}.visual_fingerprint",
         )
         if fingerprint is not None:
             for field in ("silhouette", "face", "hair", "wardrobe"):
-                _nonempty_string(fingerprint.get(field), issues, path, f"{prefix}.visual_fingerprint.{field}")
-            _string_list(fingerprint.get("palette"), issues, path, f"{prefix}.visual_fingerprint.palette", minimum=1)
-            _string_list(fingerprint.get("signature_props"), issues, path, f"{prefix}.visual_fingerprint.signature_props", minimum=1)
-            _string_list(fingerprint.get("invariants"), issues, path, f"{prefix}.visual_fingerprint.invariants", minimum=2, maximum=5)
-            _string_list(fingerprint.get("avoid"), issues, path, f"{prefix}.visual_fingerprint.avoid", minimum=1)
+                _nonempty_string(
+                    fingerprint.get(field), issues, path, f"{prefix}.visual_fingerprint.{field}"
+                )
+            _string_list(
+                fingerprint.get("palette"),
+                issues,
+                path,
+                f"{prefix}.visual_fingerprint.palette",
+                minimum=1,
+            )
+            _string_list(
+                fingerprint.get("signature_props"),
+                issues,
+                path,
+                f"{prefix}.visual_fingerprint.signature_props",
+                minimum=1,
+            )
+            _string_list(
+                fingerprint.get("invariants"),
+                issues,
+                path,
+                f"{prefix}.visual_fingerprint.invariants",
+                minimum=2,
+                maximum=5,
+            )
+            _string_list(
+                fingerprint.get("avoid"),
+                issues,
+                path,
+                f"{prefix}.visual_fingerprint.avoid",
+                minimum=1,
+            )
     if len(set(ids)) != len(ids):
         _add(issues, path, "characters", "character IDs must be unique")
     return _sorted(issues)
@@ -431,8 +584,18 @@ def validate_story_plan(data: dict[str, object]) -> list[ValidationIssue]:
     path = "plan/story-plan.json"
     issues: list[ValidationIssue] = []
     fields = {
-        "schema_version", "title", "logline", "theme", "tone", "rating",
-        "setting", "beginning", "turn", "climax", "ending", "scenes",
+        "schema_version",
+        "title",
+        "logline",
+        "theme",
+        "tone",
+        "rating",
+        "setting",
+        "beginning",
+        "turn",
+        "climax",
+        "ending",
+        "scenes",
     }
     root = _object(data, fields, fields, issues, path, "")
     if root is None:
@@ -515,7 +678,9 @@ def _validate_text_item(
         if not _identifier(speaker, issues, path, f"{prefix}.speaker"):
             pass
         elif speaker not in known_characters or speaker not in panel_characters:
-            _add(issues, path, f"{prefix}.speaker", "must reference a character present in the panel")
+            _add(
+                issues, path, f"{prefix}.speaker", "must reference a character present in the panel"
+            )
     elif speaker is not None:
         _add(issues, path, f"{prefix}.speaker", "must be null for caption and sfx")
     if item.get("anchor") not in ANCHORS:
@@ -626,7 +791,8 @@ def validate_storyboard(
         _add(issues, path, "pages", "must contain 1 to 4 pages")
 
     known_scenes = {
-        scene.get("id") for scene in story.get("scenes", [])
+        scene.get("id")
+        for scene in story.get("scenes", [])
         if isinstance(scene, dict) and isinstance(scene.get("id"), str)
     }
     scene_anchors = {
@@ -637,7 +803,8 @@ def validate_storyboard(
         and isinstance(scene.get("continuity_anchor"), str)
     }
     known_characters = {
-        character.get("id") for character in characters.get("characters", [])
+        character.get("id")
+        for character in characters.get("characters", [])
         if isinstance(character, dict) and isinstance(character.get("id"), str)
     }
     character_invariants = {
@@ -649,9 +816,20 @@ def validate_storyboard(
     }
     page_fields = {"number", "layout", "panels"}
     panel_fields = {
-        "id", "order", "scene_id", "rect", "beat", "characters", "shot",
-        "composition", "action", "expression", "lighting", "continuity",
-        "negative", "text",
+        "id",
+        "order",
+        "scene_id",
+        "rect",
+        "beat",
+        "characters",
+        "shot",
+        "composition",
+        "action",
+        "expression",
+        "lighting",
+        "continuity",
+        "negative",
+        "text",
     }
     all_panel_ids: list[str] = []
     all_text_ids: list[str] = []
@@ -664,7 +842,9 @@ def validate_storyboard(
         page_number = page.get("number")
         _integer(page_number, 1, 4, issues, path, f"{page_prefix}.number")
         if page_number != page_index + 1:
-            _add(issues, path, f"{page_prefix}.number", "pages must be numbered contiguously from 1")
+            _add(
+                issues, path, f"{page_prefix}.number", "pages must be numbered contiguously from 1"
+            )
         layout = page.get("layout")
         if layout not in LAYOUTS:
             _add(issues, path, f"{page_prefix}.layout", "unknown layout")
@@ -698,36 +878,74 @@ def validate_storyboard(
                 _add(issues, path, f"{prefix}.scene_id", "must reference a story scene")
             for field in ("beat", "shot", "composition", "action", "expression", "lighting"):
                 _nonempty_string(panel.get(field), issues, path, f"{prefix}.{field}")
-            panel_characters = _string_list(panel.get("characters"), issues, path, f"{prefix}.characters") or []
+            panel_characters = (
+                _string_list(panel.get("characters"), issues, path, f"{prefix}.characters") or []
+            )
             for item_index, character_id in enumerate(panel_characters):
                 if character_id not in known_characters:
-                    _add(issues, path, f"{prefix}.characters[{item_index}]", "must reference the character bible")
+                    _add(
+                        issues,
+                        path,
+                        f"{prefix}.characters[{item_index}]",
+                        "must reference the character bible",
+                    )
             if len(set(panel_characters)) != len(panel_characters):
                 _add(issues, path, f"{prefix}.characters", "character IDs must be unique")
-            continuity = _string_list(panel.get("continuity"), issues, path, f"{prefix}.continuity") or []
+            continuity = (
+                _string_list(panel.get("continuity"), issues, path, f"{prefix}.continuity") or []
+            )
             if len(set(continuity)) != len(continuity):
                 _add(issues, path, f"{prefix}.continuity", "continuity anchors must be unique")
             for continuity_index, anchor in enumerate(continuity):
                 anchor_field = f"{prefix}.continuity[{continuity_index}]"
                 owner, separator, fact = anchor.partition(":")
-                if not separator or not fact.strip() or owner not in known_characters | known_scenes:
-                    _add(issues, path, anchor_field, "must reference a known character or scene anchor")
-                elif owner in character_invariants and fact.strip() not in character_invariants[owner]:
+                if (
+                    not separator
+                    or not fact.strip()
+                    or owner not in known_characters | known_scenes
+                ):
+                    _add(
+                        issues,
+                        path,
+                        anchor_field,
+                        "must reference a known character or scene anchor",
+                    )
+                elif (
+                    owner in character_invariants
+                    and fact.strip() not in character_invariants[owner]
+                ):
                     _add(issues, path, anchor_field, "must reuse an exact character invariant")
                 elif owner in scene_anchors and fact.strip() != scene_anchors[owner]:
                     _add(issues, path, anchor_field, "must reuse the exact scene continuity anchor")
             _string_list(panel.get("negative"), issues, path, f"{prefix}.negative", minimum=1)
-            rect = _object(panel.get("rect"), {"x", "y", "width", "height"}, {"x", "y", "width", "height"}, issues, path, f"{prefix}.rect")
+            rect = _object(
+                panel.get("rect"),
+                {"x", "y", "width", "height"},
+                {"x", "y", "width", "height"},
+                issues,
+                path,
+                f"{prefix}.rect",
+            )
             valid_rect: dict[str, int] | None = None
-            if rect is not None and all(isinstance(rect.get(key), int) and not isinstance(rect.get(key), bool) for key in ("x", "y", "width", "height")):
+            if rect is not None and all(
+                isinstance(rect.get(key), int) and not isinstance(rect.get(key), bool)
+                for key in ("x", "y", "width", "height")
+            ):
                 valid_rect = {key: int(rect[key]) for key in ("x", "y", "width", "height")}
                 if (
-                    valid_rect["width"] <= 0 or valid_rect["height"] <= 0
-                    or valid_rect["x"] < MARGIN or valid_rect["y"] < MARGIN
+                    valid_rect["width"] <= 0
+                    or valid_rect["height"] <= 0
+                    or valid_rect["x"] < MARGIN
+                    or valid_rect["y"] < MARGIN
                     or valid_rect["x"] + valid_rect["width"] > PAGE_WIDTH - MARGIN
                     or valid_rect["y"] + valid_rect["height"] > PAGE_HEIGHT - MARGIN
                 ):
-                    _add(issues, path, f"{prefix}.rect", "must stay inside the page margin with positive area")
+                    _add(
+                        issues,
+                        path,
+                        f"{prefix}.rect",
+                        "must stay inside the page margin with positive area",
+                    )
                 if panel_index < len(expected_rects) and valid_rect != expected_rects[panel_index]:
                     _add(issues, path, f"{prefix}.rect", "must equal the fixed layout rectangle")
                 page_rectangles.append((prefix, valid_rect))
@@ -743,8 +961,12 @@ def validate_storyboard(
                 for text_index, text_value in enumerate(text_items):
                     text_prefix = f"{prefix}.text[{text_index}]"
                     total_words += _validate_text_item(
-                        text_value, set(panel_characters), known_characters,
-                        issues, path, text_prefix,
+                        text_value,
+                        set(panel_characters),
+                        known_characters,
+                        issues,
+                        path,
+                        text_prefix,
                     )
                     if isinstance(text_value, dict) and isinstance(text_value.get("id"), str):
                         all_text_ids.append(text_value["id"])
@@ -752,7 +974,7 @@ def validate_storyboard(
                     _add(issues, path, f"{prefix}.text", "panel text exceeds 45 total words")
                 _validate_panel_attribution(text_items, issues, path, prefix)
         for first_index, (first_prefix, first) in enumerate(page_rectangles):
-            for second_prefix, second in page_rectangles[first_index + 1:]:
+            for second_prefix, second in page_rectangles[first_index + 1 :]:
                 if rectangles_overlap(first, second):
                     _add(issues, path, f"{first_prefix}.rect", f"overlaps {second_prefix}.rect")
     if total_panels > 12:
@@ -770,8 +992,14 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
     path = f"qa/panels/{panel_name}.json"
     issues: list[ValidationIssue] = []
     required_fields = {
-        "schema_version", "kind", "subject_id", "bindings", "checks",
-        "review", "decision", "unresolved_warnings",
+        "schema_version",
+        "kind",
+        "subject_id",
+        "bindings",
+        "checks",
+        "review",
+        "decision",
+        "unresolved_warnings",
     }
     fields = required_fields | {"override_reason"}
     root = _object(data, fields, required_fields, issues, path, "")
@@ -786,9 +1014,16 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
         _add(issues, path, "subject_id", "must match pNN-NN")
 
     binding_fields = {
-        "raw_path", "raw_sha256", "raw_width", "raw_height",
-        "clean_path", "clean_sha256", "clean_width", "clean_height",
-        "normalization_path", "normalization_sha256",
+        "raw_path",
+        "raw_sha256",
+        "raw_width",
+        "raw_height",
+        "clean_path",
+        "clean_sha256",
+        "clean_width",
+        "clean_height",
+        "normalization_path",
+        "normalization_sha256",
     }
     bindings = _object(
         root.get("bindings"), binding_fields, binding_fields, issues, path, "bindings"
@@ -864,7 +1099,11 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
     if has_warning and decision not in {"accept-warning", "regenerate"}:
         _add(issues, path, "decision", "warnings require accept-warning or regenerate")
     unresolved = _string_list(
-        root.get("unresolved_warnings"), issues, path, "unresolved_warnings"
+        root.get("unresolved_warnings"),
+        issues,
+        path,
+        "unresolved_warnings",
+        entry_max_chars=MAX_WARNING_CHARS,
     )
     if decision == "accept-warning" and not unresolved:
         _add(issues, path, "unresolved_warnings", "accepted warnings must be recorded")
@@ -872,7 +1111,13 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
         _add(issues, path, "unresolved_warnings", "accepted record cannot have warnings")
     override_reason = root.get("override_reason")
     if "override_reason" in root:
-        _nonempty_string(override_reason, issues, path, "override_reason")
+        _narrative_field(
+            override_reason,
+            issues,
+            path,
+            "override_reason",
+            max_chars=MAX_OVERRIDE_REASON_CHARS,
+        )
         if decision != "accept-warning":
             _add(issues, path, "override_reason", "is allowed only for accept-warning")
         has_failed_warning = isinstance(checks, list) and any(
@@ -906,9 +1151,19 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
     path = f"qa/panels/{panel_name}.json"
     issues: list[ValidationIssue] = []
     fields = {
-        "schema_version", "panel_id", "source_prompt_path", "raw_path", "clean_path",
-        "raw_sha256", "dimensions", "attempts", "generation", "checks",
-        "decision", "retry_reason", "unresolved_warnings",
+        "schema_version",
+        "panel_id",
+        "source_prompt_path",
+        "raw_path",
+        "clean_path",
+        "raw_sha256",
+        "dimensions",
+        "attempts",
+        "generation",
+        "checks",
+        "decision",
+        "retry_reason",
+        "unresolved_warnings",
     }
     root = _object(
         data,
@@ -922,35 +1177,48 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
         return _sorted(issues)
     if root.get("schema_version") != "1.0":
         _add(issues, path, "schema_version", "must equal 1.0")
-    if not isinstance(root.get("panel_id"), str) or PANEL_ID_PATTERN.fullmatch(root["panel_id"]) is None:
+    if (
+        not isinstance(root.get("panel_id"), str)
+        or PANEL_ID_PATTERN.fullmatch(root["panel_id"]) is None
+    ):
         _add(issues, path, "panel_id", "must match pNN-NN")
     for field in ("source_prompt_path", "raw_path", "clean_path"):
         _relative_path(root.get(field), issues, path, field, nullable=True)
     _sha256(root.get("raw_sha256"), issues, path, "raw_sha256", nullable=True)
-    dimensions = _object(root.get("dimensions"), {"width", "height"}, {"width", "height"}, issues, path, "dimensions")
+    dimensions = _object(
+        root.get("dimensions"), {"width", "height"}, {"width", "height"}, issues, path, "dimensions"
+    )
     if dimensions is not None:
         _integer(dimensions.get("width"), 0, 100_000, issues, path, "dimensions.width")
         _integer(dimensions.get("height"), 0, 100_000, issues, path, "dimensions.height")
     _integer(root.get("attempts"), 0, 3, issues, path, "attempts")
     generation_fields = {"capability_name", "reference_paths", "completed_at"}
-    generation = _object(root.get("generation"), generation_fields, generation_fields, issues, path, "generation")
+    generation = _object(
+        root.get("generation"), generation_fields, generation_fields, issues, path, "generation"
+    )
     if generation is not None:
         if generation.get("capability_name") is not None:
-            _nonempty_string(generation.get("capability_name"), issues, path, "generation.capability_name")
+            _nonempty_string(
+                generation.get("capability_name"), issues, path, "generation.capability_name"
+            )
         references = generation.get("reference_paths")
         if not isinstance(references, list):
             _add(issues, path, "generation.reference_paths", "must be an array")
         else:
             for index, reference in enumerate(references):
                 _relative_path(reference, issues, path, f"generation.reference_paths[{index}]")
-        _timestamp(generation.get("completed_at"), issues, path, "generation.completed_at", nullable=True)
+        _timestamp(
+            generation.get("completed_at"), issues, path, "generation.completed_at", nullable=True
+        )
     checks = root.get("checks")
     if not isinstance(checks, list):
         _add(issues, path, "checks", "must be an array")
     else:
         actual_ids = [check.get("id") if isinstance(check, dict) else None for check in checks]
         if tuple(actual_ids) != PANEL_CHECK_IDS:
-            _add(issues, path, "checks", "must contain the seven required checks in normative order")
+            _add(
+                issues, path, "checks", "must contain the seven required checks in normative order"
+            )
         check_fields = {"id", "result", "severity", "evidence"}
         for index, value in enumerate(checks):
             prefix = f"checks[{index}]"
@@ -982,7 +1250,9 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
         for check in checks
     )
     if has_warning and decision not in {"accept_with_warnings", "regenerate"}:
-        _add(issues, path, "decision", "warning checks require accept_with_warnings or regeneration")
+        _add(
+            issues, path, "decision", "warning checks require accept_with_warnings or regeneration"
+        )
     retry_reason = root.get("retry_reason")
     if decision == "regenerate":
         _nonempty_string(retry_reason, issues, path, "retry_reason")
@@ -990,16 +1260,32 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
         _add(issues, path, "retry_reason", "must be null unless regenerating")
     failure_category = root.get("failure_category")
     if failure_category is not None and (
-        not isinstance(failure_category, str)
-        or CATEGORY.fullmatch(failure_category) is None
+        not isinstance(failure_category, str) or CATEGORY.fullmatch(failure_category) is None
     ):
         _add(issues, path, "failure_category", "must be a sanitized category string or null")
     override_reason = root.get("override_reason")
     if "override_reason" in root:
-        _nonempty_string(override_reason, issues, path, "override_reason")
-    unresolved = _string_list(root.get("unresolved_warnings"), issues, path, "unresolved_warnings")
+        _narrative_field(
+            override_reason,
+            issues,
+            path,
+            "override_reason",
+            max_chars=MAX_OVERRIDE_REASON_CHARS,
+        )
+    unresolved = _string_list(
+        root.get("unresolved_warnings"),
+        issues,
+        path,
+        "unresolved_warnings",
+        entry_max_chars=MAX_WARNING_CHARS,
+    )
     if decision == "accept_with_warnings" and (not has_warning or not unresolved):
-        _add(issues, path, "unresolved_warnings", "accepted warnings require check evidence and user-visible impact")
+        _add(
+            issues,
+            path,
+            "unresolved_warnings",
+            "accepted warnings require check evidence and user-visible impact",
+        )
     if "override_reason" in root:
         has_overridden_failure = isinstance(checks, list) and any(
             isinstance(check, dict)
@@ -1012,7 +1298,12 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
         if decision != "accept_with_warnings":
             _add(issues, path, "override_reason", "is allowed only for accept_with_warnings")
         if not has_overridden_failure:
-            _add(issues, path, "override_reason", "requires a failed check downgraded to warning severity")
+            _add(
+                issues,
+                path,
+                "override_reason",
+                "requires a failed check downgraded to warning severity",
+            )
         if unresolved is not None and override_reason not in unresolved:
             _add(issues, path, "override_reason", "must also appear in unresolved_warnings")
     attempts = root.get("attempts")
@@ -1058,20 +1349,27 @@ def _read_canonical_json(
         return None
     try:
         path = contained_project_path(project_dir, relative_path, must_exist=True)
-        raw = path.read_bytes()
-        data = json.loads(raw.decode("utf-8"))
+        raw = read_bytes_nofollow(path, max_bytes=MAX_JSON_BYTES)
+        data = loads_bounded_json(raw, source=relative_path)
         if not isinstance(data, dict):
             raise ValueError("expected a JSON object")
     except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
         _add(issues, relative_path, "file", f"cannot read JSON: {type(error).__name__}: {error}")
         return None
-    canonical = (json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    canonical = (json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
     # Normalize CRLF so the comparison passes on Windows checkouts where
     # Git may have converted tracked JSON files (ponytail: keep the
     # canonical artifact LF-only; tolerate CRLF as input).
     raw_normalized = raw.replace(b"\r\n", b"\n")
     if raw_normalized != canonical:
-        _add(issues, relative_path, "file", "JSON must use canonical two-space sorted UTF-8 formatting")
+        _add(
+            issues,
+            relative_path,
+            "file",
+            "JSON must use canonical two-space sorted UTF-8 formatting",
+        )
     return data
 
 
@@ -1099,9 +1397,16 @@ def validate_panel_provenance(
         return tuple(_sorted(issues))
 
     required = {
-        "raw_path", "raw_sha256", "raw_width", "raw_height",
-        "clean_path", "clean_sha256", "clean_width", "clean_height",
-        "normalization_path", "normalization_sha256",
+        "raw_path",
+        "raw_sha256",
+        "raw_width",
+        "raw_height",
+        "clean_path",
+        "clean_sha256",
+        "clean_width",
+        "clean_height",
+        "normalization_path",
+        "normalization_sha256",
     }
     for field in sorted(required - set(bindings)):
         stale(field, "required provenance binding is missing")
@@ -1151,8 +1456,11 @@ def validate_panel_provenance(
                     image.load()
                     actual_size = image.size
         except (
-            OSError, SyntaxError, UnidentifiedImageError,
-            Image.DecompressionBombError, Image.DecompressionBombWarning,
+            OSError,
+            SyntaxError,
+            UnidentifiedImageError,
+            Image.DecompressionBombError,
+            Image.DecompressionBombWarning,
         ):
             stale(f"{prefix}_path", "bound raster is unreadable or exceeds the decode limit")
             continue
@@ -1164,8 +1472,11 @@ def validate_panel_provenance(
     normalization_path = resolved.get("normalization")
     if normalization_path is not None:
         try:
-            normalization = json.loads(normalization_path.read_text("utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
+            normalization = loads_bounded_json(
+                read_bytes_nofollow(normalization_path, max_bytes=MAX_JSON_BYTES),
+                source="normalization record",
+            )
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
             stale("normalization_path", "normalization record is unreadable")
         else:
             if not isinstance(normalization, dict):
@@ -1220,7 +1531,10 @@ def _validate_placement_attribution(
             stale("items.attribution", "only dialogue carries speaker attribution")
         return
     if not isinstance(attribution, dict) or set(attribution) != {
-        "authored_speaker", "resolution", "speaker", "speaker_anchor",
+        "authored_speaker",
+        "resolution",
+        "speaker",
+        "speaker_anchor",
     }:
         stale("items.attribution", "dialogue attribution record is missing or malformed")
         return
@@ -1258,10 +1572,11 @@ def sfx_advisories(project_dir: Path) -> list[str]:
     that produced that state are already being reported.
     """
     try:
-        path = contained_project_path(
-            Path(project_dir), "plan/storyboard.json", must_exist=True
+        path = contained_project_path(Path(project_dir), "plan/storyboard.json", must_exist=True)
+        storyboard = loads_bounded_json(
+            read_bytes_nofollow(path, max_bytes=MAX_JSON_BYTES),
+            source="plan/storyboard.json",
         )
-        storyboard = json.loads(path.read_text("utf-8"))
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         return []
     if not isinstance(storyboard, dict) or not isinstance(storyboard.get("pages"), list):
@@ -1282,15 +1597,14 @@ def sfx_advisories(project_dir: Path) -> list[str]:
     return lines
 
 
-def _storyboard_panel(
-    project_dir: Path, panel_id: str
-) -> dict[str, object] | None:
+def _storyboard_panel(project_dir: Path, panel_id: str) -> dict[str, object] | None:
     """Return one storyboard panel, or ``None`` when it cannot be resolved."""
     try:
-        path = contained_project_path(
-            project_dir, "plan/storyboard.json", must_exist=True
+        path = contained_project_path(project_dir, "plan/storyboard.json", must_exist=True)
+        storyboard = loads_bounded_json(
+            read_bytes_nofollow(path, max_bytes=MAX_JSON_BYTES),
+            source="plan/storyboard.json",
         )
-        storyboard = json.loads(path.read_text("utf-8"))
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         return None
     if not isinstance(storyboard, dict) or not isinstance(storyboard.get("pages"), list):
@@ -1351,10 +1665,11 @@ def validate_lettering_provenance(
         )
 
     try:
-        geometry_path = contained_project_path(
-            project_dir, geometry_relative, must_exist=True
+        geometry_path = contained_project_path(project_dir, geometry_relative, must_exist=True)
+        geometry = loads_bounded_json(
+            read_bytes_nofollow(geometry_path, max_bytes=MAX_JSON_BYTES),
+            source="lettering geometry",
         )
-        geometry = json.loads(geometry_path.read_text("utf-8"))
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         stale("geometry.path", "lettering geometry is missing or unreadable")
         return tuple(_sorted(issues))
@@ -1368,18 +1683,18 @@ def validate_lettering_provenance(
         # font policy, so an older record is re-lettered rather than migrated.
         stale(
             "schema_version",
-            "geometry predates speaker attribution or SFX provenance and must be "
-            "lettered again",
+            "geometry predates speaker attribution or SFX provenance and must be lettered again",
         )
     if geometry.get("geometry_sha256") != lettering_geometry_hash(geometry):
         stale("geometry_sha256", "canonical geometry hash does not match")
     _validate_sfx_provenance(project_dir, panel_id, geometry, stale)
 
     try:
-        typography_path = contained_project_path(
-            project_dir, typography_relative, must_exist=True
+        typography_path = contained_project_path(project_dir, typography_relative, must_exist=True)
+        typography = loads_bounded_json(
+            read_bytes_nofollow(typography_path, max_bytes=MAX_JSON_BYTES),
+            source="typography preflight",
         )
-        typography = json.loads(typography_path.read_text("utf-8"))
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         stale("typography.path", "typography preflight is missing or unreadable")
         typography = None
@@ -1463,11 +1778,7 @@ def validate_lettering_provenance(
                     break
                 value = int(codepoint[2:], 16)
                 character = glyph.get("character")
-                if (
-                    not isinstance(character, str)
-                    or len(character) != 1
-                    or ord(character) != value
-                ):
+                if not isinstance(character, str) or len(character) != 1 or ord(character) != value:
                     stale(
                         "glyphs.character",
                         "glyph character does not match its recorded codepoint",
@@ -1510,9 +1821,7 @@ def validate_lettering_provenance(
             stale(f"bindings.{digest_field}", "bound artifact hash does not match")
 
     if isinstance(typography, dict):
-        typography_hash = hashlib.sha256(
-            canonical_artifact_bytes(typography)
-        ).hexdigest()
+        typography_hash = hashlib.sha256(canonical_artifact_bytes(typography)).hexdigest()
         if bindings.get("typography_sha256") != typography_hash:
             stale("typography.path", "typography record hash does not match")
         if bindings.get("font_policy_sha256") != typography.get("font_policy_sha256"):
@@ -1554,8 +1863,7 @@ def validate_lettering_provenance(
             if (
                 not isinstance(box, dict)
                 or any(
-                    not isinstance(box.get(key), int)
-                    or isinstance(box.get(key), bool)
+                    not isinstance(box.get(key), int) or isinstance(box.get(key), bool)
                     for key in ("x", "y", "width", "height")
                 )
                 or box.get("width", 0) <= 0
@@ -1566,8 +1874,16 @@ def validate_lettering_provenance(
             tail = entry.get("tail")
             if tail is not None:
                 expected_tail_fields = {
-                    "attachment", "base", "control", "length", "policy_version",
-                    "source_gap", "speaker_anchor", "tip", "voice_source", "width",
+                    "attachment",
+                    "base",
+                    "control",
+                    "length",
+                    "policy_version",
+                    "source_gap",
+                    "speaker_anchor",
+                    "tip",
+                    "voice_source",
+                    "width",
                 }
 
                 def finite_point(value: object) -> bool:
@@ -1683,10 +1999,21 @@ def _validate_raster(
                 if expected_ratio is not None and height > 0:
                     actual_ratio = width / height
                     if abs(actual_ratio - expected_ratio) / expected_ratio > 0.02:
-                        _add(issues, issue_path, field, "image aspect ratio differs from storyboard by more than 2%")
+                        _add(
+                            issues,
+                            issue_path,
+                            field,
+                            "image aspect ratio differs from storyboard by more than 2%",
+                        )
                 image.load()
                 return width, height
-    except (OSError, SyntaxError, UnidentifiedImageError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
+    except (
+        OSError,
+        SyntaxError,
+        UnidentifiedImageError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as error:
         _add(issues, issue_path, field, f"image is unreadable: {type(error).__name__}")
         return None
 
@@ -1741,12 +2068,16 @@ def validate_pdf_verification(
     try:
         path = contained_project_path(project_dir, relative)
     except (OSError, ValueError):
-        return [ValidationIssue(relative, "pdf-verification-stale", "verification path escapes the project boundary")]
+        return [
+            ValidationIssue(
+                relative, "pdf-verification-stale", "verification path escapes the project boundary"
+            )
+        ]
     stale_reasons: list[str] = []
     try:
-        payload = path.read_bytes()
-        record = json.loads(payload.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        payload = read_bytes_nofollow(path, max_bytes=MAX_JSON_BYTES)
+        record = loads_bounded_json(payload, source="pdf-verification.json")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
         record = None
         stale_reasons.append("verification record is missing or unreadable")
 
@@ -1756,10 +2087,7 @@ def validate_pdf_verification(
         if record.get("kind") != "pdf-verification":
             stale_reasons.append("record kind is invalid")
         verified_at = record.get("verified_at")
-        if (
-            not isinstance(verified_at, str)
-            or TIMESTAMP_PATTERN.fullmatch(verified_at) is None
-        ):
+        if not isinstance(verified_at, str) or TIMESTAMP_PATTERN.fullmatch(verified_at) is None:
             stale_reasons.append("verification timestamp is not ISO 8601 UTC")
         expected_pdf = f"exports/{project_id}.pdf"
         if record.get("pdf_path") != expected_pdf:
@@ -1812,19 +2140,19 @@ def validate_pdf_verification(
                         or not current_path.is_file()
                         or sha256_file(current_path) != expected_hash
                     ):
-                        stale_reasons.append(
-                            f"page {page_number} {binding} binding is stale"
-                        )
+                        stale_reasons.append(f"page {page_number} {binding} binding is stale")
     elif not stale_reasons:
         stale_reasons.append("verification record must be an object")
 
     if not stale_reasons:
         return []
-    return [ValidationIssue(
-        relative,
-        "pdf-verification-stale",
-        "; ".join(dict.fromkeys(stale_reasons)),
-    )]
+    return [
+        ValidationIssue(
+            relative,
+            "pdf-verification-stale",
+            "; ".join(dict.fromkeys(stale_reasons)),
+        )
+    ]
 
 
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
@@ -1852,7 +2180,8 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
         )
         if story is not None and characters is not None:
             known = {
-                character.get("id") for character in characters.get("characters", [])
+                character.get("id")
+                for character in characters.get("characters", [])
                 if isinstance(character, dict)
             }
             for scene_index, scene in enumerate(story.get("scenes", [])):
@@ -1881,9 +2210,19 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                     if isinstance(page, dict) and isinstance(page.get("panels"), list)
                 )
                 if settings.get("page_count") != actual_pages:
-                    _add(issues, "project.json", "settings.page_count", "must match the storyboard page count")
+                    _add(
+                        issues,
+                        "project.json",
+                        "settings.page_count",
+                        "must match the storyboard page count",
+                    )
                 if settings.get("panel_count") != actual_panels:
-                    _add(issues, "project.json", "settings.panel_count", "must match the storyboard panel count")
+                    _add(
+                        issues,
+                        "project.json",
+                        "settings.panel_count",
+                        "must match the storyboard panel count",
+                    )
             panel_map = _storyboard_panel_map(storyboard)
             manifest_panels = manifest.get("panels", [])
             if isinstance(manifest_panels, list) and manifest_panels != list(panel_map):
@@ -1933,15 +2272,21 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                     for check in checks
                 )
                 hard_failure = record.get("failure_category") in {
-                    "corrupt", "corrupt_image", "safety", "safety_refusal",
+                    "corrupt",
+                    "corrupt_image",
+                    "safety",
+                    "safety_refusal",
                 }
                 if record.get("decision") == "regenerate" or has_error_failure or hard_failure:
                     reason = record.get("retry_reason")
-                    panel_errors.append((
-                        record_relative,
-                        reason if isinstance(reason, str) and reason.strip()
-                        else "panel has an unresolved error",
-                    ))
+                    panel_errors.append(
+                        (
+                            record_relative,
+                            reason
+                            if isinstance(reason, str) and reason.strip()
+                            else "panel has an unresolved error",
+                        )
+                    )
                 unresolved = record.get("unresolved_warnings")
                 if isinstance(unresolved, list):
                     panel_warnings.extend(
@@ -1955,25 +2300,37 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                 _add(issues, record_relative, id_field, "must match its storyboard panel")
             rect = panel.get("rect")
             expected_ratio = None
-            if isinstance(rect, dict) and isinstance(rect.get("width"), int) and isinstance(rect.get("height"), int) and rect["height"] > 0:
+            if (
+                isinstance(rect, dict)
+                and isinstance(rect.get("width"), int)
+                and isinstance(rect.get("height"), int)
+                and rect["height"] > 0
+            ):
                 expected_ratio = rect["width"] / rect["height"]
             raw_path = bindings.get("raw_path") if is_quality_v2 else record.get("raw_path")
             clean_path = bindings.get("clean_path") if is_quality_v2 else record.get("clean_path")
             raw_size = _validate_raster(
-                project_dir, raw_path, record_relative,
+                project_dir,
+                raw_path,
+                record_relative,
                 "bindings.raw_path" if is_quality_v2 else "raw_path",
-                issues, expected_ratio,
+                issues,
+                expected_ratio,
             )
             _validate_raster(
-                project_dir, clean_path, record_relative,
+                project_dir,
+                clean_path,
+                record_relative,
                 "bindings.clean_path" if is_quality_v2 else "clean_path",
-                issues, expected_ratio,
+                issues,
+                expected_ratio,
             )
             if raw_size is not None and not is_quality_v2:
                 dimensions = record.get("dimensions")
-                if isinstance(dimensions, dict) and (
-                    dimensions.get("width"), dimensions.get("height")
-                ) != raw_size:
+                if (
+                    isinstance(dimensions, dict)
+                    and (dimensions.get("width"), dimensions.get("height")) != raw_size
+                ):
                     _add(issues, record_relative, "dimensions", "must match the raw image")
             raw_hash = bindings.get("raw_sha256") if is_quality_v2 else record.get("raw_sha256")
             if isinstance(raw_path, str) and isinstance(raw_hash, str):
@@ -1983,12 +2340,15 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                     pass
                 else:
                     if image_path.is_file() and SHA256_PATTERN.fullmatch(raw_hash):
-                        image_path = contained_project_path(
-                            project_dir, raw_path, must_exist=True
-                        )
+                        image_path = contained_project_path(project_dir, raw_path, must_exist=True)
                         if sha256_file(image_path) != raw_hash:
                             hash_field = "bindings.raw_sha256" if is_quality_v2 else "raw_sha256"
-                            _add(issues, record_relative, hash_field, "hash does not match the raw image")
+                            _add(
+                                issues,
+                                record_relative,
+                                hash_field,
+                                "hash does not match the raw image",
+                            )
             clean_hash = bindings.get("clean_sha256") if is_quality_v2 else None
             if is_quality_v2 and isinstance(clean_path, str) and isinstance(clean_hash, str):
                 try:
@@ -2012,13 +2372,25 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                 try:
                     prompt_file = _contained_project_path(project_dir, prompt_path)
                 except ValueError:
-                    _add(issues, record_relative, "source_prompt_path", "referenced prompt path escapes the project boundary")
+                    _add(
+                        issues,
+                        record_relative,
+                        "source_prompt_path",
+                        "referenced prompt path escapes the project boundary",
+                    )
                 else:
                     if not prompt_file.is_file():
-                        _add(issues, record_relative, "source_prompt_path", "referenced prompt is missing")
+                        _add(
+                            issues,
+                            record_relative,
+                            "source_prompt_path",
+                            "referenced prompt is missing",
+                        )
             generation = None if is_quality_v2 else record.get("generation")
             if isinstance(generation, dict):
-                for reference_index, reference_path in enumerate(generation.get("reference_paths", [])):
+                for reference_index, reference_path in enumerate(
+                    generation.get("reference_paths", [])
+                ):
                     _validate_raster(
                         project_dir,
                         reference_path,
@@ -2027,22 +2399,45 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                         issues,
                     )
         if manifest is not None:
-            source_path = manifest.get("input", {}).get("source_path") if isinstance(manifest.get("input"), dict) else None
-            source_hash = manifest.get("input", {}).get("source_sha256") if isinstance(manifest.get("input"), dict) else None
+            source_path = (
+                manifest.get("input", {}).get("source_path")
+                if isinstance(manifest.get("input"), dict)
+                else None
+            )
+            source_hash = (
+                manifest.get("input", {}).get("source_sha256")
+                if isinstance(manifest.get("input"), dict)
+                else None
+            )
             if isinstance(source_path, str) and isinstance(source_hash, str):
                 try:
                     source_file = _contained_project_path(project_dir, source_path)
                 except ValueError:
-                    _add(issues, "project.json", "input.source_path", "referenced source path escapes the project boundary")
+                    _add(
+                        issues,
+                        "project.json",
+                        "input.source_path",
+                        "referenced source path escapes the project boundary",
+                    )
                 else:
                     if not source_file.is_file():
-                        _add(issues, "project.json", "input.source_path", "referenced source is missing")
+                        _add(
+                            issues,
+                            "project.json",
+                            "input.source_path",
+                            "referenced source is missing",
+                        )
                     elif SHA256_PATTERN.fullmatch(source_hash):
                         source_file = contained_project_path(
                             project_dir, source_path, must_exist=True
                         )
                         if sha256_file(source_file) != source_hash:
-                            _add(issues, "project.json", "input.source_sha256", "hash does not match the source")
+                            _add(
+                                issues,
+                                "project.json",
+                                "input.source_sha256",
+                                "hash does not match the source",
+                            )
 
     if stage in {"all", "final", "export-ready"} and manifest is not None:
         for record_path, reason in panel_errors:
@@ -2053,11 +2448,11 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                 f"unresolved panel error blocks final validation: {reason}",
             )
         manifest_warnings = manifest.get("warnings")
-        recorded_warnings = {
-            warning
-            for warning in manifest_warnings
-            if isinstance(warning, str)
-        } if isinstance(manifest_warnings, list) else set()
+        recorded_warnings = (
+            {warning for warning in manifest_warnings if isinstance(warning, str)}
+            if isinstance(manifest_warnings, list)
+            else set()
+        )
         for _, warning in panel_warnings:
             if warning not in recorded_warnings:
                 _add(
@@ -2092,16 +2487,31 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                     try:
                         artifact = _contained_project_path(project_dir, relative_path)
                     except ValueError:
-                        _add(issues, "project.json", f"artifacts.{name}.path", "referenced artifact path escapes the project boundary")
+                        _add(
+                            issues,
+                            "project.json",
+                            f"artifacts.{name}.path",
+                            "referenced artifact path escapes the project boundary",
+                        )
                     else:
                         if not artifact.is_file():
-                            _add(issues, "project.json", f"artifacts.{name}.path", "referenced artifact is missing")
+                            _add(
+                                issues,
+                                "project.json",
+                                f"artifacts.{name}.path",
+                                "referenced artifact is missing",
+                            )
                         elif SHA256_PATTERN.fullmatch(expected_hash):
                             artifact = contained_project_path(
                                 project_dir, relative_path, must_exist=True
                             )
                             if sha256_file(artifact) != expected_hash:
-                                _add(issues, "project.json", f"artifacts.{name}.sha256", "hash does not match the artifact")
+                                _add(
+                                    issues,
+                                    "project.json",
+                                    f"artifacts.{name}.sha256",
+                                    "hash does not match the artifact",
+                                )
 
     # Fail-closed artifact enumeration for terminal / export-ready stages.
     if stage in {"all", "final", "export-ready"} and manifest is not None:
@@ -2121,7 +2531,11 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
         panels = panels[:MAX_PANELS]
 
         _validate_required_artifacts(
-            project_dir, manifest, page_count, panels, issues,
+            project_dir,
+            manifest,
+            page_count,
+            panels,
+            issues,
             require_terminal=(stage != "export-ready"),
         )
 
@@ -2139,8 +2553,7 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
             # from failing the set lookup.
             is_current_page_qa = page_qa_version == CURRENT_PAGE_QA_SCHEMA_VERSION
             is_migratable_page_qa = (
-                isinstance(page_qa_version, str)
-                and page_qa_version in PAGE_QA_MIGRATION_SOURCES
+                isinstance(page_qa_version, str) and page_qa_version in PAGE_QA_MIGRATION_SOURCES
             )
             is_legacy_flat = page_qa_version == LEGACY_PAGE_QA_SCHEMA_VERSION
             if page_qa is not None:
@@ -2164,11 +2577,16 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                         "quality-migration-required: schema 1.0 page QA must be migrated",
                     )
                     if page_qa.get("page") != page_number:
-                        _add(issues, page_qa_relative, "page",
-                             "must match the canonical page number")
+                        _add(
+                            issues, page_qa_relative, "page", "must match the canonical page number"
+                        )
                     if page_qa.get("page_path") != expected_page:
-                        _add(issues, page_qa_relative, "page_path",
-                             "must match the canonical page path")
+                        _add(
+                            issues,
+                            page_qa_relative,
+                            "page_path",
+                            "must match the canonical page path",
+                        )
                 else:
                     _add(
                         issues,
@@ -2184,8 +2602,12 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                 page_hash = sha256_file(page_path)
                 if isinstance(page_qa.get("page_sha256"), str):
                     if page_qa["page_sha256"] != page_hash:
-                        _add(issues, page_qa_relative, "page_sha256",
-                             "hash does not match the page image")
+                        _add(
+                            issues,
+                            page_qa_relative,
+                            "page_sha256",
+                            "hash does not match the page image",
+                        )
 
         # Lettered panels and their current typography/geometry provenance.
         for panel_id in panels:
@@ -2193,11 +2615,15 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
             try:
                 lettered = contained_project_path(project_dir, lettered_relative)
             except (OSError, ValueError):
-                _add(issues, lettered_relative, "", "lettered panel path escapes the project boundary")
+                _add(
+                    issues,
+                    lettered_relative,
+                    "",
+                    "lettered panel path escapes the project boundary",
+                )
                 continue
             if not lettered.is_file():
-                _add(issues, f"panels/{panel_id}/lettered.png", "",
-                     "lettered panel is missing")
+                _add(issues, f"panels/{panel_id}/lettered.png", "", "lettered panel is missing")
             issues.extend(validate_lettering_provenance(project_dir, panel_id))
 
         # export-ready does not require report, PDF, or export cache.
@@ -2212,21 +2638,22 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                 try:
                     pdf_path = contained_project_path(project_dir, pdf_relative)
                 except (OSError, ValueError):
-                    _add(issues, "project.json", "project_id", "exported PDF path escapes the project boundary")
+                    _add(
+                        issues,
+                        "project.json",
+                        "project_id",
+                        "exported PDF path escapes the project boundary",
+                    )
                     pdf_path = None
                 if pdf_path is not None:
                     if not pdf_path.is_file():
-                        _add(issues, f"exports/{project_id}.pdf", "",
-                             "exported PDF is missing")
-                    issues.extend(
-                        validate_pdf_verification(project_dir, project_id, page_count)
-                    )
+                        _add(issues, f"exports/{project_id}.pdf", "", "exported PDF is missing")
+                    issues.extend(validate_pdf_verification(project_dir, project_id, page_count))
 
         # Composition cache required.
         comp_cache = project_dir / "cache/composition.json"
         if not comp_cache.is_file():
-            _add(issues, "cache/composition.json", "",
-                 "composition stage cache is missing")
+            _add(issues, "cache/composition.json", "", "composition stage cache is missing")
 
     return _sorted(issues)
 
@@ -2244,14 +2671,21 @@ def _validate_required_artifacts(
     if not isinstance(artifacts, dict):
         artifacts = {}
     required = {
-        "character_bible", "story_plan", "storyboard", "composition_cache",
+        "character_bible",
+        "story_plan",
+        "storyboard",
+        "composition_cache",
     }
     if require_terminal:
         required.update({"qa_report", "pdf", "pdf_verification"})
     for name in sorted(required):
         if name not in artifacts:
-            _add(issues, "project.json", f"artifacts.{name}",
-                 "required artifact descriptor is missing")
+            _add(
+                issues,
+                "project.json",
+                f"artifacts.{name}",
+                "required artifact descriptor is missing",
+            )
 
     expected_paths = {
         "character_bible": "plan/character-bible.json",
@@ -2260,18 +2694,19 @@ def _validate_required_artifacts(
         "composition_cache": "cache/composition.json",
     }
     if require_terminal:
-        expected_paths.update({
-            "qa_report": "qa/report.md",
-            "pdf_verification": "exports/pdf-verification.json",
-        })
+        expected_paths.update(
+            {
+                "qa_report": "qa/report.md",
+                "pdf_verification": "exports/pdf-verification.json",
+            }
+        )
         project_id = manifest.get("project_id")
         if isinstance(project_id, str) and ID_PATTERN.fullmatch(project_id):
             expected_paths["pdf"] = f"exports/{project_id}.pdf"
     for name, expected in expected_paths.items():
         descriptor = artifacts.get(name)
         if isinstance(descriptor, dict) and descriptor.get("path") != expected:
-            _add(issues, "project.json", f"artifacts.{name}.path",
-                 f"must equal {expected}")
+            _add(issues, "project.json", f"artifacts.{name}.path", f"must equal {expected}")
 
 
 class _ValidationArgumentParser(argparse.ArgumentParser):
@@ -2300,15 +2735,19 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if issues:
         if arguments.as_json:
-            print(json.dumps(
-                {"issues": [
-                    {"path": issue.path, "field": issue.field, "message": issue.message}
-                    for issue in issues
-                ]},
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            ))
+            print(
+                json.dumps(
+                    {
+                        "issues": [
+                            {"path": issue.path, "field": issue.field, "message": issue.message}
+                            for issue in issues
+                        ]
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
         else:
             for issue in issues:
                 print(f"{issue.path}:{issue.field}: {issue.message}")
