@@ -67,8 +67,8 @@ def checksum_for(checksums: Path, archive: Path) -> str:
 
 
 def verify_payload_checksums(manifest: Path, payloads: list[Path]) -> int:
-    """Verify payloads against a global manifest that may repeat basenames."""
-    records: dict[str, set[str]] = {}
+    """Verify payloads against a global manifest with unique asset names."""
+    records: dict[str, str] = {}
     for line in manifest.read_text(encoding="utf-8").splitlines():
         parts = line.split("  ", 1)
         if len(parts) != 2:
@@ -76,14 +76,16 @@ def verify_payload_checksums(manifest: Path, payloads: list[Path]) -> int:
         digest, name = parts[0].strip().lower(), Path(parts[1]).name
         if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
             raise RuntimeError("invalid SHA256SUMS entry")
-        records.setdefault(name, set()).add(digest)
+        if name in records:
+            raise RuntimeError(f"duplicate SHA256SUMS entry: {name}")
+        records[name] = digest
     required_names = {payload.name for payload in payloads}
     if not required_names <= records.keys():
         missing = ", ".join(sorted(required_names - records.keys()))
         raise RuntimeError(f"SHA256SUMS payload coverage mismatch: missing {missing}")
     for payload in payloads:
         actual = hashlib.sha256(payload.read_bytes()).hexdigest()
-        if actual not in records[payload.name]:
+        if actual != records[payload.name]:
             raise RuntimeError(f"SHA256 mismatch for {payload.name}")
     return len(payloads)
 
