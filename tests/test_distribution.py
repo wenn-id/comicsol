@@ -249,6 +249,45 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("python:3.11.15-slim@sha256:", dockerfile)
         self.assertIn("requirements/locks/runtime-linux-x86_64.txt", dockerfile)
 
+    def test_release_native_matrix_pins_python_available_on_every_runner(self):
+        """Each native leg must pin a CPython that actually ships for its runner.
+
+        CPython 3.11 is in security-only maintenance, so actions/python-versions
+        stops publishing macOS and Windows binaries after 3.11.9 and continues
+        with Linux-only builds. One patch pin shared by all three legs therefore
+        fails setup-python on macOS and Windows, which skips the publish job and
+        produces a tag with no release.
+        """
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        native = workflow.split("\n  native:\n", 1)[1].split("\n  container:\n", 1)[0]
+
+        self.assertIn("python-version: ${{ matrix.python }}", native)
+        self.assertNotRegex(
+            native,
+            r"python-version:[ \t]*'?\d+\.\d+\.\d+",
+            "native legs must resolve the interpreter per platform, not share one patch pin",
+        )
+
+        pins = dict(
+            re.findall(
+                r"-[ \t]*os:[^\n]*\n[ \t]*platform:[ \t]*(\w+)[ \t]*\n[ \t]*python:[ \t]*'([^']+)'",
+                native,
+            )
+        )
+        self.assertEqual({"linux", "macos", "windows"}, set(pins), pins)
+
+        # Newest 3.11 patch release carrying macOS and Windows binaries in
+        # actions/python-versions versions-manifest.json.
+        last_cross_platform_311 = (3, 11, 9)
+        for platform in ("macos", "windows"):
+            pinned = tuple(int(part) for part in pins[platform].split("."))
+            self.assertLessEqual(
+                pinned,
+                last_cross_platform_311,
+                f"{platform} pins Python {pins[platform]}, which ships no {platform} binary",
+            )
+
         self.assertNotIn(f"refs/tags/v{RELEASE_VERSION}", workflow)
         for runner in ("ubuntu-latest", "macos-26-intel", "windows-latest"):
             self.assertIn(runner, workflow)

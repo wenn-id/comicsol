@@ -81,14 +81,23 @@ jobs:
     needs: prepare
     strategy:
       fail-fast: false
+      # CPython 3.11 is in security-only maintenance, so actions/python-versions
+      # publishes no macOS or Windows binaries past 3.11.9 -- only Linux builds
+      # continue. Pinning every leg to one patch release therefore breaks the
+      # macOS and Windows legs outright. Linux stays on 3.11.15 to match the
+      # Dockerfile base image; macOS and Windows pin the newest build that exists
+      # for them. Check versions-manifest.json before raising either pin.
       matrix:
         include:
           - os: ubuntu-latest
             platform: linux
+            python: '3.11.15'
           - os: macos-26-intel
             platform: macos
+            python: '3.11.9'
           - os: windows-latest
             platform: windows
+            python: '3.11.9'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -97,7 +106,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
-          python-version: '3.11.15'
+          python-version: ${{ matrix.python }}
       - name: Install locked build environment
         shell: bash
         run: python -m pip install --require-hashes -r requirements/locks/release-${{ matrix.platform }}-x86_64.txt

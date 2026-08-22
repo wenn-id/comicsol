@@ -2,8 +2,20 @@
 
 ## Unreleased
 
-No changes yet. `docs/releases/milestone-delivery.md` records what each milestone delivered
-and which tag carries it.
+`docs/releases/milestone-delivery.md` records what each milestone delivered and which tag
+carries it.
+
+### Fixed
+
+- Restored the macOS and Windows legs of the native release build. All three legs pinned
+  CPython `3.11.15`, but the 3.11 line is in security-only maintenance and
+  `actions/python-versions` publishes no macOS or Windows binary past `3.11.9` — only Linux
+  builds continue. `setup-python` therefore failed outright on both platforms, which skipped
+  `publish` and left the `v2.0.0rc5` tag with no release attached. Each leg now resolves its
+  own interpreter: Linux stays on `3.11.15` to match the Dockerfile base image, while macOS
+  and Windows pin `3.11.9`, the newest build that exists for them. A regression test asserts
+  the native matrix never shares one patch pin again and that neither cross-platform leg
+  outruns the last release carrying its binary.
 
 ## 2.0.0rc5 — unreleased
 
