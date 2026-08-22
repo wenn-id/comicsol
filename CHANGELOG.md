@@ -5,7 +5,11 @@
 No changes yet. `docs/releases/milestone-delivery.md` records what each milestone delivered
 and which tag carries it.
 
-## 2.0.0rc5 — 2026-08-21
+## 2.0.0rc5 — unreleased
+
+Prepared for the `v2.0.0rc5` tag and **not published**. No archive, checksum, SBOM, or
+signature exists until the release workflow runs, and the release qualification gate has not
+been executed. The published prerelease is still `2.0.0rc4`.
 
 Prerelease carrying milestones v2.0 — Stability, v2.1 — Reliability & DX, and v2.2 — Comic
 Quality in full: 28 issues, none of which had shipped before. The v2.0 milestone belongs here

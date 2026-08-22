@@ -219,6 +219,9 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         if released.startswith("No"):
             self.assertIn("Unreleased", sections)
             return sections["Unreleased"]
+        # `Pending — <tag>` names a section prepared for a tag that is not published
+        # yet. The evidence lives there, so it resolves like a release; what must not
+        # happen is the record calling that tag published, which is checked below.
         cited = re.findall(r"\d+\.\d+\.\d+rc\d+", released)
         self.assertTrue(cited, f"{released!r} names no tag")
         matches = [
@@ -377,8 +380,8 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
         # Counted against the current version rather than a literal, so preparing a
         # release cannot leave the timeline a tag behind.
         self.assertIn(
-            __version__,
-            published,
+            f"`{__version__}`",
+            self.record,
             f"the tag table has no row for the current version {__version__}",
         )
         self.assertGreaterEqual(len(published), len(self.DELIVERED))
@@ -417,6 +420,16 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
                     continue
                 cited = set(re.findall(r"\d+\.\d+\.\d+rc\d+", released))
                 self.assertTrue(cited, f"{milestone}: {released!r} names no tag")
+                if released.startswith("Pending"):
+                    # A pending tag must not also be recorded as published; that
+                    # contradiction is what this document was written to prevent.
+                    claimed = sorted(cited & set(published))
+                    self.assertFalse(
+                        claimed,
+                        f"{milestone} is Pending on {claimed} but the tag table "
+                        "records those as published",
+                    )
+                    continue
                 unknown = sorted(cited - set(published))
                 self.assertFalse(unknown, f"{milestone} claims unpublished tags: {unknown}")
                 last_merge = merged[milestone]

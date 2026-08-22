@@ -1,6 +1,10 @@
-# Install Comic Sol v2.0.0rc5
+# Install Comic Sol v2.0.0rc4
 
-Comic Sol `v2.0.0rc5` is a prerelease distributed as native portable archives for Linux, macOS, and Windows, plus a Python wheel/source archive and an OCI image definition. Native archives bundle Python 3.11, Pillow, MCP, fonts, templates, the Skill, and references; no system Python is required after extraction.
+> `v2.0.0rc5` is prepared in the repository but **not yet published**. These instructions name
+> `v2.0.0rc4`, the latest published prerelease, because those are the archives that exist.
+> They are updated to name `v2.0.0rc5` when that tag is published.
+
+Comic Sol `v2.0.0rc4` is a prerelease distributed as native portable archives for Linux, macOS, and Windows, plus a Python wheel/source archive and an OCI image definition. Native archives bundle Python 3.11, Pillow, MCP, fonts, templates, the Skill, and references; no system Python is required after extraction.
 
 > **First time installing Comic Sol?** Start with
 > [`docs/onboarding.md`](onboarding.md) instead. It is one short path from install
@@ -23,10 +27,10 @@ This release uses a keyless Sigstore signature for `SHA256SUMS`; it is not Authe
 Download the matching ZIP and copy `installers/install.sh` from the same release or repository checkout. Read it before execution, then verify and install:
 
 ```bash
-sha256sum comic-sol-2.0.0rc5-linux-x86_64.zip
+sha256sum comic-sol-2.0.0rc4-linux-x86_64.zip
 # Compare the digest with SHA256SUMS.
 sh installers/install.sh \
-  --archive ./comic-sol-2.0.0rc5-linux-x86_64.zip \
+  --archive ./comic-sol-2.0.0rc4-linux-x86_64.zip \
   --sha256 <digest-from-SHA256SUMS> \
   --checksums ./SHA256SUMS \
   --signature ./SHA256SUMS.sigstore.json
@@ -35,19 +39,19 @@ $HOME/.local/share/comic-sol/bin/comic-sol --version
 $HOME/.local/share/comic-sol/bin/comic-sol doctor
 ```
 
-For macOS, use `comic-sol-2.0.0rc5-macos-x86_64.zip`. The default installation root is `$HOME/.local/share/comic-sol`. Override it with `--install-root PATH` or `COMIC_SOL_INSTALL_ROOT`.
+For macOS, use `comic-sol-2.0.0rc4-macos-x86_64.zip`. The default installation root is `$HOME/.local/share/comic-sol`. Override it with `--install-root PATH` or `COMIC_SOL_INSTALL_ROOT`.
 
 The POSIX installer requires `cosign`, `perl`, `sha256sum`, `unzip`, and standard POSIX utilities. Perl is used for race-free no-follow install-root traversal. The native binaries are not notarized, so macOS Gatekeeper may require an explicit local approval for this prerelease.
 
 ## Windows PowerShell
 
-Download `comic-sol-2.0.0rc5-windows-x86_64.zip` and copy `installers/install.ps1` from the same release or repository checkout, then run:
+Download `comic-sol-2.0.0rc4-windows-x86_64.zip` and copy `installers/install.ps1` from the same release or repository checkout, then run:
 
 ```powershell
-(Get-FileHash .\comic-sol-2.0.0rc5-windows-x86_64.zip -Algorithm SHA256).Hash
+(Get-FileHash .\comic-sol-2.0.0rc4-windows-x86_64.zip -Algorithm SHA256).Hash
 # Compare the digest with SHA256SUMS.
 .\installers\install.ps1 `
-  -Archive .\comic-sol-2.0.0rc5-windows-x86_64.zip `
+  -Archive .\comic-sol-2.0.0rc4-windows-x86_64.zip `
   -SHA256 <digest-from-SHA256SUMS> `
   -Checksums .\SHA256SUMS `
   -Signature .\SHA256SUMS.sigstore.json
@@ -110,8 +114,8 @@ Uninstall validates the installation sentinel and active version, rejects filesy
 Build and run the non-root image from a checkout:
 
 ```bash
-docker build -t comic-sol:2.0.0rc5 .
-docker run --rm --entrypoint comic-sol comic-sol:2.0.0rc5 doctor --output-root /tmp/comic-sol-doctor
+docker build -t comic-sol:2.0.0rc4 .
+docker run --rm --entrypoint comic-sol comic-sol:2.0.0rc4 doctor --output-root /tmp/comic-sol-doctor
 docker compose up
 ```
 
@@ -125,7 +129,7 @@ MCP stdio has no authentication. Any local process able to launch the configured
 
 Each platform bundle contains:
 
-- `comic-sol-2.0.0rc5-<platform>-x86_64.zip`
+- `comic-sol-2.0.0rc4-<platform>-x86_64.zip`
 - platform metadata declaring `signature_status: sigstore`
 - a CycloneDX SBOM
 - `SHA256SUMS`
