@@ -7,13 +7,14 @@ import errno
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Iterator
+from typing import BinaryIO, Iterator, cast
 
 from .core_primitives import canonical_json_bytes
 from .input_limits import (
@@ -168,7 +169,7 @@ class ProjectLock:
             import msvcrt
 
             handle.seek(_LOCK_BYTE_OFFSET)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
         else:
             import fcntl
 
@@ -188,7 +189,7 @@ class ProjectLock:
             import msvcrt
 
             handle.seek(_LOCK_BYTE_OFFSET)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
         else:
             import fcntl
 
@@ -333,7 +334,7 @@ def open_contained(project_dir: Path, relative: str | Path, *, flags: int = os.O
             descriptor = os.open(name, flags | _O_NOFOLLOW, mode, dir_fd=parent_fd)
         finally:
             os.close(parent_fd)
-    stream = os.fdopen(descriptor, _stream_mode(flags))
+    stream = cast(BinaryIO, os.fdopen(descriptor, _stream_mode(flags)))
     try:
         yield stream
     finally:
@@ -364,18 +365,18 @@ def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -
                 attributes = 0
             if attributes & _REPARSE_POINT:
                 raise ValueError("path must not contain symlinks or reparse points")
-        return os.fdopen(os.open(absolute, flags, mode), _stream_mode(flags))
+        return cast(BinaryIO, os.fdopen(os.open(absolute, flags, mode), _stream_mode(flags)))
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _O_NOFOLLOW
-    current = os.open(parts[0], directory_flags)
+    directory_fd = os.open(parts[0], directory_flags)
     try:
         for part in parts[1:-1]:
-            child = os.open(part, directory_flags, dir_fd=current)
-            os.close(current)
-            current = child
-        descriptor = os.open(parts[-1], flags | _O_NOFOLLOW, mode, dir_fd=current)
+            child_fd = os.open(part, directory_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = child_fd
+        descriptor = os.open(parts[-1], flags | _O_NOFOLLOW, mode, dir_fd=directory_fd)
     finally:
-        os.close(current)
-    return os.fdopen(descriptor, _stream_mode(flags))
+        os.close(directory_fd)
+    return cast(BinaryIO, os.fdopen(descriptor, _stream_mode(flags)))
 
 
 def _read_bounded_stream(stream: BinaryIO, *, max_bytes: int) -> bytes:
@@ -385,7 +386,10 @@ def _read_bounded_stream(stream: BinaryIO, *, max_bytes: int) -> bytes:
     gigabyte file is refused without loading it, and the read itself is capped
     one byte above the limit to catch a file that grows between the two.
     """
-    size = os.fstat(stream.fileno()).st_size
+    st = os.fstat(stream.fileno())
+    if not stat.S_ISREG(st.st_mode):
+        raise InputResourceLimitError("the regular file requirement")
+    size = st.st_size
     if size > max_bytes:
         raise InputResourceLimitError(
             f"the file size limit of {max_bytes} bytes"
@@ -874,11 +878,30 @@ class ProjectTransaction:
                     )
                 except (json.JSONDecodeError, OSError, ValueError):
                     continue
+                if not isinstance(journal, dict):
+                    continue
                 phase = journal.get("phase")
                 targets = journal.get("targets")
                 if not isinstance(targets, list):
                     continue
                 if phase in ("staging", "publishing", "rolled_back"):
+                    valid = True
+                    for entry in targets:
+                        if not isinstance(entry, dict):
+                            valid = False
+                            break
+                        if not isinstance(entry.get("path"), str):
+                            valid = False
+                            break
+                        operation = entry.get("operation", "write")
+                        if operation not in {"write", "append"}:
+                            valid = False
+                            break
+                        if operation == "write" and "backup" not in entry:
+                            valid = False
+                            break
+                    if not valid:
+                        continue
                     for entry in reversed(targets):
                         if entry.get("operation") == "append":
                             ProjectTransaction(project_dir, "recovery")._rollback_append(entry)

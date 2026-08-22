@@ -139,7 +139,10 @@ class _ConfigLock:
                 fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return
             except OSError as error:
-                if error.errno not in {errno.EAGAIN, errno.EACCES, errno.EDEADLK} or time.monotonic() >= deadline:
+                if (
+                    error.errno not in {errno.EAGAIN, errno.EACCES, errno.EDEADLK}
+                    or time.monotonic() >= deadline
+                ):
                     raise TimeoutError("client config is locked") from error
                 time.sleep(0.05)
 
@@ -262,9 +265,7 @@ def _resolve_executable(executable: str | os.PathLike[str] | None) -> str:
     if located is None:
         raise FileNotFoundError("Comic Sol executable could not be resolved")
     resolved = Path(located).expanduser().resolve(strict=True)
-    if not resolved.is_file() or (
-        os.name != "nt" and not os.access(resolved, os.X_OK)
-    ):
+    if not resolved.is_file() or (os.name != "nt" and not os.access(resolved, os.X_OK)):
         raise FileNotFoundError("Comic Sol executable is not runnable")
     return str(resolved)
 
@@ -277,7 +278,9 @@ def _atomic_write(
     expected: _FileSnapshot | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
     temporary = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "wb") as stream:
@@ -320,7 +323,13 @@ def _rename_exchange(source: Path, destination: Path) -> None:
         flags = 0
     if function is None:
         raise OSError(errno.ENOTSUP, "atomic exchange is unavailable on this platform")
-    function.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    function.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
     function.restype = ctypes.c_int
     result = function(
         at_fdcwd,
@@ -554,13 +563,7 @@ def default_adapters(home: Path | None = None) -> list[ClientAdapter]:
         roaming = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
         claude = roaming / "Claude" / "claude_desktop_config.json"
     elif sys.platform == "darwin":
-        claude = (
-            home
-            / "Library"
-            / "Application Support"
-            / "Claude"
-            / "claude_desktop_config.json"
-        )
+        claude = home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
     else:
         claude = home / ".config" / "Claude" / "claude_desktop_config.json"
 
@@ -568,15 +571,15 @@ def default_adapters(home: Path | None = None) -> list[ClientAdapter]:
         [
             JsonClientAdapter("claude-desktop", claude),
             JsonClientAdapter("cursor", home / ".cursor" / "mcp.json"),
-            JsonClientAdapter(
-                "windsurf", home / ".codeium" / "windsurf" / "mcp_config.json"
-            ),
+            JsonClientAdapter("windsurf", home / ".codeium" / "windsurf" / "mcp_config.json"),
         ]
     )
     return adapters
 
 
-def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: bool) -> SetupResult:
+def _configure_one(
+    adapter: ClientAdapter, entry: dict[str, object], *, remove: bool
+) -> SetupResult:
     path = adapter.config_path
     try:
         detected = adapter.detect()
@@ -599,12 +602,16 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
                     f"malformed or unreadable config: {error}",
                 )
             try:
-                updated, changed = adapter.remove(config) if remove else adapter.mutate(config, entry)
+                updated, changed = (
+                    adapter.remove(config) if remove else adapter.mutate(config, entry)
+                )
             except Exception as error:
                 return SetupResult(adapter.name, "failed", str(path), None, str(error))
             if not changed:
                 status = "unchanged" if not remove else "not-configured"
-                return SetupResult(adapter.name, status, str(path), None, "no config change required")
+                return SetupResult(
+                    adapter.name, status, str(path), None, "no config change required"
+                )
 
         with _ConfigLock(path):
             try:
@@ -619,12 +626,16 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
                     f"malformed or unreadable config: {error}",
                 )
             try:
-                updated, changed = adapter.remove(config) if remove else adapter.mutate(config, entry)
+                updated, changed = (
+                    adapter.remove(config) if remove else adapter.mutate(config, entry)
+                )
             except Exception as error:
                 return SetupResult(adapter.name, "failed", str(path), None, str(error))
             if not changed:
                 status = "unchanged" if not remove else "not-configured"
-                return SetupResult(adapter.name, status, str(path), None, "no config change required")
+                return SetupResult(
+                    adapter.name, status, str(path), None, "no config change required"
+                )
 
             backup = _backup_path(path)
             backup_created = False
@@ -685,7 +696,6 @@ def _configure_one(adapter: ClientAdapter, entry: dict[str, object], *, remove: 
     return SetupResult(adapter.name, status, str(path), str(backup), "integration updated")
 
 
-
 def setup_clients(
     output_root: Path,
     selected: Iterable[str] | None = None,
@@ -702,7 +712,9 @@ def setup_clients(
     results: list[SetupResult] = []
     for adapter in candidates:
         if chosen and adapter.name not in chosen:
-            results.append(SetupResult(adapter.name, "skipped", str(adapter.config_path), None, "not selected"))
+            results.append(
+                SetupResult(adapter.name, "skipped", str(adapter.config_path), None, "not selected")
+            )
         else:
             try:
                 detected = adapter.detect()
@@ -730,9 +742,17 @@ def setup_clients(
         for name in SUPPORTED_CLIENT_NAMES:
             if name not in present and (not chosen or name in chosen):
                 results.append(
-                    SetupResult(name, "unsupported", None, None, "native config format or location is not verified")
+                    SetupResult(
+                        name,
+                        "unsupported",
+                        None,
+                        None,
+                        "native config format or location is not verified",
+                    )
                 )
     return results
+
+
 def uninstall_clients(
     output_root: Path,
     selected: Iterable[str] | None = None,
@@ -747,7 +767,9 @@ def uninstall_clients(
     results: list[SetupResult] = []
     for adapter in candidates:
         if chosen and adapter.name not in chosen:
-            results.append(SetupResult(adapter.name, "skipped", str(adapter.config_path), None, "not selected"))
+            results.append(
+                SetupResult(adapter.name, "skipped", str(adapter.config_path), None, "not selected")
+            )
         else:
             results.append(_configure_one(adapter, {}, remove=True))
     if using_defaults:
@@ -755,6 +777,12 @@ def uninstall_clients(
         for name in SUPPORTED_CLIENT_NAMES:
             if name not in present and (not chosen or name in chosen):
                 results.append(
-                    SetupResult(name, "unsupported", None, None, "native config format or location is not verified")
+                    SetupResult(
+                        name,
+                        "unsupported",
+                        None,
+                        None,
+                        "native config format or location is not verified",
+                    )
                 )
     return results

@@ -25,6 +25,7 @@ if MCP_AVAILABLE:
     from scripts import mcp_server  # noqa: E402
     from mcp import ClientSession, StdioServerParameters  # noqa: E402
     from mcp.client.stdio import stdio_client  # noqa: E402
+
     try:
         from mcp.server.fastmcp.exceptions import ToolError  # noqa: E402
     except ModuleNotFoundError:
@@ -115,8 +116,11 @@ def write_current_page_qa_records(project: Path, page_numbers):
             project,
             page_number,
             build_page_quality_record(
-                project, page_number, valid_page_reviewer_checks(project, page_number),
-                reviewer="fixture-reviewer", reviewed_at="2026-08-14T01:02:03Z",
+                project,
+                page_number,
+                valid_page_reviewer_checks(project, page_number),
+                reviewer="fixture-reviewer",
+                reviewed_at="2026-08-14T01:02:03Z",
             ),
         )
 
@@ -206,12 +210,27 @@ class McpServerUnitTests(unittest.TestCase):
 
     def test_tool_error_maps_exception_categories_to_safe_messages(self):
         cases = (
-            (FileNotFoundError("password=file-value"), "not-found: required project data was not found"),
-            (PermissionError("password=permission-value"), "permission-denied: project data could not be accessed"),
+            (
+                FileNotFoundError("password=file-value"),
+                "not-found: required project data was not found",
+            ),
+            (
+                PermissionError("password=permission-value"),
+                "permission-denied: project data could not be accessed",
+            ),
             (OSError("password=os-value"), "io-error: project data operation failed"),
-            (UnicodeError("password=unicode-value"), "invalid-data: project data encoding is invalid"),
-            (ValueError("password=value-error"), "invalid-data: tool request or project data is invalid"),
-            (TypeError("password=type-error"), "invalid-data: tool request or project data is invalid"),
+            (
+                UnicodeError("password=unicode-value"),
+                "invalid-data: project data encoding is invalid",
+            ),
+            (
+                ValueError("password=value-error"),
+                "invalid-data: tool request or project data is invalid",
+            ),
+            (
+                TypeError("password=type-error"),
+                "invalid-data: tool request or project data is invalid",
+            ),
             (RuntimeError("password=runtime-value"), "internal-error: tool operation failed"),
         )
         for error, expected in cases:
@@ -276,14 +295,18 @@ class McpServerUnitTests(unittest.TestCase):
         )
         project = self.root / project_id
         manifest = read_json(project / "project.json")
-        manifest.update({
-            "status": "BLOCKED",
-            "blocked_from": "STORYBOARDED",
-            "blocked_reason": "image-capability-unavailable",
-        })
+        manifest.update(
+            {
+                "status": "BLOCKED",
+                "blocked_from": "STORYBOARDED",
+                "blocked_reason": "image-capability-unavailable",
+            }
+        )
         atomic_write_json(project / "project.json", manifest)
 
-        with self.assertRaisesRegex(ToolError, "invalid-data: tool request or project data is invalid"):
+        with self.assertRaisesRegex(
+            ToolError, "invalid-data: tool request or project data is invalid"
+        ):
             mcp_server.comic_invalidate(project_id, "generation")
 
         persisted = read_json(project / "project.json")
@@ -330,7 +353,9 @@ class McpServerUnitTests(unittest.TestCase):
             cached_root_identity[2] + 1_000_000_000,
             *cached_root_identity[3:],
         )
-        self.assertEqual(mcp_server._directory_identity(changed_project_metadata), changed_root_identity)
+        self.assertEqual(
+            mcp_server._directory_identity(changed_project_metadata), changed_root_identity
+        )
 
         def deterministic_lstat(path):
             return changed_project_metadata if path == project else real_lstat(path)
@@ -563,9 +588,7 @@ class McpServerUnitTests(unittest.TestCase):
         self.assertEqual("p01-01: accepted with warnings", result)
         updated = json.loads(record_path.read_text("utf-8"))
         self.assertEqual("accept-warning", updated["decision"])
-        self.assertEqual(
-            "minor prop drift is acceptable", updated["override_reason"]
-        )
+        self.assertEqual("minor prop drift is acceptable", updated["override_reason"])
 
 
 @unittest.skipUnless(MCP_AVAILABLE, "MCP extra is not installed")
@@ -591,11 +614,14 @@ class InstalledMcpProtocolTests(unittest.IsolatedAsyncioTestCase):
                     health = await session.call_tool("comic_doctor", {})
                     self.assertFalse(result_is_error(health))
                     self.assertTrue(structured_content(health)["healthy"])
-                    created = await session.call_tool("comic_init", {
-                        "title": "Installed Wire Test",
-                        "source_text": "An installed protocol smoke test.",
-                        "request_settings": {"language": "en", "mode": "short_prompt"},
-                    })
+                    created = await session.call_tool(
+                        "comic_init",
+                        {
+                            "title": "Installed Wire Test",
+                            "source_text": "An installed protocol smoke test.",
+                            "request_settings": {"language": "en", "mode": "short_prompt"},
+                        },
+                    )
                     self.assertFalse(result_is_error(created))
                     project_id = structured_content(created)["result"]
                     status = await session.call_tool("comic_status", {"project_id": project_id})
@@ -635,7 +661,9 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
                         error: bool = False,
                     ) -> Any:
                         result = await session.call_tool(name, arguments or {})
-                        self.assertEqual(error, result_is_error(result), f"{name}: {result.content}")
+                        self.assertEqual(
+                            error, result_is_error(result), f"{name}: {result.content}"
+                        )
                         if error:
                             self.assertIsNone(structured_content(result))
                         else:
@@ -646,65 +674,106 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(health["healthy"])
                     self.assertTrue(any("PASS Python 3.11" in item for item in health["messages"]))
 
-                    created = await call("comic_init", {
-                        "title": "Wire Test",
-                        "source_text": "A protocol smoke test.",
-                        "request_settings": {"language": "en", "mode": "short_prompt"},
-                    })
+                    created = await call(
+                        "comic_init",
+                        {
+                            "title": "Wire Test",
+                            "source_text": "A protocol smoke test.",
+                            "request_settings": {"language": "en", "mode": "short_prompt"},
+                        },
+                    )
                     self.assertEqual("wire-test", created["result"])
                     status = await call("comic_status", {"project_id": "wire-test"})
                     self.assertEqual("INIT", status["status"])
-                    transitioned = await call("comic_transition", {
-                        "project_id": "wire-test", "target": "PLANNED",
-                    })
+                    transitioned = await call(
+                        "comic_transition",
+                        {
+                            "project_id": "wire-test",
+                            "target": "PLANNED",
+                        },
+                    )
                     self.assertEqual("PLANNED", transitioned["status"])
 
-                    validated = await call("comic_validate", {
-                        "project_id": "sunlight-courier", "stage": "panels",
-                    })
+                    validated = await call(
+                        "comic_validate",
+                        {
+                            "project_id": "sunlight-courier",
+                            "stage": "panels",
+                        },
+                    )
                     self.assertEqual([], validated["result"])
-                    resume = await call("comic_resume_plan", {
-                        "project_id": "sunlight-courier",
-                    })
+                    resume = await call(
+                        "comic_resume_plan",
+                        {
+                            "project_id": "sunlight-courier",
+                        },
+                    )
                     self.assertGreaterEqual(len(resume["result"]), 6)
-                    recorded = await call("comic_record_stage", {
-                        "project_id": "sunlight-courier", "stage": "planning",
-                    })
+                    recorded = await call(
+                        "comic_record_stage",
+                        {
+                            "project_id": "sunlight-courier",
+                            "stage": "planning",
+                        },
+                    )
                     self.assertEqual("planning", recorded["stage"])
-                    counters = await call("comic_record_attempt", {
-                        "project_id": "sunlight-courier",
-                        "panel_id": "p01-01",
-                        "kind": "initial",
-                        "relative_path": "panels/raw/p01-01-attempt.png",
-                    })
+                    counters = await call(
+                        "comic_record_attempt",
+                        {
+                            "project_id": "sunlight-courier",
+                            "panel_id": "p01-01",
+                            "kind": "initial",
+                            "relative_path": "panels/raw/p01-01-attempt.png",
+                        },
+                    )
                     self.assertEqual(1, counters["initial"])
-                    promoted = await call("comic_promote_attempt", {
-                        "project_id": "sunlight-courier",
-                        "panel_id": "p01-01",
-                        "relative_path": "panels/raw/p01-01-attempt.png",
-                    })
+                    promoted = await call(
+                        "comic_promote_attempt",
+                        {
+                            "project_id": "sunlight-courier",
+                            "panel_id": "p01-01",
+                            "relative_path": "panels/raw/p01-01-attempt.png",
+                        },
+                    )
                     self.assertEqual("panels/raw/p01-01.png", promoted["result"])
-                    await call("comic_override_panel", {
-                        "project_id": "sunlight-courier",
-                        "panel_id": "p01-01",
-                        "reason": "protocol smoke test",
-                    }, error=True)
-                    lettered = await call("comic_letter", {
-                        "project_id": "sunlight-courier",
-                    })
+                    await call(
+                        "comic_override_panel",
+                        {
+                            "project_id": "sunlight-courier",
+                            "panel_id": "p01-01",
+                            "reason": "protocol smoke test",
+                        },
+                        error=True,
+                    )
+                    lettered = await call(
+                        "comic_letter",
+                        {
+                            "project_id": "sunlight-courier",
+                        },
+                    )
                     self.assertEqual(4, len(lettered["result"]))
-                    pages = await call("comic_compose", {
-                        "project_id": "sunlight-courier",
-                    })
+                    pages = await call(
+                        "comic_compose",
+                        {
+                            "project_id": "sunlight-courier",
+                        },
+                    )
                     self.assertEqual(2, len(pages["result"]))
                     write_current_page_qa_records(project, (1, 2))
-                    exported = await call("comic_export", {
-                        "project_id": "sunlight-courier",
-                    })
+                    exported = await call(
+                        "comic_export",
+                        {
+                            "project_id": "sunlight-courier",
+                        },
+                    )
                     self.assertEqual("exports/sunlight-courier.pdf", exported["result"])
-                    invalidated = await call("comic_invalidate", {
-                        "project_id": "sunlight-courier", "stage": "export",
-                    })
+                    invalidated = await call(
+                        "comic_invalidate",
+                        {
+                            "project_id": "sunlight-courier",
+                            "stage": "export",
+                        },
+                    )
                     self.assertIn("qa_report", invalidated["result"])
 
     async def test_finalize_lifecycle_produces_terminal_artifacts(self):
@@ -745,11 +814,15 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
                     # the committed sample pages up front would not work, since
                     # recomposition re-encodes pixel-identical PNGs whose bytes
                     # differ by platform zlib.
-                    blocked = await session.call_tool("comic_finalize", {"project_id": "sunlight-courier"})
+                    blocked = await session.call_tool(
+                        "comic_finalize", {"project_id": "sunlight-courier"}
+                    )
                     self.assertTrue(result_is_error(blocked), "comic_finalize must gate on page QA")
                     write_page_qa_records()
 
-                    result = await session.call_tool("comic_finalize", {"project_id": "sunlight-courier"})
+                    result = await session.call_tool(
+                        "comic_finalize", {"project_id": "sunlight-courier"}
+                    )
                     self.assertFalse(result_is_error(result), "comic_finalize")
                     content: Any = structured_content(result)
                     self.assertEqual("COMPLETE", content["status"])
@@ -768,14 +841,20 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue((project / "cache/composition.json").is_file())
 
                     # Final validator returns no issues.
-                    validated = await session.call_tool("comic_validate", {
-                        "project_id": "sunlight-courier", "stage": "final",
-                    })
+                    validated = await session.call_tool(
+                        "comic_validate",
+                        {
+                            "project_id": "sunlight-courier",
+                            "stage": "final",
+                        },
+                    )
                     self.assertFalse(result_is_error(validated))
                     self.assertEqual([], structured_content(validated)["result"])
 
                     # Terminal status matches warning state (no warnings → COMPLETE).
-                    status = await session.call_tool("comic_status", {"project_id": "sunlight-courier"})
+                    status = await session.call_tool(
+                        "comic_status", {"project_id": "sunlight-courier"}
+                    )
                     self.assertEqual("COMPLETE", structured_content(status)["status"])
 
 

@@ -135,7 +135,10 @@ class _ArtifactSnapshots:
         key = Path(path)
         snapshot = self._snapshots.get(key)
         if snapshot is None:
-            snapshot = _read_and_digest(key, max_bytes=max_bytes)
+            if max_bytes is None:
+                snapshot = _read_and_digest(key)
+            else:
+                snapshot = _read_and_digest(key, max_bytes=max_bytes)
             self._snapshots[key] = snapshot
         return snapshot
 

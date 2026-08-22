@@ -50,7 +50,8 @@ def reviewer_checks(project=None):
             "reviewer": "fixture-reviewer",
             "regions": [],
         }
-        for check_id in PAGE_CHECK_IDS if check_id in SUBJECTIVE
+        for check_id in PAGE_CHECK_IDS
+        if check_id in SUBJECTIVE
     ]
     if project is None:
         return checks
@@ -58,26 +59,24 @@ def reviewer_checks(project=None):
     storyboard = json.loads((project / "plan/storyboard.json").read_text("utf-8"))
     regions = []
     for panel in storyboard["pages"][0]["panels"]:
-        geometry = json.loads(
-            (project / f"panels/{panel['id']}/lettering.json").read_text("utf-8")
-        )
+        geometry = json.loads((project / f"panels/{panel['id']}/lettering.json").read_text("utf-8"))
         geometry_by_id = {item["id"]: item for item in geometry["items"]}
         for item in panel["text"]:
             if item["kind"] != "dialogue":
                 continue
             tail = geometry_by_id[item["id"]]["tail"]
-            regions.append({
-                "panel_id": panel["id"],
-                "text_id": item["id"],
-                "speaker": item["speaker"],
-                "voice_source": item["voice_source"],
-                "speaker_anchor": item["speaker_anchor"],
-                "tip": tail["tip"],
-                "result": "pass",
-            })
-    next(check for check in checks if check["id"] == "bubble-tail-direction")[
-        "regions"
-    ] = regions
+            regions.append(
+                {
+                    "panel_id": panel["id"],
+                    "text_id": item["id"],
+                    "speaker": item["speaker"],
+                    "voice_source": item["voice_source"],
+                    "speaker_anchor": item["speaker_anchor"],
+                    "tip": tail["tip"],
+                    "result": "pass",
+                }
+            )
+    next(check for check in checks if check["id"] == "bubble-tail-direction")["regions"] = regions
     return checks
 
 
@@ -102,9 +101,7 @@ class PageQualityTests(unittest.TestCase):
         )
 
     def test_page_record_uses_supplied_review_provenance(self):
-        record = self._build_record(
-            reviewer="alwan-review", reviewed_at="2026-08-14T01:02:03Z"
-        )
+        record = self._build_record(reviewer="alwan-review", reviewed_at="2026-08-14T01:02:03Z")
 
         self.assertEqual("alwan-review", record["review"]["reviewer"])
         self.assertEqual("2026-08-14T01:02:03Z", record["review"]["reviewed_at"])
@@ -118,10 +115,12 @@ class PageQualityTests(unittest.TestCase):
         record["review"]["reviewed_at"] = "fixture-deterministic"
         write_page_quality_record(self.project, 1, record)
 
-        self.assertTrue(any(
-            issue.field == "review.reviewed_at"
-            for issue in validate_page_quality(self.project, 1)
-        ))
+        self.assertTrue(
+            any(
+                issue.field == "review.reviewed_at"
+                for issue in validate_page_quality(self.project, 1)
+            )
+        )
 
     def test_tail_warning_requires_failed_region_and_records_warning(self):
         checks = reviewer_checks(self.project)
@@ -170,37 +169,56 @@ class PageQualityTests(unittest.TestCase):
             ("extra", lambda record: record.update({"extra": True})),
             ("review", lambda record: record["review"].update({"extra": True})),
             ("bindings", lambda record: record["bindings"].update({"extra": True})),
-            ("bindings.page_path", lambda record: record["bindings"].update({"page_path": "pages/page-999.png"})),
-            ("bindings.composition_cache_path", lambda record: record["bindings"].pop("composition_cache_path")),
-            ("bindings.page_width", lambda record: record["bindings"].update({"page_width": "1600"})),
+            (
+                "bindings.page_path",
+                lambda record: record["bindings"].update({"page_path": "pages/page-999.png"}),
+            ),
+            (
+                "bindings.composition_cache_path",
+                lambda record: record["bindings"].pop("composition_cache_path"),
+            ),
+            (
+                "bindings.page_width",
+                lambda record: record["bindings"].update({"page_width": "1600"}),
+            ),
         )
         for field, mutate in cases:
             with self.subTest(field=field):
                 record = self._build_record()
                 mutate(record)
                 write_page_quality_record(self.project, 1, record)
-                self.assertTrue(any(
-                    issue.field == field
-                    for issue in validate_page_quality(self.project, 1)
-                ))
+                self.assertTrue(
+                    any(issue.field == field for issue in validate_page_quality(self.project, 1))
+                )
 
     def test_exact_check_ids_and_method_boundaries(self):
         self.assertEqual(
             (
-                "clipped-text", "text-overlap", "face-action-obstruction",
-                "bubble-tail-direction", "reading-order",
-                "accidental-text-watermark", "layout-border-integrity",
-                "balloon-subject-obstruction", "bubble-tail-geometry",
+                "clipped-text",
+                "text-overlap",
+                "face-action-obstruction",
+                "bubble-tail-direction",
+                "reading-order",
+                "accidental-text-watermark",
+                "layout-border-integrity",
+                "balloon-subject-obstruction",
+                "bubble-tail-geometry",
                 "balloon-crowding",
             ),
             PAGE_CHECK_IDS,
         )
         self.assertEqual(
-            frozenset({
-                "clipped-text", "text-overlap", "reading-order",
-                "layout-border-integrity", "balloon-subject-obstruction",
-                "bubble-tail-geometry", "balloon-crowding",
-            }),
+            frozenset(
+                {
+                    "clipped-text",
+                    "text-overlap",
+                    "reading-order",
+                    "layout-border-integrity",
+                    "balloon-subject-obstruction",
+                    "bubble-tail-geometry",
+                    "balloon-crowding",
+                }
+            ),
             DETERMINISTIC_PAGE_CHECK_IDS,
         )
 
@@ -238,17 +256,13 @@ class PageQualityTests(unittest.TestCase):
 
     def test_tail_direction_requires_one_current_region_per_dialogue(self):
         missing = reviewer_checks(self.project)
-        tail_check = next(
-            check for check in missing if check["id"] == "bubble-tail-direction"
-        )
+        tail_check = next(check for check in missing if check["id"] == "bubble-tail-direction")
         tail_check["regions"] = []
         with self.assertRaisesRegex(ValueError, "bubble-tail-evidence-mismatch"):
             self._build_record(missing)
 
         stale = reviewer_checks(self.project)
-        tail_check = next(
-            check for check in stale if check["id"] == "bubble-tail-direction"
-        )
+        tail_check = next(check for check in stale if check["id"] == "bubble-tail-direction")
         tail_check["regions"][0]["tip"][0] += 1
         with self.assertRaisesRegex(ValueError, "bubble-tail-evidence-mismatch"):
             self._build_record(stale)
@@ -267,8 +281,12 @@ class PageQualityTests(unittest.TestCase):
         self.assertRegex(bindings["composition_cache_sha256"], r"^[0-9a-f]{64}$")
         self.assertRegex(bindings["storyboard_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(3, len(bindings["lettering_sha256s"]))
-        self.assertTrue(all(value.startswith("p01-0") and len(value.split(":")) == 2
-                            for value in bindings["lettering_sha256s"]))
+        self.assertTrue(
+            all(
+                value.startswith("p01-0") and len(value.split(":")) == 2
+                for value in bindings["lettering_sha256s"]
+            )
+        )
 
     def test_write_is_canonical_and_current_record_validates(self):
         record = self._build_record()
@@ -285,19 +303,20 @@ class PageQualityTests(unittest.TestCase):
     def test_persisted_deterministic_pass_checks_reject_failure_regions(self):
         record = self._build_record()
         deterministic = next(
-            check for check in record["checks"]
-            if check["id"] in DETERMINISTIC_PAGE_CHECK_IDS
+            check for check in record["checks"] if check["id"] in DETERMINISTIC_PAGE_CHECK_IDS
         )
         deterministic["regions"] = [{"scope": "page"}]
         write_page_quality_record(self.project, 1, record)
 
         issues = validate_page_quality(self.project, 1)
 
-        self.assertTrue(any(
-            issue.field == "checks"
-            and "deterministic passing checks" in issue.message
-            for issue in issues
-        ), issues)
+        self.assertTrue(
+            any(
+                issue.field == "checks" and "deterministic passing checks" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_page_cache_storyboard_layout_and_lettering_drift_are_stale(self):
         record = self._build_record()
@@ -314,11 +333,13 @@ class PageQualityTests(unittest.TestCase):
                 before = path.read_bytes()
                 path.write_bytes(before + b"changed")
                 issues = validate_page_quality(self.project, 1)
-                self.assertTrue(any(
-                    issue.field == field
-                    and issue.message.startswith("page-quality-stale:")
-                    for issue in issues
-                ), issues)
+                self.assertTrue(
+                    any(
+                        issue.field == field and issue.message.startswith("page-quality-stale:")
+                        for issue in issues
+                    ),
+                    issues,
+                )
                 path.write_bytes(before)
 
         storyboard_path = self.project / "plan/storyboard.json"
@@ -354,9 +375,7 @@ class PageQualityTests(unittest.TestCase):
         ):
             issues = validate_page_quality(self.project, page_number)
         root = self.project.resolve()
-        return issues, {
-            path.relative_to(root).as_posix(): count for path, count in reads.items()
-        }
+        return issues, {path.relative_to(root).as_posix(): count for path, count in reads.items()}
 
     def test_one_validation_reads_each_bound_artifact_exactly_once(self):
         write_page_quality_record(self.project, 1, self._build_record())
@@ -391,10 +410,7 @@ class PageQualityTests(unittest.TestCase):
         missing = validate_page_quality(self.project, 1)
         self.assertEqual(
             ["page-quality-stale: bound artifact is missing"],
-            [
-                issue.message for issue in missing
-                if issue.field == "bindings.page_sha256"
-            ],
+            [issue.message for issue in missing if issue.field == "bindings.page_sha256"],
             missing,
         )
 
@@ -408,10 +424,7 @@ class PageQualityTests(unittest.TestCase):
                 "page-quality-stale: bound artifact hash does not match",
                 "page-quality-stale: bound value does not match current artifacts",
             ],
-            sorted(
-                issue.message for issue in changed
-                if issue.field == "bindings.page_sha256"
-            ),
+            sorted(issue.message for issue in changed if issue.field == "bindings.page_sha256"),
             changed,
         )
 
@@ -420,9 +433,7 @@ class PageQualityTests(unittest.TestCase):
         Image.new("RGB", (12, 9), "white").save(decoy)
         record = self._build_record()
         record["bindings"]["page_path"] = "pages/page-002.png"
-        record["bindings"]["page_sha256"] = hashlib.sha256(
-            decoy.read_bytes()
-        ).hexdigest()
+        record["bindings"]["page_sha256"] = hashlib.sha256(decoy.read_bytes()).hexdigest()
         write_page_quality_record(self.project, 1, record)
 
         issues, reads = self._count_artifact_reads()
@@ -459,10 +470,7 @@ class PageQualityTests(unittest.TestCase):
         # panel set the storyboard declares, which the other traversal walks.
         self.assertEqual(
             ["page-quality-stale: bound value does not match current artifacts"],
-            [
-                issue.message for issue in issues
-                if issue.field == "bindings.lettering_sha256s"
-            ],
+            [issue.message for issue in issues if issue.field == "bindings.lettering_sha256s"],
             issues,
         )
 
@@ -495,24 +503,29 @@ class PageQualityTests(unittest.TestCase):
         record = self._build_record()
         write_page_quality_record(self.project, 1, record)
         current = validate_project(self.project, "export-ready")
-        self.assertFalse(any(
-            issue.path == "qa/pages/page-001.json"
-            and (
-                issue.message.startswith("page-quality-stale:")
-                or "migration" in issue.message
-            )
-            for issue in current
-        ), current)
+        self.assertFalse(
+            any(
+                issue.path == "qa/pages/page-001.json"
+                and (
+                    issue.message.startswith("page-quality-stale:") or "migration" in issue.message
+                )
+                for issue in current
+            ),
+            current,
+        )
 
         page = self.project / "pages/page-001.png"
         page.write_bytes(page.read_bytes() + b"stale")
         stale = validate_project(self.project, "export-ready")
-        self.assertTrue(any(
-            issue.path == "qa/pages/page-001.json"
-            and issue.field == "bindings.page_sha256"
-            and issue.message.startswith("page-quality-stale:")
-            for issue in stale
-        ), stale)
+        self.assertTrue(
+            any(
+                issue.path == "qa/pages/page-001.json"
+                and issue.field == "bindings.page_sha256"
+                and issue.message.startswith("page-quality-stale:")
+                for issue in stale
+            ),
+            stale,
+        )
 
     def test_publish_uses_one_snapshot_when_page_changes_after_checks(self):
         page_path = self.project / "pages/page-001.png"
@@ -673,9 +686,7 @@ class BalloonPlacementQualityTests(unittest.TestCase):
                 self.assertEqual(layout["expected_result"], check["result"])
                 self.assertNotEqual([], check["regions"])
                 for reason in layout.get("expected_reasons", []):
-                    self.assertIn(
-                        reason, [region.get("reason") for region in check["regions"]]
-                    )
+                    self.assertIn(reason, [region.get("reason") for region in check["regions"]])
 
     def test_out_of_bounds_is_measured_in_the_clean_raster_not_the_page_rect(self):
         project = self._fresh_project()
@@ -720,14 +731,16 @@ class BalloonPlacementQualityTests(unittest.TestCase):
         self.assertEqual("error", check["severity"])
         self.assertEqual("deterministic-geometry-v1", check["method"])
         self.assertEqual(
-            [{
-                "clearance": 0.0,
-                "item_id": "p01-02-t01",
-                "panel_id": "p01-02",
-                # 720 * 0.025, the same gap the renderer reserves for a tail.
-                "required_clearance": 18.0,
-                "subject_text_id": "p01-02-t01",
-            }],
+            [
+                {
+                    "clearance": 0.0,
+                    "item_id": "p01-02-t01",
+                    "panel_id": "p01-02",
+                    # 720 * 0.025, the same gap the renderer reserves for a tail.
+                    "required_clearance": 18.0,
+                    "subject_text_id": "p01-02-t01",
+                }
+            ],
             check["regions"],
         )
 
@@ -741,23 +754,36 @@ class BalloonPlacementQualityTests(unittest.TestCase):
         be counted — as an effect. `clipped-text`, `text-overlap`, and
         `reading-order` still judge it, because those apply to any drawn box.
         """
+
         # p01-02's dialogue anchors at [0.7, 0.55] of a 720x1064 panel, so this box
         # sits directly on the protected voice source. The storyboard is untouched,
         # which keeps that anchor protected: the only variable is the drawn box's
         # kind.
         def extra(kind):
-            return {"panels": {"p01-02": {"append": [{
-                "anchor": "middle-right",
-                "attribution": None,
-                "box": {"x": 454, "y": 545, "width": 120, "height": 90},
-                "font_runs": [
-                    {"font_id": "ComicNeue-Bold.ttf", "style": "bold", "text": "KRAK!"}
-                ],
-                "id": "p01-02-t02",
-                "kind": kind,
-                "reading_order": 2,
-                "tail": None,
-            }]}}}
+            return {
+                "panels": {
+                    "p01-02": {
+                        "append": [
+                            {
+                                "anchor": "middle-right",
+                                "attribution": None,
+                                "box": {"x": 454, "y": 545, "width": 120, "height": 90},
+                                "font_runs": [
+                                    {
+                                        "font_id": "ComicNeue-Bold.ttf",
+                                        "style": "bold",
+                                        "text": "KRAK!",
+                                    }
+                                ],
+                                "id": "p01-02-t02",
+                                "kind": kind,
+                                "reading_order": 2,
+                                "tail": None,
+                            }
+                        ]
+                    }
+                }
+            }
 
         as_balloon = self._fresh_project()
         apply_balloon_layout(as_balloon, extra("caption"))
@@ -791,13 +817,25 @@ class BalloonPlacementQualityTests(unittest.TestCase):
         project = self._fresh_project()
         # p01-01 and p01-03 carry captions only, so no anchor exists to protect.
         for panel_id, item_id in (("p01-01", "p01-01-t01"), ("p01-03", "p01-03-t01")):
-            apply_balloon_layout(project, {
-                "panels": {
-                    panel_id: {"replace": {item_id: {"box": {
-                        "height": 120, "width": 200, "x": 40, "y": 60,
-                    }}}}
-                }
-            })
+            apply_balloon_layout(
+                project,
+                {
+                    "panels": {
+                        panel_id: {
+                            "replace": {
+                                item_id: {
+                                    "box": {
+                                        "height": 120,
+                                        "width": 200,
+                                        "x": 40,
+                                        "y": 60,
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            )
         checks = self._checks(project)
 
         self.assertEqual("pass", checks["balloon-subject-obstruction"]["result"])
@@ -828,9 +866,7 @@ class BalloonPlacementQualityTests(unittest.TestCase):
         project = self._fresh_project()
         apply_balloon_layout(
             project,
-            json.loads(
-                (BALLOON_LAYOUTS / "warn-crowded-separation.json").read_text("utf-8")
-            ),
+            json.loads((BALLOON_LAYOUTS / "warn-crowded-separation.json").read_text("utf-8")),
         )
         checks = self._checks(project)
         crowding = checks["balloon-crowding"]
@@ -858,11 +894,13 @@ class BalloonPlacementQualityTests(unittest.TestCase):
         path = project / "panels/p01-01/lettering.json"
         geometry = json.loads(path.read_text("utf-8"))
         duplicate = dict(geometry["items"][0])
-        duplicate.update({
-            "box": {"height": 100, "width": 100, "x": 29, "y": 24},
-            "id": "p01-01-t02",
-            "reading_order": 2,
-        })
+        duplicate.update(
+            {
+                "box": {"height": 100, "width": 100, "x": 29, "y": 24},
+                "id": "p01-01-t02",
+                "reading_order": 2,
+            }
+        )
         geometry["items"].append(duplicate)
         path.write_text(
             json.dumps(geometry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -872,12 +910,14 @@ class BalloonPlacementQualityTests(unittest.TestCase):
 
         self.assertEqual("fail", check["result"])
         self.assertEqual(
-            [{
-                "items": ["p01-01-t01", "p01-01-t02"],
-                "overlap_area": 10000,
-                "overlap_ratio": 1.0,
-                "panel_id": "p01-01",
-            }],
+            [
+                {
+                    "items": ["p01-01-t01", "p01-01-t02"],
+                    "overlap_area": 10000,
+                    "overlap_ratio": 1.0,
+                    "panel_id": "p01-01",
+                }
+            ],
             check["regions"],
         )
 
@@ -902,32 +942,31 @@ class BalloonPlacementQualityTests(unittest.TestCase):
 
     def test_tail_attachment_must_sit_on_the_drawn_balloon_outline(self):
         project = self._fresh_project()
-        geometry = json.loads(
-            (project / "panels/p01-02/lettering.json").read_text("utf-8")
-        )
-        box = next(
-            item["box"] for item in geometry["items"] if item["id"] == "p01-02-t01"
-        )
+        geometry = json.loads((project / "panels/p01-02/lettering.json").read_text("utf-8"))
+        box = next(item["box"] for item in geometry["items"] if item["id"] == "p01-02-t01")
         centre = [box["x"] + box["width"] / 2, box["y"] + box["height"] / 2]
 
-        apply_balloon_layout(project, {
-            "panels": {
-                "p01-02": {
-                    "replace": {"p01-02-t01": {"tail_fields": {"attachment": centre}}}
+        apply_balloon_layout(
+            project,
+            {
+                "panels": {
+                    "p01-02": {"replace": {"p01-02-t01": {"tail_fields": {"attachment": centre}}}}
                 }
-            }
-        })
+            },
+        )
         check = self._checks(project)["bubble-tail-geometry"]
 
         # The centre is inside the bounding box, so a box-membership test would
         # accept it. Only the ellipse outline exposes a tail attached to nothing.
         self.assertEqual("fail", check["result"])
         self.assertEqual(
-            [{
-                "panel_id": "p01-02",
-                "reason": "detached-tail",
-                "text_id": "p01-02-t01",
-            }],
+            [
+                {
+                    "panel_id": "p01-02",
+                    "reason": "detached-tail",
+                    "text_id": "p01-02-t01",
+                }
+            ],
             check["regions"],
         )
 
@@ -938,12 +977,8 @@ class BalloonPlacementQualityTests(unittest.TestCase):
             (project / "panels/p01-02/normalization.json").read_text("utf-8")
         )
         width, height = normalization["clean"]["size"]
-        geometry = json.loads(
-            (project / "panels/p01-02/lettering.json").read_text("utf-8")
-        )
-        box = next(
-            item["box"] for item in geometry["items"] if item["id"] == "p01-02-t01"
-        )
+        geometry = json.loads((project / "panels/p01-02/lettering.json").read_text("utf-8"))
+        box = next(item["box"] for item in geometry["items"] if item["id"] == "p01-02-t01")
 
         # Rebuild a tail that is fully self-consistent for the off-panel anchor:
         # attachment on the ellipse, tip aimed at the target, gap recomputed. Every
@@ -974,32 +1009,37 @@ class BalloonPlacementQualityTests(unittest.TestCase):
             json.dumps(storyboard, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             "utf-8",
         )
-        apply_balloon_layout(project, {
-            "panels": {
-                "p01-02": {
-                    "replace": {
-                        "p01-02-t01": {
-                            "tail_fields": {
-                                # The echo agrees, so the mismatch rule cannot fire.
-                                "speaker_anchor": anchor,
-                                "attachment": [round(v, 4) for v in attachment],
-                                "tip": [round(v, 4) for v in tip],
-                                "source_gap": round(span - length, 4),
+        apply_balloon_layout(
+            project,
+            {
+                "panels": {
+                    "p01-02": {
+                        "replace": {
+                            "p01-02-t01": {
+                                "tail_fields": {
+                                    # The echo agrees, so the mismatch rule cannot fire.
+                                    "speaker_anchor": anchor,
+                                    "attachment": [round(v, 4) for v in attachment],
+                                    "tip": [round(v, 4) for v in tip],
+                                    "source_gap": round(span - length, 4),
+                                }
                             }
                         }
                     }
                 }
-            }
-        })
+            },
+        )
         check = self._checks(project)["bubble-tail-geometry"]
 
         self.assertEqual("fail", check["result"])
         self.assertEqual(
-            [{
-                "panel_id": "p01-02",
-                "reason": "speaker-anchor-out-of-range",
-                "text_id": "p01-02-t01",
-            }],
+            [
+                {
+                    "panel_id": "p01-02",
+                    "reason": "speaker-anchor-out-of-range",
+                    "text_id": "p01-02-t01",
+                }
+            ],
             check["regions"],
         )
 
@@ -1018,9 +1058,9 @@ class BalloonPlacementQualityTests(unittest.TestCase):
         for name, box in cases:
             with self.subTest(box=name):
                 project = self._fresh_project()
-                apply_balloon_layout(project, {
-                    "panels": {"p01-02": {"replace": {"p01-02-t01": {"box": box}}}}
-                })
+                apply_balloon_layout(
+                    project, {"panels": {"p01-02": {"replace": {"p01-02-t01": {"box": box}}}}}
+                )
                 check = self._checks(project)["bubble-tail-geometry"]
 
                 self.assertEqual("fail", check["result"])
@@ -1031,9 +1071,9 @@ class BalloonPlacementQualityTests(unittest.TestCase):
 
     def test_tail_on_a_non_dialogue_placement_is_rejected(self):
         project = self._fresh_project()
-        apply_balloon_layout(project, {
-            "panels": {"p01-02": {"replace": {"p01-02-t01": {"kind": "caption"}}}}
-        })
+        apply_balloon_layout(
+            project, {"panels": {"p01-02": {"replace": {"p01-02-t01": {"kind": "caption"}}}}}
+        )
         check = self._checks(project)["bubble-tail-geometry"]
 
         # Only dialogue is drawn as a balloon, so there is no outline to verify.
@@ -1058,11 +1098,13 @@ class BalloonPlacementQualityTests(unittest.TestCase):
 
         self.assertEqual("fail", check["result"])
         self.assertEqual(
-            [{
-                "panel_id": "p01-02",
-                "reason": "speaker-anchor-mismatch",
-                "text_id": "p01-02-t01",
-            }],
+            [
+                {
+                    "panel_id": "p01-02",
+                    "reason": "speaker-anchor-mismatch",
+                    "text_id": "p01-02-t01",
+                }
+            ],
             check["regions"],
         )
 
@@ -1115,11 +1157,14 @@ class BalloonPlacementQualityTests(unittest.TestCase):
         path.write_bytes(path.read_bytes() + b"changed")
         issues = validate_page_quality(project, 1)
 
-        self.assertTrue(any(
-            issue.field == "bindings.normalization_sha256s"
-            and issue.message.startswith("page-quality-stale:")
-            for issue in issues
-        ), issues)
+        self.assertTrue(
+            any(
+                issue.field == "bindings.normalization_sha256s"
+                and issue.message.startswith("page-quality-stale:")
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_out_of_range_speaker_anchor_is_not_treated_as_a_protected_subject(self):
         project = self._fresh_project()
@@ -1147,9 +1192,7 @@ class BalloonPlacementQualityTests(unittest.TestCase):
     def test_deterministic_warning_without_regions_cannot_manufacture_a_warning(self):
         project = self._fresh_project()
         record = self._record(project)
-        crowding = next(
-            check for check in record["checks"] if check["id"] == "balloon-crowding"
-        )
+        crowding = next(check for check in record["checks"] if check["id"] == "balloon-crowding")
         crowding.update({"result": "warning", "severity": "warning", "regions": []})
         record["decision"] = "accept-warning"
         record["unresolved_warnings"] = [crowding["evidence"]]
@@ -1157,11 +1200,14 @@ class BalloonPlacementQualityTests(unittest.TestCase):
 
         issues = validate_page_quality(project, 1)
 
-        self.assertTrue(any(
-            issue.field == "checks"
-            and "deterministic failing checks must include failure regions" in issue.message
-            for issue in issues
-        ), issues)
+        self.assertTrue(
+            any(
+                issue.field == "checks"
+                and "deterministic failing checks must include failure regions" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
 
 
 class MultiSpeakerAttributionQualityTests(unittest.TestCase):
@@ -1217,9 +1263,7 @@ class MultiSpeakerAttributionQualityTests(unittest.TestCase):
         project = self._fresh_project()
         geometry = json.loads(self._geometry_path(project).read_text("utf-8"))
 
-        attribution = {
-            item["id"]: item["attribution"] for item in geometry["items"]
-        }
+        attribution = {item["id"]: item["attribution"] for item in geometry["items"]}
 
         self.assertEqual(
             {
@@ -1249,7 +1293,8 @@ class MultiSpeakerAttributionQualityTests(unittest.TestCase):
         # point at the anchor the storyboard authored, so nothing but attribution
         # reveals that the balloons now credit the wrong characters.
         first["authored_speaker"], second["authored_speaker"] = (
-            second["authored_speaker"], first["authored_speaker"],
+            second["authored_speaker"],
+            first["authored_speaker"],
         )
         first["speaker"], second["speaker"] = second["speaker"], first["speaker"]
         path.write_text(
@@ -1291,11 +1336,13 @@ class MultiSpeakerAttributionQualityTests(unittest.TestCase):
 
                 self.assertEqual("regenerate", record["decision"])
                 self.assertEqual(
-                    [{
-                        "panel_id": "p01-02",
-                        "reason": "speaker-mismatch",
-                        "text_id": self.text_ids[0],
-                    }],
+                    [
+                        {
+                            "panel_id": "p01-02",
+                            "reason": "speaker-mismatch",
+                            "text_id": self.text_ids[0],
+                        }
+                    ],
                     checks["bubble-tail-geometry"]["regions"],
                 )
 

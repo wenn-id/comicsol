@@ -89,9 +89,7 @@ def actual_bundle_paths() -> set[Path]:
             paths.update(
                 path.relative_to(BUNDLE)
                 for path in root.rglob("*")
-                if path.is_file()
-                and "__pycache__" not in path.parts
-                and path.suffix != ".pyc"
+                if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
             )
     return paths
 
@@ -120,9 +118,7 @@ def sync() -> None:
         target = destination(relative)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
-    for relative in sorted(
-        actual_bundle_paths() - expected_bundle_paths(), key=Path.as_posix
-    ):
+    for relative in sorted(actual_bundle_paths() - expected_bundle_paths(), key=Path.as_posix):
         destination(relative).unlink()
 
 

@@ -41,7 +41,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -262,9 +261,14 @@ def _identity_defects(check: Mapping[str, Any], evidence: str) -> list[RepairDef
     if "provenance" not in check or not isinstance(regions, list) or not regions:
         return [
             RepairDefect(
-                IDENTITY_CHECK, PANEL_SCOPE, None,
-                str(check.get("result")), str(check.get("severity")),
-                evidence, None, UNLOCALIZED_EVIDENCE,
+                IDENTITY_CHECK,
+                PANEL_SCOPE,
+                None,
+                str(check.get("result")),
+                str(check.get("severity")),
+                evidence,
+                None,
+                UNLOCALIZED_EVIDENCE,
             )
         ]
     defects: list[RepairDefect] = []
@@ -293,9 +297,14 @@ def _identity_defects(check: Mapping[str, Any], evidence: str) -> list[RepairDef
         # drifted, so the panel is repaired as a whole rather than guessed at.
         return [
             RepairDefect(
-                IDENTITY_CHECK, PANEL_SCOPE, None,
-                str(check.get("result")), str(check.get("severity")),
-                evidence, None, UNLOCALIZED_EVIDENCE,
+                IDENTITY_CHECK,
+                PANEL_SCOPE,
+                None,
+                str(check.get("result")),
+                str(check.get("severity")),
+                evidence,
+                None,
+                UNLOCALIZED_EVIDENCE,
             )
         ]
     return defects
@@ -305,16 +314,13 @@ def _defect_region_scope(region: Mapping[str, Any]) -> tuple[str, str]:
     """Return the scope and target a bounded defect region names, or fail closed."""
     if set(region) != DEFECT_REGION_FIELDS:
         raise RepairStrategyError(
-            "defect region fields must be exactly "
-            + ", ".join(sorted(DEFECT_REGION_FIELDS))
+            "defect region fields must be exactly " + ", ".join(sorted(DEFECT_REGION_FIELDS))
         )
     character_id = region.get("character_id")
     area = region.get("area")
     named = [value for value in (character_id, area) if value is not None]
     if len(named) != 1:
-        raise RepairStrategyError(
-            "defect region must name exactly one of character_id or area"
-        )
+        raise RepairStrategyError("defect region must name exactly one of character_id or area")
     if character_id is not None:
         if (
             not isinstance(character_id, str)
@@ -352,8 +358,7 @@ def _localized_defects(
         scope, target = _defect_region_scope(region)
         if scope == SUBJECT_SCOPE and target not in reviewed_cast:
             raise RepairStrategyError(
-                f"{check_id} region names a character this panel's review did "
-                f"not cover: {target!r}"
+                f"{check_id} region names a character this panel's review did not cover: {target!r}"
             )
         if region.get("result") not in RESULTS or region.get("severity") not in SEVERITIES:
             raise RepairStrategyError(f"{check_id} region result or severity is invalid")
@@ -374,17 +379,20 @@ def _localized_defects(
     if not defects:
         return [
             RepairDefect(
-                check_id, PANEL_SCOPE, None,
-                str(check.get("result")), str(check.get("severity")),
-                evidence, None, UNLOCALIZED_EVIDENCE,
+                check_id,
+                PANEL_SCOPE,
+                None,
+                str(check.get("result")),
+                str(check.get("severity")),
+                evidence,
+                None,
+                UNLOCALIZED_EVIDENCE,
             )
         ]
     return defects
 
 
-def _check_defects(
-    check: Mapping[str, Any], reviewed_cast: tuple[str, ...]
-) -> list[RepairDefect]:
+def _check_defects(check: Mapping[str, Any], reviewed_cast: tuple[str, ...]) -> list[RepairDefect]:
     """Classify one panel check into zero or more scoped defects."""
     check_id = check.get("id")
     if check_id not in PANEL_CHECK_IDS:
@@ -397,9 +405,14 @@ def _check_defects(
     if check_id in PANEL_WIDE_CHECKS:
         return [
             RepairDefect(
-                str(check_id), PANEL_SCOPE, None,
-                str(check.get("result")), str(check.get("severity")),
-                evidence, None, PANEL_WIDE_CHECK,
+                str(check_id),
+                PANEL_SCOPE,
+                None,
+                str(check.get("result")),
+                str(check.get("severity")),
+                evidence,
+                None,
+                PANEL_WIDE_CHECK,
             )
         ]
     if check_id == IDENTITY_CHECK:
@@ -429,15 +442,11 @@ def _validated_identity_check(
         ),
     )
     if issues:
-        raise RepairStrategyError(
-            f"character-identity check cannot be trusted: {issues[0]}"
-        )
+        raise RepairStrategyError(f"character-identity check cannot be trusted: {issues[0]}")
     provenance = identity.get("provenance")
     if isinstance(provenance, Mapping):
         if provenance.get("panel_id") != panel_id:
-            raise RepairStrategyError(
-                "character-identity provenance names a different panel"
-            )
+            raise RepairStrategyError("character-identity provenance names a different panel")
         reviewed = {
             entry.get("character_id")
             for entry in provenance.get("characters") or []
@@ -451,8 +460,7 @@ def _validated_identity_check(
         unreviewed = sorted(faulted - reviewed)
         if unreviewed:
             raise RepairStrategyError(
-                "character-identity region names an unreviewed character: "
-                f"{unreviewed[0]!r}"
+                f"character-identity region names an unreviewed character: {unreviewed[0]!r}"
             )
     return identity
 
@@ -542,12 +550,8 @@ def panel_repair_plan(
     defects: list[RepairDefect] = []
     for check in checks:
         defects.extend(_check_defects(check, reviewed_cast))
-    unaffected_checks = tuple(
-        str(check["id"]) for check in checks if not _non_passing(check)
-    )
-    faulted_subjects = {
-        defect.target for defect in defects if defect.scope == SUBJECT_SCOPE
-    }
+    unaffected_checks = tuple(str(check["id"]) for check in checks if not _non_passing(check))
+    faulted_subjects = {defect.target for defect in defects if defect.scope == SUBJECT_SCOPE}
     unaffected_subjects = tuple(
         subject for subject in reviewed_cast if subject not in faulted_subjects
     )
@@ -629,9 +633,7 @@ def _read_document(project_dir: Path, relative: str) -> Mapping[str, Any]:
     """Read one contained JSON object without following symlinks, or fail closed."""
     try:
         value = loads_bounded_json(
-            read_contained_bytes(
-                Path(project_dir), relative, max_bytes=MAX_JSON_BYTES
-            ),
+            read_contained_bytes(Path(project_dir), relative, max_bytes=MAX_JSON_BYTES),
             source=relative,
         )
     except InputResourceLimitError:
@@ -730,9 +732,7 @@ def panel_repair_plans(
     return tuple(plans)
 
 
-def project_repair_plan(
-    project_dir: Path, *, localized_edit_supported: bool
-) -> dict[str, Any]:
+def project_repair_plan(project_dir: Path, *, localized_edit_supported: bool) -> dict[str, Any]:
     """Return the whole project's repair-plan document."""
     return {
         "panels": [
@@ -750,9 +750,7 @@ def read_repair_plan(project_dir: Path) -> Mapping[str, Any]:
     return _read_document(Path(project_dir), REPAIR_PLAN_PATH)
 
 
-def recorded_panel_plan(
-    project_dir: Path, panel_id: str
-) -> Mapping[str, Any] | None:
+def recorded_panel_plan(project_dir: Path, panel_id: str) -> Mapping[str, Any] | None:
     """Return one panel's recorded plan entry, or ``None`` when none is published."""
     try:
         document = read_repair_plan(project_dir)
@@ -785,9 +783,7 @@ def write_repair_plan(project_dir: Path, document: Mapping[str, Any]) -> Path:
     return project_dir / REPAIR_PLAN_PATH
 
 
-def plan_and_write_repair_plan(
-    project_dir: Path, *, localized_edit_supported: bool
-) -> Path:
+def plan_and_write_repair_plan(project_dir: Path, *, localized_edit_supported: bool) -> Path:
     """Plan every reviewed panel's repair, then publish the record.
 
     Reading the reviews, hashing the bound artifacts, and publishing the plan all
@@ -1002,8 +998,7 @@ def repair_plan_block(plan: PanelRepairPlan) -> str:
         else "- reviewed clean, but a full regeneration re-rolls them:"
     )
     lines.append(
-        "  checks: "
-        + (", ".join(plan.unaffected_checks) if plan.unaffected_checks else "none")
+        "  checks: " + (", ".join(plan.unaffected_checks) if plan.unaffected_checks else "none")
     )
     lines.append(
         "  subjects: "
@@ -1014,10 +1009,7 @@ def repair_plan_block(plan: PanelRepairPlan) -> str:
         for defect in plan.defects:
             target = "panel" if defect.target is None else f"{defect.scope} {defect.target}"
             reason = "" if defect.fallback_reason is None else f" [{defect.fallback_reason}]"
-            lines.append(
-                f"  {defect.check_id} {target} "
-                f"{defect.result}/{defect.severity}{reason}"
-            )
+            lines.append(f"  {defect.check_id} {target} {defect.result}/{defect.severity}{reason}")
     return "\n".join(lines)
 
 
@@ -1028,9 +1020,7 @@ def repair_plan_block(plan: PanelRepairPlan) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description=(
-            "Plan how each reviewed panel should be repaired, and record why."
-        ),
+        description=("Plan how each reviewed panel should be repaired, and record why."),
     )
     parser.add_argument("project_dir", type=Path, help="generated project directory")
     parser.add_argument(

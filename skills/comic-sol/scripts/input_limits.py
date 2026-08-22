@@ -176,8 +176,12 @@ def loads_bounded_json(
     relative label (never an absolute path) so error messages stay safe.
     """
     if isinstance(payload, bytes):
-        text = payload.decode("utf-8")
         encoded_size = len(payload)
+        if encoded_size > MAX_JSON_BYTES:
+            raise InputResourceLimitError(
+                f"the JSON size limit of {MAX_JSON_BYTES} bytes for {source}"
+            )
+        text = payload.decode("utf-8")
     elif isinstance(payload, str):
         text = payload
         encoded_size = len(payload.encode("utf-8"))

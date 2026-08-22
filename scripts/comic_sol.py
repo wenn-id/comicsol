@@ -132,6 +132,7 @@ class ResumeAction:
     artifact: str
     reason: str
 
+
 PROJECT_DIRECTORIES = (
     "source",
     "plan",
@@ -185,9 +186,7 @@ EVENT_DETAIL_KINDS = {
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
-    )
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def read_json(path: Path) -> dict[str, object]:
@@ -237,9 +236,6 @@ def layout_rects(name: str) -> list[dict[str, int]]:
     ]
 
 
-
-
-
 def _allocate_project_directory(output_root: Path, base_slug: str) -> Path:
     output_root.mkdir(parents=True, exist_ok=True)
     suffix = 1
@@ -259,6 +255,7 @@ def validate_request_settings(request: dict[str, object]) -> dict[str, object]:
     """Validate the small, non-secret request record persisted in each project."""
     if not isinstance(request, dict):
         raise TypeError("request must be a JSON object")
+
     def reject_sensitive_keys(value: object) -> None:
         if isinstance(value, dict):
             for key, nested in value.items():
@@ -279,13 +276,13 @@ def validate_request_settings(request: dict[str, object]) -> dict[str, object]:
     language = request.get("language", "en")
     title = request.get("title")
     if not isinstance(mode, str) or mode not in REQUEST_MODES:
-        raise ValueError("request mode must be one of short_prompt, pasted_story, source_file, or resume")
+        raise ValueError(
+            "request mode must be one of short_prompt, pasted_story, source_file, or resume"
+        )
     if not isinstance(language, str) or not language.strip() or len(language) > 35:
         raise ValueError("request language must be a non-empty language tag")
     if title is not None:
-        validate_narrative(
-            title, message=REQUEST_TITLE_LIMIT_MESSAGE, max_chars=MAX_TITLE_CHARS
-        )
+        validate_narrative(title, message=REQUEST_TITLE_LIMIT_MESSAGE, max_chars=MAX_TITLE_CHARS)
     return {key: request[key] for key in sorted(request)}
 
 
@@ -322,9 +319,7 @@ def init_project(
         raise TypeError("source must be bytes")
     if not isinstance(request, dict):
         raise TypeError("request must be a JSON object")
-    validate_narrative(
-        title, message=TITLE_LIMIT_MESSAGE, max_chars=MAX_TITLE_CHARS
-    )
+    validate_narrative(title, message=TITLE_LIMIT_MESSAGE, max_chars=MAX_TITLE_CHARS)
     validate_source_bytes(source)
     validated_request = validate_request_settings(request)
 
@@ -445,9 +440,7 @@ def transition(
 ) -> dict[str, object]:
     """Move a project by one legal state, publishing the manifest last."""
     if warning is not None:
-        validate_narrative(
-            warning, message=WARNING_LIMIT_MESSAGE, max_chars=MAX_WARNING_CHARS
-        )
+        validate_narrative(warning, message=WARNING_LIMIT_MESSAGE, max_chars=MAX_WARNING_CHARS)
     if target == "BLOCKED":
         block_warning = warning or "project blocked"
         reason = re.sub(r"[^a-z0-9]+", "-", block_warning.lower()).strip("-")
@@ -469,6 +462,7 @@ def transition(
             raise ValueError(f"invalid Comic Sol transition: {current} -> {target}")
         if target in TERMINAL_STATUSES:
             from .validate_project import require_valid_project
+
             require_valid_project(project_dir, "final")
         if target == "COMPLETE_WITH_WARNINGS" and not (warnings or warning):
             raise ValueError("COMPLETE_WITH_WARNINGS requires an unresolved warning")
@@ -535,10 +529,7 @@ def _storyboard_panels(storyboard: dict[str, object]) -> list[dict[str, object]]
 
 def _project_files(project_dir: Path, relatives: list[str]) -> list[Path]:
     """Resolve required relative files without silently dropping missing inputs."""
-    return [
-        _contained_project_path(project_dir, Path(relative))
-        for relative in relatives
-    ]
+    return [_contained_project_path(project_dir, Path(relative)) for relative in relatives]
 
 
 def _panel_clean_relative_path(project_dir: Path, panel_id: object) -> str:
@@ -568,11 +559,15 @@ def _resume_stage_material(
     characters = read_json(project_dir / "plan/character-bible.json")
     if material_kind == "storyboard":
         character_items = characters.get("characters", [])
-        identities = [
-            {"id": item.get("id")}
-            for item in character_items
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
-        ] if isinstance(character_items, list) else []
+        identities = (
+            [
+                {"id": item.get("id")}
+                for item in character_items
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            ]
+            if isinstance(character_items, list)
+            else []
+        )
         return [story, identities], []
     storyboard = read_json(project_dir / "plan/storyboard.json")
     panels = _storyboard_panels(storyboard)
@@ -588,11 +583,11 @@ def _resume_stage_material(
             # Routing an effect to deterministic lettering therefore invalidates
             # generation for that panel — the artwork must come back without the
             # baked effect — while leaving planning and the storyboard untouched.
-            generated_sfx = [
-                sfx_material(text_item)
-                for text_item in text_items
-                if is_generated_sfx(text_item)
-            ] if isinstance(text_items, list) else []
+            generated_sfx = (
+                [sfx_material(text_item) for text_item in text_items if is_generated_sfx(text_item)]
+                if isinstance(text_items, list)
+                else []
+            )
             if generated_sfx:
                 visual_panel["text"] = generated_sfx
             else:
@@ -612,22 +607,25 @@ def _resume_stage_material(
                 source_prompt_path = record.get("source_prompt_path")
                 generation = record.get("generation")
                 references = (
-                    generation.get("reference_paths")
-                    if isinstance(generation, dict) else None
+                    generation.get("reference_paths") if isinstance(generation, dict) else None
                 )
             if record_panel_id != panel_id:
                 raise ValueError(f"panel QA record does not match {panel_id}")
-            if not isinstance(source_prompt_path, str) or not isinstance(references, list) or not all(
-                isinstance(reference, str) for reference in references
+            if (
+                not isinstance(source_prompt_path, str)
+                or not isinstance(references, list)
+                or not all(isinstance(reference, str) for reference in references)
             ):
                 raise ValueError(f"panel QA dependencies are invalid: {panel_id}")
             prompt_paths.append(source_prompt_path)
             actual_reference_paths.extend(references)
-            dependencies.append({
-                "panel_id": panel_id,
-                "reference_paths": references,
-                "source_prompt_path": source_prompt_path,
-            })
+            dependencies.append(
+                {
+                    "panel_id": panel_id,
+                    "reference_paths": references,
+                    "source_prompt_path": source_prompt_path,
+                }
+            )
         reference_paths: list[str] = []
         character_items = characters.get("characters", [])
         if isinstance(character_items, list):
@@ -648,7 +646,8 @@ def _resume_stage_material(
         # render mode does not re-letter a page that would come out identical.
         text = [normalized_text_material(panel.get("text", [])) for panel in panels]
         return [text] if text else [[]], _project_files(
-            project_dir, [_panel_clean_relative_path(project_dir, panel_id) for panel_id in panel_ids]
+            project_dir,
+            [_panel_clean_relative_path(project_dir, panel_id) for panel_id in panel_ids],
         )
     if material_kind == "composition":
         geometry = []
@@ -658,20 +657,28 @@ def _resume_stage_material(
                 if not isinstance(page, dict):
                     continue
                 page_panels = page.get("panels", [])
-                geometry.append({
-                    "number": page.get("number"),
-                    "layout": page.get("layout"),
-                    "panels": [
-                        panel.get("rect") for panel in page_panels if isinstance(panel, dict)
-                    ] if isinstance(page_panels, list) else [],
-                })
+                geometry.append(
+                    {
+                        "number": page.get("number"),
+                        "layout": page.get("layout"),
+                        "panels": [
+                            panel.get("rect") for panel in page_panels if isinstance(panel, dict)
+                        ]
+                        if isinstance(page_panels, list)
+                        else [],
+                    }
+                )
         return [geometry], _project_files(
             project_dir, [f"panels/{panel_id}/lettered.png" for panel_id in panel_ids]
         )
     settings = manifest.get("settings", {})
     project_id = manifest.get("project_id")
     page_count = settings.get("page_count", 0) if isinstance(settings, dict) else 0
-    page_paths = [f"pages/page-{number:03d}.png" for number in range(1, page_count + 1)] if isinstance(page_count, int) else []
+    page_paths = (
+        [f"pages/page-{number:03d}.png" for number in range(1, page_count + 1)]
+        if isinstance(page_count, int)
+        else []
+    )
     return (
         [{"project_id": project_id, "settings": settings}],
         _project_files(project_dir, page_paths + ["qa/report.md"]),
@@ -698,9 +705,7 @@ def _manifest_artifact_problem(
         try:
             path = contained_project_path(project_dir, relative)
         except (ValueError, OSError):
-            problems.setdefault(
-                stage, f"artifact path escapes the project: {name}"
-            )
+            problems.setdefault(stage, f"artifact path escapes the project: {name}")
             continue
         if not path.is_file():
             problems.setdefault(stage, f"artifact is missing: {relative}")
@@ -727,10 +732,7 @@ def _stage_output_files(
         raise ValueError("storyboard has no panels")
     if output_kind == "generation":
         relatives = [f"panels/raw/{panel_id}.png" for panel_id in panel_ids]
-        relatives += [
-            _panel_clean_relative_path(project_dir, panel_id)
-            for panel_id in panel_ids
-        ]
+        relatives += [_panel_clean_relative_path(project_dir, panel_id) for panel_id in panel_ids]
         return _project_files(project_dir, relatives)
     if output_kind == "lettering":
         return _project_files(
@@ -811,17 +813,14 @@ def record_stage(project_dir: Path, stage: str) -> dict[str, object]:
             raise ValueError("manifest stage_versions must contain the stage version")
         output_files = _stage_output_files(project_dir, stage, manifest)
         missing_outputs = [
-            path.relative_to(project_dir).as_posix()
-            for path in output_files
-            if not path.is_file()
+            path.relative_to(project_dir).as_posix() for path in output_files if not path.is_file()
         ]
         if missing_outputs:
             raise ValueError(f"stage output is missing: {missing_outputs[0]}")
         canonical_inputs, files = _resume_stage_material(project_dir, stage, manifest)
         key = stage_cache_key(stage, canonical_inputs, files, versions[stage])
         artifacts = {
-            path.relative_to(project_dir).as_posix(): sha256_file(path)
-            for path in output_files
+            path.relative_to(project_dir).as_posix(): sha256_file(path) for path in output_files
         }
         cache_path = project_dir / STAGE_CACHE_PATH
         cache, _ = _load_stage_cache(cache_path)
@@ -853,7 +852,10 @@ def _accepted_panel_problem(
 
     is_v2 = record.get("schema_version") == "2.0"
     if not is_v2 and record.get("failure_category") in {
-        "corrupt", "corrupt_image", "safety", "safety_refusal",
+        "corrupt",
+        "corrupt_image",
+        "safety",
+        "safety_refusal",
     }:
         return "non-overridable panel failure cannot be reused"
 
@@ -877,18 +879,34 @@ def _accepted_panel_problem(
         if any(bindings.get(field) != value for field, value in expected_paths.items()):
             return "accepted panel paths do not match the canonical project layout"
         artifact_specs = (
-            ("raw", expected_paths["raw_path"], bindings.get("raw_sha256"),
-             (bindings.get("raw_width"), bindings.get("raw_height"))),
-            ("clean", expected_paths["clean_path"], bindings.get("clean_sha256"),
-             (bindings.get("clean_width"), bindings.get("clean_height"))),
-            ("normalization", expected_paths["normalization_path"],
-             bindings.get("normalization_sha256"), None),
+            (
+                "raw",
+                expected_paths["raw_path"],
+                bindings.get("raw_sha256"),
+                (bindings.get("raw_width"), bindings.get("raw_height")),
+            ),
+            (
+                "clean",
+                expected_paths["clean_path"],
+                bindings.get("clean_sha256"),
+                (bindings.get("clean_width"), bindings.get("clean_height")),
+            ),
+            (
+                "normalization",
+                expected_paths["normalization_path"],
+                bindings.get("normalization_sha256"),
+                None,
+            ),
         )
     else:
         panel_id = record.get("panel_id")
         raw_path = record.get("raw_path")
         clean_path = record.get("clean_path")
-        if not isinstance(panel_id, str) or not isinstance(raw_path, str) or not isinstance(clean_path, str):
+        if (
+            not isinstance(panel_id, str)
+            or not isinstance(raw_path, str)
+            or not isinstance(clean_path, str)
+        ):
             return "accepted panel QA record is invalid"
         expected_paths = {
             "source_prompt_path": f"prompts/panels/{panel_id}.txt",
@@ -899,8 +917,10 @@ def _accepted_panel_problem(
             return "accepted panel paths do not match the canonical project layout"
         dimensions = record.get("dimensions")
         recorded_size = (
-            dimensions.get("width"), dimensions.get("height")
-        ) if isinstance(dimensions, dict) else None
+            (dimensions.get("width"), dimensions.get("height"))
+            if isinstance(dimensions, dict)
+            else None
+        )
         artifact_specs = (
             ("raw", raw_path, record.get("raw_sha256"), recorded_size),
             ("clean", clean_path, None, recorded_size),
@@ -936,9 +956,6 @@ def _accepted_panel_problem(
     return None
 
 
-
-
-
 def build_resume_plan(project_dir: Path) -> list[ResumeAction]:
     """Return a read-only deterministic reuse/repair plan for a generated project."""
     project_dir = Path(project_dir).resolve()
@@ -951,13 +968,17 @@ def build_resume_plan(project_dir: Path) -> list[ResumeAction]:
     if not isinstance(versions, dict):
         raise ValueError("manifest stage_versions must be an object")
     manifest_artifacts = manifest.get("artifacts", {})
-    semantic_manifest_paths = {
-        descriptor.get("path")
-        for name, descriptor in manifest_artifacts.items()
-        if name in {"story_plan", "character_bible", "storyboard"}
-        and isinstance(descriptor, dict)
-        and isinstance(descriptor.get("path"), str)
-    } if isinstance(manifest_artifacts, dict) else set()
+    semantic_manifest_paths = (
+        {
+            descriptor.get("path")
+            for name, descriptor in manifest_artifacts.items()
+            if name in {"story_plan", "character_bible", "storyboard"}
+            and isinstance(descriptor, dict)
+            and isinstance(descriptor.get("path"), str)
+        }
+        if isinstance(manifest_artifacts, dict)
+        else set()
+    )
     problems = _manifest_artifact_problem(project_dir, manifest)
     stale_from: int | None = None
     stale_reason = ""
@@ -1011,31 +1032,39 @@ def build_resume_plan(project_dir: Path) -> list[ResumeAction]:
             actions.append(ResumeAction(stage, "reuse", "stage", "cache key and artifacts match"))
         else:
             action = get_stage(stage).stale_action
-            reason = stale_reason if index == stale_from else f"depends on stale {RESUME_STAGES[stale_from]} stage"
+            reason = (
+                stale_reason
+                if index == stale_from
+                else f"depends on stale {RESUME_STAGES[stale_from]} stage"
+            )
             actions.append(ResumeAction(stage, action, "stage", reason))
 
     for temporary in sorted(project_dir.rglob("*.tmp")):
         if temporary.is_file():
-            actions.append(ResumeAction(
-                "generation",
-                "rerun",
-                temporary.relative_to(project_dir).as_posix(),
-                "interrupted temporary file ignored and preserved",
-            ))
+            actions.append(
+                ResumeAction(
+                    "generation",
+                    "rerun",
+                    temporary.relative_to(project_dir).as_posix(),
+                    "interrupted temporary file ignored and preserved",
+                )
+            )
     generation_cache_reusable = any(
-        action.stage == "generation"
-        and action.artifact == "stage"
-        and action.action == "reuse"
+        action.stage == "generation" and action.artifact == "stage" and action.action == "reuse"
         for action in actions
     )
     for record_path in sorted((project_dir / "qa/panels").glob("*.json")):
         try:
             record = read_json(record_path)
         except (OSError, UnicodeError, ValueError) as error:
-            actions.append(ResumeAction(
-                "generation", "regenerate", record_path.stem,
-                f"panel QA record is invalid: {type(error).__name__}",
-            ))
+            actions.append(
+                ResumeAction(
+                    "generation",
+                    "regenerate",
+                    record_path.stem,
+                    f"panel QA record is invalid: {type(error).__name__}",
+                )
+            )
             continue
         panel_id = (
             record.get("subject_id")
@@ -1053,16 +1082,18 @@ def build_resume_plan(project_dir: Path) -> list[ResumeAction]:
         panel_problem = _accepted_panel_problem(project_dir, record) if accepted else None
         if accepted and panel_problem is None and not generation_cache_reusable:
             panel_problem = "generation stage cache is stale or missing"
-        actions.append(ResumeAction(
-            "generation",
-            "reuse" if accepted and panel_problem is None else "regenerate",
-            panel_id,
-            (
-                "accepted QA artifact is reusable"
-                if accepted and panel_problem is None
-                else panel_problem or "panel QA requires regeneration"
-            ),
-        ))
+        actions.append(
+            ResumeAction(
+                "generation",
+                "reuse" if accepted and panel_problem is None else "regenerate",
+                panel_id,
+                (
+                    "accepted QA artifact is reusable"
+                    if accepted and panel_problem is None
+                    else panel_problem or "panel QA requires regeneration"
+                ),
+            )
+        )
     return actions
 
 
@@ -1091,12 +1122,14 @@ def block_project(project_dir: Path, reason: str, warning: str) -> dict[str, obj
         normalized_warning = warning.strip()
         if normalized_warning not in warnings:
             warnings.append(normalized_warning)
-        manifest.update({
-            "blocked_from": current,
-            "blocked_reason": reason,
-            "status": "BLOCKED",
-            "updated_at": _utc_now(),
-        })
+        manifest.update(
+            {
+                "blocked_from": current,
+                "blocked_reason": reason,
+                "status": "BLOCKED",
+                "updated_at": _utc_now(),
+            }
+        )
         transaction.append_bytes(
             "logs/events.jsonl",
             canonical_event_record(
@@ -1143,38 +1176,43 @@ def resume_project(
     with ProjectLock(project_dir):
         ProjectTransaction.recover(project_dir)
         if progress is not None:
-            progress({"status": "working", "stage": "resume", "completed": [], "remaining": list(RESUME_STAGES)})
+            progress(
+                {
+                    "status": "working",
+                    "stage": "resume",
+                    "completed": [],
+                    "remaining": list(RESUME_STAGES),
+                }
+            )
         result = _resume_project_locked(project_dir, manifest_path)
         if progress is not None:
             state = str(result.get("status", "")).upper()
             preserved = result.get("preserved")
             invalidated = result.get("invalidated")
-            progress({
-                "status": (
-                    "blocked"
-                    if state == "BLOCKED"
-                    else "complete"
-                    if state in TERMINAL_STATUSES
-                    else "working"
-                ),
-                "stage": "resume",
-                "completed": preserved if isinstance(preserved, list) else [],
-                "remaining": invalidated if isinstance(invalidated, list) else [],
-            })
+            progress(
+                {
+                    "status": (
+                        "blocked"
+                        if state == "BLOCKED"
+                        else "complete"
+                        if state in TERMINAL_STATUSES
+                        else "working"
+                    ),
+                    "stage": "resume",
+                    "completed": preserved if isinstance(preserved, list) else [],
+                    "remaining": invalidated if isinstance(invalidated, list) else [],
+                }
+            )
         return result
 
 
-def _resume_project_locked(
-    project_dir: Path, manifest_path: Path
-) -> dict[str, object]:
+def _resume_project_locked(project_dir: Path, manifest_path: Path) -> dict[str, object]:
     with ProjectLock(project_dir):
         manifest = read_project_manifest(manifest_path, normalize_legacy=False)
         if manifest.get("status") != "BLOCKED":
             actions = build_resume_plan(project_dir)
             stage_actions = {
-                action.stage: action
-                for action in actions
-                if action.artifact == "stage"
+                action.stage: action for action in actions if action.artifact == "stage"
             }
             preserved: list[str] = []
             stale_stage: str | None = None
@@ -1185,8 +1223,9 @@ def _resume_project_locked(
                 elif stale_stage is None:
                     stale_stage = stage
             invalidated = (
-                list(RESUME_STAGES[RESUME_STAGES.index(stale_stage):])
-                if stale_stage is not None else []
+                list(RESUME_STAGES[RESUME_STAGES.index(stale_stage) :])
+                if stale_stage is not None
+                else []
             )
             return {
                 "status": manifest.get("status"),
@@ -1195,11 +1234,7 @@ def _resume_project_locked(
                 "next_action": _next_resume_action(project_dir, stale_stage),
             }
         actions = build_resume_plan(project_dir)
-        stage_actions = {
-            action.stage: action
-            for action in actions
-            if action.artifact == "stage"
-        }
+        stage_actions = {action.stage: action for action in actions if action.artifact == "stage"}
         preserved: list[str] = []
         stale_stage: str | None = None
         for stage in RESUME_STAGES:
@@ -1209,8 +1244,9 @@ def _resume_project_locked(
             elif stale_stage is None:
                 stale_stage = stage
         invalidated = (
-            list(RESUME_STAGES[RESUME_STAGES.index(stale_stage):])
-            if stale_stage is not None else []
+            list(RESUME_STAGES[RESUME_STAGES.index(stale_stage) :])
+            if stale_stage is not None
+            else []
         )
         blocked_from = manifest.get("blocked_from")
         if blocked_from not in LINEAR_STATUSES:
@@ -1235,9 +1271,7 @@ def _resume_project_locked(
         # `resume` that invalidates the same stage agree. They differ for the
         # generation stage, whose invalidation preserves the canonical references.
     if stale_stage is not None:
-        recovery_status = _post_invalidation_status(
-            project_dir, stale_stage, str(blocked_from)
-        )
+        recovery_status = _post_invalidation_status(project_dir, stale_stage, str(blocked_from))
     else:
         recovery_status = STAGE_COMPLETION_STATUS[preserved[-1]] if preserved else "INIT"
     with ProjectLock(project_dir):
@@ -1245,9 +1279,7 @@ def _resume_project_locked(
         warnings = manifest.get("warnings")
         if not isinstance(warnings, list):
             warnings = []
-        manifest["warnings"] = [
-            item for item in warnings if _warning_reason(item) != reason
-        ]
+        manifest["warnings"] = [item for item in warnings if _warning_reason(item) != reason]
         manifest["status"] = recovery_status
         manifest["blocked_from"] = None
         manifest["blocked_reason"] = None
@@ -1313,9 +1345,7 @@ def _post_invalidation_status(project_dir: Path, stage: str, reached: str) -> st
     return _earlier_status(status, reached)
 
 
-def _invalidate_from_locked(
-    project_dir: Path, stage: str, tx: ProjectTransaction
-) -> list[str]:
+def _invalidate_from_locked(project_dir: Path, stage: str, tx: ProjectTransaction) -> list[str]:
     """Apply invalidation while the caller owns the project transaction lock."""
     if stage not in RESUME_STAGES:
         raise ValueError(f"unknown resume stage: {stage}")
@@ -1333,9 +1363,7 @@ def _invalidate_from_locked(
         if owner is not None and RESUME_STAGES.index(owner) >= start:
             removed.append(name)
             del artifacts[name]
-    manifest["status"] = _post_invalidation_status(
-        project_dir, stage, str(manifest.get("status"))
-    )
+    manifest["status"] = _post_invalidation_status(project_dir, stage, str(manifest.get("status")))
     manifest["updated_at"] = _utc_now()
 
     cache_path = project_dir / STAGE_CACHE_PATH
@@ -1345,9 +1373,7 @@ def _invalidate_from_locked(
         if isinstance(cached_stages, dict):
             for downstream in RESUME_STAGES[start:]:
                 cached_stages.pop(downstream, None)
-            tx.stage_bytes(
-                str(STAGE_CACHE_PATH), canonical_artifact_bytes(cache)
-            )
+            tx.stage_bytes(str(STAGE_CACHE_PATH), canonical_artifact_bytes(cache))
     tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
     return removed
 
@@ -1413,11 +1439,7 @@ def _advance_generation_counters(
             raise ValueError("panel generation counters must be non-negative integers")
         panel[name] = value
     global_extras = counters.get("global_extra_calls", 0)
-    if (
-        isinstance(global_extras, bool)
-        or not isinstance(global_extras, int)
-        or global_extras < 0
-    ):
+    if isinstance(global_extras, bool) or not isinstance(global_extras, int) or global_extras < 0:
         raise ValueError("global generation counter must be a non-negative integer")
     if panel[counter_name] >= GENERATION_LIMITS[kind]:
         raise ValueError(GENERATION_LIMIT_MESSAGES[kind])
@@ -1445,9 +1467,7 @@ def _stage_generation_accounting(
     attempt_relative: Path,
     counters: dict[str, object],
 ) -> None:
-    transaction.stage_bytes(
-        GENERATION_COUNTERS_PATH.as_posix(), canonical_artifact_bytes(counters)
-    )
+    transaction.stage_bytes(GENERATION_COUNTERS_PATH.as_posix(), canonical_artifact_bytes(counters))
     transaction.append_bytes(
         "logs/events.jsonl",
         canonical_event_record(
@@ -1474,9 +1494,7 @@ def record_generation_attempt(
     attempt = _contained_project_path(project_dir, Path(attempt_path))
     attempt_relative = attempt.relative_to(project_dir)
     with ProjectTransaction(project_dir, "record-generation-attempt") as transaction:
-        attempt = contained_project_path(
-            project_dir, attempt_relative, must_exist=True
-        )
+        attempt = contained_project_path(project_dir, attempt_relative, must_exist=True)
         if not attempt.is_file():
             raise ValueError("attempt path must be a retained file")
         _verify_raster(attempt)
@@ -1506,9 +1524,7 @@ def retain_generation_attempt(
         counters, counts, sequence = _advance_generation_counters(
             project_dir, panel_id, kind, counter_name
         )
-        attempt_relative = Path(
-            f"panels/attempts/{panel_id}/{kind}-{sequence}.{extension}"
-        )
+        attempt_relative = Path(f"panels/attempts/{panel_id}/{kind}-{sequence}.{extension}")
         if contained_project_path(project_dir, attempt_relative).exists():
             raise ValueError("generation attempt destination already exists")
         transaction.stage_bytes(attempt_relative.as_posix(), payload)
@@ -1518,9 +1534,7 @@ def retain_generation_attempt(
     return counts
 
 
-def _verify_raster_payload(
-    payload: bytes, media_type: str, width: int, height: int
-) -> str:
+def _verify_raster_payload(payload: bytes, media_type: str, width: int, height: int) -> str:
     formats = {
         "image/png": ("PNG", "png"),
         "image/jpeg": ("JPEG", "jpg"),
@@ -1564,7 +1578,12 @@ def _verify_raster(path: Path) -> tuple[int, int]:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
-            payload = read_bytes_nofollow(path, max_bytes=MAX_ENCODED_RASTER_BYTES)
+            try:
+                payload = read_bytes_nofollow(path, max_bytes=MAX_ENCODED_RASTER_BYTES)
+            except InputResourceLimitError as error:
+                raise InputResourceLimitError(
+                    f"the encoded raster size limit of {MAX_ENCODED_RASTER_BYTES} bytes"
+                ) from error
             with Image.open(io.BytesIO(payload)) as image:
                 if image.format not in {"PNG", "JPEG", "WEBP"}:
                     raise ValueError("attempt must be a readable raster")
@@ -1576,7 +1595,12 @@ def _verify_raster(path: Path) -> tuple[int, int]:
                 return image.width, image.height
     except InputResourceLimitError:
         raise
-    except (OSError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
+    except (
+        OSError,
+        SyntaxError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as error:
         raise ValueError("attempt must be a readable raster") from error
 
 
@@ -1607,17 +1631,11 @@ def _replacement_problem(project_dir: Path, panel_id: str) -> str | None:
     except FileNotFoundError:
         return None
     except OSError as error:
-        return (
-            f"panel QA record cannot be inspected: {record_relative}: "
-            f"{type(error).__name__}"
-        )
+        return f"panel QA record cannot be inspected: {record_relative}: {type(error).__name__}"
     try:
         record = read_json(record_path)
     except (OSError, ValueError, json.JSONDecodeError) as error:
-        return (
-            f"panel QA record cannot be read: {record_relative}: "
-            f"{type(error).__name__}"
-        )
+        return f"panel QA record cannot be read: {record_relative}: {type(error).__name__}"
     decision = record.get("decision")
     if decision in ACCEPTED_DECISIONS:
         return (
@@ -1625,10 +1643,7 @@ def _replacement_problem(project_dir: Path, panel_id: str) -> str | None:
             f"{record_relative} before replacing the accepted raster"
         )
     if decision not in REPAIR_DECISIONS:
-        return (
-            "panel QA record has no recognized quality decision: "
-            f"{record_relative}"
-        )
+        return f"panel QA record has no recognized quality decision: {record_relative}"
     return None
 
 
@@ -1683,14 +1698,16 @@ def promote_attempt(project_dir: Path, panel_id: str, attempt_path: Path) -> Pat
                     available = not archive.exists()
                 except ValueError:
                     available = False
-                if available and archive_relative != attempt_relative and archive_relative != destination_relative:
+                if (
+                    available
+                    and archive_relative != attempt_relative
+                    and archive_relative != destination_relative
+                ):
                     transaction.stage_bytes(archive_relative.as_posix(), old_bytes)
                     break
                 number += 1
         transaction.stage_bytes(destination_relative.as_posix(), new_bytes)
-        events = canonical_event_record(
-            "generation.attempt-promoted", event_details
-        )
+        events = canonical_event_record("generation.attempt-promoted", event_details)
         if replaced:
             events += canonical_event_record(
                 "artifact.regenerated",
@@ -1699,9 +1716,7 @@ def promote_attempt(project_dir: Path, panel_id: str, attempt_path: Path) -> Pat
                     "reused": False,
                 },
             )
-        transaction.append_bytes(
-            "logs/events.jsonl", events, repair_torn_jsonl=True
-        )
+        transaction.append_bytes("logs/events.jsonl", events, repair_torn_jsonl=True)
     return destination
 
 
@@ -1740,13 +1755,17 @@ def _stage_override(
         if category != "visual_qa":
             raise ValueError("only non-safety visual QA errors can be overridden")
     checks = record.get("checks")
-    failed_checks = [
-        check
-        for check in checks
-        if isinstance(check, dict)
-        and check.get("result") == "fail"
-        and check.get("severity") == "error"
-    ] if isinstance(checks, list) else []
+    failed_checks = (
+        [
+            check
+            for check in checks
+            if isinstance(check, dict)
+            and check.get("result") == "fail"
+            and check.get("severity") == "error"
+        ]
+        if isinstance(checks, list)
+        else []
+    )
     if not failed_checks:
         raise ValueError("override requires an error-level failed check")
     if record.get("decision") != "regenerate":
@@ -1758,10 +1777,7 @@ def _stage_override(
     else:
         raw_path = record.get("raw_path")
         clean_path = record.get("clean_path")
-        if (
-            raw_path != f"panels/raw/{panel_id}.png"
-            or clean_path != f"panels/clean/{panel_id}.png"
-        ):
+        if raw_path != f"panels/raw/{panel_id}.png" or clean_path != f"panels/clean/{panel_id}.png":
             raise ValueError("corrupt images cannot be overridden")
         try:
             raw = _contained_project_path(project_dir, Path(raw_path))
@@ -1770,8 +1786,10 @@ def _stage_override(
             clean_size = _verify_raster(clean)
             dimensions = record.get("dimensions")
             recorded_size = (
-                dimensions.get("width"), dimensions.get("height")
-            ) if isinstance(dimensions, dict) else None
+                (dimensions.get("width"), dimensions.get("height"))
+                if isinstance(dimensions, dict)
+                else None
+            )
             if (
                 record.get("raw_sha256") != sha256_file(raw)
                 or recorded_size != raw_size
@@ -1816,9 +1834,7 @@ def _stage_override(
     tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
     tx.append_bytes(
         "logs/events.jsonl",
-        canonical_event_record(
-            "panel.overridden", {"panel_id": panel_id, "action": "accepted"}
-        ),
+        canonical_event_record("panel.overridden", {"panel_id": panel_id, "action": "accepted"}),
         repair_torn_jsonl=True,
     )
 
@@ -1845,18 +1861,36 @@ def doctor_report(output_root: Path) -> dict[str, object]:
         checks.append(check)
 
     if sys.version_info[:2] >= (3, 11):
-        add_check("runtime", "pass", f"Python 3.11+ ({sys.version.split()[0]})", "No action required.")
+        add_check(
+            "runtime", "pass", f"Python 3.11+ ({sys.version.split()[0]})", "No action required."
+        )
     else:
-        add_check("runtime", "fail", f"Python 3.11+ required; found {sys.version.split()[0]}", "Install Python 3.11 or newer and rerun doctor.")
+        add_check(
+            "runtime",
+            "fail",
+            f"Python 3.11+ required; found {sys.version.split()[0]}",
+            "Install Python 3.11 or newer and rerun doctor.",
+        )
 
     try:
         import PIL
+
         if PIL.__version__ == REQUIRED_PILLOW:
             add_check("pillow", "pass", f"Pillow {REQUIRED_PILLOW}", "No action required.")
         else:
-            add_check("pillow", "fail", f"Pillow {REQUIRED_PILLOW} required; found {PIL.__version__}", f"Install the locked Pillow version: python -m pip install Pillow=={REQUIRED_PILLOW}.")
+            add_check(
+                "pillow",
+                "fail",
+                f"Pillow {REQUIRED_PILLOW} required; found {PIL.__version__}",
+                f"Install the locked Pillow version: python -m pip install Pillow=={REQUIRED_PILLOW}.",
+            )
     except Exception as error:
-        add_check("pillow", "fail", f"Pillow check failed: {type(error).__name__}: {error}", "Install the Comic Sol runtime again so its bundled Pillow dependency is restored.")
+        add_check(
+            "pillow",
+            "fail",
+            f"Pillow check failed: {type(error).__name__}: {error}",
+            "Install the Comic Sol runtime again so its bundled Pillow dependency is restored.",
+        )
 
     font_checks = (
         ("Comic Neue Regular", FONT_PATH_COMIC_REGULAR),
@@ -1874,7 +1908,13 @@ def doctor_report(output_root: Path) -> dict[str, object]:
             font_failures.append(detail)
             font_results.append((label, False, detail))
     if font_failures:
-        add_check("fonts", "fail", "Required bundled fonts could not be loaded.", "Reinstall Comic Sol or restore the bundled assets/fonts directory.", failures=font_failures)
+        add_check(
+            "fonts",
+            "fail",
+            "Required bundled fonts could not be loaded.",
+            "Reinstall Comic Sol or restore the bundled assets/fonts directory.",
+            failures=font_failures,
+        )
     else:
         add_check("fonts", "pass", "Bundled fonts load at 42px.", "No action required.")
 
@@ -1905,8 +1945,7 @@ def doctor_report(output_root: Path) -> dict[str, object]:
             add_check(
                 "typography",
                 "fail",
-                "Bundled fonts no longer letter required scripts: "
-                + ", ".join(sorted(missing)),
+                "Bundled fonts no longer letter required scripts: " + ", ".join(sorted(missing)),
                 "Restore the bundled assets/fonts directory so the documented scripts letter again.",
                 failures=failures,
             )
@@ -1927,8 +1966,12 @@ def doctor_report(output_root: Path) -> dict[str, object]:
         )
 
     template_names = (
-        "manifest.json", "character-bible.json", "story-plan.json",
-        "storyboard.json", "panel-record.json", "qa-report.md.tmpl",
+        "manifest.json",
+        "character-bible.json",
+        "story-plan.json",
+        "storyboard.json",
+        "panel-record.json",
+        "qa-report.md.tmpl",
     )
     json_template_names = set(template_names) - {"qa-report.md.tmpl"}
     missing_templates = [name for name in template_names if not (TEMPLATES / name).is_file()]
@@ -1941,18 +1984,37 @@ def doctor_report(output_root: Path) -> dict[str, object]:
             invalid_templates.append(f"{name} ({type(error).__name__})")
     if missing_templates or invalid_templates:
         failures = missing_templates + invalid_templates
-        add_check("templates", "fail", f"Templates missing or invalid: {', '.join(failures)}", "Reinstall Comic Sol so its bundled templates are restored.", missing=missing_templates, invalid=invalid_templates)
+        add_check(
+            "templates",
+            "fail",
+            f"Templates missing or invalid: {', '.join(failures)}",
+            "Reinstall Comic Sol so its bundled templates are restored.",
+            missing=missing_templates,
+            invalid=invalid_templates,
+        )
     else:
         add_check("templates", "pass", "Bundled templates available.", "No action required.")
 
     reference_root = ROOT / "references"
     if not reference_root.is_dir():
         reference_root = ROOT / "skill" / "references"
-    missing_references = [name for name in ("workflow.md", "schemas.md", "visual-qa.md") if not (reference_root / name).is_file()]
+    missing_references = [
+        name
+        for name in ("workflow.md", "schemas.md", "visual-qa.md")
+        if not (reference_root / name).is_file()
+    ]
     if missing_references:
-        add_check("references", "fail", f"References missing: {', '.join(missing_references)}", "Reinstall Comic Sol or restore its bundled references.", missing=missing_references)
+        add_check(
+            "references",
+            "fail",
+            f"References missing: {', '.join(missing_references)}",
+            "Reinstall Comic Sol or restore its bundled references.",
+            missing=missing_references,
+        )
     else:
-        add_check("references", "pass", "Bundled workflow references available.", "No action required.")
+        add_check(
+            "references", "pass", "Bundled workflow references available.", "No action required."
+        )
 
     output_root = Path(output_root)
     try:
@@ -1961,9 +2023,19 @@ def doctor_report(output_root: Path) -> dict[str, object]:
             handle.write(b"ok")
             handle.flush()
             os.fsync(handle.fileno())
-        add_check("output-root", "pass", f"output root writable: {output_root.resolve()}", "No action required.")
+        add_check(
+            "output-root",
+            "pass",
+            f"output root writable: {output_root.resolve()}",
+            "No action required.",
+        )
     except OSError as error:
-        add_check("output-root", "fail", f"Output root is not writable: {type(error).__name__}: {error}", "Choose a writable project directory with --output-root or fix its permissions.")
+        add_check(
+            "output-root",
+            "fail",
+            f"Output root is not writable: {type(error).__name__}: {error}",
+            "Choose a writable project directory with --output-root or fix its permissions.",
+        )
 
     try:
         try:
@@ -1977,12 +2049,32 @@ def doctor_report(output_root: Path) -> dict[str, object]:
         if not hasattr(server_module, api_name) or not hasattr(exceptions_module, "ToolError"):
             raise ImportError("required MCP server APIs are missing")
     except ModuleNotFoundError:
-        add_check("mcp", "warn", "MCP support is unavailable in this environment.", "Install the optional MCP extra with: python -m pip install 'comic-sol[mcp]'.")
+        add_check(
+            "mcp",
+            "warn",
+            "MCP support is unavailable in this environment.",
+            "Install the optional MCP extra with: python -m pip install 'comic-sol[mcp]'.",
+        )
     except Exception as error:
-        add_check("mcp", "warn", f"MCP support is installed but unusable ({type(error).__name__}).", "Reinstall the optional MCP extra and rerun doctor.")
+        add_check(
+            "mcp",
+            "warn",
+            f"MCP support is installed but unusable ({type(error).__name__}).",
+            "Reinstall the optional MCP extra and rerun doctor.",
+        )
     else:
-        add_check("mcp", "pass", "MCP support is installed and its server APIs are importable.", "No action required.")
-    add_check("image-capability", "warn", "Image-generation capability must be inspected in the agent session.", "Enable an image-generation skill/tool, then resume the project when panels are needed.")
+        add_check(
+            "mcp",
+            "pass",
+            "MCP support is installed and its server APIs are importable.",
+            "No action required.",
+        )
+    add_check(
+        "image-capability",
+        "warn",
+        "Image-generation capability must be inspected in the agent session.",
+        "Enable an image-generation skill/tool, then resume the project when panels are needed.",
+    )
 
     ready = not any(check["status"] == "fail" for check in checks)
     messages = [f"{'READY' if ready else 'NOT READY'} Comic Sol diagnostics"]
@@ -1992,7 +2084,9 @@ def doctor_report(output_root: Path) -> dict[str, object]:
     else:
         messages.append(f"FAIL Python 3.11+ required; found {sys.version.split()[0]}")
     pillow_check = next(check for check in checks if check["id"] == "pillow")
-    messages.append(f"{'PASS' if pillow_check['status'] == 'pass' else 'FAIL'} {pillow_check['message']}")
+    messages.append(
+        f"{'PASS' if pillow_check['status'] == 'pass' else 'FAIL'} {pillow_check['message']}"
+    )
     for label, passed, detail in font_results:
         messages.append(f"{'PASS' if passed else 'FAIL'} {detail}")
     templates_check = next(check for check in checks if check["id"] == "templates")
@@ -2008,7 +2102,9 @@ def doctor_report(output_root: Path) -> dict[str, object]:
         else f"FAIL {references_check['message']}"
     )
     output_check = next(check for check in checks if check["id"] == "output-root")
-    messages.append(f"{'PASS' if output_check['status'] == 'pass' else 'FAIL'} {output_check['message']}")
+    messages.append(
+        f"{'PASS' if output_check['status'] == 'pass' else 'FAIL'} {output_check['message']}"
+    )
     messages.append("INFO image capability: inspect in agent session")
     return {"ready": ready, "healthy": ready, "checks": checks, "messages": messages}
 
@@ -2029,20 +2125,24 @@ def finalize_project(
     project_dir = caller_project_dir.resolve(strict=True)
     with ProjectLock(project_dir, timeout=PROJECT_OPERATION_LOCK_TIMEOUT):
         if progress is not None:
-            progress({
-                "status": "working",
-                "stage": "lettering",
-                "completed": [],
-                "remaining": ["composition", "export"],
-            })
+            progress(
+                {
+                    "status": "working",
+                    "stage": "lettering",
+                    "completed": [],
+                    "remaining": ["composition", "export"],
+                }
+            )
         result = _finalize_project_locked(project_dir, caller_project_dir, progress)
         if progress is not None:
-            progress({
-                "status": "complete",
-                "stage": "export",
-                "completed": ["lettering", "composition", "export"],
-                "remaining": [],
-            })
+            progress(
+                {
+                    "status": "complete",
+                    "stage": "export",
+                    "completed": ["lettering", "composition", "export"],
+                    "remaining": [],
+                }
+            )
         return result
 
 
@@ -2066,10 +2166,7 @@ def _finalize_project_locked(
 
     # 1. Determine stale stages from the resume plan.
     plan = build_resume_plan(caller_project_dir)
-    stale = {
-        a.stage for a in plan
-        if a.artifact == "stage" and a.action in {"regenerate", "rerun"}
-    }
+    stale = {a.stage for a in plan if a.artifact == "stage" and a.action in {"regenerate", "rerun"}}
 
     # 2. Lettering (if stale), advance status.
     manifest = read_project_manifest(manifest_path, normalize_legacy=False)
@@ -2077,15 +2174,16 @@ def _finalize_project_locked(
     if not isinstance(panel_ids, list) or not panel_ids:
         storyboard = read_json(project_dir / "plan/storyboard.json")
         panel_ids = [
-            panel["id"] for panel in _storyboard_panels(storyboard)
+            panel["id"]
+            for panel in _storyboard_panels(storyboard)
             if isinstance(panel.get("id"), str)
         ]
     need_lettering = "lettering" in stale or not all(
-        (project_dir / f"panels/{pid}/lettered.png").is_file()
-        for pid in panel_ids
+        (project_dir / f"panels/{pid}/lettered.png").is_file() for pid in panel_ids
     )
     if need_lettering:
         from .letter_panels import letter_project
+
         letter_project(caller_project_dir)
         record_stage(caller_project_dir, "lettering")
     manifest = read_project_manifest(manifest_path, normalize_legacy=False)
@@ -2093,18 +2191,23 @@ def _finalize_project_locked(
         transition(caller_project_dir, "LETTERED")
 
     if progress is not None:
-        progress({
-            "status": "working",
-            "stage": "composition",
-            "completed": ["lettering"],
-            "remaining": ["export"],
-        })
+        progress(
+            {
+                "status": "working",
+                "stage": "composition",
+                "completed": ["lettering"],
+                "remaining": ["export"],
+            }
+        )
 
     # 3. Composition (if stale), advance status. compose_project writes
     #    cache/composition.json and its manifest descriptor.
-    need_composition = "composition" in stale or not (project_dir / "cache/composition.json").is_file()
+    need_composition = (
+        "composition" in stale or not (project_dir / "cache/composition.json").is_file()
+    )
     if need_composition:
         from .compose_pages import compose_project
+
         compose_project(caller_project_dir)
         record_stage(caller_project_dir, "composition")
     manifest = read_project_manifest(manifest_path, normalize_legacy=False)
@@ -2112,12 +2215,14 @@ def _finalize_project_locked(
         transition(caller_project_dir, "COMPOSED")
 
     if progress is not None:
-        progress({
-            "status": "working",
-            "stage": "export",
-            "completed": ["lettering", "composition"],
-            "remaining": [],
-        })
+        progress(
+            {
+                "status": "working",
+                "stage": "export",
+                "completed": ["lettering", "composition"],
+                "remaining": [],
+            }
+        )
 
     # 4. Fail closed on agent-produced page-QA integrity records.
     from .page_quality import validate_page_quality
@@ -2141,13 +2246,12 @@ def _finalize_project_locked(
             raise ValueError(f"page_qa_required: {page_rel} is missing")
         page_issues = validate_page_quality(caller_project_dir, page_number)
         if page_issues:
-            detail = "; ".join(
-                f"{issue.field}: {issue.message}" for issue in page_issues
-            )
+            detail = "; ".join(f"{issue.field}: {issue.message}" for issue in page_issues)
             raise ValueError(f"page_qa_required: {qa_rel} is stale: {detail}")
 
     # 5. Guarded export (validates export-ready, writes PDF, records descriptor).
     from .export_pdf import guarded_export
+
     guarded_export(caller_project_dir)
     manifest = read_project_manifest(manifest_path, normalize_legacy=False)
     if _allowed_transition(str(manifest.get("status")), "EXPORTED"):
@@ -2159,11 +2263,10 @@ def _finalize_project_locked(
     manifest = read_project_manifest(manifest_path, normalize_legacy=False)
     warnings = manifest.get("warnings")
     final_status = (
-        "COMPLETE_WITH_WARNINGS"
-        if isinstance(warnings, list) and warnings
-        else "COMPLETE"
+        "COMPLETE_WITH_WARNINGS" if isinstance(warnings, list) and warnings else "COMPLETE"
     )
     from .render_report import render_report
+
     render_report(caller_project_dir)
 
     # 7. render_report and compose_project record their own descriptors.
@@ -2213,9 +2316,7 @@ def _build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("--json", action="store_true", dest="as_json")
 
     doctor_parser = subparsers.add_parser("doctor")
-    doctor_parser.add_argument(
-        "--output-root", type=Path, default=Path("comic-sol-output")
-    )
+    doctor_parser.add_argument("--output-root", type=Path, default=Path("comic-sol-output"))
 
     resume_parser = subparsers.add_parser("resume-plan")
     resume_parser.add_argument("project_dir", type=Path)
@@ -2272,18 +2373,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(project.resolve())
         elif arguments.command == "transition":
-            manifest = transition(
-                arguments.project_dir, arguments.target, arguments.warning
-            )
+            manifest = transition(arguments.project_dir, arguments.target, arguments.warning)
             print(f"{manifest['project_id']}: {manifest['status']}")
         elif arguments.command == "status":
             manifest = read_project_manifest(arguments.project_dir / "project.json")
             if arguments.as_json:
-                print(
-                    json.dumps(
-                        manifest, ensure_ascii=False, indent=2, sort_keys=True
-                    )
-                )
+                print(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
             else:
                 print(f"{manifest['project_id']}: {manifest['status']}")
         elif arguments.command == "doctor":
@@ -2293,7 +2388,14 @@ def main(argv: list[str] | None = None) -> int:
         elif arguments.command == "resume-plan":
             actions = build_resume_plan(arguments.project_dir)
             if arguments.as_json:
-                print(json.dumps([asdict(action) for action in actions], ensure_ascii=False, indent=2, sort_keys=True))
+                print(
+                    json.dumps(
+                        [asdict(action) for action in actions],
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
             else:
                 for action in actions:
                     print(f"{action.stage}: {action.action} {action.artifact} — {action.reason}")
@@ -2313,9 +2415,10 @@ def main(argv: list[str] | None = None) -> int:
         elif arguments.command == "invalidate":
             # Invalidating a BLOCKED project would leave blocked_from and
             # blocked_reason set, which every later validation rejects.
-            if read_project_manifest(Path(arguments.project_dir) / "project.json").get(
-                "status"
-            ) == "BLOCKED":
+            if (
+                read_project_manifest(Path(arguments.project_dir) / "project.json").get("status")
+                == "BLOCKED"
+            ):
                 raise ValueError(
                     "project is BLOCKED; run `comic_sol.py resume PROJECT_DIR` "
                     "to clear the block before invalidating a stage"

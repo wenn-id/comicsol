@@ -215,8 +215,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             if command in {"resume", "finalize"}:
                 reporter.failure(
-                    blocked="blocked" in str(error).lower()
-                    or "capability" in str(error).lower()
+                    blocked="blocked" in str(error).lower() or "capability" in str(error).lower()
                 )
             print(format_human_error(error, command=command), file=sys.stderr)
         return 2
@@ -236,8 +235,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             if command in {"resume", "finalize"}:
                 reporter.failure(
-                    blocked="blocked" in str(error).lower()
-                    or "capability" in str(error).lower()
+                    blocked="blocked" in str(error).lower() or "capability" in str(error).lower()
                 )
             print(format_human_error(error, command=command), file=sys.stderr)
         return 1

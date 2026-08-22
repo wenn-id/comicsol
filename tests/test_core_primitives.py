@@ -65,16 +65,24 @@ class CorePrimitiveTests(unittest.TestCase):
 class BalloonGeometryPrimitiveTests(unittest.TestCase):
     def test_overlap_area_is_zero_for_touching_rectangles(self):
         first = {"x": 0, "y": 0, "width": 10, "height": 10}
-        self.assertEqual(0, rectangle_overlap_area(first, {"x": 10, "y": 0, "width": 5, "height": 5}))
+        self.assertEqual(
+            0, rectangle_overlap_area(first, {"x": 10, "y": 0, "width": 5, "height": 5})
+        )
         self.assertEqual(
             4, rectangle_overlap_area(first, {"x": 8, "y": 8, "width": 5, "height": 5})
         )
 
     def test_separation_is_zero_when_rectangles_touch_or_overlap(self):
         first = {"x": 0, "y": 0, "width": 10, "height": 10}
-        self.assertEqual(0.0, rectangle_separation(first, {"x": 10, "y": 0, "width": 5, "height": 5}))
-        self.assertEqual(0.0, rectangle_separation(first, {"x": 5, "y": 5, "width": 5, "height": 5}))
-        self.assertEqual(5.0, rectangle_separation(first, {"x": 15, "y": 0, "width": 5, "height": 5}))
+        self.assertEqual(
+            0.0, rectangle_separation(first, {"x": 10, "y": 0, "width": 5, "height": 5})
+        )
+        self.assertEqual(
+            0.0, rectangle_separation(first, {"x": 5, "y": 5, "width": 5, "height": 5})
+        )
+        self.assertEqual(
+            5.0, rectangle_separation(first, {"x": 15, "y": 0, "width": 5, "height": 5})
+        )
         self.assertEqual(
             5.0, rectangle_separation(first, {"x": 13, "y": 14, "width": 5, "height": 5})
         )
@@ -122,7 +130,9 @@ class BalloonGeometryPrimitiveTests(unittest.TestCase):
         # Pointing at a different speaker fails the cosine alignment floor.
         self.assertEqual("fail", tail_geometry_result(tail, [0.02, 0.1], 1000, 1000))
         # A tail must stop short of its voice source.
-        self.assertEqual("fail", tail_geometry_result({**tail, "source_gap": 0.0}, [0.5, 0.1], 1000, 1000))
+        self.assertEqual(
+            "fail", tail_geometry_result({**tail, "source_gap": 0.0}, [0.5, 0.1], 1000, 1000)
+        )
         # A tip outside the panel fails even when it is aimed correctly.
         self.assertEqual(
             "fail", tail_geometry_result({**tail, "tip": [1400.0, 100.0]}, [1.0, 0.1], 1000, 1000)
@@ -187,12 +197,15 @@ class BalloonGeometryPrimitiveTests(unittest.TestCase):
         # A corrupt anchor is a failed check, never an exception out of the record
         # builder.
         for anchor in (
-            ["a", "b"], [None, 1], [float("nan"), 0.5], [float("inf"), 0.5],
-            [True, 0.5], [0.5], [0.5, 0.1, 0.2],
+            ["a", "b"],
+            [None, 1],
+            [float("nan"), 0.5],
+            [float("inf"), 0.5],
+            [True, 0.5],
+            [0.5],
+            [0.5, 0.1, 0.2],
         ):
-            self.assertEqual(
-                "fail", tail_geometry_result(tail, anchor, 1000, 1000), anchor
-            )
+            self.assertEqual("fail", tail_geometry_result(tail, anchor, 1000, 1000), anchor)
 
 
 if __name__ == "__main__":

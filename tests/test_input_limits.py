@@ -50,6 +50,7 @@ from scripts.validate_project import validate_manifest, validate_panel_record
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
 if MCP_AVAILABLE:
     from scripts import mcp_server
+
     try:
         from mcp.server.fastmcp.exceptions import ToolError
     except ModuleNotFoundError:
@@ -68,8 +69,7 @@ def bomb_png_bytes(width: int, height: int) -> bytes:
     def chunk(kind: bytes, data: bytes) -> bytes:
         body = kind + data
         return (
-            struct.pack(">I", len(data)) + body
-            + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+            struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
         )
 
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
@@ -170,9 +170,7 @@ class BoundedReaderTests(unittest.TestCase):
             project = root / "project"
             project.mkdir()
             (project / "small.bin").write_bytes(b"x" * 16)
-            self.assertEqual(
-                len(read_contained_bytes(project, "small.bin", max_bytes=16)), 16
-            )
+            self.assertEqual(len(read_contained_bytes(project, "small.bin", max_bytes=16)), 16)
             with self.assertRaises(InputResourceLimitError):
                 read_contained_bytes(project, "small.bin", max_bytes=15)
 
@@ -230,9 +228,7 @@ class RasterEncodedLimitTests(unittest.TestCase):
         with temporary_directory() as root:
             raster = root / "huge.png"
             raster.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * (1024 + 1))
-            with mock.patch.object(
-                comic_sol, "MAX_ENCODED_RASTER_BYTES", 1024
-            ):
+            with mock.patch.object(comic_sol, "MAX_ENCODED_RASTER_BYTES", 1024):
                 with self.assertRaises(InputResourceLimitError) as raised:
                     comic_sol._verify_raster(raster)
             self.assertIn("encoded raster size limit", str(raised.exception))
@@ -266,16 +262,16 @@ class NarrativeFieldTests(unittest.TestCase):
         self.assertEqual(MAX_OVERRIDE_REASON_CHARS, 1000)
 
     def test_title_at_the_boundary(self):
-        self.assertEqual(
-            len(validate_narrative("T" * 200, message="title", max_chars=200)), 200
-        )
+        self.assertEqual(len(validate_narrative("T" * 200, message="title", max_chars=200)), 200)
         with self.assertRaises(ValueError):
             validate_narrative("T" * 201, message="title", max_chars=200)
 
     def test_warning_and_reason_boundaries(self):
         validate_narrative("w" * MAX_WARNING_CHARS, message="w", max_chars=MAX_WARNING_CHARS)
         with self.assertRaises(ValueError):
-            validate_narrative("w" * (MAX_WARNING_CHARS + 1), message="w", max_chars=MAX_WARNING_CHARS)
+            validate_narrative(
+                "w" * (MAX_WARNING_CHARS + 1), message="w", max_chars=MAX_WARNING_CHARS
+            )
         validate_narrative(
             "r" * MAX_OVERRIDE_REASON_CHARS,
             message="r",
@@ -307,9 +303,7 @@ class NarrativeFieldTests(unittest.TestCase):
             "Reviewer accepted the motion blur as an artistic choice.",
             "secret agent storyline approved for teen rating",
         ):
-            self.assertEqual(
-                validate_narrative(prose, message="note", max_chars=500), prose
-            )
+            self.assertEqual(validate_narrative(prose, message="note", max_chars=500), prose)
 
 
 class EngineNarrativeSurfaceTests(unittest.TestCase):
@@ -320,16 +314,12 @@ class EngineNarrativeSurfaceTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 ValueError, "title must be a non-empty string of at most 200"
             ):
-                comic_sol.init_project(
-                    root, "T" * 201, b"source", {"mode": "short_prompt"}
-                )
+                comic_sol.init_project(root, "T" * 201, b"source", {"mode": "short_prompt"})
 
     def test_init_project_rejects_secret_title(self):
         with temporary_directory() as root:
             with self.assertRaisesRegex(ValueError, "narrative field"):
-                comic_sol.init_project(
-                    root, "Story with api_key=abc123 inside", b"source", {}
-                )
+                comic_sol.init_project(root, "Story with api_key=abc123 inside", b"source", {})
 
     def test_validate_request_settings_rejects_oversized_request_title(self):
         with self.assertRaisesRegex(
@@ -387,16 +377,12 @@ class EngineNarrativeSurfaceTests(unittest.TestCase):
         )
         issues = validate_manifest(manifest("Fine", ["w" * 501]))
         self.assertTrue(
-            any(
-                issue.field == "warnings[0]" and "at most 500" in issue.message
-                for issue in issues
-            )
+            any(issue.field == "warnings[0]" and "at most 500" in issue.message for issue in issues)
         )
         issues = validate_manifest(manifest("Fine", ["api_key=abc123"]))
         self.assertTrue(
             any(
-                issue.field == "warnings[0]"
-                and "secrets or credentials" in issue.message
+                issue.field == "warnings[0]" and "secrets or credentials" in issue.message
                 for issue in issues
             )
         )
@@ -431,8 +417,7 @@ class EngineNarrativeSurfaceTests(unittest.TestCase):
         issues = validate_panel_record(record("api_key=abc123"))
         self.assertTrue(
             any(
-                issue.field == "override_reason"
-                and "secrets or credentials" in issue.message
+                issue.field == "override_reason" and "secrets or credentials" in issue.message
                 for issue in issues
             )
         )
@@ -459,9 +444,7 @@ class StructuredResourceErrorTests(unittest.TestCase):
                 self.assertEqual("security-error", payload["category"])
 
     def test_other_security_errors_still_classify_to_cs_sec_001(self):
-        classified = classify_exception(
-            ValueError("security-error: project contains a symlink")
-        )
+        classified = classify_exception(ValueError("security-error: project contains a symlink"))
         self.assertEqual("CS-SEC-001", classified.code)
 
     def test_error_message_carries_no_payload_content(self):
@@ -564,9 +547,7 @@ class McpInputLimitParityTests(unittest.TestCase):
     def test_status_reports_oversized_manifest_as_cs_sec_002(self):
         project = self.root / "huge-project"
         project.mkdir()
-        (project / "project.json").write_bytes(
-            b'{"padding": "' + b"a" * MAX_JSON_BYTES + b'"}'
-        )
+        (project / "project.json").write_bytes(b'{"padding": "' + b"a" * MAX_JSON_BYTES + b'"}')
         with self.assertRaises(ToolError) as raised:
             mcp_server.comic_status("huge-project")
         payload = self._tool_payload(raised.exception)
@@ -589,12 +570,8 @@ class CliInputLimitParityTests(unittest.TestCase):
         with temporary_directory() as root:
             project = root / "huge-project"
             project.mkdir()
-            (project / "project.json").write_bytes(
-                b'{"padding": "' + b"a" * MAX_JSON_BYTES + b'"}'
-            )
-            code, stdout, stderr = self.invoke(
-                ["--json", "status", str(project)]
-            )
+            (project / "project.json").write_bytes(b'{"padding": "' + b"a" * MAX_JSON_BYTES + b'"}')
+            code, stdout, stderr = self.invoke(["--json", "status", str(project)])
             self.assertEqual(2, code)
             payload = json.loads(stdout)
             self.assertFalse(payload["ok"])

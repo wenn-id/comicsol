@@ -42,8 +42,7 @@ def _storyboard_page(storyboard: dict, page_number: int) -> dict:
     if not isinstance(pages, list):
         raise ValueError("storyboard pages must be an array")
     matches = [
-        page for page in pages
-        if isinstance(page, dict) and page.get("number") == page_number
+        page for page in pages if isinstance(page, dict) and page.get("number") == page_number
     ]
     if len(matches) != 1:
         raise ValueError(f"storyboard page {page_number} was not found exactly once")
@@ -58,11 +57,13 @@ def _artifact_path(project_dir: Path, panel_id: str, source_artifacts: dict) -> 
     candidates: list[str | Path] = []
     if isinstance(configured, (str, Path)):
         candidates.append(configured)
-    candidates.extend((
-        f"panels/{panel_id}/lettered.png",
-        f"pages/{panel_id}.png",
-        f"panels/lettered/{panel_id}.png",
-    ))
+    candidates.extend(
+        (
+            f"panels/{panel_id}/lettered.png",
+            f"pages/{panel_id}.png",
+            f"panels/lettered/{panel_id}.png",
+        )
+    )
     for relative in candidates:
         candidate = contained_project_path(project_dir, relative)
         if candidate.is_file():
@@ -91,9 +92,7 @@ def _page_sources(
         else:
             sources.append((panel, source))
     if missing:
-        raise FileNotFoundError(
-            "missing required lettered panel image(s): " + ", ".join(missing)
-        )
+        raise FileNotFoundError("missing required lettered panel image(s): " + ", ".join(missing))
     return sources
 
 
@@ -107,8 +106,12 @@ def _rect(panel: dict) -> tuple[int, int, int, int]:
         raise ValueError(f"panel {panel.get('id')} rectangle must contain integers")
     x, y, width, height = values
     if (
-        x < 0 or y < 0 or width <= 0 or height <= 0
-        or x + width > PAGE_WIDTH or y + height > PAGE_HEIGHT
+        x < 0
+        or y < 0
+        or width <= 0
+        or height <= 0
+        or x + width > PAGE_WIDTH
+        or y + height > PAGE_HEIGHT
     ):
         raise ValueError(f"panel {panel.get('id')} rectangle exceeds the page")
     return x, y, width, height
@@ -133,9 +136,7 @@ def _page_layout(page: dict) -> tuple[str, tuple[tuple[int, int, int, int], ...]
         return declared, rectangles
     definition = get_layout(declared)
     if definition.rectangles != rectangles:
-        raise ValueError(
-            f"declared layout {declared} does not match storyboard rectangles"
-        )
+        raise ValueError(f"declared layout {declared} does not match storyboard rectangles")
     return declared, rectangles
 
 
@@ -158,9 +159,7 @@ def _compose_to_bytes(
                     centering=(0.5, 0.5),
                 )
         except (OSError, SyntaxError) as error:
-            raise ValueError(
-                f"panel {panel.get('id')} is not a readable image"
-            ) from error
+            raise ValueError(f"panel {panel.get('id')} is not a readable image") from error
         canvas.paste(fitted, (x, y))
         draw.rectangle(
             (x, y, x + width - 1, y + height - 1),
@@ -223,7 +222,9 @@ def compose_page(
 def _compose_all_pages_locked(project_dir: Path) -> list[Path]:
     """Compose every storyboard page in numeric order after a complete preflight."""
     project_dir = Path(project_dir)
-    storyboard = read_json(contained_project_path(project_dir, "plan/storyboard.json", must_exist=True))
+    storyboard = read_json(
+        contained_project_path(project_dir, "plan/storyboard.json", must_exist=True)
+    )
     manifest = read_project_manifest(
         contained_project_path(project_dir, "project.json", must_exist=True),
         normalize_legacy=False,
@@ -236,7 +237,8 @@ def _compose_all_pages_locked(project_dir: Path) -> list[Path]:
     if not isinstance(pages, list):
         raise ValueError("storyboard pages must be an array")
     page_numbers = sorted(
-        page.get("number") for page in pages
+        page.get("number")
+        for page in pages
         if isinstance(page, dict)
         and isinstance(page.get("number"), int)
         and not isinstance(page.get("number"), bool)
@@ -248,14 +250,10 @@ def _compose_all_pages_locked(project_dir: Path) -> list[Path]:
     for number in page_numbers:
         page = _storyboard_page(storyboard, number)
         layout_name, rectangles = _page_layout(page)
-        sources = _read_source_payloads(
-            project_dir, _page_sources(project_dir, page, artifacts)
-        )
+        sources = _read_source_payloads(project_dir, _page_sources(project_dir, page, artifacts))
         relative = f"pages/page-{number:03d}.png"
         payload = _compose_to_bytes(page, sources)
-        prepared_pages.append(
-            (number, relative, payload, (page, sources, layout_name, rectangles))
-        )
+        prepared_pages.append((number, relative, payload, (page, sources, layout_name, rectangles)))
     cache_pages = []
     for number, relative, payload, metadata in prepared_pages:
         page, sources, layout_name, rectangles = metadata
@@ -264,32 +262,34 @@ def _compose_all_pages_locked(project_dir: Path) -> list[Path]:
             f"{panel['id']}:{hashlib.sha256(source_payload).hexdigest()}"
             for panel, _, source_payload in sources
         ]
-        cache_pages.append({
-            "layout": {
-                "name": layout_name,
-                "rectangles": [list(rectangle) for rectangle in rectangles],
-                "version": LAYOUT_VERSION,
-            },
-            "ordered_lettered_sha256s": ordered_hashes,
-            "output": {
-                "dimensions": [PAGE_WIDTH, PAGE_HEIGHT],
-                "path": relative,
-                "sha256": hashlib.sha256(payload).hexdigest(),
-            },
-            "page_id": f"page-{number:03d}",
-            "panel_ids": panel_ids,
-            "settings_sha256": hashlib.sha256(
-                canonical_artifact_bytes(settings)
-            ).hexdigest(),
-            "storyboard_page_sha256": hashlib.sha256(
-                canonical_artifact_bytes(page)
-            ).hexdigest(),
-        })
-    cache_payload = canonical_artifact_bytes({
-        "kind": "composition-cache",
-        "pages": cache_pages,
-        "schema_version": "2.0",
-    })
+        cache_pages.append(
+            {
+                "layout": {
+                    "name": layout_name,
+                    "rectangles": [list(rectangle) for rectangle in rectangles],
+                    "version": LAYOUT_VERSION,
+                },
+                "ordered_lettered_sha256s": ordered_hashes,
+                "output": {
+                    "dimensions": [PAGE_WIDTH, PAGE_HEIGHT],
+                    "path": relative,
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                },
+                "page_id": f"page-{number:03d}",
+                "panel_ids": panel_ids,
+                "settings_sha256": hashlib.sha256(canonical_artifact_bytes(settings)).hexdigest(),
+                "storyboard_page_sha256": hashlib.sha256(
+                    canonical_artifact_bytes(page)
+                ).hexdigest(),
+            }
+        )
+    cache_payload = canonical_artifact_bytes(
+        {
+            "kind": "composition-cache",
+            "pages": cache_pages,
+            "schema_version": "2.0",
+        }
+    )
     output_paths = []
     with ProjectTransaction(project_dir, "composition") as transaction:
         for _, relative, payload, _ in prepared_pages:
@@ -308,9 +308,7 @@ def _compose_all_pages_locked(project_dir: Path) -> list[Path]:
             "sha256": hashlib.sha256(cache_payload).hexdigest(),
         }
         locked_manifest["artifacts"] = descriptors
-        transaction.stage_bytes(
-            "project.json", canonical_artifact_bytes(locked_manifest)
-        )
+        transaction.stage_bytes("project.json", canonical_artifact_bytes(locked_manifest))
         transaction.commit()
     return output_paths
 
@@ -343,18 +341,14 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.all_pages:
             paths = compose_all_pages(arguments.project_dir)
         else:
-            with ProjectLock(
-                Path(arguments.project_dir), timeout=PROJECT_OPERATION_LOCK_TIMEOUT
-            ):
+            with ProjectLock(Path(arguments.project_dir), timeout=PROJECT_OPERATION_LOCK_TIMEOUT):
                 storyboard = read_json(
                     contained_project_path(
                         arguments.project_dir, "plan/storyboard.json", must_exist=True
                     )
                 )
                 manifest = read_project_manifest(
-                    contained_project_path(
-                        arguments.project_dir, "project.json", must_exist=True
-                    ),
+                    contained_project_path(arguments.project_dir, "project.json", must_exist=True),
                     normalize_legacy=False,
                 )
                 settings = manifest.get("settings")
