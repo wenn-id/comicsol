@@ -46,10 +46,11 @@ carries it.
   `v2.0`, `v2.1`, and `v2.2` remain **milestone names, not version tags**; the distribution
   version is `2.0.0rc6`, and `comic_sol_product/version.py`, the Compose image tag, package
   metadata, native archive and SBOM names, `docs/releases/v2.0.0rc6.md`, this changelog, and
-  the installer examples all agree on it. The prepared-but-failed `v2.0.0rc5` tag is neither
-  moved nor reused: its Native Release runs failed with no release attached, `main` advanced
-  two release fixes past its target, and moving an immutable release tag would break the
-  guarantee that a tag names the exact reviewed bytes. `v2.0.0rc6` will therefore be annotated
+  the candidate installer fixtures all agree on it. Published-install examples intentionally
+  remain on `2.0.0rc4`, the latest available prerelease, until `2.0.0rc6` is published. The
+  prepared-but-failed `v2.0.0rc5` tag is neither moved nor reused: its Native Release runs
+  failed with no release attached, and `main` advanced two release fixes past its target. Moving
+  an immutable release tag would break the guarantee that a tag names the exact reviewed bytes. `v2.0.0rc6` will therefore be annotated
   fresh at the reviewed `main` commit after this PR lands. No `2.2.0` distribution exists or is
   planned by this candidate.
 
