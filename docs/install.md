@@ -39,7 +39,12 @@ $HOME/.local/share/comic-sol/bin/comic-sol --version
 $HOME/.local/share/comic-sol/bin/comic-sol doctor
 ```
 
-For macOS, use `comic-sol-2.0.0rc4-macos-x86_64.zip`. The default installation root is `$HOME/.local/share/comic-sol`. Override it with `--install-root PATH` or `COMIC_SOL_INSTALL_ROOT`.
+For macOS, use `comic-sol-2.0.0rc4-macos-x86_64.zip`. Despite that name, the archive contains
+arm64 binaries and will not run natively on an Intel Mac — it was built on an arm64 runner while
+the release still labelled every artifact `x86_64`. From `2.0.0rc5` onward the macOS archive is
+named `comic-sol-<version>-macos-arm64.zip` so the name matches its contents, and Apple silicon
+is the only macOS release target. The default installation root is `$HOME/.local/share/comic-sol`.
+Override it with `--install-root PATH` or `COMIC_SOL_INSTALL_ROOT`.
 
 The POSIX installer requires `cosign`, `perl`, `sha256sum`, `unzip`, and standard POSIX utilities. Perl is used for race-free no-follow install-root traversal. The native binaries are not notarized, so macOS Gatekeeper may require an explicit local approval for this prerelease.
 

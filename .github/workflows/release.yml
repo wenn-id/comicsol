@@ -81,22 +81,31 @@ jobs:
     needs: prepare
     strategy:
       fail-fast: false
-      # CPython 3.11 is in security-only maintenance, so actions/python-versions
-      # publishes no macOS or Windows binaries past 3.11.9 -- only Linux builds
-      # continue. Pinning every leg to one patch release therefore breaks the
-      # macOS and Windows legs outright. Linux stays on 3.11.15 to match the
-      # Dockerfile base image; macOS and Windows pin the newest build that exists
-      # for them. Check versions-manifest.json before raising either pin.
+      # Interpreter pins differ per leg on purpose. CPython 3.11 is in
+      # security-only maintenance, so actions/python-versions publishes no macOS
+      # or Windows binary past 3.11.9 -- only Linux builds continue. Linux stays
+      # on 3.11.15 to match the Dockerfile base image. Check
+      # versions-manifest.json before raising either pin.
+      #
+      # macOS ships arm64. cryptography 49.0.0 removed x86_64 macOS support and
+      # now publishes arm64 wheels only, so an x86_64 macOS leg has to build it
+      # from source against an OpenSSL the frozen runtime then cannot load. The
+      # lock files are per-platform but arch-agnostic -- they already carry the
+      # arm64 wheel hashes -- so the release-<platform>-x86_64.txt names below
+      # are legacy and do not gate the architecture that gets built.
       matrix:
         include:
           - os: ubuntu-latest
             platform: linux
+            arch: x86_64
             python: '3.11.15'
-          - os: macos-26-intel
+          - os: macos-latest
             platform: macos
+            arch: arm64
             python: '3.11.9'
           - os: windows-latest
             platform: windows
+            arch: x86_64
             python: '3.11.9'
     runs-on: ${{ matrix.os }}
     steps:
@@ -120,11 +129,11 @@ jobs:
         run: |
           python scripts/build_portable.py --wheel dist/*.whl --output native --lock requirements/locks/release-${{ matrix.platform }}-x86_64.txt
           python scripts/portable_release_smoke.py --runtime native/comic-sol
-          python scripts/assemble_release.py --runtime native/comic-sol --environment native/build-environment.sbom.json --output release --platform ${{ matrix.platform }} --architecture x86_64
+          python scripts/assemble_release.py --runtime native/comic-sol --environment native/build-environment.sbom.json --output release --platform ${{ matrix.platform }} --architecture ${{ matrix.arch }}
       - name: Upload native bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: comic-sol-${{ matrix.platform }}-x86_64
+          name: comic-sol-${{ matrix.platform }}-${{ matrix.arch }}
           path: release/*
           if-no-files-found: error
 
@@ -203,9 +212,9 @@ jobs:
           from comic_sol_product.distribution import ReleaseIdentity, validate_sbom_schema, verify_release_directory
           root = Path("bundles")
           records = []
-          for platform in ("linux", "macos", "windows"):
-              bundle = root / f"comic-sol-{platform}-x86_64"
-              identity = ReleaseIdentity(os.environ["RELEASE_VERSION"], platform, "x86_64")
+          for platform, arch in (("linux", "x86_64"), ("macos", "arm64"), ("windows", "x86_64")):
+              bundle = root / f"comic-sol-{platform}-{arch}"
+              identity = ReleaseIdentity(os.environ["RELEASE_VERSION"], platform, arch)
               verify_release_directory(bundle, identity)
               validate_sbom_schema(bundle / f"{identity.stem}.sbom.json")
               for path in sorted(bundle.iterdir()):

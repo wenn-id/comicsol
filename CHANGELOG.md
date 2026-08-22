@@ -17,6 +17,29 @@ carries it.
   the native matrix never shares one patch pin again and that neither cross-platform leg
   outruns the last release carrying its binary.
 
+- Moved the macOS release from x86_64 to arm64, and corrected what the artifact name claims.
+  `cryptography` removed x86_64 macOS support in 49.0.0 and now publishes arm64 wheels only,
+  so the x86_64 leg had to build it from source against an OpenSSL that the frozen runtime
+  could not then load — `dlopen` failed on `_SSL_get0_group_name`, the bundled MCP smoke test
+  failed, and `publish` was skipped. The runner, the uploaded bundle name, the assembled
+  architecture, and the publish-side release identity now all agree on `arm64`, and the
+  qualification workflow resolves the architecture per platform instead of assuming x86_64.
+
+  This also corrects a mislabelling that predates the change: `2.0.0rc1` through `2.0.0rc4`
+  published their macOS archives as `-macos-x86_64.zip` while building them on an arm64
+  runner. All 102 Mach-O binaries inside `comic-sol-2.0.0rc4-macos-x86_64.zip` are arm64, and
+  its metadata, SBOM, and checksum entries all record `x86_64`. Anyone who took the archive at
+  its word on an Intel Mac received a binary that cannot run natively. Apple silicon is now
+  the only macOS release target, and the name says so. `docs/install.md` records the
+  discrepancy for the archives already published.
+
+  The lock files are unchanged: they are per-platform but arch-agnostic, and
+  `requirements/locks/release-macos-x86_64.txt` already carried the hash for
+  `cryptography-50.0.0-cp311-abi3-macosx_11_0_arm64.whl`, so the arm64 leg installs a
+  prebuilt, already-trusted wheel. Their `-x86_64` filenames are now legacy; renaming them is
+  left as separate work because `CONTRIBUTING.md`, `docs/onboarding.md`, `README.md`, and the
+  lock-completeness test all reference those paths.
+
 ## 2.0.0rc5 — unreleased
 
 Prepared for the `v2.0.0rc5` tag and **not published**. No archive, checksum, SBOM, or

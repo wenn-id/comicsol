@@ -248,48 +248,8 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("DOCKER_BASE_DIGEST", workflow)
         self.assertIn("python:3.11.15-slim@sha256:", dockerfile)
         self.assertIn("requirements/locks/runtime-linux-x86_64.txt", dockerfile)
-
-    def test_release_native_matrix_pins_python_available_on_every_runner(self):
-        """Each native leg must pin a CPython that actually ships for its runner.
-
-        CPython 3.11 is in security-only maintenance, so actions/python-versions
-        stops publishing macOS and Windows binaries after 3.11.9 and continues
-        with Linux-only builds. One patch pin shared by all three legs therefore
-        fails setup-python on macOS and Windows, which skips the publish job and
-        produces a tag with no release.
-        """
-        root = Path(__file__).resolve().parents[1]
-        workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
-        native = workflow.split("\n  native:\n", 1)[1].split("\n  container:\n", 1)[0]
-
-        self.assertIn("python-version: ${{ matrix.python }}", native)
-        self.assertNotRegex(
-            native,
-            r"python-version:[ \t]*'?\d+\.\d+\.\d+",
-            "native legs must resolve the interpreter per platform, not share one patch pin",
-        )
-
-        pins = dict(
-            re.findall(
-                r"-[ \t]*os:[^\n]*\n[ \t]*platform:[ \t]*(\w+)[ \t]*\n[ \t]*python:[ \t]*'([^']+)'",
-                native,
-            )
-        )
-        self.assertEqual({"linux", "macos", "windows"}, set(pins), pins)
-
-        # Newest 3.11 patch release carrying macOS and Windows binaries in
-        # actions/python-versions versions-manifest.json.
-        last_cross_platform_311 = (3, 11, 9)
-        for platform in ("macos", "windows"):
-            pinned = tuple(int(part) for part in pins[platform].split("."))
-            self.assertLessEqual(
-                pinned,
-                last_cross_platform_311,
-                f"{platform} pins Python {pins[platform]}, which ships no {platform} binary",
-            )
-
         self.assertNotIn(f"refs/tags/v{RELEASE_VERSION}", workflow)
-        for runner in ("ubuntu-latest", "macos-26-intel", "windows-latest"):
+        for runner in ("ubuntu-latest", "macos-latest", "windows-latest"):
             self.assertIn(runner, workflow)
         self.assertIn("scripts/build_portable.py", workflow)
         self.assertIn("build-environment.sbom.json", workflow)
@@ -331,6 +291,98 @@ class NativeDistributionContractTests(unittest.TestCase):
             if "uses:" in line:
                 reference = line.split("uses:", 1)[1].strip().split()[0]
                 self.assertRegex(reference, r"^[^@]+@[0-9a-f]{40}$")
+
+    def test_release_native_matrix_pins_python_available_on_every_runner(self):
+        """Each native leg must pin a CPython that actually ships for its runner.
+
+        CPython 3.11 is in security-only maintenance, so actions/python-versions
+        stops publishing macOS and Windows binaries after 3.11.9 and continues
+        with Linux-only builds. One patch pin shared by all three legs therefore
+        fails setup-python on macOS and Windows, which skips the publish job and
+        produces a tag with no release.
+        """
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        native = workflow.split("\n  native:\n", 1)[1].split("\n  container:\n", 1)[0]
+
+        self.assertIn("python-version: ${{ matrix.python }}", native)
+        self.assertNotRegex(
+            native,
+            r"python-version:[ \t]*'?\d+\.\d+\.\d+",
+            "native legs must resolve the interpreter per platform, not share one patch pin",
+        )
+
+        legs = self._native_legs(native)
+        self.assertEqual({"linux", "macos", "windows"}, set(legs), legs)
+
+        # Newest 3.11 patch release carrying macOS and Windows binaries in
+        # actions/python-versions versions-manifest.json.
+        last_cross_platform_311 = (3, 11, 9)
+        for platform in ("macos", "windows"):
+            pinned = tuple(int(part) for part in legs[platform]["python"].split("."))
+            self.assertLessEqual(
+                pinned,
+                last_cross_platform_311,
+                f"{platform} pins Python {legs[platform]['python']}, "
+                f"which ships no {platform} binary",
+            )
+
+    def test_release_publishes_macos_arm64_not_x86_64(self):
+        """The macOS release must be arm64 at every stage that names an arch.
+
+        cryptography removed x86_64 macOS support in 49.0.0 and publishes arm64
+        wheels only. An x86_64 macOS leg has to build it from source against an
+        OpenSSL that the frozen runtime then cannot load, which fails the bundled
+        MCP smoke test and skips publish, leaving a tag with no release. The
+        runner, the uploaded bundle name, the assembled architecture, and the
+        publish-side identity all have to agree on arm64.
+        """
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        native = workflow.split("\n  native:\n", 1)[1].split("\n  container:\n", 1)[0]
+
+        legs = self._native_legs(native)
+        for platform, fields in sorted(legs.items()):
+            self.assertIn(
+                "arch",
+                fields,
+                f"the {platform} leg declares no arch, so the artifact name and the "
+                f"assembled architecture cannot be derived from the matrix: {fields}",
+            )
+        self.assertEqual("arm64", legs["macos"]["arch"], legs["macos"])
+        self.assertEqual("macos-latest", legs["macos"]["os"], legs["macos"])
+        for platform in ("linux", "windows"):
+            self.assertEqual("x86_64", legs[platform]["arch"], legs[platform])
+
+        # The arch must flow through, not be re-hardcoded downstream.
+        self.assertIn("--architecture ${{ matrix.arch }}", native)
+        self.assertIn("comic-sol-${{ matrix.platform }}-${{ matrix.arch }}", native)
+        self.assertNotIn("--architecture x86_64", workflow)
+        self.assertIn('("macos", "arm64")', workflow)
+
+        qualification = (
+            root / ".github/workflows/release-qualification.yml"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("macos-26-intel", qualification)
+        self.assertIn("arch: arm64", qualification)
+        self.assertNotIn("-x86_64.zip", qualification.replace("linux-x86_64.zip", ""))
+
+    @staticmethod
+    def _native_legs(native):
+        """Map platform -> matrix fields for each leg of the native job."""
+        legs = {}
+        for chunk in native.split("- os:")[1:]:
+            fields = dict(
+                re.findall(
+                    r"^[ \t]*(platform|arch|python):[ \t]*'?([^'\n]+?)'?[ \t]*$",
+                    chunk,
+                    re.M,
+                )
+            )
+            fields["os"] = chunk.splitlines()[0].strip()
+            if "platform" in fields:
+                legs[fields["platform"]] = fields
+        return legs
 
     def test_release_locks_are_hashed_and_complete_for_every_target(self):
         root = Path(__file__).resolve().parents[1]

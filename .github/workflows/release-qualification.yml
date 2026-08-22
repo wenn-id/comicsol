@@ -20,12 +20,17 @@ jobs:
         include:
           - platform: linux
             runner: ubuntu-latest
+            arch: x86_64
             installer: install.sh
+          # macOS releases ship arm64; cryptography publishes no x86_64 macOS
+          # wheel since 49.0.0, so the release matrix builds arm64 there.
           - platform: macos
-            runner: macos-26-intel
+            runner: macos-latest
+            arch: arm64
             installer: install.sh
           - platform: windows
             runner: windows-latest
+            arch: x86_64
             installer: install.ps1
     runs-on: ${{ matrix.runner }}
     steps:
@@ -35,13 +40,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
           PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
           INSTALLER: ${{ matrix.installer }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-          archive="comic-sol-${version}-${PLATFORM}-x86_64.zip"
-          metadata="comic-sol-${version}-${PLATFORM}-x86_64.metadata.json"
-          sbom="comic-sol-${version}-${PLATFORM}-x86_64.sbom.json"
+          archive="comic-sol-${version}-${PLATFORM}-${ARCH}.zip"
+          metadata="comic-sol-${version}-${PLATFORM}-${ARCH}.metadata.json"
+          sbom="comic-sol-${version}-${PLATFORM}-${ARCH}.sbom.json"
           mkdir -p qualification
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
@@ -70,13 +76,14 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag }}
           PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
           INSTALLER: ${{ matrix.installer }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-          archive="qualification/comic-sol-${version}-${PLATFORM}-x86_64.zip"
-          metadata="qualification/comic-sol-${version}-${PLATFORM}-x86_64.metadata.json"
-          sbom="qualification/comic-sol-${version}-${PLATFORM}-x86_64.sbom.json"
+          archive="qualification/comic-sol-${version}-${PLATFORM}-${ARCH}.zip"
+          metadata="qualification/comic-sol-${version}-${PLATFORM}-${ARCH}.metadata.json"
+          sbom="qualification/comic-sol-${version}-${PLATFORM}-${ARCH}.sbom.json"
           python qualification/release_qualification.py \
             --archive "$archive" \
             --installer "qualification/$INSTALLER" \
