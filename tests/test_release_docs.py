@@ -68,7 +68,7 @@ class ReleaseDocumentationTests(unittest.TestCase):
             "#117",
         ):
             self.assertIn(phrase, criteria)
-        for platform in ("Linux x86_64", "macOS x86_64", "Windows x86_64", "WSL2"):
+        for platform in ("Linux x86_64", "macOS arm64", "Windows x86_64", "WSL2"):
             self.assertIn(platform, criteria)
         for command in (
             "doctor",
@@ -87,6 +87,43 @@ class ReleaseDocumentationTests(unittest.TestCase):
             self.release_workflow,
         )
         self.assertIn("authoritative release gate", self.release_workflow)
+
+    def test_release_gate_documents_orchestration_states_and_environment_limit(self):
+        criteria = self.stable_criteria
+        for phrase in (
+            "Candidate prepared",
+            "Candidate gated and built",
+            "Candidate published",
+            "Qualification",
+            "Awaiting approval",
+            "Promotion",
+            "Failure / blocked",
+            "Withdrawal / yank",
+            "Rollback",
+            "Disposable-candidate drill",
+            "release-production",
+            "tag ruleset",
+            "restricts updates and deletions",
+            "ownership marker",
+            "newest deployment status",
+            "required reviewers",
+            "YAML can name but cannot protect an Environment",
+            "github.actor",
+            "deployment audit",
+            "private draft candidate",
+            "delete only that draft",
+            "run-attempt evidence artifact",
+            "immutable release",
+            "attests the JSON and Markdown digests",
+            "final allowed Release mutation",
+            "locked prerelease field",
+            "existing Ruff, formatting, mypy, coverage, security, and other quality debt",
+            "supporting evidence outside that payload manifest",
+            "actual reviewer remains `null`",
+            "release-evidence.json",
+            "release-evidence.md",
+        ):
+            self.assertIn(phrase, criteria)
 
     def test_install_guide_covers_every_supported_lifecycle(self):
         for phrase in (

@@ -5,9 +5,28 @@ on:
   workflow_dispatch:
     inputs:
       baseline:
-        description: "Git revision to benchmark as the baseline (defaults to the merge base or the previous commit)"
+        description: "Git revision to benchmark as the baseline (defaults to the merge base or the candidate's previous commit)"
         required: false
         type: string
+  workflow_call:
+    inputs:
+      candidate_sha:
+        description: "Exact candidate commit to benchmark; empty only for ordinary event-driven runs"
+        required: false
+        default: ""
+        type: string
+      baseline:
+        description: "Git revision to benchmark as the baseline"
+        required: false
+        default: ""
+        type: string
+    outputs:
+      decision:
+        description: "Fail-closed benchmark decision"
+        value: ${{ jobs.benchmark.outputs.decision }}
+      summary_sha256:
+        description: "SHA-256 of summary-delta.json"
+        value: ${{ jobs.benchmark.outputs.summary_sha256 }}
 
 permissions:
   contents: read
@@ -16,11 +35,21 @@ jobs:
   benchmark:
     name: benchmark two engine revisions
     runs-on: ubuntu-latest
+    outputs:
+      decision: ${{ steps.delta.outputs.decision }}
+      summary_sha256: ${{ steps.delta.outputs.summary_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
           # The baseline revision is benchmarked from a worktree of this checkout.
           fetch-depth: 0
+      - name: Verify exact candidate checkout
+        if: inputs.candidate_sha != ''
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
       - name: Set up Python 3.11
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
@@ -43,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${REQUESTED}" ]; then
-            revision="${REQUESTED}"
+            revision="$(git rev-parse "${REQUESTED}^{commit}")"
           elif [ -n "${BASE_SHA}" ]; then
             revision="$(git merge-base "${BASE_SHA}" HEAD)"
           else
@@ -86,7 +115,10 @@ jobs:
             --output benchmark/baseline-summary.json
 
       - name: Diff the two revisions
+        id: delta
         shell: bash
+        env:
+          BASELINE_SHA: ${{ steps.baseline.outputs.revision }}
         run: |
           set -euo pipefail
           python scripts/benchmark.py \
@@ -97,8 +129,27 @@ jobs:
             --baseline benchmark/baseline-summary.json \
             --candidate benchmark/candidate-summary.json \
             --output benchmark/summary-delta.json
+          CANDIDATE_SHA="$(git rev-parse HEAD)" python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("benchmark/summary-delta.json")
+          record = json.loads(path.read_text(encoding="utf-8"))
+          record["candidate_sha"] = os.environ["CANDIDATE_SHA"]
+          record["baseline_sha"] = os.environ["BASELINE_SHA"]
+          path.write_text(
+              json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+              encoding="utf-8",
+              newline="\n",
+          )
+          PY
+          test "$(jq -r .decision benchmark/summary-delta.json)" = "NO REGRESSION"
+          test "$(jq -r .status benchmark/summary-delta.json)" = "passed"
           grep -Fq "NO REGRESSION" benchmark/diff.md
           grep -Fq "NO REGRESSION" benchmark/summary-delta.md
+          echo "decision=NO REGRESSION" >> "$GITHUB_OUTPUT"
+          echo "summary_sha256=$(sha256sum benchmark/summary-delta.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Publish the benchmark report
         if: always()

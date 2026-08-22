@@ -6,6 +6,18 @@ on:
   # Validate every pull request; `main` is the canonical public product branch.
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      candidate_sha:
+        description: "Exact candidate commit to test; empty only for ordinary event-driven runs"
+        required: false
+        default: ""
+        type: string
+      blocking_quality:
+        description: "Make every quality check release-blocking"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   test:
@@ -18,6 +30,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        ref: ${{ inputs.candidate_sha || github.sha }}
     - name: Set up Python 3.11
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
       with:
@@ -75,11 +89,13 @@ jobs:
         fi
 
   quality:
-    name: Quality baseline
+    name: Quality baseline (blocking for release calls)
     runs-on: ubuntu-latest
-    continue-on-error: true
+    continue-on-error: ${{ !inputs.blocking_quality }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        ref: ${{ inputs.candidate_sha || github.sha }}
     - name: Set up Python 3.11
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
       with:
@@ -89,16 +105,16 @@ jobs:
     - name: Install quality tools
       run: python -m pip install --require-hashes -r requirements/locks/quality-linux-x86_64.txt
     - name: Ruff lint
-      continue-on-error: true
+      continue-on-error: ${{ !inputs.blocking_quality }}
       run: ruff check scripts comic_sol_product tests
     - name: Ruff format check
-      continue-on-error: true
+      continue-on-error: ${{ !inputs.blocking_quality }}
       run: ruff format --check scripts comic_sol_product tests
     - name: Mypy baseline
-      continue-on-error: true
+      continue-on-error: ${{ !inputs.blocking_quality }}
       run: mypy
     - name: Coverage baseline
-      continue-on-error: true
+      continue-on-error: ${{ !inputs.blocking_quality }}
       run: |
         python -m coverage run --branch -m unittest discover -s tests
         python -m coverage report
@@ -117,6 +133,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        ref: ${{ inputs.candidate_sha || github.sha }}
     - name: Set up Python 3.11
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
       with:

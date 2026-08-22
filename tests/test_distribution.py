@@ -268,16 +268,24 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("read_only: true", compose)
         self.assertIn("/data", compose)
 
-        self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("inputs:", workflow)
-        self.assertIn("tag:", workflow)
+        self.assertNotIn("workflow_dispatch:", workflow)
+        self.assertNotIn("inputs.tag", workflow)
         self.assertIn("tags: [ 'v*' ]", workflow)
         self.assertIn("name: Prepare release", workflow)
         self.assertIn('git rev-parse "${TAG}^{commit}"', workflow)
-        self.assertIn("ref: ${{ inputs.tag || github.ref_name }}", workflow)
+        self.assertIn('test "$TRIGGER_REF" = "refs/tags/$TAG"', workflow)
+        self.assertIn('git rev-parse "${TRIGGER_SHA}^{commit}"', workflow)
+        self.assertIn("ref: ${{ github.ref }}", workflow)
         self.assertIn("ref: ${{ needs.prepare.outputs.sha }}", workflow)
-        self.assertGreaterEqual(workflow.count("ref: ${{ needs.prepare.outputs.sha }}"), 4)
-        self.assertIn("needs: [prepare, native, container, source]", workflow)
+        self.assertGreaterEqual(workflow.count("ref: ${{ needs.prepare.outputs.sha }}"), 5)
+        self.assertIn("needs: [prepare, full-tests, codeql, benchmark, native, container, source]", workflow)
+        self.assertIn("uses: ./.github/workflows/tests.yml", workflow)
+        self.assertIn("uses: ./.github/workflows/codeql.yml", workflow)
+        self.assertIn("uses: ./.github/workflows/benchmark.yml", workflow)
+        self.assertIn("uses: ./.github/workflows/release-qualification.yml", workflow)
+        self.assertIn("blocking_quality: true", workflow)
+        self.assertIn("name: release-production", workflow)
+        self.assertNotIn("--clobber", workflow)
         self.assertNotIn("if: startsWith(github.ref, 'refs/tags/v')", workflow)
         self.assertIn("requirements/locks/release-${{ matrix.platform }}-x86_64.txt", workflow)
         self.assertIn("--require-hashes", workflow)
@@ -308,7 +316,7 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("prerelease", workflow.lower())
         self.assertIn("packaging.version", workflow)
         self.assertIn("github.ref_name", workflow)
-        self.assertIn("inputs.tag || github.ref_name", workflow)
+        self.assertNotIn("inputs.tag || github.ref_name", workflow)
         self.assertIn("Verify tag matches package version", workflow)
         self.assertIn("comic-sol:${{ needs.prepare.outputs.version }}", workflow)
         self.assertIn("actions/attest-build-provenance@", workflow)
@@ -332,9 +340,12 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertNotIn(f"refs/tags/v{RELEASE_VERSION}", workflow)
         self.assertNotIn("refs/tags/v2.0.0rc1", workflow)
         for line in workflow.splitlines():
-            if "uses:" in line:
+            if re.match(r"^\s*uses:\s+\S+", line):
                 reference = line.split("uses:", 1)[1].strip().split()[0]
-                self.assertRegex(reference, r"^[^@]+@[0-9a-f]{40}$")
+                if reference.startswith("./"):
+                    self.assertRegex(reference, r"^\./\.github/workflows/[^/]+\.yml$")
+                else:
+                    self.assertRegex(reference, r"^[^@]+@[0-9a-f]{40}$")
 
     def test_release_native_matrix_pins_python_available_on_every_runner(self):
         """Each native leg must pin a CPython that actually ships for its runner.

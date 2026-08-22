@@ -9,6 +9,8 @@ from unittest import mock
 
 from comic_sol_product import __version__ as _V
 
+from scripts.release_evidence import build_evidence
+from scripts.release_evidence import write_evidence
 from scripts.release_qualification import aggregate_summaries
 from scripts.release_qualification import executable_path
 from scripts.release_qualification import qualify
@@ -187,7 +189,7 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "SHA256 mismatch"):
                 verify_payload_checksums(manifest, payloads)
 
-    def test_verify_payload_checksums_accepts_duplicate_global_manifest_names(self):
+    def test_verify_payload_checksums_rejects_duplicate_global_manifest_names(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             payload = root / "install.sh"
@@ -204,7 +206,8 @@ class ReleaseQualificationContractTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            self.assertEqual(1, verify_payload_checksums(manifest, [payload]))
+            with self.assertRaisesRegex(RuntimeError, "duplicate SHA256SUMS entry"):
+                verify_payload_checksums(manifest, [payload])
 
     def test_qualification_harness_help_runs_without_source_package(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -522,21 +525,28 @@ class ReleaseQualificationContractTests(unittest.TestCase):
         ):
             self.assertIn(token, source)
 
-    def test_release_publish_workflow_keeps_provenance_attestation_gate(self):
+    def test_release_publish_workflow_attests_every_signed_manifest_payload(self):
         workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("attest-build-provenance", workflow)
-        self.assertIn("bundles/**/*.zip", workflow)
-        self.assertIn("bundles/**/*.whl", workflow)
-        self.assertIn("bundles/**/*.tar.gz", workflow)
+        self.assertIn("subject-checksums: bundles/SHA256SUMS", workflow)
+        self.assertNotIn("subject-path:", workflow)
 
     def test_release_qualification_workflow_uses_release_asset_not_checkout_build(self):
         self.assertTrue(WORKFLOW.is_file())
         workflow = WORKFLOW.read_text(encoding="utf-8")
         for token in (
             "workflow_dispatch",
+            "workflow_call",
             "inputs:",
             "tag:",
+            "candidate_sha:",
+            "ref: ${{ inputs.candidate_sha }}",
+            'git rev-parse "${RELEASE_TAG}^{commit}"',
             "gh release download",
+            "gh attestation verify",
+            "*.whl",
+            "*.tar.gz",
+            "*.container.tar",
             "linux",
             "macos",
             "windows",
@@ -577,6 +587,278 @@ class ReleaseQualificationContractTests(unittest.TestCase):
         self.assertIn("comic-sol --version", docs)
         self.assertIn("comic-sol doctor", docs)
         self.assertIn("user projects", docs.lower())
+
+
+class ReleaseOrchestrationContractTests(unittest.TestCase):
+    def _artifact(self, artifact_id, name):
+        return {
+            "id": artifact_id,
+            "name": name,
+            "digest": "sha256:" + format(artifact_id, "064x"),
+            "url": f"https://api.github.com/repos/wenn-id/comicsol/actions/artifacts/{artifact_id}",
+            "archive_download_url": (
+                f"https://api.github.com/repos/wenn-id/comicsol/actions/artifacts/{artifact_id}/zip"
+            ),
+        }
+
+    def _candidate(self):
+        return {
+            "schema_version": 1,
+            "state": "candidate",
+            "tag": "v9.9.9rc1",
+            "version": "9.9.9rc1",
+            "candidate_commit": "a" * 40,
+            "checksum_manifest": {"name": "SHA256SUMS", "sha256": "b" * 64},
+            "payloads": [
+                {"name": "comic-sol-9.9.9rc1-linux-x86_64.zip", "sha256": "c" * 64},
+                {"name": "comic-sol-9.9.9rc1-linux-x86_64.sbom.json", "sha256": "d" * 64},
+            ],
+            "actions_artifacts": [self._artifact(1, "benchmark-results")],
+        }
+
+    def _qualification(self):
+        return {
+            "status": "passed",
+            "decision": "RELEASE READY",
+            "candidate": {
+                "tag": "v9.9.9rc1",
+                "commit_sha": "a" * 40,
+                "checksum_manifest_sha256": "b" * 64,
+            },
+            "summaries": {"linux": {"status": "passed", "exceptions": []}},
+        }
+
+    def _arguments(self):
+        return {
+            "candidate_identity": self._candidate(),
+            "qualification": self._qualification(),
+            "benchmark": {
+                "status": "passed",
+                "decision": "NO REGRESSION",
+                "candidate_sha": "a" * 40,
+            },
+            "qualification_sha256": "e" * 64,
+            "benchmark_sha256": "f" * 64,
+            "actions_artifacts": [
+                self._artifact(1, "benchmark-results"),
+                self._artifact(2, "candidate-identity"),
+                self._artifact(3, "release-qualification-summary"),
+            ],
+            "deployment": {
+                "id": 42,
+                "sha": "a" * 40,
+                "ref": "refs/tags/v9.9.9rc1",
+                "environment": "release-production",
+                "api_url": "https://api.github.com/repos/wenn-id/comicsol/deployments/42",
+                "html_audit_url": "https://github.com/wenn-id/comicsol/actions/runs/1234/job/7",
+            },
+            "required_reviewers": [{"type": "User", "id": 7, "login": "eligible-maintainer"}],
+            "repository": "wenn-id/comicsol",
+            "run_id": "1234",
+            "run_url": "https://github.com/wenn-id/comicsol/actions/runs/1234",
+            "environment": "release-production",
+            "trigger_actor": "workflow-trigger",
+        }
+
+    def test_disposable_candidate_evidence_drill_is_deterministic(self):
+        arguments = self._arguments()
+        first = build_evidence(**arguments)
+        second = build_evidence(**arguments)
+        self.assertEqual(first, second)
+        self.assertEqual("promotion-ready", first["state"])
+        self.assertEqual("e" * 64, first["qualification"]["summary_sha256"])
+        self.assertEqual("f" * 64, first["gates"]["benchmark"]["summary_sha256"])
+        self.assertEqual(
+            ["eligible-maintainer"],
+            [item["login"] for item in first["promotion"]["required_reviewers"]],
+        )
+        self.assertIsNone(first["promotion"]["actual_reviewer"])
+        self.assertNotIn("promotion_actor", first["promotion"])
+        self.assertEqual(
+            {item["name"] for item in first["supply_chain"]["payloads"]},
+            set(first["supply_chain"]["attestations"]["subjects"]),
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_evidence(first, root / "evidence.json", root / "evidence.md")
+            expected = (root / "evidence.json").read_bytes()
+            write_evidence(second, root / "evidence-2.json", root / "evidence-2.md")
+            self.assertEqual(expected, (root / "evidence-2.json").read_bytes())
+            self.assertIn("Deployment audit", (root / "evidence.md").read_text(encoding="utf-8"))
+
+    def test_evidence_binding_rejects_failed_or_mismatched_gate_identity(self):
+        arguments = self._arguments()
+        arguments["qualification"]["status"] = "failed"
+        with self.assertRaisesRegex(RuntimeError, "qualification evidence"):
+            build_evidence(**arguments)
+
+        arguments = self._arguments()
+        arguments["benchmark"]["decision"] = "REGRESSION"
+        with self.assertRaisesRegex(RuntimeError, "benchmark evidence"):
+            build_evidence(**arguments)
+
+        arguments = self._arguments()
+        arguments["qualification"]["candidate"]["commit_sha"] = "0" * 40
+        with self.assertRaisesRegex(RuntimeError, "another candidate"):
+            build_evidence(**arguments)
+
+        arguments = self._arguments()
+        arguments["benchmark"]["candidate_sha"] = "0" * 40
+        with self.assertRaisesRegex(RuntimeError, "another candidate"):
+            build_evidence(**arguments)
+
+        arguments = self._arguments()
+        arguments["deployment"]["environment"] = "staging"
+        with self.assertRaisesRegex(RuntimeError, "deployment evidence"):
+            build_evidence(**arguments)
+
+    def test_release_trigger_and_codeql_are_bound_to_exact_github_identity(self):
+        release = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        codeql = (ROOT / ".github/workflows/codeql.yml").read_text(encoding="utf-8")
+        trigger = release.split("permissions:", 1)[0]
+        prepare = release.split("\n  prepare:\n", 1)[1].split("\n  full-tests:\n", 1)[0]
+        self.assertNotIn("workflow_dispatch", trigger)
+        self.assertNotIn("inputs.tag", release)
+        self.assertIn("tags: [ 'v*' ]", trigger)
+        self.assertIn("group: release-${{ github.ref }}", trigger)
+        self.assertIn("cancel-in-progress: false", trigger)
+        self.assertIn("Verify active release-tag immutability rules", prepare)
+        self.assertIn('{"update", "deletion"} <= rule_types', prepare)
+        self.assertIn('refs/tags/{os.environ[\'RELEASE_TAG\']}', prepare)
+        self.assertIn('test "$TRIGGER_REF" = "refs/tags/$TAG"', prepare)
+        self.assertIn('git rev-parse "${TRIGGER_SHA}^{commit}"', prepare)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$SHA"', prepare)
+        self.assertIn(
+            "candidate_ref: ${{ format('refs/tags/{0}', needs.prepare.outputs.tag) }}", release
+        )
+        self.assertIn("ref: ${{ inputs.candidate_ref || github.ref }}", codeql)
+        self.assertIn("sha: ${{ inputs.candidate_sha || github.sha }}", codeql)
+
+    def test_candidate_publication_is_draft_verified_immutable_and_fail_closed(self):
+        release = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        candidate = release.split("\n  candidate:\n", 1)[1].split("\n  qualification:\n", 1)[0]
+        self.assertIn("actions: read", candidate)
+        self.assertIn("subject-checksums: bundles/SHA256SUMS", candidate)
+        self.assertIn("release ${RELEASE_TAG} already exists", candidate)
+        self.assertIn("cleanup_failed_candidate", candidate)
+        self.assertIn('release_id="$(jq -er \'.id\' "$created_release")"', candidate)
+        self.assertIn("mapfile -t matching_ids", candidate)
+        self.assertIn("comic-sol-release-owner:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}", candidate)
+        self.assertIn("contains($marker)", candidate)
+        self.assertNotIn("draft candidate lookup was not unique", candidate)
+        self.assertIn("find bundles -type f ! -name SHA256SUMS -print0", candidate)
+        self.assertIn(
+            'gh release upload "$RELEASE_TAG" bundles/SHA256SUMS --repo "$GITHUB_REPOSITORY"',
+            candidate,
+        )
+        self.assertNotIn("--clobber", candidate)
+        positions = [
+            candidate.index("-F draft=true"),
+            candidate.index("gh release upload"),
+            candidate.index("draft-verification"),
+            candidate.index("-F draft=false -F prerelease=true"),
+            candidate.index("repository release immutability is required"),
+            candidate.index("trap - EXIT"),
+        ]
+        self.assertEqual(sorted(positions), positions)
+        self.assertEqual(3, candidate.count("git ls-remote --tags origin"))
+        self.assertIn('"refs/tags/${RELEASE_TAG}^{}"', candidate)
+        self.assertIn(".immutable != true", candidate)
+
+    def test_qualification_uses_strict_provenance_and_bound_outputs(self):
+        qualification = WORKFLOW.read_text(encoding="utf-8")
+        benchmark = (ROOT / ".github/workflows/benchmark.yml").read_text(encoding="utf-8")
+        strict_flags = (
+            "--signer-workflow wenn-id/comicsol/.github/workflows/release.yml",
+            '--source-digest "$CANDIDATE_SHA"',
+            '--source-ref "refs/tags/$RELEASE_TAG"',
+            "--deny-self-hosted-runners",
+        )
+        for flag in strict_flags:
+            self.assertGreaterEqual(qualification.count(flag), 2)
+        for workflow in (qualification, benchmark):
+            self.assertIn("decision:", workflow)
+            self.assertIn("summary_sha256:", workflow)
+        self.assertIn('summary["candidate"]', qualification)
+        self.assertIn('record["candidate_sha"]', benchmark)
+
+    def test_promotion_attests_evidence_and_closes_final_mutation_boundary(self):
+        release = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        promotion = release.split("\n  promote:\n", 1)[1]
+        for token in (
+            "EXPECTED_BENCHMARK_SHA256",
+            "EXPECTED_QUALIFICATION_SHA256",
+            "evidence-actions-artifacts.json",
+            "deployment-identity.json",
+            "required-reviewers.json",
+            "html_audit_url",
+            "actions: read",
+            "attestations: write",
+            "id-token: write",
+            "name: release-evidence-${{ github.run_attempt }}",
+            "subject-checksums: release-evidence.sha256",
+            '"run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])',
+            "deployment, status = max(",
+            'key=lambda item: (item[1]["id"], item[0]["id"])',
+        ):
+            self.assertIn(token, promotion)
+        self.assertNotIn("rollback_promotion", promotion)
+        self.assertNotIn("--clobber", promotion)
+        final_step = promotion.split(
+            "- name: Revalidate immutable release and record promotion as final mutation", 1
+        )[1]
+        positions = [
+            final_step.index("sha256sum -c release-evidence.sha256"),
+            final_step.index("releases/tags/${RELEASE_TAG}"),
+            final_step.index("git ls-remote --tags origin"),
+            final_step.index("promoted-release-notes.md"),
+            final_step.index('boundary_release="$(gh api'),
+            final_step.rindex("--method PATCH"),
+        ]
+        self.assertEqual(sorted(positions), positions)
+        self.assertIn('"refs/tags/${RELEASE_TAG}^{}"', final_step)
+        self.assertGreaterEqual(final_step.count(".immutable"), 2)
+        self.assertIn("production approved", final_step)
+        self.assertIn("--raw-field", final_step)
+        self.assertNotIn("-F prerelease=", final_step)
+        self.assertNotIn("gh release upload", final_step)
+        self.assertNotIn("--method DELETE", final_step)
+        self.assertTrue(final_step.rstrip().endswith(">/dev/null"))
+
+    def test_release_workflow_remains_one_exact_sha_no_rebuild_dag(self):
+        release = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        tests = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        codeql = (ROOT / ".github/workflows/codeql.yml").read_text(encoding="utf-8")
+        benchmark = (ROOT / ".github/workflows/benchmark.yml").read_text(encoding="utf-8")
+        for token in (
+            "uses: ./.github/workflows/tests.yml",
+            "uses: ./.github/workflows/codeql.yml",
+            "uses: ./.github/workflows/benchmark.yml",
+            "uses: ./.github/workflows/release-qualification.yml",
+            "candidate_sha: ${{ needs.prepare.outputs.sha }}",
+            "blocking_quality: true",
+            "name: release-production",
+            "candidate-identity.json",
+            "release-evidence.json",
+            "required_reviewers",
+            "prevent_self_review",
+        ):
+            self.assertIn(token, release)
+        self.assertNotIn("--clobber", release)
+        promotion = release.split("\n  promote:\n", 1)[1]
+        for forbidden in (
+            "python -m build",
+            "docker build",
+            "build_portable.py",
+            "assemble_release.py",
+            "cosign sign-blob",
+        ):
+            self.assertNotIn(forbidden, promotion)
+        self.assertEqual(1, promotion.count("attest-build-provenance"))
+        for workflow in (tests, codeql, benchmark):
+            self.assertIn("workflow_call:", workflow)
+            self.assertIn("candidate_sha:", workflow)
+            self.assertIn("inputs.candidate_sha", workflow)
 
 
 if __name__ == "__main__":
