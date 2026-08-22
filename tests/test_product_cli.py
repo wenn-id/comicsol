@@ -6,6 +6,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from comic_sol_product import __version__
+
 from comic_sol_product import cli
 from comic_sol_product.config import default_output_root
 
@@ -26,7 +28,7 @@ class ProductCliTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as exit_context, redirect_stdout(stdout):
             cli.build_parser().parse_args(["--version"])
         self.assertEqual(0, exit_context.exception.code)
-        self.assertEqual("comic-sol 2.0.0rc4\n", stdout.getvalue())
+        self.assertEqual(f"comic-sol {__version__}\n", stdout.getvalue())
 
     def test_default_output_roots_are_platform_native(self):
         home = Path("/users/example")
