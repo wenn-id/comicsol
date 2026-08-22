@@ -372,6 +372,9 @@ class NativeDistributionContractTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn("macos-26-intel", qualification)
         self.assertIn("arch: arm64", qualification)
+        self.assertIn('--architecture "$ARCH"', qualification)
+        self.assertIn("$architecture = $env:ARCH", qualification)
+        self.assertIn("--architecture '$architecture'", qualification)
         self.assertNotIn("-x86_64.zip", qualification.replace("linux-x86_64.zip", ""))
 
     @staticmethod
