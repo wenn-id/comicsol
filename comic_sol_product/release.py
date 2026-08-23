@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import tarfile
 import zipfile
+from email.parser import HeaderParser
 from pathlib import Path
 from typing import Iterable
 
@@ -54,6 +55,25 @@ FORBIDDEN_WHEEL_MEMBERS = frozenset(
     }
 )
 
+REQUIRED_PROJECT_URLS = frozenset(
+    {
+        "Homepage",
+        "Repository",
+        "Documentation",
+        "Changelog",
+        "Issue Tracker",
+        "Security Policy",
+    }
+)
+
+REQUIRED_METADATA_CLASSIFIER_PREFIXES = (
+    "Development Status ::",
+    "Intended Audience ::",
+    "Operating System ::",
+    "Programming Language :: Python ::",
+    "Topic ::",
+)
+
 
 def validate_wheel_members(members: Iterable[str]) -> None:
     member_set = set(members)
@@ -65,9 +85,75 @@ def validate_wheel_members(members: Iterable[str]) -> None:
         raise ValueError("wheel contains build-only members: " + ", ".join(forbidden))
 
 
+def validate_wheel_metadata(metadata_text: str) -> None:
+    """Fail closed when the wheel METADATA stops describing the project.
+
+    Project URLs, classifiers, keywords, and maintainer fields are the
+    discovery surface PyPI and package tooling read; a wheel that loses them
+    still installs, so only this gate makes the loss visible.
+    """
+
+    message = HeaderParser().parsestr(metadata_text)
+    problems: list[str] = []
+
+    for field in ("Name", "Version", "Summary"):
+        if not (message.get(field) or "").strip():
+            problems.append(f"missing required field: {field}")
+
+    requires_python = (message.get("Requires-Python") or "").strip()
+    if not requires_python.startswith(">=3.11"):
+        problems.append(f"Requires-Python must require 3.11+: {requires_python!r}")
+
+    if not (message.get("Author") or "").strip() and not (message.get("Maintainer") or "").strip():
+        problems.append("neither Author nor Maintainer is set")
+
+    if not (message.get("Keywords") or "").strip():
+        problems.append("missing Keywords")
+
+    classifiers = message.get_all("Classifier") or []
+    if not classifiers:
+        problems.append("missing Classifiers")
+    for prefix in REQUIRED_METADATA_CLASSIFIER_PREFIXES:
+        if not any(classifier.startswith(prefix) for classifier in classifiers):
+            problems.append(f"no {prefix.rstrip(' ::')} classifier")
+
+    project_urls = [
+        (entry.split(",", 1)[0].strip() if "," in entry else entry.strip())
+        for entry in (message.get_all("Project-URL") or [])
+    ]
+    missing_urls = sorted(REQUIRED_PROJECT_URLS - set(project_urls))
+    if missing_urls:
+        problems.append("missing Project-URL entries: " + ", ".join(missing_urls))
+
+    # The license is declared as a PEP 639 SPDX expression; a legacy license
+    # classifier alongside it is deprecated metadata, not a second license.
+    if not (message.get("License-Expression") or "").strip():
+        problems.append("missing License-Expression")
+    if any(classifier.startswith("License ::") for classifier in classifiers):
+        problems.append("deprecated License :: classifier alongside License-Expression")
+
+    if problems:
+        raise ValueError("wheel METADATA failed validation: " + "; ".join(problems))
+
+
+def wheel_metadata_member(members: Iterable[str]) -> str:
+    member_set = set(members)
+    candidates = sorted(
+        name for name in member_set if name.endswith(".dist-info/METADATA") and name.count("/") == 1
+    )
+    if len(candidates) != 1:
+        raise ValueError(
+            "wheel must contain exactly one <package>.dist-info/METADATA member, found: "
+            + ", ".join(candidates)
+        )
+    return candidates[0]
+
+
 def validate_wheel(path: Path) -> None:
     with zipfile.ZipFile(path) as archive:
         validate_wheel_members(archive.namelist())
+        metadata_member = wheel_metadata_member(archive.namelist())
+        validate_wheel_metadata(archive.read(metadata_member).decode("utf-8"))
 
 
 def validate_sdist_members(members: Iterable[str]) -> None:

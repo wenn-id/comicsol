@@ -83,6 +83,13 @@ follow the Linux instructions above; the PowerShell steps apply only when runnin
 Comic Sol directly on native Windows. The deterministic test suite does not need
 an image provider.
 
+Comic Sol ships as several surfaces — Skill checkout, Codex Plugin, source
+checkout, installed CLI wheel, native portable archive, MCP server, and OCI
+image — each with its own start command and default output root;
+[`docs/surfaces.md`](docs/surfaces.md) separates them, and
+[`docs/support-matrix.md`](docs/support-matrix.md) publishes the full
+platform × install-mode × architecture × runtime matrix.
+
 Install the portable CLI from a checkout and verify the bundled deterministic
 engine, fonts, and templates:
 
@@ -270,20 +277,33 @@ Each run preserves editable semantic and visual intermediates beneath its genera
 project directory. The important outputs are:
 
 ```text
-project.json                  project manifest and current state
-plan/                         story plan, character bible, and storyboard
-prompts/                      editable reference and panel prompts
-references/                   canonical character and scene images
-panels/raw/                   generated panel PNGs
-panels/clean/                 accepted clean panel PNGs
-panels/*/lettered.png         deterministic lettered panel PNGs
-pages/page-001.png            ordered 1600×2400 page PNGs
-exports/<project-id>.pdf      ordered comic PDF
-qa/panels/*.json              seven-check panel QA records
-qa/report.md                  human-readable QA report
-exports/pdf-verification.json PDF verification (`pdf_verification` descriptor)
-logs/                         sanitized events, cache, and retry accounting
+project.json                       project manifest and current state
+plan/                              story plan, character bible, and storyboard
+plan/character-identity-pack.json  per-character identity traits for generation (v2.2)
+prompts/                           editable reference and panel prompts
+references/                        canonical character and scene images
+panels/raw/                        generated panel PNGs
+panels/clean/                      accepted clean panel PNGs
+panels/*/lettered.png              deterministic lettered panel PNGs
+panels/*/sfx-audit.json            authored-SFX authorization records
+pages/page-001.png                 ordered 1600×2400 page PNGs
+exports/<project-id>.pdf           ordered comic PDF
+exports/pdf-verification.json      PDF verification (`pdf_verification` descriptor)
+qa/panels/*.json                   seven-check panel QA records
+qa/pages/page-001.json             ten-check page QA records (schema 2.1)
+qa/report.md                       human-readable QA report
+logs/reference-selection.json      which reference images each panel uses (v2.2)
+logs/repair-plan.json              selective panel-repair decisions (v2.2)
+logs/                              sanitized events, cache, and retry accounting
 ```
+
+Treat the QA artifacts as evidence with limits, not as guarantees: deterministic
+offline builds prove schema, lettering, composition, export, and validation
+mechanics — including the page-QA 2.1 records and the PDF verification descriptor —
+while artwork-dependent checks on placeholder builds are recorded as unreviewed
+warnings, and live visual quality is established only by the
+[v2.2 live-visual-evidence contract](docs/releases/v2.2-live-visual-evidence.md),
+not by a green test suite.
 
 ### Official examples
 
@@ -428,6 +448,24 @@ spelling is not deterministic, so visual QA and bounded retries remain required.
 Offline fixtures prove deterministic stages, not live image quality. Large projects
 beyond four pages or twelve panels require an explicit scope decision.
 
+### Accessibility and localization limitations
+
+- Exported PDFs are **image-based**: each page is a rasterized PNG embedded in
+  the PDF. There is no extractable text layer, the document is untagged, it is
+  **not PDF/UA** or otherwise standards-conformant for accessibility, and it
+  carries **no alt text** for panels or pages. Screen readers cannot read the
+  dialogue out of the exported file; use the editable `prompts/` and `plan/`
+  intermediates when you need machine-readable text.
+- Lettering places glyphs by nominal advance without a shaping engine, so
+  scripts that need contextual joining, cluster reordering, mark stacking, or
+  bidirectional runs are refused rather than rendered incorrectly; see
+  [`docs/typography.md`](docs/typography.md) for the supported-script contract
+  and extension fonts. No font choice adds shaping support.
+- The CLI and Skill surface — command names, progress, QA reports, and
+  documentation — are English-only. Story content may use any script the
+  typography preflight accepts, but Comic Sol does not localize its own
+  interface or messages.
+
 For support, run `doctor`, retain the printed project path, and inspect
 `project.json` plus `qa/report.md`. A `BLOCKED` project is intentionally resumable;
 restore the missing capability or correct the reported artifact, then ask Codex to
@@ -440,8 +478,23 @@ Comic Sol's original code and documentation are available under the MIT License 
 licensed under the SIL Open Font License 1.1; see
 [`assets/README.md`](assets/README.md).
 
-## Contributing and security
+## Contributing, support, and security
 
 Development is review-first through pull requests into `main`. See
-[`CONTRIBUTING.md`](CONTRIBUTING.md) for the required validation gates. Report
-security issues privately as described in [`SECURITY.md`](SECURITY.md).
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the required validation gates.
+
+- **Support** — how to report a problem with the right diagnostics (version,
+  install mode, error code, JSON `doctor` output) and when to use the private
+  route for sensitive reports: [`SUPPORT.md`](SUPPORT.md).
+- **Privacy** — what each surface (Skill, plugin, CLI, native archive, MCP,
+  OCI) keeps local and what leaves the machine through your image provider:
+  [`PRIVACY.md`](PRIVACY.md).
+- **Terms** — the terms of use for every distribution surface:
+  [`TERMS.md`](TERMS.md).
+- **Security** — report security issues privately as described in
+  [`SECURITY.md`](SECURITY.md).
+- **Typography and accessibility limits** — supported scripts, extension
+  fonts, and the accessibility/localization limitations of exported PDFs:
+  [`docs/typography.md`](docs/typography.md) and
+  [Accessibility and localization limitations](#accessibility-and-localization-limitations).
+
