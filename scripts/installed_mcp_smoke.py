@@ -50,9 +50,7 @@ async def smoke(command: str, arguments: list[str]) -> None:
 def parse_server_entry(command: str, arguments_json: str) -> tuple[str, list[str]]:
     """Parse one structured MCP command entry without invoking a shell."""
     arguments = json.loads(arguments_json)
-    if not isinstance(arguments, list) or not all(
-        isinstance(item, str) for item in arguments
-    ):
+    if not isinstance(arguments, list) or not all(isinstance(item, str) for item in arguments):
         raise ValueError("MCP arguments must be a JSON string array")
     return command, arguments
 

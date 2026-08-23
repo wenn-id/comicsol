@@ -724,7 +724,7 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", trigger)
         self.assertIn("Verify active release-tag immutability rules", prepare)
         self.assertIn('{"update", "deletion"} <= rule_types', prepare)
-        self.assertIn('refs/tags/{os.environ[\'RELEASE_TAG\']}', prepare)
+        self.assertIn("refs/tags/{os.environ['RELEASE_TAG']}", prepare)
         self.assertIn('test "$TRIGGER_REF" = "refs/tags/$TAG"', prepare)
         self.assertIn('git rev-parse "${TRIGGER_SHA}^{commit}"', prepare)
         self.assertIn('test "$(git rev-parse HEAD)" = "$SHA"', prepare)
@@ -836,7 +836,6 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
             "uses: ./.github/workflows/benchmark.yml",
             "uses: ./.github/workflows/release-qualification.yml",
             "candidate_sha: ${{ needs.prepare.outputs.sha }}",
-            "blocking_quality: true",
             "name: release-production",
             "candidate-identity.json",
             "release-evidence.json",

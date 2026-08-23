@@ -54,8 +54,12 @@ def _legacy_layouts() -> dict[str, tuple[Rectangle, ...]]:
         "hero-top-two-bottom": (
             (MARGIN, MARGIN, inner_width, hero_height),
             (MARGIN, MARGIN + hero_height + GUTTER, half_width, support_height),
-            (MARGIN + half_width + GUTTER, MARGIN + hero_height + GUTTER,
-             half_width, support_height),
+            (
+                MARGIN + half_width + GUTTER,
+                MARGIN + hero_height + GUTTER,
+                half_width,
+                support_height,
+            ),
         ),
         "two-top-hero-bottom": (
             (MARGIN, MARGIN, half_width, support_height),
@@ -74,9 +78,8 @@ def _rectangle(value: object) -> Rectangle:
         values = tuple(value)
     else:
         raise ValueError("layout rectangle must be an object or four values")
-    if (
-        len(values) != 4
-        or any(not isinstance(item, int) or isinstance(item, bool) for item in values)
+    if len(values) != 4 or any(
+        not isinstance(item, int) or isinstance(item, bool) for item in values
     ):
         raise ValueError("layout rectangle must contain four integers")
     return values  # type: ignore[return-value]
@@ -98,7 +101,7 @@ def validate_custom_layout(
         if x < 0 or y < 0 or x + width > PAGE_WIDTH or y + height > PAGE_HEIGHT:
             raise ValueError("layout rectangles must be contained by the canonical page")
     for index, first in enumerate(canonical):
-        for second in canonical[index + 1:]:
+        for second in canonical[index + 1 :]:
             if _overlap(first, second):
                 raise ValueError("layout rectangles overlap")
     expected_order = tuple(range(1, len(canonical) + 1))

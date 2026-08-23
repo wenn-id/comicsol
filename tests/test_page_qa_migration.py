@@ -61,9 +61,7 @@ def legacy_page_record(project):
         (region["panel_id"], region["text_id"]): region["tip"]
         for region in bounded_tail_regions(project, 1)
     }
-    tail = next(
-        check for check in record["checks"] if check["id"] == "bubble-tail-direction"
-    )
+    tail = next(check for check in record["checks"] if check["id"] == "bubble-tail-direction")
     for region in tail["regions"]:
         key = (region["panel_id"], region["text_id"])
         if key not in tips:
@@ -77,9 +75,7 @@ class PageQaMigrationRegistryTests(unittest.TestCase):
         self.assertEqual("2.1", CURRENT_PAGE_QA_SCHEMA_VERSION)
         # Keyed by (source, target) like PROJECT_MIGRATIONS, so a version without
         # a reviewed hook cannot be silently accepted.
-        self.assertEqual(
-            {("2.0", CURRENT_PAGE_QA_SCHEMA_VERSION)}, set(PAGE_QA_MIGRATIONS)
-        )
+        self.assertEqual({("2.0", CURRENT_PAGE_QA_SCHEMA_VERSION)}, set(PAGE_QA_MIGRATIONS))
         self.assertEqual({"2.0"}, set(PAGE_QA_MIGRATION_SOURCES))
 
     def test_shipped_template_starts_at_the_current_version(self):
@@ -88,9 +84,7 @@ class PageQaMigrationRegistryTests(unittest.TestCase):
             "skills/comic-sol/templates/page-qa.json",
         ):
             template = json.loads((ROOT / relative).read_text("utf-8"))
-            self.assertEqual(
-                CURRENT_PAGE_QA_SCHEMA_VERSION, template["schema_version"], relative
-            )
+            self.assertEqual(CURRENT_PAGE_QA_SCHEMA_VERSION, template["schema_version"], relative)
 
 
 class PageQaMigrationTests(unittest.TestCase):
@@ -113,14 +107,13 @@ class PageQaMigrationTests(unittest.TestCase):
         self.assertEqual(CURRENT_PAGE_QA_SCHEMA_VERSION, migrated["schema_version"])
         self.assertEqual("page-qa", migrated["kind"])
         self.assertEqual("page-001", migrated["subject_id"])
-        self.assertEqual(
-            list(PAGE_CHECK_IDS), [check["id"] for check in migrated["checks"]]
-        )
+        self.assertEqual(list(PAGE_CHECK_IDS), [check["id"] for check in migrated["checks"]])
         self.assertEqual(PAGE_BINDING_FIELDS, set(migrated["bindings"]))
         # The published bytes are the migrated record, in canonical artifact form.
         self.assertEqual(
-            (json.dumps(migrated, ensure_ascii=False, indent=2, sort_keys=True)
-             + "\n").encode("utf-8"),
+            (json.dumps(migrated, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+                "utf-8"
+            ),
             self.record_path.read_bytes(),
         )
         self.assertEqual((), validate_page_quality(self.project, 1))
@@ -141,9 +134,7 @@ class PageQaMigrationTests(unittest.TestCase):
         storyboard = json.loads((self.project / "plan/storyboard.json").read_text("utf-8"))
         self.assertEqual(
             [
-                panel_id + ":" + sha256_file(
-                    self.project / f"panels/{panel_id}/normalization.json"
-                )
+                panel_id + ":" + sha256_file(self.project / f"panels/{panel_id}/normalization.json")
                 for panel_id in panel_ids(storyboard)
             ],
             migrated["bindings"]["normalization_sha256s"],
@@ -188,17 +179,14 @@ class PageQaMigrationTests(unittest.TestCase):
         self.assertEqual(before, self.record_path.read_bytes())
 
     def test_interrupted_migration_leaves_the_project_unchanged(self):
-        with mock.patch.object(
-            ProjectTransaction, "commit", side_effect=OSError("interrupted")
-        ):
+        with mock.patch.object(ProjectTransaction, "commit", side_effect=OSError("interrupted")):
             with self.assertRaises(OSError):
                 migrate_page_quality_record(self.project, 1)
         self.assertEqual(self.before, self.record_path.read_bytes())
 
         ProjectTransaction.recover(self.project)
         self.assertEqual(self.before, self.record_path.read_bytes())
-        self.assertEqual("2.0", json.loads(
-            self.record_path.read_text("utf-8"))["schema_version"])
+        self.assertEqual("2.0", json.loads(self.record_path.read_text("utf-8"))["schema_version"])
 
     def test_migrating_a_current_record_neither_publishes_nor_journals(self):
         migrate_page_quality_record(self.project, 1)
@@ -222,23 +210,24 @@ class PageQaMigrationTests(unittest.TestCase):
 
     def test_pre_change_record_is_reported_as_migration_required_not_malformed(self):
         issues = [
-            issue for issue in validate_project(self.project, "export-ready")
+            issue
+            for issue in validate_project(self.project, "export-ready")
             if issue.path == RECORD_RELATIVE
         ]
 
         self.assertEqual(
-            [(
-                "schema_version",
-                "quality-migration-required: schema 2.0 page QA must be migrated "
-                f"to {CURRENT_PAGE_QA_SCHEMA_VERSION}",
-            )],
+            [
+                (
+                    "schema_version",
+                    "quality-migration-required: schema 2.0 page QA must be migrated "
+                    f"to {CURRENT_PAGE_QA_SCHEMA_VERSION}",
+                )
+            ],
             [(issue.field, issue.message) for issue in issues],
         )
         # The misleading verdict this change removes: a record that predates a
         # check-set change is not a reviewer who supplied the wrong check IDs.
-        self.assertNotIn(
-            "quality-check-ids", " ".join(issue.message for issue in issues)
-        )
+        self.assertNotIn("quality-check-ids", " ".join(issue.message for issue in issues))
 
     def test_unsupported_version_is_not_diagnosed_as_a_legacy_record(self):
         # An unknown version is neither current, migratable, nor a flat
@@ -251,32 +240,32 @@ class PageQaMigrationTests(unittest.TestCase):
                 atomic_write_json(self.record_path, corrupt)
 
                 issues = [
-                    issue for issue in validate_project(self.project, "export-ready")
+                    issue
+                    for issue in validate_project(self.project, "export-ready")
                     if issue.path == RECORD_RELATIVE
                 ]
 
                 self.assertEqual(
-                    [(
-                        "schema_version",
-                        "quality-migration-required: unsupported page QA schema; no "
-                        f"migration path to {CURRENT_PAGE_QA_SCHEMA_VERSION} is registered",
-                    )],
+                    [
+                        (
+                            "schema_version",
+                            "quality-migration-required: unsupported page QA schema; no "
+                            f"migration path to {CURRENT_PAGE_QA_SCHEMA_VERSION} is registered",
+                        )
+                    ],
                     [(issue.field, issue.message) for issue in issues],
                 )
 
     def test_migration_refuses_a_record_malformed_for_its_own_version(self):
         malformed = json.loads(self.before.decode("utf-8"))
         duplicate = next(
-            check for check in malformed["checks"]
-            if check["id"] == "face-action-obstruction"
+            check for check in malformed["checks"] if check["id"] == "face-action-obstruction"
         )
         malformed["checks"].append(dict(duplicate))
         atomic_write_json(self.record_path, malformed)
         before = self.record_path.read_bytes()
 
-        with self.assertRaisesRegex(
-            PageQualityMigrationError, "not a valid schema-2.0 record"
-        ):
+        with self.assertRaisesRegex(PageQualityMigrationError, "not a valid schema-2.0 record"):
             migrate_page_quality_record(self.project, 1)
 
         self.assertEqual(before, self.record_path.read_bytes())
@@ -284,8 +273,7 @@ class PageQaMigrationTests(unittest.TestCase):
     def test_migration_refuses_a_record_missing_a_reviewer_check(self):
         incomplete = json.loads(self.before.decode("utf-8"))
         incomplete["checks"] = [
-            check for check in incomplete["checks"]
-            if check["id"] != "accidental-text-watermark"
+            check for check in incomplete["checks"] if check["id"] != "accidental-text-watermark"
         ]
         atomic_write_json(self.record_path, incomplete)
         before = self.record_path.read_bytes()
@@ -299,7 +287,8 @@ class PageQaMigrationTests(unittest.TestCase):
         migrate_page_quality_record(self.project, 1)
 
         issues = [
-            issue for issue in validate_project(self.project, "export-ready")
+            issue
+            for issue in validate_project(self.project, "export-ready")
             if issue.path == RECORD_RELATIVE
         ]
 

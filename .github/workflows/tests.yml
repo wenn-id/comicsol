@@ -13,11 +13,6 @@ on:
         required: false
         default: ""
         type: string
-      blocking_quality:
-        description: "Make every quality check release-blocking"
-        required: false
-        default: false
-        type: boolean
 
 jobs:
   test:
@@ -89,9 +84,8 @@ jobs:
         fi
 
   quality:
-    name: Quality baseline (blocking for release calls)
+    name: Quality gates
     runs-on: ubuntu-latest
-    continue-on-error: ${{ !inputs.blocking_quality }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       with:
@@ -105,18 +99,16 @@ jobs:
     - name: Install quality tools
       run: python -m pip install --require-hashes -r requirements/locks/quality-linux-x86_64.txt
     - name: Ruff lint
-      continue-on-error: ${{ !inputs.blocking_quality }}
-      run: ruff check scripts comic_sol_product tests
+      run: python -m ruff check scripts comic_sol_product tests
     - name: Ruff format check
-      continue-on-error: ${{ !inputs.blocking_quality }}
-      run: ruff format --check scripts comic_sol_product tests
-    - name: Mypy baseline
-      continue-on-error: ${{ !inputs.blocking_quality }}
-      run: mypy
-    - name: Coverage baseline
-      continue-on-error: ${{ !inputs.blocking_quality }}
+      run: python -m ruff format --check scripts comic_sol_product tests
+    - name: Mypy incremental scope
+      run: python -m mypy
+    - name: Application coverage gates
       run: |
-        python -m coverage run --branch -m unittest discover -s tests
+        python -m coverage run -m unittest discover -s tests
+        python -m coverage json -o coverage.json
+        python scripts/check_coverage.py coverage.json
         python -m coverage report
         python -m coverage xml -o coverage.xml
         python -m coverage html -d coverage-html
@@ -124,8 +116,9 @@ jobs:
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: coverage-baseline
+        name: quality-coverage
         path: |
+          coverage.json
           coverage.xml
           coverage-html/
 

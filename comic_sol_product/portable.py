@@ -22,7 +22,9 @@ REQUIRED_RUNTIME_SUFFIXES = frozenset(
 def validate_runtime_members(members: Iterable[str]) -> None:
     names = {name.replace("\\", "/").rstrip("/") for name in members}
     missing = sorted(
-        suffix for suffix in REQUIRED_RUNTIME_SUFFIXES if not any(name.endswith(suffix) for name in names)
+        suffix
+        for suffix in REQUIRED_RUNTIME_SUFFIXES
+        if not any(name.endswith(suffix) for name in names)
     )
     executable_present = any(
         name.endswith("comic-sol/comic-sol") or name.endswith("comic-sol/comic-sol.exe")
@@ -31,7 +33,9 @@ def validate_runtime_members(members: Iterable[str]) -> None:
     if not executable_present:
         missing.append("comic-sol/comic-sol[.exe]")
     if missing:
-        raise ValueError("portable runtime is missing required members: " + ", ".join(sorted(set(missing))))
+        raise ValueError(
+            "portable runtime is missing required members: " + ", ".join(sorted(set(missing)))
+        )
 
 
 def create_portable_archive(runtime_dir: Path, archive: Path) -> Path:
@@ -44,7 +48,9 @@ def create_portable_archive(runtime_dir: Path, archive: Path) -> Path:
     validate_runtime_members(members)
     archive.parent.mkdir(parents=True, exist_ok=True)
     if archive.name.endswith(".zip"):
-        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as writer:
+        with zipfile.ZipFile(
+            archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+        ) as writer:
             for source in sorted(path for path in runtime_dir.rglob("*") if path.is_file()):
                 target = f"comic-sol/{source.relative_to(runtime_dir).as_posix()}"
                 info = zipfile.ZipInfo(target, (1980, 1, 1, 0, 0, 0))

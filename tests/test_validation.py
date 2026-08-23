@@ -57,39 +57,54 @@ def valid_manifest():
 def valid_characters():
     return {
         "schema_version": "1.0",
-        "characters": [{
-            "id": "mira", "name": "Mira", "role": "courier",
-            "age_band": "young-adult", "pronouns": "she/her",
-            "visual_fingerprint": {
-                "silhouette": "short compact build", "face": "round face",
-                "hair": "chin-length black bob", "wardrobe": "cream jacket",
-                "palette": ["charcoal", "cream", "amber"],
-                "signature_props": ["courier bag"],
-                "invariants": ["amber scarf", "circular bag clasp"],
-                "avoid": ["logos", "generated text"],
-            },
-            "personality": ["resourceful"], "motivation": "finish delivery",
-            "speech": "short practical sentences",
-            "reference_path": "references/characters/mira.png",
-        }],
+        "characters": [
+            {
+                "id": "mira",
+                "name": "Mira",
+                "role": "courier",
+                "age_band": "young-adult",
+                "pronouns": "she/her",
+                "visual_fingerprint": {
+                    "silhouette": "short compact build",
+                    "face": "round face",
+                    "hair": "chin-length black bob",
+                    "wardrobe": "cream jacket",
+                    "palette": ["charcoal", "cream", "amber"],
+                    "signature_props": ["courier bag"],
+                    "invariants": ["amber scarf", "circular bag clasp"],
+                    "avoid": ["logos", "generated text"],
+                },
+                "personality": ["resourceful"],
+                "motivation": "finish delivery",
+                "speech": "short practical sentences",
+                "reference_path": "references/characters/mira.png",
+            }
+        ],
     }
 
 
 def valid_story():
     scene = {
-        "purpose": "launch the delivery", "location": "dispatch hall",
-        "time": "artificial dusk", "characters": ["mira"],
+        "purpose": "launch the delivery",
+        "location": "dispatch hall",
+        "time": "artificial dusk",
+        "characters": ["mira"],
         "continuity_anchor": "brass walls and amber strips",
     }
     first = {"id": "delivery-hall", **scene}
     second = {"id": "generator-shaft", **scene, "purpose": "resolve delivery"}
     return {
-        "schema_version": "1.0", "title": "Sunlight Courier",
+        "schema_version": "1.0",
+        "title": "Sunlight Courier",
         "logline": "A courier delivers the last vial of sunlight.",
-        "theme": "Hope is shared.", "tone": ["urgent", "tender"],
-        "rating": "teen", "setting": "An underground city.",
-        "beginning": "Mira receives the vial.", "turn": "A bridge collapses.",
-        "climax": "Mira crosses the shaft.", "ending": "The city relights.",
+        "theme": "Hope is shared.",
+        "tone": ["urgent", "tender"],
+        "rating": "teen",
+        "setting": "An underground city.",
+        "beginning": "Mira receives the vial.",
+        "turn": "A bridge collapses.",
+        "climax": "Mira crosses the shaft.",
+        "ending": "The city relights.",
         "scenes": [first, second],
     }
 
@@ -97,49 +112,80 @@ def valid_story():
 def valid_storyboard():
     return {
         "schema_version": "1.0",
-        "pages": [{
-            "number": 1, "layout": "full-page",
-            "panels": [{
-                "id": "p01-01", "order": 1, "scene_id": "delivery-hall",
-                "rect": layout_rects("full-page")[0],
-                "beat": "Mira catches the vial.", "characters": ["mira"],
-                "shot": "wide establishing shot",
-                "composition": "Mira on right third with safe top-left",
-                "action": "Mira catches the vial.", "expression": "focused surprise",
-                "lighting": "amber key light", "continuity": ["mira:amber scarf"],
-                "negative": ["text", "speech bubbles", "watermark"],
-                "text": [{
-                    "id": "p01-01-t01", "kind": "dialogue", "speaker": "mira",
-                    "content": "I have one delivery left.", "anchor": "top-left",
-                    "voice_source": "human", "speaker_anchor": [0.7, 0.5],
-                    "priority": 1,
-                }],
-            }],
-        }],
+        "pages": [
+            {
+                "number": 1,
+                "layout": "full-page",
+                "panels": [
+                    {
+                        "id": "p01-01",
+                        "order": 1,
+                        "scene_id": "delivery-hall",
+                        "rect": layout_rects("full-page")[0],
+                        "beat": "Mira catches the vial.",
+                        "characters": ["mira"],
+                        "shot": "wide establishing shot",
+                        "composition": "Mira on right third with safe top-left",
+                        "action": "Mira catches the vial.",
+                        "expression": "focused surprise",
+                        "lighting": "amber key light",
+                        "continuity": ["mira:amber scarf"],
+                        "negative": ["text", "speech bubbles", "watermark"],
+                        "text": [
+                            {
+                                "id": "p01-01-t01",
+                                "kind": "dialogue",
+                                "speaker": "mira",
+                                "content": "I have one delivery left.",
+                                "anchor": "top-left",
+                                "voice_source": "human",
+                                "speaker_anchor": [0.7, 0.5],
+                                "priority": 1,
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
     }
 
 
 def valid_panel_record():
     check_ids = (
-        "character-identity", "anatomy", "action", "composition",
-        "continuity", "text-free", "technical",
+        "character-identity",
+        "anatomy",
+        "action",
+        "composition",
+        "continuity",
+        "text-free",
+        "technical",
     )
     return {
-        "schema_version": "1.0", "panel_id": "p01-01",
+        "schema_version": "1.0",
+        "panel_id": "p01-01",
         "source_prompt_path": "prompts/panels/p01-01.txt",
         "raw_path": "panels/raw/p01-01.png",
-        "clean_path": "panels/clean/p01-01.png", "raw_sha256": "b" * 64,
-        "dimensions": {"width": 736, "height": 1136}, "attempts": 1,
+        "clean_path": "panels/clean/p01-01.png",
+        "raw_sha256": "b" * 64,
+        "dimensions": {"width": 736, "height": 1136},
+        "attempts": 1,
         "generation": {
             "capability_name": "agent-image-generation",
             "reference_paths": ["references/characters/mira.png"],
             "completed_at": "2026-07-18T04:10:00Z",
         },
-        "checks": [{
-            "id": check_id, "result": "pass", "severity": "error",
-            "evidence": "verified",
-        } for check_id in check_ids],
-        "decision": "accept", "retry_reason": None, "unresolved_warnings": [],
+        "checks": [
+            {
+                "id": check_id,
+                "result": "pass",
+                "severity": "error",
+                "evidence": "verified",
+            }
+            for check_id in check_ids
+        ],
+        "decision": "accept",
+        "retry_reason": None,
+        "unresolved_warnings": [],
     }
 
 
@@ -160,15 +206,18 @@ def valid_panel_record_v2():
             "normalization_path": "panels/p01-01/normalization.json",
             "normalization_sha256": "d" * 64,
         },
-        "checks": [{
-            "id": check_id,
-            "result": "pass",
-            "severity": "error",
-            "evidence": f"Observed {check_id} against current panel artifacts",
-            "method": "agent-review",
-            "reviewer": "fixture-reviewer",
-            "regions": [],
-        } for check_id in PANEL_CHECK_IDS],
+        "checks": [
+            {
+                "id": check_id,
+                "result": "pass",
+                "severity": "error",
+                "evidence": f"Observed {check_id} against current panel artifacts",
+                "method": "agent-review",
+                "reviewer": "fixture-reviewer",
+                "regions": [],
+            }
+            for check_id in PANEL_CHECK_IDS
+        ],
         "review": {
             "method": "agent-review",
             "reviewer": "fixture-reviewer",
@@ -182,8 +231,11 @@ def valid_panel_record_v2():
 class TemplateContractTests(unittest.TestCase):
     def test_templates_are_canonical_with_quality_records_at_v2(self):
         names = (
-            "manifest.json", "character-bible.json", "story-plan.json",
-            "storyboard.json", "panel-record.json",
+            "manifest.json",
+            "character-bible.json",
+            "story-plan.json",
+            "storyboard.json",
+            "panel-record.json",
         )
         for name in names:
             raw = (ROOT / "templates" / name).read_bytes()
@@ -191,8 +243,9 @@ class TemplateContractTests(unittest.TestCase):
             data = json.loads(raw)
             expected_schema = "2.0" if name == "panel-record.json" else "1.0"
             self.assertEqual(expected_schema, data["schema_version"])
-            expected = (json.dumps(data, ensure_ascii=False, indent=2,
-                                   sort_keys=True) + "\n").encode("utf-8")
+            expected = (
+                json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            ).encode("utf-8")
             self.assertEqual(expected, raw, name)
 
         page_raw = (ROOT / "templates/page-qa.json").read_bytes()
@@ -211,9 +264,16 @@ class TemplateContractTests(unittest.TestCase):
         panel = json.loads((ROOT / "templates/panel-record.json").read_text("utf-8"))
         self.assertEqual(
             {
-                "raw_path", "raw_sha256", "raw_width", "raw_height",
-                "clean_path", "clean_sha256", "clean_width", "clean_height",
-                "normalization_path", "normalization_sha256",
+                "raw_path",
+                "raw_sha256",
+                "raw_width",
+                "raw_height",
+                "clean_path",
+                "clean_sha256",
+                "clean_width",
+                "clean_height",
+                "normalization_path",
+                "normalization_sha256",
             },
             set(panel["bindings"]),
         )
@@ -257,21 +317,26 @@ class LayoutGeometryTests(unittest.TestCase):
                 self.assertGreaterEqual(rect["y"], 64)
                 self.assertLessEqual(rect["x"] + rect["width"], 1536)
                 self.assertLessEqual(rect["y"] + rect["height"], 2336)
-            self.assertFalse(any(
-                rectangles_overlap(a, b)
-                for index, a in enumerate(rects)
-                for b in rects[index + 1:]
-            ))
+            self.assertFalse(
+                any(
+                    rectangles_overlap(a, b)
+                    for index, a in enumerate(rects)
+                    for b in rects[index + 1 :]
+                )
+            )
 
     def test_layout_rectangles_are_exact_and_unknown_layout_is_rejected(self):
         self.assertEqual(
             [{"x": 64, "y": 64, "width": 1472, "height": 2272}],
             layout_rects("full-page"),
         )
-        self.assertEqual([
-            {"x": 64, "y": 64, "width": 1472, "height": 1120},
-            {"x": 64, "y": 1216, "width": 1472, "height": 1120},
-        ], layout_rects("two-horizontal"))
+        self.assertEqual(
+            [
+                {"x": 64, "y": 64, "width": 1472, "height": 1120},
+                {"x": 64, "y": 1216, "width": 1472, "height": 1120},
+            ],
+            layout_rects("two-horizontal"),
+        )
         with self.assertRaisesRegex(ValueError, "unknown layout"):
             layout_rects("diagonal-chaos")
 
@@ -302,24 +367,40 @@ class StrictSchemaValidationTests(unittest.TestCase):
         malformed = valid_manifest()
         malformed["schema_version"] = ["1.0"]
         malformed_issues = validate_manifest(malformed)
-        self.assertTrue(
-            any(issue.field == "schema_version" for issue in malformed_issues)
-        )
+        self.assertTrue(any(issue.field == "schema_version" for issue in malformed_issues))
 
         legacy = valid_manifest()
         legacy.pop("schema_version")
         self.assertEqual([], validate_manifest(legacy))
 
         cases = []
-        data = valid_manifest(); data["surprise"] = True; cases.append((data, "surprise"))
-        data = valid_manifest(); data["project_id"] = "Bad ID"; cases.append((data, "project_id"))
-        data = valid_manifest(); data["settings"]["page_count"] = 5; cases.append((data, "settings.page_count"))
-        data = valid_manifest(); data["settings"]["panel_count"] = 13; cases.append((data, "settings.panel_count"))
-        data = valid_manifest(); data["input"]["source_path"] = "../private.txt"; cases.append((data, "input.source_path"))
-        data = valid_manifest(); data["input"]["source_path"] = "source/other.txt"; cases.append((data, "input.source_path"))
-        data = valid_manifest(); data["input"]["source_sha256"] = "ABC"; cases.append((data, "input.source_sha256"))
-        data = valid_manifest(); data["created_at"] = "2026-07-18 04:00:00Z"; cases.append((data, "created_at"))
-        data = valid_manifest(); data["capability"]["status"] = "available"; cases.append((data, "capability.name"))
+        data = valid_manifest()
+        data["surprise"] = True
+        cases.append((data, "surprise"))
+        data = valid_manifest()
+        data["project_id"] = "Bad ID"
+        cases.append((data, "project_id"))
+        data = valid_manifest()
+        data["settings"]["page_count"] = 5
+        cases.append((data, "settings.page_count"))
+        data = valid_manifest()
+        data["settings"]["panel_count"] = 13
+        cases.append((data, "settings.panel_count"))
+        data = valid_manifest()
+        data["input"]["source_path"] = "../private.txt"
+        cases.append((data, "input.source_path"))
+        data = valid_manifest()
+        data["input"]["source_path"] = "source/other.txt"
+        cases.append((data, "input.source_path"))
+        data = valid_manifest()
+        data["input"]["source_sha256"] = "ABC"
+        cases.append((data, "input.source_sha256"))
+        data = valid_manifest()
+        data["created_at"] = "2026-07-18 04:00:00Z"
+        cases.append((data, "created_at"))
+        data = valid_manifest()
+        data["capability"]["status"] = "available"
+        cases.append((data, "capability.name"))
         for data, field in cases:
             with self.subTest(field=field):
                 self.assert_issue(validate_manifest(data), field)
@@ -339,21 +420,39 @@ class StrictSchemaValidationTests(unittest.TestCase):
 
     def test_character_and_story_rules_are_strict(self):
         character_cases = []
-        data = valid_characters(); data["unknown"] = 1; character_cases.append((data, "unknown"))
-        data = valid_characters(); data["characters"][0]["id"] = "Mira!"; character_cases.append((data, "characters[0].id"))
-        data = valid_characters(); data["characters"][0]["visual_fingerprint"]["invariants"] = ["one"]; character_cases.append((data, "invariants"))
-        data = valid_characters(); data["characters"][0]["reference_path"] = "/tmp/mira.png"; character_cases.append((data, "reference_path"))
-        data = valid_characters(); data["characters"][0]["reference_path"] = "references/characters/other.png"; character_cases.append((data, "reference_path"))
+        data = valid_characters()
+        data["unknown"] = 1
+        character_cases.append((data, "unknown"))
+        data = valid_characters()
+        data["characters"][0]["id"] = "Mira!"
+        character_cases.append((data, "characters[0].id"))
+        data = valid_characters()
+        data["characters"][0]["visual_fingerprint"]["invariants"] = ["one"]
+        character_cases.append((data, "invariants"))
+        data = valid_characters()
+        data["characters"][0]["reference_path"] = "/tmp/mira.png"
+        character_cases.append((data, "reference_path"))
+        data = valid_characters()
+        data["characters"][0]["reference_path"] = "references/characters/other.png"
+        character_cases.append((data, "reference_path"))
         for data, field in character_cases:
             with self.subTest(character_field=field):
                 self.assert_issue(validate_character_bible(data), field)
         self.assertEqual([], validate_character_bible(valid_characters()))
 
         story_cases = []
-        data = valid_story(); data["scenes"] = data["scenes"][:1]; story_cases.append((data, "scenes"))
-        data = valid_story(); data["scenes"] = data["scenes"] * 3; story_cases.append((data, "scenes"))
-        data = valid_story(); data["scenes"][0]["characters"] = ["Unknown!"]; story_cases.append((data, "scenes[0].characters"))
-        data = valid_story(); data["scenes"][0]["characters"] = ["mira", "mira"]; story_cases.append((data, "scenes[0].characters"))
+        data = valid_story()
+        data["scenes"] = data["scenes"][:1]
+        story_cases.append((data, "scenes"))
+        data = valid_story()
+        data["scenes"] = data["scenes"] * 3
+        story_cases.append((data, "scenes"))
+        data = valid_story()
+        data["scenes"][0]["characters"] = ["Unknown!"]
+        story_cases.append((data, "scenes[0].characters"))
+        data = valid_story()
+        data["scenes"][0]["characters"] = ["mira", "mira"]
+        story_cases.append((data, "scenes[0].characters"))
         for data, field in story_cases:
             with self.subTest(story_field=field):
                 self.assert_issue(validate_story_plan(data), field)
@@ -362,17 +461,39 @@ class StrictSchemaValidationTests(unittest.TestCase):
     def test_storyboard_rejects_references_text_and_geometry(self):
         story, characters = valid_story(), valid_characters()
         cases = []
-        data = valid_storyboard(); data["pages"][0]["panels"][0]["surprise"] = True; cases.append((data, "surprise"))
-        data = valid_storyboard(); data["pages"][0]["panels"][0]["scene_id"] = "missing"; cases.append((data, "scene_id"))
-        data = valid_storyboard(); data["pages"][0]["panels"][0]["characters"] = ["ghost"]; cases.append((data, "characters"))
-        data = valid_storyboard(); data["pages"][0]["panels"][0]["characters"] = ["mira", "mira"]; cases.append((data, "characters"))
-        data = valid_storyboard(); data["pages"][0]["panels"][0]["continuity"] = ["ghost:blue hat"]; cases.append((data, "continuity"))
-        data = valid_storyboard(); data["pages"][0]["panels"][0]["continuity"] = ["delivery-hall:invented lighting"]; cases.append((data, "continuity"))
-        data = valid_storyboard(); data["pages"][0]["panels"][0]["text"][0]["speaker"] = "ghost"; cases.append((data, "speaker"))
-        data = valid_storyboard(); data["pages"][0]["panels"][0]["text"][0]["content"] = "word " * 33; cases.append((data, "content"))
-        data = valid_storyboard(); data["pages"][0]["panels"][0]["text"][0]["anchor"] = "center"; cases.append((data, "anchor"))
-        data = valid_storyboard(); data["pages"][0]["panels"][0]["text"][0]["speaker_anchor"] = [1.2, 0.5]; cases.append((data, "speaker_anchor"))
-        data = valid_storyboard(); data["pages"][0]["panels"][0]["rect"]["x"] = 0; cases.append((data, "rect"))
+        data = valid_storyboard()
+        data["pages"][0]["panels"][0]["surprise"] = True
+        cases.append((data, "surprise"))
+        data = valid_storyboard()
+        data["pages"][0]["panels"][0]["scene_id"] = "missing"
+        cases.append((data, "scene_id"))
+        data = valid_storyboard()
+        data["pages"][0]["panels"][0]["characters"] = ["ghost"]
+        cases.append((data, "characters"))
+        data = valid_storyboard()
+        data["pages"][0]["panels"][0]["characters"] = ["mira", "mira"]
+        cases.append((data, "characters"))
+        data = valid_storyboard()
+        data["pages"][0]["panels"][0]["continuity"] = ["ghost:blue hat"]
+        cases.append((data, "continuity"))
+        data = valid_storyboard()
+        data["pages"][0]["panels"][0]["continuity"] = ["delivery-hall:invented lighting"]
+        cases.append((data, "continuity"))
+        data = valid_storyboard()
+        data["pages"][0]["panels"][0]["text"][0]["speaker"] = "ghost"
+        cases.append((data, "speaker"))
+        data = valid_storyboard()
+        data["pages"][0]["panels"][0]["text"][0]["content"] = "word " * 33
+        cases.append((data, "content"))
+        data = valid_storyboard()
+        data["pages"][0]["panels"][0]["text"][0]["anchor"] = "center"
+        cases.append((data, "anchor"))
+        data = valid_storyboard()
+        data["pages"][0]["panels"][0]["text"][0]["speaker_anchor"] = [1.2, 0.5]
+        cases.append((data, "speaker_anchor"))
+        data = valid_storyboard()
+        data["pages"][0]["panels"][0]["rect"]["x"] = 0
+        cases.append((data, "rect"))
         for data, field in cases:
             with self.subTest(field=field):
                 self.assert_issue(validate_storyboard(data, story, characters), field)
@@ -402,11 +523,15 @@ class StrictSchemaValidationTests(unittest.TestCase):
 
     def test_storyboard_accepts_and_separates_multi_speaker_attribution(self):
         story, characters = valid_story(), valid_characters()
-        characters["characters"].append({
-            **deepcopy(characters["characters"][0]),
-            "id": "ren", "name": "Ren", "role": "gatekeeper",
-            "reference_path": "references/characters/ren.png",
-        })
+        characters["characters"].append(
+            {
+                **deepcopy(characters["characters"][0]),
+                "id": "ren",
+                "name": "Ren",
+                "role": "gatekeeper",
+                "reference_path": "references/characters/ren.png",
+            }
+        )
 
         def two_speakers(first_anchor, second_anchor, second_speaker="ren"):
             """Return a storyboard whose only panel letters two spoken balloons."""
@@ -416,11 +541,15 @@ class StrictSchemaValidationTests(unittest.TestCase):
             first = panel["text"][0]
             first["speaker_anchor"] = first_anchor
             second = deepcopy(first)
-            second.update({
-                "id": "p01-01-t02", "speaker": second_speaker,
-                "speaker_anchor": second_anchor, "priority": 2,
-                "content": "Then I hold the gate.",
-            })
+            second.update(
+                {
+                    "id": "p01-01-t02",
+                    "speaker": second_speaker,
+                    "speaker_anchor": second_anchor,
+                    "priority": 2,
+                    "content": "Then I hold the gate.",
+                }
+            )
             panel["text"] = [first, second]
             return data
 
@@ -445,12 +574,15 @@ class StrictSchemaValidationTests(unittest.TestCase):
         ):
             with self.subTest(description=description):
                 issues = validate_storyboard(data, story, characters)
-                self.assertTrue(any(
-                    issue.field == "pages[0].panels[0].text"
-                    and issue.message.startswith("dialogue-attribution-ambiguous:")
-                    and "p01-01-t01 and p01-01-t02" in issue.message
-                    for issue in issues
-                ), issues)
+                self.assertTrue(
+                    any(
+                        issue.field == "pages[0].panels[0].text"
+                        and issue.message.startswith("dialogue-attribution-ambiguous:")
+                        and "p01-01-t01 and p01-01-t02" in issue.message
+                        for issue in issues
+                    ),
+                    issues,
+                )
 
     def test_storyboard_reports_legacy_tail_migration_and_tail_free_captions(self):
         story, characters = valid_story(), valid_characters()
@@ -460,19 +592,20 @@ class StrictSchemaValidationTests(unittest.TestCase):
         legacy_item.pop("speaker_anchor")
         legacy_item["tail_target"] = [0.7, 0.5]
         legacy_issues = validate_storyboard(legacy, story, characters)
-        self.assertTrue(any(
-            "balloon-tail-migration-required" in issue.message
-            for issue in legacy_issues
-        ))
+        self.assertTrue(
+            any("balloon-tail-migration-required" in issue.message for issue in legacy_issues)
+        )
 
         for kind in ("caption", "sfx"):
             data = valid_storyboard()
             item = data["pages"][0]["panels"][0]["text"][0]
-            item.update({
-                "kind": kind,
-                "speaker": None,
-                "content": "System status." if kind == "caption" else "KRAK!",
-            })
+            item.update(
+                {
+                    "kind": kind,
+                    "speaker": None,
+                    "content": "System status." if kind == "caption" else "KRAK!",
+                }
+            )
             item.pop("voice_source")
             item.pop("speaker_anchor")
             self.assertEqual([], validate_storyboard(data, story, characters))
@@ -490,30 +623,37 @@ class StrictSchemaValidationTests(unittest.TestCase):
             page["panels"][0]["id"] = f"p{number:02d}-01"
         self.assert_issue(validate_storyboard(data, story, characters), "pages")
 
-        data = valid_storyboard(); panel = data["pages"][0]["panels"][0]
+        data = valid_storyboard()
+        panel = data["pages"][0]["panels"][0]
         data["pages"][0]["panels"] = [deepcopy(panel) for _ in range(5)]
         for number, current in enumerate(data["pages"][0]["panels"], 1):
             current["id"], current["order"] = f"p01-{number:02d}", number
         self.assert_issue(validate_storyboard(data, story, characters), "panels")
 
-        data = valid_storyboard(); data["pages"] = []
+        data = valid_storyboard()
+        data["pages"] = []
         for page_number in range(1, 5):
             page = {"number": page_number, "layout": "full-page", "panels": []}
             for panel_number in range(1, 5 if page_number < 4 else 2):
                 current = deepcopy(panel)
-                current["id"], current["order"] = f"p{page_number:02d}-{panel_number:02d}", panel_number
+                current["id"], current["order"] = (
+                    f"p{page_number:02d}-{panel_number:02d}",
+                    panel_number,
+                )
                 page["panels"].append(current)
             data["pages"].append(page)
         self.assert_issue(validate_storyboard(data, story, characters), "pages.panels")
 
-        data = valid_storyboard(); item = data["pages"][0]["panels"][0]["text"][0]
+        data = valid_storyboard()
+        item = data["pages"][0]["panels"][0]["text"][0]
         data["pages"][0]["panels"][0]["text"] = [deepcopy(item) for _ in range(4)]
         for number, text in enumerate(data["pages"][0]["panels"][0]["text"], 1):
             text["id"] = f"p01-01-t{number:02d}"
         self.assert_issue(validate_storyboard(data, story, characters), "text")
 
         for kind, limit in (("caption", 45), ("sfx", 3)):
-            data = valid_storyboard(); text = data["pages"][0]["panels"][0]["text"][0]
+            data = valid_storyboard()
+            text = data["pages"][0]["panels"][0]["text"][0]
             text.update({"kind": kind, "speaker": None, "content": "word " * (limit + 1)})
             text.pop("voice_source")
             text.pop("speaker_anchor")
@@ -521,26 +661,47 @@ class StrictSchemaValidationTests(unittest.TestCase):
                 self.assert_issue(validate_storyboard(data, story, characters), "content")
 
     def test_storyboard_rejects_overlapping_rectangles(self):
-        data = valid_storyboard(); panel = data["pages"][0]["panels"][0]
+        data = valid_storyboard()
+        panel = data["pages"][0]["panels"][0]
         data["pages"][0]["layout"] = "two-horizontal"
-        second = deepcopy(panel); second["id"], second["order"] = "p01-02", 2
+        second = deepcopy(panel)
+        second["id"], second["order"] = "p01-02", 2
         data["pages"][0]["panels"].append(second)
-        self.assert_issue(
-            validate_storyboard(data, valid_story(), valid_characters()), "rect"
-        )
+        self.assert_issue(validate_storyboard(data, valid_story(), valid_characters()), "rect")
 
     def test_panel_record_requires_exact_checks_paths_hashes_and_cross_fields(self):
         cases = []
-        data = valid_panel_record(); data["surprise"] = True; cases.append((data, "surprise"))
-        data = valid_panel_record(); data["checks"] = data["checks"][:-1]; cases.append((data, "checks"))
-        data = valid_panel_record(); data["raw_path"] = "/tmp/panel.png"; cases.append((data, "raw_path"))
-        data = valid_panel_record(); data["raw_sha256"] = "B" * 64; cases.append((data, "raw_sha256"))
-        data = valid_panel_record(); data["decision"] = "regenerate"; data["retry_reason"] = None; cases.append((data, "retry_reason"))
-        data = valid_panel_record(); data["checks"][0]["result"] = "fail"; cases.append((data, "decision"))
-        data = valid_panel_record(); data["checks"][0]["result"] = "warning"; cases.append((data, "decision"))
-        data = valid_panel_record(); data["checks"][0].update({"result": "fail", "severity": "warning"}); cases.append((data, "decision"))
-        data = valid_panel_record(); data["decision"] = "accept_with_warnings"; cases.append((data, "unresolved_warnings"))
-        data = valid_panel_record(); data["raw_path"] = None; cases.append((data, "raw_path"))
+        data = valid_panel_record()
+        data["surprise"] = True
+        cases.append((data, "surprise"))
+        data = valid_panel_record()
+        data["checks"] = data["checks"][:-1]
+        cases.append((data, "checks"))
+        data = valid_panel_record()
+        data["raw_path"] = "/tmp/panel.png"
+        cases.append((data, "raw_path"))
+        data = valid_panel_record()
+        data["raw_sha256"] = "B" * 64
+        cases.append((data, "raw_sha256"))
+        data = valid_panel_record()
+        data["decision"] = "regenerate"
+        data["retry_reason"] = None
+        cases.append((data, "retry_reason"))
+        data = valid_panel_record()
+        data["checks"][0]["result"] = "fail"
+        cases.append((data, "decision"))
+        data = valid_panel_record()
+        data["checks"][0]["result"] = "warning"
+        cases.append((data, "decision"))
+        data = valid_panel_record()
+        data["checks"][0].update({"result": "fail", "severity": "warning"})
+        cases.append((data, "decision"))
+        data = valid_panel_record()
+        data["decision"] = "accept_with_warnings"
+        cases.append((data, "unresolved_warnings"))
+        data = valid_panel_record()
+        data["raw_path"] = None
+        cases.append((data, "raw_path"))
         for data, field in cases:
             with self.subTest(field=field):
                 self.assert_issue(validate_panel_record(data), field)
@@ -594,29 +755,43 @@ class StrictSchemaValidationTests(unittest.TestCase):
         record["checks"][0].update({"result": "warning", "severity": "warning"})
 
         self.assert_issue(validate_panel_record(record), "decision")
-        record.update({
-            "decision": "accept-warning",
-            "unresolved_warnings": ["minor visual drift"],
-        })
+        record.update(
+            {
+                "decision": "accept-warning",
+                "unresolved_warnings": ["minor visual drift"],
+            }
+        )
         self.assertEqual([], validate_panel_record(record))
 
     def test_v2_override_reason_requires_a_recorded_failed_warning(self):
         reason = "minor prop drift is acceptable"
         valid = valid_panel_record_v2()
         valid["checks"][0].update({"result": "fail", "severity": "warning"})
-        valid.update({
-            "decision": "accept-warning",
-            "override_reason": reason,
-            "unresolved_warnings": [reason],
-        })
+        valid.update(
+            {
+                "decision": "accept-warning",
+                "override_reason": reason,
+                "unresolved_warnings": [reason],
+            }
+        )
         self.assertEqual([], validate_panel_record(valid))
 
         cases = []
-        data = deepcopy(valid); data["decision"] = "accept"; cases.append(data)
-        data = deepcopy(valid); data["unresolved_warnings"] = ["different warning"]; cases.append(data)
-        data = deepcopy(valid); data["checks"][0].update({"result": "pass", "severity": "error"}); cases.append(data)
-        data = deepcopy(valid); data["override_reason"] = " "; cases.append(data)
-        data = deepcopy(valid); data["override_reason"] = None; cases.append(data)
+        data = deepcopy(valid)
+        data["decision"] = "accept"
+        cases.append(data)
+        data = deepcopy(valid)
+        data["unresolved_warnings"] = ["different warning"]
+        cases.append(data)
+        data = deepcopy(valid)
+        data["checks"][0].update({"result": "pass", "severity": "error"})
+        cases.append(data)
+        data = deepcopy(valid)
+        data["override_reason"] = " "
+        cases.append(data)
+        data = deepcopy(valid)
+        data["override_reason"] = None
+        cases.append(data)
         for data in cases:
             with self.subTest(data=data):
                 self.assert_issue(validate_panel_record(data), "override_reason")
@@ -625,20 +800,32 @@ class StrictSchemaValidationTests(unittest.TestCase):
         reason = "minor prop drift is acceptable"
         valid = valid_panel_record()
         valid["checks"][0].update({"result": "fail", "severity": "warning"})
-        valid.update({
-            "decision": "accept_with_warnings",
-            "failure_category": "visual_qa",
-            "override_reason": reason,
-            "unresolved_warnings": [reason],
-        })
+        valid.update(
+            {
+                "decision": "accept_with_warnings",
+                "failure_category": "visual_qa",
+                "override_reason": reason,
+                "unresolved_warnings": [reason],
+            }
+        )
         self.assertEqual([], validate_panel_record(valid))
 
         cases = []
-        data = deepcopy(valid); data["failure_category"] = "safety_refusal"; cases.append((data, "failure_category"))
-        data = deepcopy(valid); data["decision"] = "accept"; cases.append((data, "override_reason"))
-        data = deepcopy(valid); data["unresolved_warnings"] = ["different warning"]; cases.append((data, "override_reason"))
-        data = deepcopy(valid); data["checks"][0].update({"result": "pass", "severity": "error"}); cases.append((data, "override_reason"))
-        data = deepcopy(valid); data["override_reason"] = None; cases.append((data, "override_reason"))
+        data = deepcopy(valid)
+        data["failure_category"] = "safety_refusal"
+        cases.append((data, "failure_category"))
+        data = deepcopy(valid)
+        data["decision"] = "accept"
+        cases.append((data, "override_reason"))
+        data = deepcopy(valid)
+        data["unresolved_warnings"] = ["different warning"]
+        cases.append((data, "override_reason"))
+        data = deepcopy(valid)
+        data["checks"][0].update({"result": "pass", "severity": "error"})
+        cases.append((data, "override_reason"))
+        data = deepcopy(valid)
+        data["override_reason"] = None
+        cases.append((data, "override_reason"))
         for data, field in cases:
             with self.subTest(field=field):
                 self.assert_issue(validate_panel_record(data), field)
@@ -649,7 +836,9 @@ class ProjectValidationTests(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
         self.project = init_project(
-            self.root, "Sunlight Courier", b"A courier carries the last light.",
+            self.root,
+            "Sunlight Courier",
+            b"A courier carries the last light.",
             {"mode": "short_prompt", "language": "en"},
         )
         manifest = read_json(self.project / "project.json")
@@ -667,15 +856,14 @@ class ProjectValidationTests(unittest.TestCase):
         (self.project / "prompts/panels/p01-01.txt").write_text(
             "original panel prompt", encoding="utf-8"
         )
-        Image.new("RGB", (512, 512), "white").save(
-            self.project / "references/characters/mira.png"
-        )
+        Image.new("RGB", (512, 512), "white").save(self.project / "references/characters/mira.png")
         raw = self.project / "panels/raw/p01-01.png"
         clean = self.project / "panels/clean/p01-01.png"
         color = (20, 30, 40, 128) if mode == "RGBA" else (20, 30, 40)
         Image.new(mode, (736, 1136), color).save(raw)
         Image.new("RGB", (736, 1136), (20, 30, 40)).save(clean)
-        record = valid_panel_record(); record["raw_sha256"] = sha256_file(raw)
+        record = valid_panel_record()
+        record["raw_sha256"] = sha256_file(raw)
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
 
     def test_plan_stage_reads_only_plan_files(self):
@@ -700,22 +888,22 @@ class ProjectValidationTests(unittest.TestCase):
     def test_panel_stage_validates_hash_dimensions_aspect_and_alpha(self):
         self.add_panel_files()
         issues = validate_project(self.project, "panels")
-        self.assertTrue(any(
-            issue.field == "quality-migration-required"
-            and "schema 1.0" in issue.message
-            for issue in issues
-        ), issues)
-        self.assertFalse(any(
-            issue.field != "quality-migration-required" for issue in issues
-        ), issues)
+        self.assertTrue(
+            any(
+                issue.field == "quality-migration-required" and "schema 1.0" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+        self.assertFalse(
+            any(issue.field != "quality-migration-required" for issue in issues), issues
+        )
 
         self.add_panel_files(mode="RGBA")
         issues = validate_project(self.project, "panels")
         self.assertTrue(any("alpha" in issue.message for issue in issues), issues)
 
-        Image.new("RGB", (512, 512), "black").save(
-            self.project / "panels/raw/p01-01.png"
-        )
+        Image.new("RGB", (512, 512), "black").save(self.project / "panels/raw/p01-01.png")
         issues = validate_project(self.project, "panels")
         self.assertTrue(any("hash" in issue.message for issue in issues), issues)
         self.assertTrue(any("aspect" in issue.message for issue in issues), issues)
@@ -723,8 +911,11 @@ class ProjectValidationTests(unittest.TestCase):
     def test_schema_two_panel_record_clears_migration_issue(self):
         self.add_panel_files()
         canonical_clean = normalize_panel(
-            self.project, "p01-01", "panels/raw/p01-01.png",
-            (736, 1136), "exact",
+            self.project,
+            "p01-01",
+            "panels/raw/p01-01.png",
+            (736, 1136),
+            "exact",
         )
         record = valid_panel_record_v2()
         raw = self.project / record["bindings"]["raw_path"]
@@ -751,10 +942,10 @@ class ProjectValidationTests(unittest.TestCase):
         self.add_panel_files()
         with patch("scripts.validate_project.MAX_DECODED_PIXELS", 1):
             issues = validate_project(self.project, "panels")
-        self.assertTrue(any(
-            issue.field == "raw_path" and "unreadable" in issue.message
-            for issue in issues
-        ), issues)
+        self.assertTrue(
+            any(issue.field == "raw_path" and "unreadable" in issue.message for issue in issues),
+            issues,
+        )
 
     def test_non_object_normalization_record_is_a_validation_issue(self):
         self.add_panel_files()
@@ -762,25 +953,32 @@ class ProjectValidationTests(unittest.TestCase):
             self.project, "p01-01", "panels/raw/p01-01.png", (736, 1136), "exact"
         )
         record = valid_panel_record_v2()
-        record["bindings"].update({
-            "raw_sha256": sha256_file(self.project / "panels/raw/p01-01.png"),
-            "clean_sha256": sha256_file(clean),
-            "normalization_sha256": sha256_file(self.project / "panels/p01-01/normalization.json"),
-        })
+        record["bindings"].update(
+            {
+                "raw_sha256": sha256_file(self.project / "panels/raw/p01-01.png"),
+                "clean_sha256": sha256_file(clean),
+                "normalization_sha256": sha256_file(
+                    self.project / "panels/p01-01/normalization.json"
+                ),
+            }
+        )
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
         (self.project / "panels/p01-01/normalization.json").write_text("[]\n", "utf-8")
         issues = validate_project(self.project, "panels")
-        self.assertTrue(any("normalization record must be an object" in issue.message for issue in issues), issues)
+        self.assertTrue(
+            any("normalization record must be an object" in issue.message for issue in issues),
+            issues,
+        )
 
     def test_truncated_raster_payload_is_reported_as_unreadable(self):
         self.add_panel_files()
         raw = self.project / "panels/raw/p01-01.png"
         raw.write_bytes(raw.read_bytes()[:32])
         issues = validate_project(self.project, "panels")
-        self.assertTrue(any(
-            issue.field == "raw_path" and "unreadable" in issue.message
-            for issue in issues
-        ), issues)
+        self.assertTrue(
+            any(issue.field == "raw_path" and "unreadable" in issue.message for issue in issues),
+            issues,
+        )
 
     def test_invalid_project_id_still_checks_terminal_artifact_paths(self):
         manifest_path = self.project / "project.json"
@@ -815,25 +1013,27 @@ class ProjectValidationTests(unittest.TestCase):
                 raise AssertionError("validator hashed an escaped artifact")
             return sha256_file(path)
 
-        with patch(
-            "scripts.validate_project.sha256_file", side_effect=guarded_hash
-        ):
+        with patch("scripts.validate_project.sha256_file", side_effect=guarded_hash):
             issues = validate_project(self.project, "final")
-        self.assertTrue(any(
-            issue.field == "artifacts.story_plan.path"
-            and "escapes" in issue.message
-            for issue in issues
-        ), issues)
+        self.assertTrue(
+            any(
+                issue.field == "artifacts.story_plan.path" and "escapes" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_final_stage_rejects_safety_failure_despite_complete_manifest(self):
         self.add_panel_files()
         record_path = self.project / "qa/panels/p01-01.json"
         record = read_json(record_path)
-        record.update({
-            "decision": "regenerate",
-            "retry_reason": "provider safety refusal",
-            "failure_category": "safety_refusal",
-        })
+        record.update(
+            {
+                "decision": "regenerate",
+                "retry_reason": "provider safety refusal",
+                "failure_category": "safety_refusal",
+            }
+        )
         atomic_write_json(record_path, record)
 
         manifest_path = self.project / "project.json"
@@ -842,18 +1042,24 @@ class ProjectValidationTests(unittest.TestCase):
         atomic_write_json(manifest_path, manifest)
 
         issues = validate_project(self.project, "final")
-        self.assertTrue(any(
-            issue.path == "qa/panels/p01-01.json"
-            and issue.field == "decision"
-            and "unresolved" in issue.message
-            for issue in issues
-        ), issues)
-        self.assertTrue(any(
-            issue.path == "project.json"
-            and issue.field == "status"
-            and "unresolved panel errors" in issue.message
-            for issue in issues
-        ), issues)
+        self.assertTrue(
+            any(
+                issue.path == "qa/panels/p01-01.json"
+                and issue.field == "decision"
+                and "unresolved" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+        self.assertTrue(
+            any(
+                issue.path == "project.json"
+                and issue.field == "status"
+                and "unresolved panel errors" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_final_stage_requires_panel_warnings_and_warning_terminal(self):
         self.add_panel_files()
@@ -861,12 +1067,14 @@ class ProjectValidationTests(unittest.TestCase):
         record_path = self.project / "qa/panels/p01-01.json"
         record = read_json(record_path)
         record["checks"][0].update({"result": "fail", "severity": "warning"})
-        record.update({
-            "decision": "accept_with_warnings",
-            "failure_category": "visual_qa",
-            "override_reason": reason,
-            "unresolved_warnings": [reason],
-        })
+        record.update(
+            {
+                "decision": "accept_with_warnings",
+                "failure_category": "visual_qa",
+                "override_reason": reason,
+                "unresolved_warnings": [reason],
+            }
+        )
         atomic_write_json(record_path, record)
 
         manifest_path = self.project / "project.json"
@@ -875,27 +1083,35 @@ class ProjectValidationTests(unittest.TestCase):
         atomic_write_json(manifest_path, manifest)
 
         issues = validate_project(self.project, "final")
-        self.assertTrue(any(
-            issue.path == "project.json"
-            and issue.field == "warnings"
-            and reason in issue.message
-            for issue in issues
-        ), issues)
-        self.assertTrue(any(
-            issue.path == "project.json"
-            and issue.field == "status"
-            and "COMPLETE_WITH_WARNINGS" in issue.message
-            for issue in issues
-        ), issues)
+        self.assertTrue(
+            any(
+                issue.path == "project.json"
+                and issue.field == "warnings"
+                and reason in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+        self.assertTrue(
+            any(
+                issue.path == "project.json"
+                and issue.field == "status"
+                and "COMPLETE_WITH_WARNINGS" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
 
         manifest.update({"status": "COMPLETE_WITH_WARNINGS", "warnings": [reason]})
         atomic_write_json(manifest_path, manifest)
         issues = validate_project(self.project, "final")
-        self.assertFalse(any(
-            issue.path == "project.json"
-            and issue.field in {"status", "warnings"}
-            for issue in issues
-        ), issues)
+        self.assertFalse(
+            any(
+                issue.path == "project.json" and issue.field in {"status", "warnings"}
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_final_stage_reports_malformed_manifest_warnings_without_raising(self):
         self.add_panel_files()
@@ -905,10 +1121,13 @@ class ProjectValidationTests(unittest.TestCase):
         atomic_write_json(manifest_path, manifest)
 
         issues = validate_project(self.project, "final")
-        self.assertTrue(any(
-            issue.path == "project.json" and issue.field.startswith("warnings")
-            for issue in issues
-        ), issues)
+        self.assertTrue(
+            any(
+                issue.path == "project.json" and issue.field.startswith("warnings")
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_missing_files_are_sorted_validation_issues(self):
         shutil.rmtree(self.project / "plan")
@@ -940,14 +1159,13 @@ class ProjectValidationTests(unittest.TestCase):
         record = read_json(record_path)
         record["raw_sha256"] = sha256_file(outside)
         atomic_write_json(record_path, record)
+
         def guarded_hash(path):
             if Path(path).resolve() == outside.resolve():
                 raise AssertionError("validator followed an escaping image symlink")
             return sha256_file(path)
 
-        with patch(
-            "scripts.validate_project.sha256_file", side_effect=guarded_hash
-        ):
+        with patch("scripts.validate_project.sha256_file", side_effect=guarded_hash):
             issues = validate_project(self.project, "panels")
         self.assertTrue(any("escapes the project" in issue.message for issue in issues), issues)
 
@@ -1033,13 +1251,28 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("name: comic-sol", frontmatter)
         description = next(
             line.split(":", 1)[1].strip()
-            for line in frontmatter.splitlines() if line.startswith("description:")
+            for line in frontmatter.splitlines()
+            if line.startswith("description:")
         ).lower()
-        for term in ("create", "storyboard", "render", "resume", "export", "prompt", "story", ".txt", ".md"):
+        for term in (
+            "create",
+            "storyboard",
+            "render",
+            "resume",
+            "export",
+            "prompt",
+            "story",
+            ".txt",
+            ".md",
+        ):
             self.assertIn(term, description)
         for name in (
-            "workflow", "creative-direction", "capability-detection",
-            "visual-qa", "safety-ip", "schemas",
+            "workflow",
+            "creative-direction",
+            "capability-detection",
+            "visual-qa",
+            "safety-ip",
+            "schemas",
         ):
             self.assertIn(f"references/{name}.md", text)
             self.assertTrue((ROOT / "references" / f"{name}.md").is_file())
@@ -1114,8 +1347,14 @@ class SkillContractTests(unittest.TestCase):
         ):
             self.assertIn(condition, text)
         for default in (
-            "Pages: 2", "Panels: 4–8", "Left-to-right", "1600 × 2400",
-            "32 px gutter", "64 px outer margin", "Teen", "./comic-sol-output/",
+            "Pages: 2",
+            "Panels: 4–8",
+            "Left-to-right",
+            "1600 × 2400",
+            "32 px gutter",
+            "64 px outer margin",
+            "Teen",
+            "./comic-sol-output/",
         ):
             self.assertIn(default, text)
         self.assertIn(
@@ -1127,15 +1366,26 @@ class SkillContractTests(unittest.TestCase):
     def test_visual_qa_budgets_checks_and_completion_contract(self):
         text = self.all_agent_text()
         for check_id in (
-            "character-identity", "anatomy", "action", "composition",
-            "continuity", "text-free", "technical",
+            "character-identity",
+            "anatomy",
+            "action",
+            "composition",
+            "continuity",
+            "text-free",
+            "technical",
         ):
             self.assertIn(check_id, text)
         for phrase in (
-            "2 regenerations per panel", "8 extra calls project-wide",
-            "one immediate transient repeat", "one correction clause",
-            "COMPLETE_WITH_WARNINGS", "BLOCKED", "PDF path", "page directory",
-            "manifest path", "QA report path",
+            "2 regenerations per panel",
+            "8 extra calls project-wide",
+            "one immediate transient repeat",
+            "one correction clause",
+            "COMPLETE_WITH_WARNINGS",
+            "BLOCKED",
+            "PDF path",
+            "page directory",
+            "manifest path",
+            "QA report path",
         ):
             self.assertIn(phrase, text)
 
@@ -1148,8 +1398,13 @@ class SkillContractTests(unittest.TestCase):
 
         self.assertEqual(
             [
-                "character-identity", "anatomy", "action", "composition",
-                "continuity", "text-free", "technical",
+                "character-identity",
+                "anatomy",
+                "action",
+                "composition",
+                "continuity",
+                "text-free",
+                "technical",
             ],
             re.findall(r"^\d+\. `([^`]+)`:", visual, re.MULTILINE),
         )
@@ -1168,7 +1423,12 @@ class SkillContractTests(unittest.TestCase):
         for phrase in (
             "exact storyboard-authored `generated-visual` sfx is allowed and required",
             "missing, misspelled, duplicated, or unauthorized sfx",
-            "dialogue", "caption", "speech bubbles", "logos", "signatures", "watermarks",
+            "dialogue",
+            "caption",
+            "speech bubbles",
+            "logos",
+            "signatures",
+            "watermarks",
             # The repair path is part of the reviewer contract: a faulty generated
             # effect has a cheaper remedy than re-rolling the panel, and whether it
             # still needs a regeneration has to be stated rather than assumed.
@@ -1183,7 +1443,10 @@ class SkillContractTests(unittest.TestCase):
         )
         self.assertNotIn("no dialogue, captions, sfx", schemas)
         for phrase in (
-            "text_count", "rendered_text_count", "sfx_count", "lettered_sfx_count",
+            "text_count",
+            "rendered_text_count",
+            "sfx_count",
+            "lettered_sfx_count",
         ):
             self.assertIn(phrase, schemas)
             self.assertIn(phrase, workflow)
@@ -1194,8 +1457,12 @@ class SkillContractTests(unittest.TestCase):
             self.assertIn(phrase, workflow)
             self.assertIn(phrase, creative)
         for phrase in (
-            "image-model", "comic-sol-lettering", "sfx-audit.json",
-            "sfx-glyph-risk", "sfx-duplicate-content", "sfx-legibility-budget",
+            "image-model",
+            "comic-sol-lettering",
+            "sfx-audit.json",
+            "sfx-glyph-risk",
+            "sfx-duplicate-content",
+            "sfx-legibility-budget",
             "sfx-unprohibited-generation",
         ):
             self.assertIn(phrase, schemas)
@@ -1207,12 +1474,22 @@ class SkillContractTests(unittest.TestCase):
     def test_all_deterministic_cli_commands_are_routed(self):
         text = self.skill_text()
         commands = (
-            "comic_sol.py init", "comic_sol.py transition", "comic_sol.py status",
-            "comic_sol.py doctor", "comic_sol.py resume-plan", "comic_sol.py invalidate",
-            "comic_sol.py record-stage", "comic_sol.py record-attempt",
+            "comic_sol.py init",
+            "comic_sol.py transition",
+            "comic_sol.py status",
+            "comic_sol.py doctor",
+            "comic_sol.py resume-plan",
+            "comic_sol.py invalidate",
+            "comic_sol.py record-stage",
+            "comic_sol.py record-attempt",
             "comic_sol.py promote-attempt",
-            "comic_sol.py override-panel", "validate_project.py", "letter_panels.py",
-            "sfx_repair.py", "compose_pages.py", "export_pdf.py", "render_report.py",
+            "comic_sol.py override-panel",
+            "validate_project.py",
+            "letter_panels.py",
+            "sfx_repair.py",
+            "compose_pages.py",
+            "export_pdf.py",
+            "render_report.py",
         )
         for command in commands:
             self.assertIn(command, text)
@@ -1301,7 +1578,11 @@ class PackagingTests(unittest.TestCase):
                 "https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white",
                 "https://www.python.org/",
             ),
-            ("MCP tools", "https://img.shields.io/badge/MCP_tools-17-brightgreen", "#mcp-server-optional"),
+            (
+                "MCP tools",
+                "https://img.shields.io/badge/MCP_tools-17-brightgreen",
+                "#mcp-server-optional",
+            ),
             (
                 "Platforms",
                 "https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-blue",
@@ -1339,11 +1620,24 @@ class PackagingTests(unittest.TestCase):
             self.assertTrue((ROOT / name).is_file(), name)
         readme = self.readme()
         for phrase in (
-            "Python 3.11", "clone", "copy", "Codex skills directory",
-            "project.json", "panel PNGs", "page PNGs", "comic PDF", "qa/report.md",
-            "Linux", "Windows", "macOS", "WSL",
-            "references/capability-detection.md", "Limitations", "clean-room",
-            "tests/fixtures/valid-one-page", "No build service",
+            "Python 3.11",
+            "clone",
+            "copy",
+            "Codex skills directory",
+            "project.json",
+            "panel PNGs",
+            "page PNGs",
+            "comic PDF",
+            "qa/report.md",
+            "Linux",
+            "Windows",
+            "macOS",
+            "WSL",
+            "references/capability-detection.md",
+            "Limitations",
+            "clean-room",
+            "tests/fixtures/valid-one-page",
+            "No build service",
         ):
             self.assertIn(phrase, readme)
 
@@ -1359,9 +1653,17 @@ class PackagingTests(unittest.TestCase):
     def test_readme_documents_hybrid_lettering_capabilities_and_limits(self):
         readme = self.readme()
         for phrase in (
-            "Comic Neue Regular", "Comic Neue Bold", "per-character",
-            "Greek and Cyrillic", ".notdef", "**bold**", "adaptive oval",
-            "compact light caption", "image model", "visual QA", "CJK",
+            "Comic Neue Regular",
+            "Comic Neue Bold",
+            "per-character",
+            "Greek and Cyrillic",
+            ".notdef",
+            "**bold**",
+            "adaptive oval",
+            "compact light caption",
+            "image model",
+            "visual QA",
+            "CJK",
             "fallback boxes",
         ):
             self.assertIn(phrase, readme)

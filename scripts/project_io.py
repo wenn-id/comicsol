@@ -14,7 +14,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Iterator
+from typing import BinaryIO, Iterator, cast
 
 from .core_primitives import canonical_json_bytes
 from .input_limits import (
@@ -40,6 +40,11 @@ _LOCK_BYTE_OFFSET = 4096
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _HAS_NOFOLLOW = _O_NOFOLLOW != 0
 _REPARSE_POINT = 0x400
+
+
+def _binary_fdopen(descriptor: int, mode: str) -> BinaryIO:
+    """Open a descriptor as a binary stream with a precise static type."""
+    return cast(BinaryIO, os.fdopen(descriptor, mode))
 
 
 class ProjectLock:
@@ -80,7 +85,7 @@ class ProjectLock:
         except FileExistsError:
             handle = self._open_retained(path)
         else:
-            handle = os.fdopen(descriptor, "r+b")
+            handle = _binary_fdopen(descriptor, "r+b")
             try:
                 handle.write(b"\0")
                 handle.flush()
@@ -156,7 +161,7 @@ class ProjectLock:
             if error.errno in (errno.ELOOP, errno.EMLINK):
                 raise ValueError("lock path must not be a symlink") from error
             raise
-        return os.fdopen(descriptor, "r+b")
+        return _binary_fdopen(descriptor, "r+b")
 
     @staticmethod
     def _lock(handle: BinaryIO) -> None:
@@ -165,7 +170,7 @@ class ProjectLock:
             import msvcrt
 
             handle.seek(_LOCK_BYTE_OFFSET)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
         else:
             import fcntl
 
@@ -185,7 +190,7 @@ class ProjectLock:
             import msvcrt
 
             handle.seek(_LOCK_BYTE_OFFSET)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
         else:
             import fcntl
 
@@ -328,7 +333,7 @@ def open_contained(
             descriptor = os.open(name, flags | _O_NOFOLLOW, mode, dir_fd=parent_fd)
         finally:
             os.close(parent_fd)
-    stream = os.fdopen(descriptor, _stream_mode(flags))
+    stream = _binary_fdopen(descriptor, _stream_mode(flags))
     try:
         yield stream
     finally:
@@ -348,29 +353,31 @@ def open_path_nofollow(path: Path, *, flags: int = os.O_RDONLY, mode: int = 0) -
         absolute = Path("/private", *parts[1:])
         parts = absolute.parts
     if os.name == "nt" or not _HAS_NOFOLLOW:
-        current = Path(parts[0])
+        current_path = Path(parts[0])
         for part in parts[1:]:
-            current /= part
-            if current.is_symlink():
+            current_path /= part
+            if current_path.is_symlink():
                 raise ValueError("path must not contain symlinks or reparse points")
             try:
-                attributes = getattr(current.stat(follow_symlinks=False), "st_file_attributes", 0)
+                attributes = getattr(
+                    current_path.stat(follow_symlinks=False), "st_file_attributes", 0
+                )
             except (AttributeError, FileNotFoundError):
                 attributes = 0
             if attributes & _REPARSE_POINT:
                 raise ValueError("path must not contain symlinks or reparse points")
-        return os.fdopen(os.open(absolute, flags, mode), _stream_mode(flags))
+        return _binary_fdopen(os.open(absolute, flags, mode), _stream_mode(flags))
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _O_NOFOLLOW
-    current = os.open(parts[0], directory_flags)
+    current_fd = os.open(parts[0], directory_flags)
     try:
         for part in parts[1:-1]:
-            child = os.open(part, directory_flags, dir_fd=current)
-            os.close(current)
-            current = child
-        descriptor = os.open(parts[-1], flags | _O_NOFOLLOW, mode, dir_fd=current)
+            child = os.open(part, directory_flags, dir_fd=current_fd)
+            os.close(current_fd)
+            current_fd = child
+        descriptor = os.open(parts[-1], flags | _O_NOFOLLOW, mode, dir_fd=current_fd)
     finally:
-        os.close(current)
-    return os.fdopen(descriptor, _stream_mode(flags))
+        os.close(current_fd)
+    return _binary_fdopen(descriptor, _stream_mode(flags))
 
 
 def _read_bounded_stream(stream: BinaryIO, *, max_bytes: int) -> bytes:

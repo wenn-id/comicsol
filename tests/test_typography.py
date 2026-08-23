@@ -67,9 +67,7 @@ class TypographyPreflightTests(unittest.TestCase):
         self.assertEqual(3, hashed.call_count)
 
     def test_latin_bold_greek_and_cyrillic_select_bundled_fonts(self):
-        result = preflight_text_items(
-            [item("Stay **LOUD** Ω Ж")], FONT_POLICY
-        )
+        result = preflight_text_items([item("Stay **LOUD** Ω Ж")], FONT_POLICY)
 
         self.assertEqual("pass", result["status"])
         self.assertEqual([], result["issues"])
@@ -94,16 +92,16 @@ class TypographyPreflightTests(unittest.TestCase):
         self.assertNotIn("U+0301", codepoints)
 
     def test_whitespace_and_controls_have_explicit_non_glyph_policy(self):
-        result = preflight_text_items(
-            [item("A\t B\nC\x00D", kind="caption")], FONT_POLICY
-        )
+        result = preflight_text_items([item("A\t B\nC\x00D", kind="caption")], FONT_POLICY)
 
         self.assertEqual("pass", result["status"])
         self.assertTrue(result["non_glyphs"])
-        self.assertTrue(all(
-            entry["policy"] in {"normalized-space", "line-break"}
-            for entry in result["non_glyphs"]
-        ))
+        self.assertTrue(
+            all(
+                entry["policy"] in {"normalized-space", "line-break"}
+                for entry in result["non_glyphs"]
+            )
+        )
         self.assertFalse(any(entry["codepoint"] == "U+0000" for entry in result["glyphs"]))
 
     def test_missing_glyph_diagnostic_has_remediation_without_private_paths(self):
@@ -193,10 +191,7 @@ class TypographyPreflightTests(unittest.TestCase):
                     self.assertEqual([], result["issues"])
                     self.assertEqual(
                         scenario["expected_scripts"],
-                        {
-                            entry["script"]: entry["font_ids"]
-                            for entry in result["scripts"]
-                        },
+                        {entry["script"]: entry["font_ids"] for entry in result["scripts"]},
                     )
                     continue
                 self.assertEqual("fail", scenario["expected_status"])
@@ -208,9 +203,7 @@ class TypographyPreflightTests(unittest.TestCase):
                 if scenario["expected_reason_contains"]:
                     self.assertIn(scenario["expected_reason_contains"], issue.reason)
                 if scenario["expected_remediation_contains"]:
-                    self.assertIn(
-                        scenario["expected_remediation_contains"], issue.remediation
-                    )
+                    self.assertIn(scenario["expected_remediation_contains"], issue.remediation)
 
     def test_record_reports_the_checks_that_ran_and_the_scripts_served(self):
         result = preflight_text_items([item("Stay **LOUD** Ω Ж")], FONT_POLICY)
@@ -250,14 +243,10 @@ class ScriptExtensionPolicyTests(unittest.TestCase):
         stale and force a needless re-letter.
         """
         without = preflight_text_items([item("Safe text")], FONT_POLICY)
-        empty = preflight_text_items(
-            [item("Safe text")], {**FONT_POLICY, SCRIPT_EXTENSION_KEY: {}}
-        )
+        empty = preflight_text_items([item("Safe text")], {**FONT_POLICY, SCRIPT_EXTENSION_KEY: {}})
 
         self.assertEqual(without, empty)
-        self.assertEqual(
-            ["bold", "fallback", "regular"], sorted(without["font_policy"])
-        )
+        self.assertEqual(["bold", "fallback", "regular"], sorted(without["font_policy"]))
 
     def test_extension_face_serves_the_glyphs_the_base_policy_lacks(self):
         # U+2215 DIVISION SLASH is carried by Comic Neue and absent from Noto
@@ -290,9 +279,7 @@ class ScriptExtensionPolicyTests(unittest.TestCase):
         )
         self.assertNotEqual(
             extended["font_policy_sha256"],
-            preflight_text_items([item("ab", kind="caption")], base)[
-                "font_policy_sha256"
-            ],
+            preflight_text_items([item("ab", kind="caption")], base)["font_policy_sha256"],
         )
 
     def test_styled_face_outranks_the_extension_for_glyphs_it_already_has(self):
@@ -324,9 +311,7 @@ class ScriptExtensionPolicyTests(unittest.TestCase):
                 SCRIPT_EXTENSION_KEY: {"inherited": elsewhere},
             }
 
-            self.assertEqual(
-                elsewhere.name, Path(FONT_POLICY["regular"]).name
-            )
+            self.assertEqual(elsewhere.name, Path(FONT_POLICY["regular"]).name)
             # U+0305 is absent from Comic Neue, so the mark resolves to another
             # role while its base stays on the regular face.
             with self.assertRaises(TypographyPreflightError) as raised:
@@ -368,7 +353,11 @@ class ScriptExtensionPolicyTests(unittest.TestCase):
         first = preflight_text_items([item("Safe text")], FONT_POLICY)
         reordered = preflight_text_items(
             [{"content": "Safe text", "kind": "dialogue", "id": "dialogue-1"}],
-            {"fallback": FONT_POLICY["fallback"], "bold": FONT_POLICY["bold"], "regular": FONT_POLICY["regular"]},
+            {
+                "fallback": FONT_POLICY["fallback"],
+                "bold": FONT_POLICY["bold"],
+                "regular": FONT_POLICY["regular"],
+            },
         )
 
         self.assertEqual(first, reordered)
@@ -385,9 +374,7 @@ class ScriptExtensionPolicyTests(unittest.TestCase):
             result = preflight_text_items([item("Safe text")], FONT_POLICY)
             path = write_typography_preflight(project, "p01-01", result)
 
-            self.assertEqual(
-                (project / "panels/p01-01/typography.json").resolve(), path
-            )
+            self.assertEqual((project / "panels/p01-01/typography.json").resolve(), path)
             data = json.loads(path.read_text("utf-8"))
             self.assertEqual(result, data)
             self.assertEqual(
@@ -425,12 +412,14 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
         for page in storyboard["pages"]:
             for panel in page["panels"]:
                 if panel["id"] == panel_id:
-                    panel["text"] = [{
-                        "anchor": "top-left",
-                        "content": content,
-                        "id": f"{panel_id}-t01",
-                        "kind": kind,
-                    }]
+                    panel["text"] = [
+                        {
+                            "anchor": "top-left",
+                            "content": content,
+                            "id": f"{panel_id}-t01",
+                            "kind": kind,
+                        }
+                    ]
         storyboard_path.write_text(
             json.dumps(storyboard, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             "utf-8",
@@ -479,27 +468,25 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
         self._write_panel_text("p01-03", "Plain text")
 
         with redirect_stdout(io.StringIO()):
-            code = letter_main([
-                str(self.project),
-                "--font", str(FONT_POLICY["fallback"]),
-                "--font-script", f"common={FONT_POLICY['regular']}",
-            ])
+            code = letter_main(
+                [
+                    str(self.project),
+                    "--font",
+                    str(FONT_POLICY["fallback"]),
+                    "--font-script",
+                    f"common={FONT_POLICY['regular']}",
+                ]
+            )
 
         self.assertEqual(0, code)
-        record = json.loads(
-            (self.project / "panels/p01-01/typography.json").read_text("utf-8")
-        )
+        record = json.loads((self.project / "panels/p01-01/typography.json").read_text("utf-8"))
         self.assertEqual("pass", record["status"])
         self.assertEqual(
             ["bold", "fallback", "regular", "script:common"],
             sorted(record["font_policy"]),
         )
-        geometry = json.loads(
-            (self.project / "panels/p01-01/lettering.json").read_text("utf-8")
-        )
-        self.assertEqual(
-            record["font_policy_sha256"], geometry["bindings"]["font_policy_sha256"]
-        )
+        geometry = json.loads((self.project / "panels/p01-01/lettering.json").read_text("utf-8"))
+        self.assertEqual(record["font_policy_sha256"], geometry["bindings"]["font_policy_sha256"])
         self.assertIn(
             "ComicNeue-Regular.ttf",
             {run["font_id"] for run in geometry["items"][0]["font_runs"]},
@@ -514,10 +501,13 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
         self._write_panel_text("p01-03", "Plain text")
 
         with redirect_stdout(io.StringIO()):
-            code = letter_main([
-                str(self.project),
-                "--font-script", f"common={FONT_POLICY['regular']}",
-            ])
+            code = letter_main(
+                [
+                    str(self.project),
+                    "--font-script",
+                    f"common={FONT_POLICY['regular']}",
+                ]
+            )
         self.assertEqual(0, code)
 
         self.assertEqual({}, letter_panels.SCRIPT_FONT_EXTENSIONS)
@@ -543,9 +533,7 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
             "utf-8",
         )
 
-        with self.assertRaisesRegex(
-            TypographyPreflightError, r"U\+1F600.*p01-02-t01"
-        ):
+        with self.assertRaisesRegex(TypographyPreflightError, r"U\+1F600.*p01-02-t01"):
             letter_project(self.project)
 
         for path, payload in retained.items():
@@ -571,9 +559,7 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
 
             self.assertTrue(lettered.is_file())
             self.assertEqual("pass", typography["status"])
-            self.assertEqual(
-                LETTERING_GEOMETRY_SCHEMA_VERSION, geometry["schema_version"]
-            )
+            self.assertEqual(LETTERING_GEOMETRY_SCHEMA_VERSION, geometry["schema_version"])
             self.assertEqual(panel_id, geometry["panel_id"])
             self.assertRegex(geometry["bindings"]["clean_sha256"], r"^[0-9a-f]{64}$")
             self.assertRegex(geometry["bindings"]["storyboard_sha256"], r"^[0-9a-f]{64}$")
@@ -589,14 +575,25 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
             self.assertEqual(1, placed["reading_order"])
             self.assertEqual(f"{panel_id}-t01", placed["id"])
             self.assertIn(placed["kind"], {"dialogue", "caption"})
-            self.assertIn(placed["anchor"], {
-                "top-left", "top-center", "top-right", "middle-right",
-                "bottom-right", "bottom-center", "bottom-left", "middle-left",
-            })
-            self.assertTrue(all(
-                isinstance(placed["box"][key], int) and placed["box"][key] > 0
-                for key in ("width", "height")
-            ))
+            self.assertIn(
+                placed["anchor"],
+                {
+                    "top-left",
+                    "top-center",
+                    "top-right",
+                    "middle-right",
+                    "bottom-right",
+                    "bottom-center",
+                    "bottom-left",
+                    "middle-left",
+                },
+            )
+            self.assertTrue(
+                all(
+                    isinstance(placed["box"][key], int) and placed["box"][key] > 0
+                    for key in ("width", "height")
+                )
+            )
             self.assertTrue(placed["font_runs"])
             self.assertTrue(all("/" not in run["font_id"] for run in placed["font_runs"]))
             if placed["kind"] == "dialogue":
@@ -614,8 +611,16 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
                 self.assertEqual("human", tail["voice_source"])
                 self.assertEqual(
                     {
-                        "attachment", "base", "control", "length", "policy_version",
-                        "source_gap", "speaker_anchor", "tip", "voice_source", "width",
+                        "attachment",
+                        "base",
+                        "control",
+                        "length",
+                        "policy_version",
+                        "source_gap",
+                        "speaker_anchor",
+                        "tip",
+                        "voice_source",
+                        "width",
                     },
                     set(tail),
                 )
@@ -648,7 +653,10 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
         real_replace = project_io.os.replace
 
         def fail_typography_publish(source, destination, **kwargs):
-            if Path(source).name.startswith("staged-") and Path(destination).name == "typography.json":
+            if (
+                Path(source).name.startswith("staged-")
+                and Path(destination).name == "typography.json"
+            ):
                 raise OSError("injected typography publish failure")
             return real_replace(source, destination, **kwargs)
 
@@ -672,15 +680,16 @@ class LetteringProvenanceTests(unittest.TestCase):
         self.temporary_directory.cleanup()
 
     def assert_stale(self, issues, field):
-        self.assertTrue(any(
-            issue.field == field and issue.message.startswith("lettering-record-stale:")
-            for issue in issues
-        ), issues)
+        self.assertTrue(
+            any(
+                issue.field == field and issue.message.startswith("lettering-record-stale:")
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_current_preflight_and_geometry_pass(self):
-        self.assertEqual(
-            (), validate_lettering_provenance(self.project, self.panel_id)
-        )
+        self.assertEqual((), validate_lettering_provenance(self.project, self.panel_id))
 
     def _rewrite_typography(self, mutate):
         """Apply one edit to the panel's preflight record on disk."""
@@ -728,11 +737,9 @@ class LetteringProvenanceTests(unittest.TestCase):
         """Passing IDs alone are not evidence that the checks actually ran."""
         cases = (
             lambda r: r["checks"].append(dict(r["checks"][0])),
-            lambda r: r.update({
-                "checks": [
-                    {"id": check["id"], "result": "pass"} for check in r["checks"]
-                ]
-            }),
+            lambda r: r.update(
+                {"checks": [{"id": check["id"], "result": "pass"} for check in r["checks"]]}
+            ),
             lambda r: r["checks"][0].update({"method": "trust-me"}),
             lambda r: r["checks"][0].update({"reviewer": "someone-else"}),
             lambda r: r["checks"][0].update({"severity": "warning"}),
@@ -742,18 +749,14 @@ class LetteringProvenanceTests(unittest.TestCase):
         )
         for index, mutate in enumerate(cases):
             with self.subTest(case=index):
-                self.assert_stale(
-                    self._rewrite_typography(mutate), "typography.checks"
-                )
+                self.assert_stale(self._rewrite_typography(mutate), "typography.checks")
 
     def test_unhashable_check_id_is_reported_rather_than_raised(self):
         """Malformed JSON must produce an issue, not a TypeError."""
         for identifier in (["a"], {"a": 1}, None, 42):
             with self.subTest(identifier=identifier):
                 self.assert_stale(
-                    self._rewrite_typography(
-                        lambda r: r["checks"][0].update({"id": identifier})
-                    ),
+                    self._rewrite_typography(lambda r: r["checks"][0].update({"id": identifier})),
                     "typography.checks",
                 )
 
@@ -772,9 +775,7 @@ class LetteringProvenanceTests(unittest.TestCase):
                     path.unlink()
                 else:
                     path.write_bytes(before + b"changed")
-                self.assert_stale(
-                    validate_lettering_provenance(self.project, self.panel_id), field
-                )
+                self.assert_stale(validate_lettering_provenance(self.project, self.panel_id), field)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(before)
 
@@ -785,20 +786,22 @@ class LetteringProvenanceTests(unittest.TestCase):
         original_typography = typography_path.read_bytes()
         cases = (
             ("geometry_sha256", lambda g, t: g.update(geometry_sha256="0" * 64)),
-            ("bindings.font_policy_sha256", lambda g, t: g["bindings"].update(font_policy_sha256="0" * 64)),
-            ("items.reading_order", lambda g, t: g["items"].append(dict(g["items"][0]))),
-            ("items.box", lambda g, t: g["items"][0].update(box={"x": 1, "y": 1, "width": 0, "height": 2})),
             (
-                "items.tail",
-                lambda g, t: g["items"][0]["tail"]["control"][0][0].__setitem__(
-                    0, float("inf")
-                ),
+                "bindings.font_policy_sha256",
+                lambda g, t: g["bindings"].update(font_policy_sha256="0" * 64),
+            ),
+            ("items.reading_order", lambda g, t: g["items"].append(dict(g["items"][0]))),
+            (
+                "items.box",
+                lambda g, t: g["items"][0].update(box={"x": 1, "y": 1, "width": 0, "height": 2}),
             ),
             (
                 "items.tail",
-                lambda g, t: g["items"][0].update(
-                    tail={"origin": [1, 2], "target": [3, 4]}
-                ),
+                lambda g, t: g["items"][0]["tail"]["control"][0][0].__setitem__(0, float("inf")),
+            ),
+            (
+                "items.tail",
+                lambda g, t: g["items"][0].update(tail={"origin": [1, 2], "target": [3, 4]}),
             ),
             ("glyphs.font_id", lambda g, t: t["glyphs"][0].update(font_id=".notdef")),
             ("schema_version", lambda g, t: g.update(schema_version="1.0")),
@@ -829,29 +832,33 @@ class LetteringProvenanceTests(unittest.TestCase):
                     json.dumps(typography, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                     "utf-8",
                 )
-                self.assert_stale(
-                    validate_lettering_provenance(self.project, self.panel_id), field
-                )
+                self.assert_stale(validate_lettering_provenance(self.project, self.panel_id), field)
                 geometry_path.write_bytes(original_geometry)
                 typography_path.write_bytes(original_typography)
 
     def test_export_ready_project_gate_requires_current_lettering_provenance(self):
         current = validate_project(self.project, "export-ready")
-        self.assertFalse(any(
-            issue.path == "panels/p01-02/lettering.json"
-            and issue.message.startswith("lettering-record-stale:")
-            for issue in current
-        ), current)
+        self.assertFalse(
+            any(
+                issue.path == "panels/p01-02/lettering.json"
+                and issue.message.startswith("lettering-record-stale:")
+                for issue in current
+            ),
+            current,
+        )
 
         clean = self.project / "panels/p01-02/clean.png"
         clean.write_bytes(clean.read_bytes() + b"changed")
         stale = validate_project(self.project, "export-ready")
-        self.assertTrue(any(
-            issue.path == "panels/p01-02/lettering.json"
-            and issue.field == "bindings.clean_sha256"
-            and issue.message.startswith("lettering-record-stale:")
-            for issue in stale
-        ), stale)
+        self.assertTrue(
+            any(
+                issue.path == "panels/p01-02/lettering.json"
+                and issue.field == "bindings.clean_sha256"
+                and issue.message.startswith("lettering-record-stale:")
+                for issue in stale
+            ),
+            stale,
+        )
 
 
 if __name__ == "__main__":

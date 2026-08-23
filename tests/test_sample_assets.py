@@ -13,17 +13,15 @@ ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "samples/sunlight-courier"
 MATERIALIZER = ROOT / "scripts/materialize_sample.py"
 MAX_TRACKED_RASTER_BYTES = 22 * 1024 * 1024
+
+
 def tracked_sample_rasters() -> tuple[Path, ...]:
     compatibility = {
         SAMPLE / "panels/raw",
         SAMPLE / "panels/clean",
     }
     return tuple(
-        sorted(
-            path
-            for path in SAMPLE.glob("**/*.png")
-            if path.parent not in compatibility
-        )
+        sorted(path for path in SAMPLE.glob("**/*.png") if path.parent not in compatibility)
     )
 
 

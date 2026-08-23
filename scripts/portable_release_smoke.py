@@ -36,9 +36,7 @@ def main() -> int:
                 "--command",
                 str(executable),
                 "--args-json",
-                json.dumps(
-                    ["mcp", "--root", str((temporary / "mcp").resolve())]
-                ),
+                json.dumps(["mcp", "--root", str((temporary / "mcp").resolve())]),
             ],
             temporary,
         )

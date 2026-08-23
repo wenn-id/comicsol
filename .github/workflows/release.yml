@@ -124,7 +124,6 @@ jobs:
     uses: ./.github/workflows/tests.yml
     with:
       candidate_sha: ${{ needs.prepare.outputs.sha }}
-      blocking_quality: true
 
   codeql:
     name: Exact-candidate CodeQL

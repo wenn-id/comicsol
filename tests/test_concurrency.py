@@ -260,9 +260,14 @@ class RetryCounterProcessTests(unittest.TestCase):
         from PIL import Image as PILImage
 
         for panel_id, color in [
-            ("p01-01", "navy"), ("p01-02", "blue"), ("p01-03", "green"),
-            ("p01-04", "red"), ("p01-05", "yellow"), ("p01-06", "magenta"),
-            ("p01-07", "cyan"), ("p01-08", "white"),
+            ("p01-01", "navy"),
+            ("p01-02", "blue"),
+            ("p01-03", "green"),
+            ("p01-04", "red"),
+            ("p01-05", "yellow"),
+            ("p01-06", "magenta"),
+            ("p01-07", "cyan"),
+            ("p01-08", "white"),
         ]:
             attempt = self.project_dir / f"panels/raw/{panel_id}.initial.png"
             PILImage.new("RGB", (512, 512), color).save(attempt)
@@ -300,6 +305,7 @@ class RetryCounterProcessTests(unittest.TestCase):
         for panel_id, kind, attempt_name in pairs:
             attempt_path = self.project_dir / f"panels/raw/{attempt_name}"
             from PIL import Image as _PILImage
+
             _PILImage.new("RGB", (512, 512), (0, 0, 0)).save(attempt_path)
             child_script = (
                 f"import json, os, sys, time\n"
@@ -323,7 +329,9 @@ class RetryCounterProcessTests(unittest.TestCase):
             )
             proc = subprocess.Popen(
                 [sys.executable, "-c", child_script, os.fspath(self.project_dir), scripts_root],
-                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             children.append(proc)
         self._barrier.write_text("go", encoding="ascii")
@@ -377,15 +385,14 @@ class PromotionArchiveRaceTests(unittest.TestCase):
         (self.project_dir / "panels/raw").mkdir(parents=True)
         (self.project_dir / "logs").mkdir(parents=True)
         from PIL import Image as PILImage
+
         PILImage.new("RGB", (512, 512), "navy").save(self.project_dir / "panels/raw/p01-01.png")
         PILImage.new("RGB", (512, 512), "blue").save(self.project_dir / "panels/raw/p01-01.new.png")
         (self.project_dir / "project.json").write_text(
             '{"schema_version":"1.0","status":"PANELS_READY"}', "utf-8"
         )
         self._barrier = self.project_dir / "promotion-barrier"
-        self.old_accepted_bytes = (
-            self.project_dir / "panels/raw/p01-01.png"
-        ).read_bytes()
+        self.old_accepted_bytes = (self.project_dir / "panels/raw/p01-01.png").read_bytes()
 
     def tearDown(self):
         self.temporary_directory.cleanup()
@@ -395,8 +402,16 @@ class PromotionArchiveRaceTests(unittest.TestCase):
         children = []
         for _ in range(2):
             proc = subprocess.Popen(
-                [sys.executable, "-c", _PROMOTION_RACE_CHILD, os.fspath(self.project_dir), scripts_root],
-                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                [
+                    sys.executable,
+                    "-c",
+                    _PROMOTION_RACE_CHILD,
+                    os.fspath(self.project_dir),
+                    scripts_root,
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             children.append(proc)
         self._barrier.write_text("go", encoding="ascii")
@@ -497,6 +512,7 @@ class FinalizeLockRaceTests(unittest.TestCase):
 
         self.assertFalse(worker.is_alive())
         self.assertEqual([], errors)
+
     def test_project_transaction_honors_custom_finite_lock_timeout(self):
         lock = project_io.ProjectLock(self.project, timeout=1.0)
         lock.__enter__()
@@ -576,9 +592,8 @@ class PdfExportTransactionTests(unittest.TestCase):
         manifest["panels"] = ["p01-01"]
         atomic_write_json(self.project / "project.json", manifest)
         from PIL import Image
-        Image.new("RGB", (1600, 2400), "red").save(
-            self.project / "pages/page-001.png"
-        )
+
+        Image.new("RGB", (1600, 2400), "red").save(self.project / "pages/page-001.png")
         page_qa = self.project / "qa/pages"
         page_qa.mkdir(parents=True)
         (page_qa / "page-001.json").write_text("{}", "utf-8")

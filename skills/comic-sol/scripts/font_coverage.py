@@ -47,12 +47,8 @@ SHAPING_COMPLEX = "complex"
 # comic lettering.
 LETTERING_PLANE_LAST = 0xFFFF
 
-_ASTRAL_REASON = (
-    "codepoint is outside the basic multilingual plane that lettering supports"
-)
-_UNDECLARED_REASON = (
-    "codepoint belongs to no block the lettering policy has classified"
-)
+_ASTRAL_REASON = "codepoint is outside the basic multilingual plane that lettering supports"
+_UNDECLARED_REASON = "codepoint belongs to no block the lettering policy has classified"
 
 
 @dataclass(frozen=True)
@@ -324,9 +320,7 @@ SCRIPT_FONTS: tuple[ScriptFont, ...] = (
     ),
 )
 
-SCRIPT_FONTS_BY_SCRIPT: dict[str, ScriptFont] = {
-    entry.script: entry for entry in SCRIPT_FONTS
-}
+SCRIPT_FONTS_BY_SCRIPT: dict[str, ScriptFont] = {entry.script: entry for entry in SCRIPT_FONTS}
 
 # Scripts the bundled faces are expected to letter without an extension font.
 # `tests/test_font_coverage.py` asserts the bundled policy still covers these,
@@ -376,13 +370,12 @@ def missing_coverage_probes(
     missing: dict[str, tuple[int, ...]] = {}
     for script in BUNDLED_TARGET_SCRIPTS:
         absent = tuple(
-            codepoint
-            for codepoint in BUNDLED_COVERAGE_PROBES[script]
-            if codepoint not in covered
+            codepoint for codepoint in BUNDLED_COVERAGE_PROBES[script] if codepoint not in covered
         )
         if absent:
             missing[script] = absent
     return missing
+
 
 # Scripts that place linearly and are therefore admitted by policy, but whose
 # glyphs no bundled face carries. Authors reach them by configuring the matching
@@ -574,13 +567,15 @@ def coverage_inventory(font_policy: Mapping[str, object]) -> dict[str, object]:
             entry["shaping"] = SHAPING_LINEAR
         blocks = entry["blocks"]
         assert isinstance(blocks, list)
-        blocks.append({
-            "block": block.block,
-            "covered": covered_here,
-            "range": block.label,
-            "shaping": block.shaping,
-            "total": block.total,
-        })
+        blocks.append(
+            {
+                "block": block.block,
+                "covered": covered_here,
+                "range": block.label,
+                "shaping": block.shaping,
+                "total": block.total,
+            }
+        )
         entry["covered"] = int(entry["covered"]) + covered_here
         entry["total"] = int(entry["total"]) + block.total
 

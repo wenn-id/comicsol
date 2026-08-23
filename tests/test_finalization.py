@@ -1,7 +1,5 @@
 """Fail-closed final and export-ready artifact validation tests."""
 
-import hashlib
-import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,7 +17,6 @@ from scripts.comic_sol import (  # noqa: E402
 )
 from scripts.validate_project import (  # noqa: E402
     ProjectValidationError,
-    ValidationIssue,
     require_valid_project,
     validate_project,
 )
@@ -75,42 +72,35 @@ class FinalArtifactTests(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
         self.project = init_project(
-            self.root, "Final Test", b"A final test story.",
+            self.root,
+            "Final Test",
+            b"A final test story.",
             {"mode": "short_prompt", "language": "en"},
         )
         manifest = read_json(self.project / "project.json")
         manifest.update(valid_manifest())
-        manifest["input"]["source_sha256"] = sha256_file(
-            self.project / "source/input.txt"
-        )
+        manifest["input"]["source_sha256"] = sha256_file(self.project / "source/input.txt")
         atomic_write_json(self.project / "project.json", manifest)
-        atomic_write_json(
-            self.project / "plan/story-plan.json", valid_story()
-        )
-        atomic_write_json(
-            self.project / "plan/character-bible.json", valid_characters()
-        )
-        atomic_write_json(
-            self.project / "plan/storyboard.json", valid_storyboard()
-        )
+        atomic_write_json(self.project / "plan/story-plan.json", valid_story())
+        atomic_write_json(self.project / "plan/character-bible.json", valid_characters())
+        atomic_write_json(self.project / "plan/storyboard.json", valid_storyboard())
 
     def tearDown(self):
         self.temporary_directory.cleanup()
 
     def _add_panel_files(self):
-        (self.project / "prompts/panels/p01-01.txt").write_text(
-            "panel prompt", encoding="utf-8"
-        )
-        Image.new("RGB", (512, 512), "white").save(
-            self.project / "references/characters/mira.png"
-        )
+        (self.project / "prompts/panels/p01-01.txt").write_text("panel prompt", encoding="utf-8")
+        Image.new("RGB", (512, 512), "white").save(self.project / "references/characters/mira.png")
         raw = self.project / "panels/raw/p01-01.png"
         clean = self.project / "panels/clean/p01-01.png"
         Image.new("RGB", (736, 1136), (20, 30, 40)).save(raw)
         Image.new("RGB", (736, 1136), (20, 30, 40)).save(clean)
         canonical_clean = normalize_panel(
-            self.project, "p01-01", "panels/raw/p01-01.png",
-            (736, 1136), "exact",
+            self.project,
+            "p01-01",
+            "panels/raw/p01-01.png",
+            (736, 1136),
+            "exact",
         )
         record = valid_panel_record_v2()
         record["bindings"]["raw_sha256"] = sha256_file(raw)
@@ -127,8 +117,11 @@ class FinalArtifactTests(unittest.TestCase):
             self.project,
             1,
             build_page_quality_record(
-                self.project, 1, valid_page_reviewer_checks(self.project, 1),
-                reviewer="fixture-reviewer", reviewed_at="2026-08-14T01:02:03Z",
+                self.project,
+                1,
+                valid_page_reviewer_checks(self.project, 1),
+                reviewer="fixture-reviewer",
+                reviewed_at="2026-08-14T01:02:03Z",
             ),
         )
 
@@ -143,7 +136,8 @@ class FinalArtifactTests(unittest.TestCase):
             "final validation must report missing artifact descriptors",
         )
         self.assertGreaterEqual(
-            len(issues), 3,
+            len(issues),
+            3,
             f"empty artifacts should produce several final issues, got {len(issues)}",
         )
 
@@ -157,21 +151,15 @@ class FinalArtifactTests(unittest.TestCase):
         manifest["artifacts"] = {
             "character_bible": {
                 "path": "plan/character-bible.json",
-                "sha256": sha256_file(
-                    self.project / "plan/character-bible.json"
-                ),
+                "sha256": sha256_file(self.project / "plan/character-bible.json"),
             },
             "story_plan": {
                 "path": "plan/story-plan.json",
-                "sha256": sha256_file(
-                    self.project / "plan/story-plan.json"
-                ),
+                "sha256": sha256_file(self.project / "plan/story-plan.json"),
             },
             "storyboard": {
                 "path": "plan/storyboard.json",
-                "sha256": sha256_file(
-                    self.project / "plan/storyboard.json"
-                ),
+                "sha256": sha256_file(self.project / "plan/storyboard.json"),
             },
             "composition_cache": {
                 "path": "cache/composition.json",
@@ -181,7 +169,8 @@ class FinalArtifactTests(unittest.TestCase):
         atomic_write_json(self.project / "project.json", manifest)
         issues = validate_project(self.project, "export-ready")
         self.assertEqual(
-            [], issues,
+            [],
+            issues,
             f"export-ready with panel QA, lettered, page-QA, "
             f"composition cache should pass, got {issues}",
         )
@@ -199,34 +188,26 @@ class FinalArtifactTests(unittest.TestCase):
         manifest["artifacts"] = {
             "character_bible": {
                 "path": "plan/character-bible.json",
-                "sha256": sha256_file(
-                    self.project / "plan/character-bible.json"
-                ),
+                "sha256": sha256_file(self.project / "plan/character-bible.json"),
             },
             "story_plan": {
                 "path": "plan/story-plan.json",
-                "sha256": sha256_file(
-                    self.project / "plan/story-plan.json"
-                ),
+                "sha256": sha256_file(self.project / "plan/story-plan.json"),
             },
             "storyboard": {
                 "path": "plan/storyboard.json",
-                "sha256": sha256_file(
-                    self.project / "plan/storyboard.json"
-                ),
+                "sha256": sha256_file(self.project / "plan/storyboard.json"),
             },
         }
         atomic_write_json(self.project / "project.json", manifest)
         (self.project / "cache").mkdir(exist_ok=True)
         import json
+
         (self.project / "cache/composition.json").write_text(
             json.dumps({"schema_version": "1.0", "stages": {}})
         )
         issues = validate_project(self.project, "export-ready")
-        page_qa_issues = [
-            i for i in issues
-            if "page-001" in i.message or "qa/pages" in i.path
-        ]
+        page_qa_issues = [i for i in issues if "page-001" in i.message or "qa/pages" in i.path]
         self.assertTrue(
             len(page_qa_issues) > 0,
             f"missing page-QA must be reported, got {issues}",
@@ -238,42 +219,35 @@ class GuardedOperationTests(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
         self.project = init_project(
-            self.root, "Guard Test", b"A guard test story.",
+            self.root,
+            "Guard Test",
+            b"A guard test story.",
             {"mode": "short_prompt", "language": "en"},
         )
         manifest = read_json(self.project / "project.json")
         manifest.update(valid_manifest())
-        manifest["input"]["source_sha256"] = sha256_file(
-            self.project / "source/input.txt"
-        )
+        manifest["input"]["source_sha256"] = sha256_file(self.project / "source/input.txt")
         atomic_write_json(self.project / "project.json", manifest)
-        atomic_write_json(
-            self.project / "plan/story-plan.json", valid_story()
-        )
-        atomic_write_json(
-            self.project / "plan/character-bible.json", valid_characters()
-        )
-        atomic_write_json(
-            self.project / "plan/storyboard.json", valid_storyboard()
-        )
+        atomic_write_json(self.project / "plan/story-plan.json", valid_story())
+        atomic_write_json(self.project / "plan/character-bible.json", valid_characters())
+        atomic_write_json(self.project / "plan/storyboard.json", valid_storyboard())
 
     def tearDown(self):
         self.temporary_directory.cleanup()
 
     def _add_panel_files(self):
-        (self.project / "prompts/panels/p01-01.txt").write_text(
-            "panel prompt", encoding="utf-8"
-        )
-        Image.new("RGB", (512, 512), "white").save(
-            self.project / "references/characters/mira.png"
-        )
+        (self.project / "prompts/panels/p01-01.txt").write_text("panel prompt", encoding="utf-8")
+        Image.new("RGB", (512, 512), "white").save(self.project / "references/characters/mira.png")
         raw = self.project / "panels/raw/p01-01.png"
         clean = self.project / "panels/clean/p01-01.png"
         Image.new("RGB", (736, 1136), (20, 30, 40)).save(raw)
         Image.new("RGB", (736, 1136), (20, 30, 40)).save(clean)
         canonical_clean = normalize_panel(
-            self.project, "p01-01", "panels/raw/p01-01.png",
-            (736, 1136), "exact",
+            self.project,
+            "p01-01",
+            "panels/raw/p01-01.png",
+            (736, 1136),
+            "exact",
         )
         record = valid_panel_record_v2()
         record["bindings"]["raw_sha256"] = sha256_file(raw)
@@ -290,8 +264,11 @@ class GuardedOperationTests(unittest.TestCase):
             self.project,
             1,
             build_page_quality_record(
-                self.project, 1, valid_page_reviewer_checks(self.project, 1),
-                reviewer="fixture-reviewer", reviewed_at="2026-08-14T01:02:03Z",
+                self.project,
+                1,
+                valid_page_reviewer_checks(self.project, 1),
+                reviewer="fixture-reviewer",
+                reviewed_at="2026-08-14T01:02:03Z",
             ),
         )
 
@@ -303,21 +280,15 @@ class GuardedOperationTests(unittest.TestCase):
         manifest["artifacts"] = {
             "character_bible": {
                 "path": "plan/character-bible.json",
-                "sha256": sha256_file(
-                    self.project / "plan/character-bible.json"
-                ),
+                "sha256": sha256_file(self.project / "plan/character-bible.json"),
             },
             "story_plan": {
                 "path": "plan/story-plan.json",
-                "sha256": sha256_file(
-                    self.project / "plan/story-plan.json"
-                ),
+                "sha256": sha256_file(self.project / "plan/story-plan.json"),
             },
             "storyboard": {
                 "path": "plan/storyboard.json",
-                "sha256": sha256_file(
-                    self.project / "plan/storyboard.json"
-                ),
+                "sha256": sha256_file(self.project / "plan/storyboard.json"),
             },
             "composition_cache": {
                 "path": "cache/composition.json",
@@ -331,9 +302,7 @@ class GuardedOperationTests(unittest.TestCase):
             require_valid_project(self.project, "final")
 
     def test_require_valid_project_returns_none_on_valid(self):
-        self.assertIsNone(
-            require_valid_project(self.project, "plan")
-        )
+        self.assertIsNone(require_valid_project(self.project, "plan"))
 
     def test_guarded_export_rejects_invalid_panel_qa(self):
         """RED: guarded_export must reject when panel QA has unresolved errors."""
@@ -345,6 +314,7 @@ class GuardedOperationTests(unittest.TestCase):
         record["retry_reason"] = "character identity failure"
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
         from scripts.export_pdf import guarded_export
+
         with self.assertRaises(ProjectValidationError):
             guarded_export(self.project)
         # No PDF should be written
@@ -366,30 +336,26 @@ class GuardedOperationTests(unittest.TestCase):
         manifest["artifacts"] = {
             "character_bible": {
                 "path": "plan/character-bible.json",
-                "sha256": sha256_file(
-                    self.project / "plan/character-bible.json"
-                ),
+                "sha256": sha256_file(self.project / "plan/character-bible.json"),
             },
             "story_plan": {
                 "path": "plan/story-plan.json",
-                "sha256": sha256_file(
-                    self.project / "plan/story-plan.json"
-                ),
+                "sha256": sha256_file(self.project / "plan/story-plan.json"),
             },
             "storyboard": {
                 "path": "plan/storyboard.json",
-                "sha256": sha256_file(
-                    self.project / "plan/storyboard.json"
-                ),
+                "sha256": sha256_file(self.project / "plan/storyboard.json"),
             },
         }
         atomic_write_json(self.project / "project.json", manifest)
         (self.project / "cache").mkdir(exist_ok=True)
         import json
+
         (self.project / "cache/composition.json").write_text(
             json.dumps({"schema_version": "1.0", "stages": {}})
         )
         from scripts.export_pdf import PdfExportError, guarded_export
+
         with self.assertRaises(PdfExportError):
             guarded_export(self.project)
         self.assertFalse(
@@ -400,6 +366,7 @@ class GuardedOperationTests(unittest.TestCase):
         """GREEN: guarded_export with valid export-ready writes PDF and records descriptor."""
         self._make_export_ready()
         from scripts.export_pdf import guarded_export
+
         lexical_project = self.project / ".." / self.project.name
         result = guarded_export(lexical_project)
         self.assertEqual(
@@ -459,9 +426,7 @@ class GuardedOperationTests(unittest.TestCase):
                 raise OSError("injected verification publish failure")
             return real_replace(source, destination, **kwargs)
 
-        with mock.patch.object(
-            project_io.os, "replace", side_effect=fail_verification_publish
-        ):
+        with mock.patch.object(project_io.os, "replace", side_effect=fail_verification_publish):
             with self.assertRaisesRegex(OSError, "injected verification"):
                 guarded_export(self.project)
 
@@ -520,9 +485,7 @@ class GuardedOperationTests(unittest.TestCase):
             with self.subTest(mutate=mutate):
                 self._make_terminal_with_pdf_verification()
                 mutate()
-                self.assertIn(
-                    "pdf-verification-stale", self._pdf_verification_fields()
-                )
+                self.assertIn("pdf-verification-stale", self._pdf_verification_fields())
 
     def test_guarded_transition_rejects_incomplete_final(self):
         """RED: transition to COMPLETE must reject when final artifacts missing."""
@@ -531,6 +494,7 @@ class GuardedOperationTests(unittest.TestCase):
         manifest["status"] = "EXPORTED"
         atomic_write_json(self.project / "project.json", manifest)
         from scripts.comic_sol import transition
+
         with self.assertRaises(ProjectValidationError):
             transition(self.project, "COMPLETE")
         # Manifest unchanged
@@ -543,6 +507,7 @@ class GuardedOperationTests(unittest.TestCase):
         # Add report and PDF
         (self.project / "qa/report.md").write_text("# QA Report\n", encoding="utf-8")
         from scripts.export_pdf import guarded_export
+
         pdf_path = guarded_export(self.project)
         # Update manifest with report and pdf descriptors, set status to EXPORTED
         manifest = read_json(self.project / "project.json")
@@ -557,6 +522,7 @@ class GuardedOperationTests(unittest.TestCase):
         manifest["status"] = "EXPORTED"
         atomic_write_json(self.project / "project.json", manifest)
         from scripts.comic_sol import transition
+
         result = transition(self.project, "COMPLETE")
         self.assertEqual("COMPLETE", result["status"])
 
@@ -565,6 +531,7 @@ class GuardedOperationTests(unittest.TestCase):
         self._make_export_ready()
         (self.project / "qa/report.md").write_text("# QA Report\n", encoding="utf-8")
         from scripts.export_pdf import guarded_export
+
         pdf_path = guarded_export(self.project)
         manifest = read_json(self.project / "project.json")
         manifest["artifacts"]["qa_report"] = {
@@ -579,6 +546,7 @@ class GuardedOperationTests(unittest.TestCase):
         manifest["status"] = "EXPORTED"
         atomic_write_json(self.project / "project.json", manifest)
         from scripts.comic_sol import transition
+
         result = transition(self.project, "COMPLETE_WITH_WARNINGS")
         self.assertEqual("COMPLETE_WITH_WARNINGS", result["status"])
 

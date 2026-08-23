@@ -44,7 +44,9 @@ class NormalizationGeometryTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
 
     def test_raster_modules_share_one_decode_ceiling(self):
-        self.assertEqual(raster_limits.MAX_DECODED_PIXELS, normalize_panels_module.MAX_DECODED_PIXELS)
+        self.assertEqual(
+            raster_limits.MAX_DECODED_PIXELS, normalize_panels_module.MAX_DECODED_PIXELS
+        )
         self.assertEqual(raster_limits.MAX_DECODED_PIXELS, letter_panels.MAX_DECODED_PIXELS)
         self.assertEqual(raster_limits.MAX_DECODED_PIXELS, pdf_quality.MAX_DECODED_PIXELS)
 
@@ -53,6 +55,7 @@ class NormalizationGeometryTests(unittest.TestCase):
             with self.subTest(name=name):
                 source = (ROOT / "scripts" / name).read_text("utf-8")
                 self.assertNotIn("Image.MAX_IMAGE_PIXELS =", source)
+
     def test_center_crop_records_oriented_source_box(self):
         geometry = normalization_geometry((1200, 800), (600, 600), "crop")
         self.assertEqual((200, 0, 1000, 800), geometry.crop_box)
@@ -120,8 +123,11 @@ class NormalizePanelTests(unittest.TestCase):
                 panel_id = f"p01-0{len(list((self.project / 'panels').glob('p*'))) + 1}"
                 source = self._source(f"{panel_id}.{suffix}", fmt=fmt)
                 output = normalize_panel(
-                    self.project, panel_id, source.relative_to(self.project).as_posix(),
-                    (60, 60), "crop",
+                    self.project,
+                    panel_id,
+                    source.relative_to(self.project).as_posix(),
+                    (60, 60),
+                    "crop",
                 )
                 self.assertEqual(self.project / f"panels/{panel_id}/clean.png", output)
                 with Image.open(output) as clean:
@@ -144,11 +150,9 @@ class NormalizePanelTests(unittest.TestCase):
                 self.assertEqual(expected.encode(), record_path.read_bytes())
 
     def test_exif_orientation_is_applied_before_geometry(self):
-        source = self._source("oriented.jpg", size=(120, 80), fmt="JPEG", exif_orientation=6)
+        self._source("oriented.jpg", size=(120, 80), fmt="JPEG", exif_orientation=6)
         normalize_panel(self.project, "p01-01", "panels/raw/oriented.jpg", (60, 60), "crop")
-        record = json.loads(
-            (self.project / "panels/p01-01/normalization.json").read_text("utf-8")
-        )
+        record = json.loads((self.project / "panels/p01-01/normalization.json").read_text("utf-8"))
         self.assertEqual(6, record["source"]["exif_orientation"])
         self.assertEqual([120, 80], record["source"]["encoded_size"])
         self.assertEqual([80, 120], record["source"]["size"])
@@ -156,14 +160,10 @@ class NormalizePanelTests(unittest.TestCase):
 
     def test_identical_second_run_is_byte_identical(self):
         self._source("panel.png")
-        clean = normalize_panel(
-            self.project, "p01-01", "panels/raw/panel.png", (60, 60), "fit"
-        )
+        clean = normalize_panel(self.project, "p01-01", "panels/raw/panel.png", (60, 60), "fit")
         record = self.project / "panels/p01-01/normalization.json"
         first = (clean.read_bytes(), record.read_bytes())
-        normalize_panel(
-            self.project, "p01-01", "panels/raw/panel.png", (60, 60), "fit"
-        )
+        normalize_panel(self.project, "p01-01", "panels/raw/panel.png", (60, 60), "fit")
         self.assertEqual(first, (clean.read_bytes(), record.read_bytes()))
 
     def test_failure_preserves_existing_clean_and_record(self):
@@ -192,8 +192,11 @@ class NormalizePanelTests(unittest.TestCase):
                     normalize_panel(self.project, "p01-01", source, (60, 60), mode)
         with self.assertRaisesRegex(ValueError, "pixel limit"):
             normalize_panel(
-                self.project, "p01-01", "panels/raw/panel.png",
-                (100_000, 100_000), "crop",
+                self.project,
+                "p01-01",
+                "panels/raw/panel.png",
+                (100_000, 100_000),
+                "crop",
             )
         self.assertFalse((self.project / "panels/p01-01/clean.png").exists())
 
@@ -223,9 +226,7 @@ class PanelProvenanceTests(unittest.TestCase):
         (self.project / "logs").mkdir()
         raw = self.project / "panels/raw/p01-01.png"
         Image.new("RGB", (120, 80), "navy").save(raw)
-        normalize_panel(
-            self.project, "p01-01", "panels/raw/p01-01.png", (60, 60), "crop"
-        )
+        normalize_panel(self.project, "p01-01", "panels/raw/p01-01.png", (60, 60), "crop")
         clean = self.project / "panels/p01-01/clean.png"
         normalization = self.project / "panels/p01-01/normalization.json"
         self.record = {
@@ -250,11 +251,14 @@ class PanelProvenanceTests(unittest.TestCase):
         self.temporary_directory.cleanup()
 
     def assert_stale(self, issues, binding):
-        self.assertTrue(any(
-            issue.field == f"bindings.{binding}"
-            and issue.message.startswith("quality-record-stale:")
-            for issue in issues
-        ), issues)
+        self.assertTrue(
+            any(
+                issue.field == f"bindings.{binding}"
+                and issue.message.startswith("quality-record-stale:")
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_current_raw_clean_and_normalization_bindings_pass(self):
         self.assertEqual((), validate_panel_provenance(self.project, self.record))
@@ -269,25 +273,19 @@ class PanelProvenanceTests(unittest.TestCase):
             with self.subTest(binding=binding):
                 before = path.read_bytes()
                 path.write_bytes(before + b"changed")
-                self.assert_stale(
-                    validate_panel_provenance(self.project, self.record), binding
-                )
+                self.assert_stale(validate_panel_provenance(self.project, self.record), binding)
                 path.write_bytes(before)
 
     def test_clean_dimensions_are_recomputed(self):
         self.record["bindings"]["clean_width"] = 59
-        self.assert_stale(
-            validate_panel_provenance(self.project, self.record), "clean_width"
-        )
+        self.assert_stale(validate_panel_provenance(self.project, self.record), "clean_width")
 
     def test_provenance_rejects_raster_over_decode_limit_before_loading(self):
         with mock.patch("scripts.validate_project.MAX_DECODED_PIXELS", 1):
             issues = validate_panel_provenance(self.project, self.record)
 
         self.assert_stale(issues, "raw_path")
-        self.assertTrue(any(
-            "decode limit" in issue.message for issue in issues
-        ), issues)
+        self.assertTrue(any("decode limit" in issue.message for issue in issues), issues)
 
     def test_provenance_promotes_decompression_bomb_warning_to_stale_issue(self):
         with mock.patch(
@@ -297,9 +295,7 @@ class PanelProvenanceTests(unittest.TestCase):
             issues = validate_panel_provenance(self.project, self.record)
 
         self.assert_stale(issues, "raw_path")
-        self.assertTrue(any(
-            "unreadable" in issue.message for issue in issues
-        ), issues)
+        self.assertTrue(any("unreadable" in issue.message for issue in issues), issues)
 
     def test_missing_normalization_and_traversal_fail_closed(self):
         (self.project / "panels/p01-01/normalization.json").unlink()
@@ -308,16 +304,12 @@ class PanelProvenanceTests(unittest.TestCase):
             "normalization_path",
         )
         self.record["bindings"]["raw_path"] = "../outside.png"
-        self.assert_stale(
-            validate_panel_provenance(self.project, self.record), "raw_path"
-        )
+        self.assert_stale(validate_panel_provenance(self.project, self.record), "raw_path")
 
     def test_one_panel_change_leaves_unrelated_panel_byte_identical_and_current(self):
         raw_two = self.project / "panels/raw/p01-02.png"
         Image.new("RGB", (100, 100), "green").save(raw_two)
-        normalize_panel(
-            self.project, "p01-02", "panels/raw/p01-02.png", (50, 50), "exact"
-        )
+        normalize_panel(self.project, "p01-02", "panels/raw/p01-02.png", (50, 50), "exact")
         clean_two = self.project / "panels/p01-02/clean.png"
         normalization_two = self.project / "panels/p01-02/normalization.json"
         record_two = {
@@ -346,9 +338,7 @@ class PanelProvenanceTests(unittest.TestCase):
         changed = self.project / "panels/raw/p01-01.png"
         changed.write_bytes(changed.read_bytes() + b"changed")
 
-        self.assert_stale(
-            validate_panel_provenance(self.project, self.record), "raw_sha256"
-        )
+        self.assert_stale(validate_panel_provenance(self.project, self.record), "raw_sha256")
         self.assertEqual((), validate_panel_provenance(self.project, record_two))
         self.assertEqual(retained["raw"], raw_two.read_bytes())
         self.assertEqual(retained["clean"], clean_two.read_bytes())
