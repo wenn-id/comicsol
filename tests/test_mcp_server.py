@@ -177,6 +177,21 @@ class McpServerUnitTests(unittest.TestCase):
         tools = asyncio.run(mcp_server.mcp.list_tools())
         self.assertEqual(TOOL_NAMES, {tool.name for tool in tools})
 
+    def test_status_routes_through_locked_recovery_without_changing_response(self):
+        project = self.root / "project"
+        project.mkdir()
+        (project / "project.json").write_text("{}\n", encoding="utf-8")
+        expected = {"project_id": "project", "status": "BLOCKED"}
+
+        with mock.patch.object(
+            mcp_server,
+            "read_project_status",
+            return_value=expected,
+        ) as status:
+            self.assertIs(expected, mcp_server.comic_status("project"))
+
+        status.assert_called_once_with(project)
+
     def test_init_rejects_oversized_utf8_before_project_allocation(self):
         before = list(self.root.iterdir())
         with self.assertRaisesRegex(ToolError, "at most 200 KiB"):

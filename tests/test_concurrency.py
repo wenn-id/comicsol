@@ -11,9 +11,13 @@ from unittest import mock
 from scripts import project_io
 from scripts.comic_sol import (
     atomic_write_json,
+    canonical_artifact_bytes,
+    canonical_event_record,
     finalize_project,
     read_json,
+    read_project_status,
     record_generation_attempt,
+    resume_project,
 )
 from scripts.export_pdf import guarded_export
 
@@ -451,6 +455,251 @@ class FinalizeLockRaceTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary_directory.cleanup()
+
+    def _leave_interrupted_manifest_publication(self):
+        manifest = read_json(ROOT / "templates/manifest.json")
+        manifest["project_id"] = "project"
+        manifest["status"] = "BLOCKED"
+        manifest["blocked_from"] = "INIT"
+        manifest["blocked_reason"] = "image-capability-unavailable"
+        atomic_write_json(self.project / "project.json", manifest)
+        original = (self.project / "project.json").read_bytes()
+        (self.project / "logs").mkdir()
+        baseline_event = canonical_event_record(
+            "artifact.reused",
+            {"artifact_path": "plan/story-plan.json", "reused": True},
+        )
+        (self.project / "logs/events.jsonl").write_bytes(baseline_event)
+        self.expected_generation = {
+            "project.json": original,
+            "logs/events.jsonl": baseline_event,
+        }
+        published = dict(manifest)
+        published["status"] = "PLANNED"
+        published["blocked_from"] = None
+        published["blocked_reason"] = None
+
+        transaction = project_io.ProjectTransaction(self.project, "interrupted-status")
+        transaction.__enter__()
+        transaction.append_bytes(
+            "logs/events.jsonl",
+            baseline_event,
+            repair_torn_jsonl=True,
+        )
+        transaction.stage_bytes("project.json", canonical_artifact_bytes(published))
+        transaction._phase = "publishing"
+        transaction._write_journal()
+        for entry in transaction._journal:
+            if entry.get("operation") == "append":
+                transaction._apply_append(entry)
+            else:
+                project_io.replace_contained(self.project, entry["staged"], entry["path"])
+        lock = transaction._lock
+        if lock is None:
+            self.fail("interrupted transaction did not acquire its lock")
+        lock.__exit__(None, None, None)
+        transaction._lock = None
+        self.assertEqual("PLANNED", read_json(self.project / "project.json")["status"])
+        self.assertEqual(
+            baseline_event + baseline_event,
+            (self.project / "logs/events.jsonl").read_bytes(),
+        )
+        return original
+
+    def _assert_expected_generation(self, project):
+        for relative, payload in self.expected_generation.items():
+            self.assertEqual(payload, (project / relative).read_bytes(), relative)
+        manifest = read_json(project / "project.json")
+        events = [
+            json.loads(line)
+            for line in (project / "logs/events.jsonl").read_text("utf-8").splitlines()
+        ]
+        self.assertEqual("BLOCKED", manifest["status"])
+        self.assertEqual("INIT", manifest["blocked_from"])
+        self.assertEqual("image-capability-unavailable", manifest["blocked_reason"])
+        self.assertEqual(1, len(events))
+        self.assertEqual("artifact.reused", events[0]["event"])
+
+    def test_public_operations_wait_for_recovery_and_observe_one_generation(self):
+        root = self.project.parent
+        operations = ("read_project_status", "resume_project", "finalize_project")
+
+        for operation in operations:
+            with self.subTest(operation=operation):
+                self.project = root / operation
+                self.project.mkdir()
+                self._leave_interrupted_manifest_publication()
+                owner_entered = threading.Event()
+                release_owner = threading.Event()
+                contender_attempted = threading.Event()
+                contender_done = threading.Event()
+                owner_results = []
+                contender_results = []
+                observed_generations = []
+                errors = []
+                recover = project_io.ProjectTransaction.recover
+                lock_primitive = project_io.ProjectLock._lock
+                owner_thread = None
+                contender_thread = None
+
+                def pause_owner_recovery(project_dir):
+                    if threading.current_thread() is owner_thread:
+                        owner_entered.set()
+                        if not release_owner.wait(timeout=5):
+                            raise AssertionError("owner recovery synchronization timed out")
+                    return recover(project_dir)
+
+                def observe_contender_lock(handle):
+                    if threading.current_thread() is contender_thread:
+                        contender_attempted.set()
+                    return lock_primitive(handle)
+
+                def run_owner():
+                    try:
+                        owner_results.append(read_project_status(self.project))
+                    except BaseException as error:
+                        errors.append(("owner", error))
+
+                def resumed_state(project_dir, manifest_path):
+                    return {"status": read_json(manifest_path)["status"]}
+
+                def finalized_state(project_dir, caller_project_dir, progress):
+                    return {"status": read_json(project_dir / "project.json")["status"]}
+
+                def run_contender():
+                    try:
+                        if operation == "read_project_status":
+                            result = read_project_status(self.project)
+                        elif operation == "resume_project":
+                            result = resume_project(self.project)
+                        else:
+                            result = finalize_project(self.project)
+                        contender_results.append(result)
+                        observed_generations.append(
+                            {
+                                relative: (self.project / relative).read_bytes()
+                                for relative in self.expected_generation
+                            }
+                        )
+                    except BaseException as error:
+                        errors.append(("contender", error))
+                    finally:
+                        contender_done.set()
+
+                with (
+                    mock.patch(
+                        "scripts.comic_sol.ProjectTransaction.recover",
+                        side_effect=pause_owner_recovery,
+                    ),
+                    mock.patch.object(
+                        project_io.ProjectLock,
+                        "_lock",
+                        new=staticmethod(observe_contender_lock),
+                    ),
+                    mock.patch(
+                        "scripts.comic_sol._resume_project_locked",
+                        side_effect=resumed_state,
+                    ),
+                    mock.patch(
+                        "scripts.comic_sol._finalize_project_locked",
+                        side_effect=finalized_state,
+                    ),
+                ):
+                    owner_thread = threading.Thread(target=run_owner)
+                    owner_thread.start()
+                    self.assertTrue(
+                        owner_entered.wait(timeout=5),
+                        "owner did not pause while holding the project lock",
+                    )
+                    contender_thread = threading.Thread(target=run_contender)
+                    contender_thread.start()
+                    try:
+                        self.assertTrue(
+                            contender_attempted.wait(timeout=5),
+                            f"{operation} did not attempt the project lock",
+                        )
+                        self.assertFalse(contender_done.is_set())
+                    finally:
+                        release_owner.set()
+                        owner_thread.join(timeout=5)
+                        contender_thread.join(timeout=5)
+
+                self.assertFalse(owner_thread.is_alive())
+                self.assertFalse(contender_thread.is_alive())
+                self.assertEqual([], errors)
+                self.assertEqual("BLOCKED", owner_results[0]["status"])
+                self.assertEqual("BLOCKED", contender_results[0]["status"])
+                self.assertEqual([self.expected_generation], observed_generations)
+                self._assert_expected_generation(self.project)
+                self.assertEqual([], list((self.project / "logs/transactions").iterdir()))
+
+    def test_status_recovers_before_read_while_holding_project_lock(self):
+        original = self._leave_interrupted_manifest_publication()
+        entered = threading.Event()
+        release = threading.Event()
+        status_result = []
+        status_errors = []
+        contender_errors = []
+        recover = project_io.ProjectTransaction.recover
+
+        def pause_recovery(project_dir):
+            entered.set()
+            if not release.wait(timeout=5):
+                raise AssertionError("status recovery synchronization timed out")
+            return recover(project_dir)
+
+        def run_status():
+            try:
+                status_result.append(read_project_status(self.project))
+            except BaseException as error:
+                status_errors.append(error)
+
+        def contend():
+            try:
+                with project_io.ProjectLock(self.project, timeout=0.1):
+                    pass
+            except BaseException as error:
+                contender_errors.append(error)
+
+        with mock.patch(
+            "scripts.comic_sol.ProjectTransaction.recover",
+            side_effect=pause_recovery,
+        ):
+            worker = threading.Thread(target=run_status)
+            worker.start()
+            self.assertTrue(entered.wait(timeout=5), "status did not enter recovery")
+            contender = threading.Thread(target=contend)
+            contender.start()
+            contender.join(timeout=2)
+            release.set()
+            worker.join(timeout=5)
+
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(contender.is_alive())
+        self.assertEqual([], status_errors)
+        self.assertEqual(1, len(contender_errors))
+        self.assertIsInstance(contender_errors[0], TimeoutError)
+        self.assertEqual("BLOCKED", status_result[0]["status"])
+        self.assertEqual(original, (self.project / "project.json").read_bytes())
+        self.assertEqual([], list((self.project / "logs/transactions").iterdir()))
+
+    def test_finalize_recovers_interrupted_publication_before_workflow(self):
+        original = self._leave_interrupted_manifest_publication()
+        observed = []
+
+        def inspect_recovered_state(project_dir, caller_project_dir, progress):
+            observed.append((project_dir / "project.json").read_bytes())
+            self.assertEqual([], list((project_dir / "logs/transactions").iterdir()))
+            return {"status": "stub"}
+
+        with mock.patch(
+            "scripts.comic_sol._finalize_project_locked",
+            side_effect=inspect_recovered_state,
+        ):
+            self.assertEqual({"status": "stub"}, finalize_project(self.project))
+
+        self.assertEqual([original], observed)
+        self.assertEqual(original, (self.project / "project.json").read_bytes())
 
     def test_finalize_waits_for_existing_project_lock(self):
         lock = project_io.ProjectLock(self.project, timeout=1.0)

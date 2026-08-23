@@ -164,7 +164,7 @@ def _run(
         project = engine.init_project(arguments.output_root, arguments.title, source, request)
         return {"project_id": project.name, "project_dir": project.name}
     if arguments.command == "status":
-        return engine.read_project_manifest(arguments.project_dir / "project.json")
+        return engine.read_project_status(arguments.project_dir)
     if arguments.command == "validate":
         validation = _load_engine_module("validate_project")
 

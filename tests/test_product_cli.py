@@ -168,6 +168,21 @@ class ProductCliTests(unittest.TestCase):
             executable=launcher,
         )
 
+    def test_status_routes_through_locked_recovery_without_changing_response(self):
+        expected = {"project_id": "project", "status": "BLOCKED"}
+        seen = []
+
+        class FakeEngine:
+            def read_project_status(self, project_dir):
+                seen.append(project_dir)
+                return expected
+
+        arguments = cli.build_parser().parse_args(["status", "/tmp/project"])
+        with mock.patch.object(cli, "_load_engine", return_value=FakeEngine()):
+            self.assertIs(expected, cli._run(arguments))
+
+        self.assertEqual([Path("/tmp/project")], seen)
+
     def test_human_lifecycle_progress_is_stage_aware_and_plain(self):
         events = [
             {

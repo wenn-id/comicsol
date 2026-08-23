@@ -27,6 +27,7 @@ from scripts.comic_sol import (  # noqa: E402
     main,
     promote_attempt,
     read_json,
+    read_project_status,
     record_generation_attempt,
     record_override,
     record_stage,
@@ -1693,6 +1694,138 @@ class BlockedRecoveryTests(unittest.TestCase):
         atomic_write_json(path, data)
         return path
 
+    def _authorize_semantic_storyboard_edit(self):
+        cache = read_json(self.project / "logs/stage-cache.json")
+        old_digest = cache["stages"]["storyboard"]["artifacts"]["plan/storyboard.json"]
+        storyboard = read_json(self.project / "plan/storyboard.json")
+        storyboard["pages"][0]["panels"][0]["text"][0]["content"] = "The restored delivery begins."
+        atomic_write_json(self.project / "plan/storyboard.json", storyboard)
+        storyboard_bytes = (self.project / "plan/storyboard.json").read_bytes()
+        new_digest = sha256_file(self.project / "plan/storyboard.json")
+        self.assertNotEqual(old_digest, new_digest)
+
+        manifest = read_json(self.project / "project.json")
+        manifest["artifacts"]["storyboard"] = {
+            "path": "plan/storyboard.json",
+            "sha256": new_digest,
+        }
+        atomic_write_json(self.project / "project.json", manifest)
+        return old_digest, new_digest, storyboard_bytes
+
+    def _seed_consistent_generation_evidence(self):
+        attempt_kinds = (
+            ("initial", "panels/raw/p01-01.initial.png", "green"),
+            ("transient_repeat", "panels/raw/p01-01.transient.png", "purple"),
+            ("visual_retry", "panels/raw/p01-01.visual.png", "teal"),
+        )
+        for kind, relative, color in attempt_kinds:
+            Image.new("RGB", (512, 512), color).save(self.project / relative)
+            record_generation_attempt(self.project, "p01-01", kind, self.project / relative)
+
+        qa = read_json(self.project / "qa/panels/p01-01.json")
+        qa["attempts"] = len(attempt_kinds)
+        atomic_write_json(self.project / "qa/panels/p01-01.json", qa)
+
+        manifest = read_json(self.project / "project.json")
+        manifest["artifacts"].update(
+            {
+                "qa_report": {
+                    "path": "qa/report.md",
+                    "sha256": sha256_file(self.project / "qa/report.md"),
+                },
+                "pdf": {
+                    "path": "exports/sunlight-courier.pdf",
+                    "sha256": sha256_file(self.project / "exports/sunlight-courier.pdf"),
+                },
+            }
+        )
+        atomic_write_json(self.project / "project.json", manifest)
+        return tuple(relative for _, relative, _ in attempt_kinds)
+
+    def _assert_one_recovered_generation(
+        self,
+        project,
+        *,
+        blocked_manifest,
+        baseline_events,
+        preserved,
+    ):
+        manifest = read_json(project / "project.json")
+        cache = read_json(project / "logs/stage-cache.json")
+        events_bytes = (project / "logs/events.jsonl").read_bytes()
+        events = [json.loads(line) for line in events_bytes.decode("utf-8").splitlines()]
+        baseline_records = [
+            json.loads(line) for line in baseline_events.decode("utf-8").splitlines()
+        ]
+
+        self.assertEqual("STORYBOARDED", manifest["status"])
+        self.assertIsNone(manifest["blocked_from"])
+        self.assertIsNone(manifest["blocked_reason"])
+        self.assertEqual(
+            {"story_plan", "character_bible", "storyboard"},
+            set(manifest["artifacts"]),
+        )
+        for name in ("story_plan", "character_bible", "storyboard"):
+            descriptor = manifest["artifacts"][name]
+            self.assertEqual(blocked_manifest["artifacts"][name], descriptor)
+            self.assertEqual(
+                descriptor["sha256"],
+                sha256_file(project / descriptor["path"]),
+                name,
+            )
+        self.assertNotIn("qa_report", manifest["artifacts"])
+        self.assertNotIn("pdf", manifest["artifacts"])
+
+        self.assertEqual(["planning", "storyboard"], list(cache["stages"]))
+        cached_paths = []
+        for stage in ("planning", "storyboard"):
+            for relative, digest in cache["stages"][stage]["artifacts"].items():
+                cached_paths.append(relative)
+                self.assertEqual(digest, sha256_file(project / relative), relative)
+
+        for relative, payload in preserved.items():
+            self.assertEqual(payload, (project / relative).read_bytes(), relative)
+
+        qa = read_json(project / "qa/panels/p01-01.json")
+        counters = read_json(project / "logs/generation-counters.json")
+        panel_counts = counters["panels"]["p01-01"]
+        total_attempts = sum(panel_counts.values())
+        self.assertEqual([], validate_panel_record(qa))
+        self.assertEqual("accept", qa["decision"])
+        self.assertTrue(all(check["result"] == "pass" for check in qa["checks"]))
+        self.assertEqual(total_attempts, qa["attempts"])
+        self.assertEqual(qa["raw_sha256"], sha256_file(project / qa["raw_path"]))
+        self.assertTrue((project / qa["clean_path"]).is_file())
+        for reference in qa["generation"]["reference_paths"]:
+            self.assertTrue((project / reference).is_file(), reference)
+        self.assertEqual(
+            panel_counts["transient_repeats"] + panel_counts["visual_retries"],
+            counters["global_extra_calls"],
+        )
+
+        self.assertTrue(events_bytes.startswith(baseline_events))
+        self.assertEqual(baseline_records, events[: len(baseline_records)])
+        generation_events = [
+            event for event in events if event["event"] == "generation.attempt-recorded"
+        ]
+        self.assertEqual(total_attempts, len(generation_events))
+        self.assertEqual(
+            ["initial", "transient_repeat", "visual_retry"],
+            [event["details"]["kind"] for event in generation_events],
+        )
+        reused = [event for event in events if event["event"] == "artifact.reused"]
+        reused_paths = [event["details"]["artifact_path"] for event in reused]
+        expected_reused_paths = [
+            "plan/story-plan.json",
+            "plan/character-bible.json",
+            "plan/storyboard.json",
+        ]
+        self.assertEqual(expected_reused_paths, reused_paths)
+        self.assertCountEqual(cached_paths, reused_paths)
+        self.assertEqual(len(reused_paths), len(set(reused_paths)))
+        self.assertTrue(all(event["details"]["reused"] is True for event in reused))
+        self.assertEqual(len(baseline_records) + len(cached_paths), len(events))
+
     def test_blocked_project_cannot_be_invalidated_directly(self):
         block_project(
             self.project,
@@ -1812,6 +1945,317 @@ class BlockedRecoveryTests(unittest.TestCase):
         )
         self.assertTrue(all(isinstance(event.get("event"), str) for event in events))
 
+    def test_resume_atomic_crash_boundaries_refresh_hash_and_restore_old_cache(self):
+        attempt_paths = self._seed_consistent_generation_evidence()
+        old_storyboard_digest, new_storyboard_digest, storyboard_bytes = (
+            self._authorize_semantic_storyboard_edit()
+        )
+        self.assertEqual(
+            old_storyboard_digest,
+            read_json(self.project / "logs/stage-cache.json")["stages"]["storyboard"]["artifacts"][
+                "plan/storyboard.json"
+            ],
+        )
+        block_project(
+            self.project,
+            "image-capability-unavailable",
+            "image capability unavailable",
+        )
+        manifest = read_json(self.project / "project.json")
+        manifest["capability"].update(
+            {
+                "detected_at": "2026-07-23T00:01:00Z",
+                "name": "restored-image-tool",
+                "status": "available",
+            }
+        )
+        atomic_write_json(self.project / "project.json", manifest)
+        blocked_manifest = read_json(self.project / "project.json")
+
+        # These accepted generation records are downstream of the preserved
+        # planning/storyboard prefix. Invalidation may forget descriptors, but
+        # it must never rewrite user work, attempts, counters, or QA evidence.
+        preserved_paths = (
+            "plan/story-plan.json",
+            "plan/character-bible.json",
+            "plan/storyboard.json",
+            "references/characters/mira.png",
+            "panels/raw/p01-01.png",
+            "panels/clean/p01-01.png",
+            *attempt_paths,
+            "qa/panels/p01-01.json",
+            "logs/generation-counters.json",
+        )
+        template = self.root / "atomic-resume-template"
+        shutil.copytree(self.project, template)
+
+        for published_count in range(4):
+            with self.subTest(published_count=published_count):
+                project = self.root / f"atomic-resume-{published_count}"
+                shutil.copytree(template, project)
+                before_targets = {
+                    relative: (project / relative).read_bytes()
+                    for relative in (
+                        "project.json",
+                        "logs/stage-cache.json",
+                        "logs/events.jsonl",
+                    )
+                }
+                preserved = {
+                    relative: (project / relative).read_bytes() for relative in preserved_paths
+                }
+                seen_targets = []
+
+                def crash_at_publication(transaction):
+                    self.assertEqual("resume-recovery", transaction.operation)
+                    seen_targets.extend(transaction._journal)
+                    self.assertEqual(
+                        ["logs/stage-cache.json", "logs/events.jsonl", "project.json"],
+                        [entry["path"] for entry in transaction._journal],
+                    )
+                    for target in (
+                        "logs/stage-cache.json",
+                        "logs/events.jsonl",
+                        "project.json",
+                    ):
+                        self.assertEqual(
+                            1,
+                            sum(entry["path"] == target for entry in transaction._journal),
+                            target,
+                        )
+                    transaction._phase = "publishing"
+                    transaction._write_journal()
+                    for entry in transaction._journal[:published_count]:
+                        if entry.get("operation") == "append":
+                            transaction._apply_append(entry)
+                        else:
+                            project_io.replace_contained(
+                                transaction.project_dir,
+                                entry["staged"],
+                                entry["path"],
+                            )
+                            project_io.fsync_directory(
+                                (transaction.project_dir / entry["path"]).parent
+                            )
+                    raise KeyboardInterrupt("simulated resume process crash")
+
+                with patch.object(
+                    project_io.ProjectTransaction,
+                    "commit",
+                    autospec=True,
+                    side_effect=crash_at_publication,
+                ):
+                    with self.assertRaisesRegex(KeyboardInterrupt, "resume process crash"):
+                        resume_project(project)
+
+                self.assertEqual(3, len(seen_targets))
+                recovered = read_project_status(project)
+                self.assertEqual("BLOCKED", recovered["status"])
+                self.assertEqual("STORYBOARDED", recovered["blocked_from"])
+                self.assertEqual("image-capability-unavailable", recovered["blocked_reason"])
+                for relative, payload in before_targets.items():
+                    self.assertEqual(payload, (project / relative).read_bytes(), relative)
+                rolled_back_cache = read_json(project / "logs/stage-cache.json")
+                self.assertEqual(
+                    old_storyboard_digest,
+                    rolled_back_cache["stages"]["storyboard"]["artifacts"]["plan/storyboard.json"],
+                )
+                self.assertEqual(storyboard_bytes, (project / "plan/storyboard.json").read_bytes())
+                for relative, payload in preserved.items():
+                    self.assertEqual(payload, (project / relative).read_bytes(), relative)
+                self.assertEqual([], list((project / "logs/transactions").iterdir()))
+
+                result = resume_project(project)
+                self.assertEqual(
+                    {
+                        "status": "STORYBOARDED",
+                        "preserved": ["planning", "storyboard"],
+                        "invalidated": [
+                            "generation",
+                            "lettering",
+                            "composition",
+                            "export",
+                        ],
+                        "next_action": {"agent_required": "generation"},
+                    },
+                    result,
+                )
+                self._assert_one_recovered_generation(
+                    project,
+                    blocked_manifest=blocked_manifest,
+                    baseline_events=before_targets["logs/events.jsonl"],
+                    preserved=preserved,
+                )
+                refreshed_cache = read_json(project / "logs/stage-cache.json")
+                self.assertEqual(
+                    new_storyboard_digest,
+                    refreshed_cache["stages"]["storyboard"]["artifacts"]["plan/storyboard.json"],
+                )
+
+    def test_resume_committed_crash_preserves_new_generation_exactly_once(self):
+        attempt_paths = self._seed_consistent_generation_evidence()
+        block_project(
+            self.project,
+            "image-capability-unavailable",
+            "image capability unavailable",
+        )
+        manifest = read_json(self.project / "project.json")
+        manifest["capability"].update(
+            {
+                "detected_at": "2026-07-23T00:01:00Z",
+                "name": "restored-image-tool",
+                "status": "available",
+            }
+        )
+        atomic_write_json(self.project / "project.json", manifest)
+        blocked_manifest = read_json(self.project / "project.json")
+        baseline_events = (self.project / "logs/events.jsonl").read_bytes()
+        preserved = {
+            relative: (self.project / relative).read_bytes()
+            for relative in (
+                "plan/story-plan.json",
+                "plan/character-bible.json",
+                "plan/storyboard.json",
+                "references/characters/mira.png",
+                "panels/raw/p01-01.png",
+                "panels/clean/p01-01.png",
+                *attempt_paths,
+                "qa/panels/p01-01.json",
+                "logs/generation-counters.json",
+            )
+        }
+
+        def crash_before_cleanup(transaction):
+            self.assertEqual("resume-recovery", transaction.operation)
+            self.assertEqual(
+                ["logs/stage-cache.json", "logs/events.jsonl", "project.json"],
+                [entry["path"] for entry in transaction._journal],
+            )
+            for target in (
+                "logs/stage-cache.json",
+                "logs/events.jsonl",
+                "project.json",
+            ):
+                self.assertEqual(
+                    1,
+                    sum(entry["path"] == target for entry in transaction._journal),
+                    target,
+                )
+            transaction._phase = "publishing"
+            transaction._write_journal()
+            for entry in transaction._journal:
+                if entry.get("operation") == "append":
+                    transaction._apply_append(entry)
+                else:
+                    project_io.replace_contained(
+                        transaction.project_dir,
+                        entry["staged"],
+                        entry["path"],
+                    )
+                    project_io.fsync_directory((transaction.project_dir / entry["path"]).parent)
+            transaction._phase = "committed"
+            transaction._write_journal()
+            raise KeyboardInterrupt("simulated crash before transaction cleanup")
+
+        with patch.object(
+            project_io.ProjectTransaction,
+            "commit",
+            autospec=True,
+            side_effect=crash_before_cleanup,
+        ):
+            with self.assertRaisesRegex(KeyboardInterrupt, "before transaction cleanup"):
+                resume_project(self.project)
+
+        published = {
+            relative: (self.project / relative).read_bytes()
+            for relative in (
+                "project.json",
+                "logs/stage-cache.json",
+                "logs/events.jsonl",
+            )
+        }
+        self._assert_one_recovered_generation(
+            self.project,
+            blocked_manifest=blocked_manifest,
+            baseline_events=baseline_events,
+            preserved=preserved,
+        )
+        self.assertTrue(list((self.project / "logs/transactions").iterdir()))
+
+        recovered = read_project_status(self.project)
+        self.assertEqual("STORYBOARDED", recovered["status"])
+        for relative, payload in published.items():
+            self.assertEqual(payload, (self.project / relative).read_bytes(), relative)
+        self._assert_one_recovered_generation(
+            self.project,
+            blocked_manifest=blocked_manifest,
+            baseline_events=baseline_events,
+            preserved=preserved,
+        )
+        self.assertEqual([], list((self.project / "logs/transactions").iterdir()))
+
+        result = resume_project(self.project)
+        self.assertEqual("STORYBOARDED", result["status"])
+        for relative, payload in published.items():
+            self.assertEqual(payload, (self.project / relative).read_bytes(), relative)
+        self._assert_one_recovered_generation(
+            self.project,
+            blocked_manifest=blocked_manifest,
+            baseline_events=baseline_events,
+            preserved=preserved,
+        )
+
+    def test_resume_provenance_failure_leaves_project_blocked_byte_for_byte(self):
+        block_project(
+            self.project,
+            "image-capability-unavailable",
+            "image capability unavailable",
+        )
+        manifest = read_json(self.project / "project.json")
+        manifest["capability"].update(
+            {
+                "detected_at": "2026-07-23T00:01:00Z",
+                "name": "restored-image-tool",
+                "status": "available",
+            }
+        )
+        atomic_write_json(self.project / "project.json", manifest)
+        before = {
+            relative: (self.project / relative).read_bytes()
+            for relative in (
+                "project.json",
+                "logs/stage-cache.json",
+                "logs/events.jsonl",
+                "plan/story-plan.json",
+                "plan/character-bible.json",
+                "plan/storyboard.json",
+                "qa/panels/p01-01.json",
+            )
+        }
+        from scripts.comic_sol import _stage_output_files as stage_output_files
+
+        calls = 0
+
+        def fail_first_provenance_read(project_dir, stage, current_manifest):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise OSError("injected provenance read failure")
+            return stage_output_files(project_dir, stage, current_manifest)
+
+        with patch(
+            "scripts.comic_sol._stage_output_files",
+            side_effect=fail_first_provenance_read,
+        ):
+            with self.assertRaisesRegex(OSError, "provenance read failure"):
+                resume_project(self.project)
+
+        self.assertEqual(3, calls)
+        self.assertEqual("BLOCKED", read_json(self.project / "project.json")["status"])
+        for relative, payload in before.items():
+            self.assertEqual(payload, (self.project / relative).read_bytes(), relative)
+        self.assertEqual([], list((self.project / "logs/transactions").iterdir()))
+
     def test_resume_recovers_under_project_lock(self):
         block_project(
             self.project,
@@ -1886,16 +2330,16 @@ class BlockedRecoveryTests(unittest.TestCase):
             except BaseException as error:
                 contender_errors.append(error)
 
-        def pause_invalidation(project_dir, stage, tx):
+        def pause_invalidation(project_dir, stage, manifest, cache):
             entered.set()
             if not release.wait(timeout=5):
                 raise AssertionError("resume synchronization timed out")
-            return invalidate_locked(project_dir, stage, tx)
+            return invalidate_state_locked(project_dir, stage, manifest, cache)
 
-        from scripts.comic_sol import _invalidate_from_locked as invalidate_locked
+        from scripts.comic_sol import _invalidate_state_locked as invalidate_state_locked
 
         with patch(
-            "scripts.comic_sol._invalidate_from_locked",
+            "scripts.comic_sol._invalidate_state_locked",
             side_effect=pause_invalidation,
         ):
             worker = threading.Thread(target=lambda: resume_project(self.project))

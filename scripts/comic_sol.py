@@ -1219,6 +1219,15 @@ def _next_resume_action(project_dir: Path, stage: str | None) -> dict[str, str] 
     return {"command": shlex.join(str(part) for part in command)}
 
 
+def read_project_status(project_dir: Path) -> dict[str, object]:
+    """Recover interrupted publication, then read one consistent manifest."""
+    project_dir = Path(project_dir).resolve(strict=True)
+    manifest_path = contained_project_path(project_dir, "project.json", must_exist=True)
+    with ProjectLock(project_dir):
+        ProjectTransaction.recover(project_dir)
+        return read_project_manifest(manifest_path)
+
+
 def resume_project(
     project_dir: Path,
     *,
@@ -1318,41 +1327,76 @@ def _resume_project_locked(project_dir: Path, manifest_path: Path) -> dict[str, 
                 "invalidated": [],
                 "next_action": {"required": "image capability available"},
             }
-        if stale_stage is not None:
-            with ProjectTransaction(project_dir, "invalidate") as tx:
-                _invalidate_from_locked(project_dir, stale_stage, tx)
-        # Use the same rule as invalidate_from so a standalone `invalidate` and a
-        # `resume` that invalidates the same stage agree. They differ for the
-        # generation stage, whose invalidation preserves the canonical references.
-    if stale_stage is not None:
-        recovery_status = _post_invalidation_status(project_dir, stale_stage, str(blocked_from))
-    else:
-        recovery_status = STAGE_COMPLETION_STATUS[preserved[-1]] if preserved else "INIT"
-    with ProjectLock(project_dir):
-        manifest = read_project_manifest(manifest_path, normalize_legacy=False)
-        warnings = manifest.get("warnings")
-        if not isinstance(warnings, list):
-            warnings = []
-        manifest["warnings"] = [item for item in warnings if _warning_reason(item) != reason]
-        manifest["status"] = recovery_status
-        manifest["blocked_from"] = None
-        manifest["blocked_reason"] = None
-        manifest["updated_at"] = _utc_now()
-        atomic_write_json(manifest_path, manifest)
-        for stage in preserved:
-            try:
+
+        # Cache refresh/invalidation, reuse provenance, and the final manifest
+        # describe one recovered generation. Retain one journal across all
+        # staging so a failure or process interruption can expose only the old
+        # BLOCKED state or the complete recovered state after locked recovery.
+        with ProjectTransaction(project_dir, "resume-recovery") as tx:
+            cache_path = project_dir / STAGE_CACHE_PATH
+            cache, _ = _load_stage_cache(cache_path)
+            cached_stages = cache.get("stages")
+            if not isinstance(cached_stages, dict):
+                raise ValueError("stage cache stages must be an object")
+
+            # RESUME_STAGES and each stage output list are canonical. Snapshot
+            # every accepted output before staging any publication, then refresh
+            # preserved cache digests from those exact manifest-authorized bytes.
+            # Artifact files themselves remain untouched.
+            preserved_outputs: list[Path] = []
+            for stage in preserved:
+                entry = cached_stages.get(stage)
+                if not isinstance(entry, dict):
+                    raise ValueError(f"preserved stage cache entry is missing: {stage}")
                 outputs = _stage_output_files(project_dir, stage, manifest)
-            except (OSError, ValueError, json.JSONDecodeError):
-                continue
-            for output in outputs:
-                append_event(
-                    project_dir,
-                    "artifact.reused",
-                    {
-                        "artifact_path": output.relative_to(project_dir).as_posix(),
-                        "reused": True,
-                    },
+                entry["artifacts"] = {
+                    output.relative_to(project_dir).as_posix(): sha256_file(output)
+                    for output in outputs
+                }
+                preserved_outputs.extend(outputs)
+
+            if stale_stage is not None:
+                _invalidate_state_locked(project_dir, stale_stage, manifest, cache)
+                recovery_status = _post_invalidation_status(
+                    project_dir, stale_stage, str(blocked_from)
                 )
+            else:
+                recovery_status = STAGE_COMPLETION_STATUS[preserved[-1]] if preserved else "INIT"
+
+            # The cache is one publication target even when it is both refreshed
+            # upstream and invalidated downstream. Keep it before events and the
+            # manifest commit marker in the journal.
+            if cache_path.is_file() or preserved:
+                tx.stage_bytes(str(STAGE_CACHE_PATH), canonical_artifact_bytes(cache))
+
+            warnings = manifest.get("warnings")
+            if not isinstance(warnings, list):
+                warnings = []
+            manifest["warnings"] = [item for item in warnings if _warning_reason(item) != reason]
+            manifest["status"] = recovery_status
+            manifest["blocked_from"] = None
+            manifest["blocked_reason"] = None
+            manifest["updated_at"] = _utc_now()
+
+            # Reuse events use the same accepted output snapshot as the cache,
+            # preserving stable upstream-to-downstream provenance ordering.
+            for output in preserved_outputs:
+                tx.append_bytes(
+                    "logs/events.jsonl",
+                    canonical_event_record(
+                        "artifact.reused",
+                        {
+                            "artifact_path": output.relative_to(project_dir).as_posix(),
+                            "reused": True,
+                        },
+                    ),
+                    repair_torn_jsonl=True,
+                )
+
+            # The manifest is the commit marker and is deliberately staged once,
+            # after cache and event targets, in its final non-BLOCKED form.
+            tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
+
         return {
             "status": recovery_status,
             "preserved": preserved,
@@ -1399,14 +1443,17 @@ def _post_invalidation_status(project_dir: Path, stage: str, reached: str) -> st
     return _earlier_status(status, reached)
 
 
-def _invalidate_from_locked(project_dir: Path, stage: str, tx: ProjectTransaction) -> list[str]:
-    """Apply invalidation while the caller owns the project transaction lock."""
+def _invalidate_state_locked(
+    project_dir: Path,
+    stage: str,
+    manifest: dict[str, object],
+    cache: dict[str, object],
+) -> list[str]:
+    """Mutate invalidated manifest and cache state without staging targets."""
     if stage not in RESUME_STAGES:
         raise ValueError(f"unknown resume stage: {stage}")
-    manifest_path = project_dir / "project.json"
     start = RESUME_STAGES.index(stage)
     removed: list[str] = []
-    manifest = read_project_manifest(manifest_path, normalize_legacy=False)
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict):
         raise ValueError("manifest artifacts must be an object")
@@ -1417,17 +1464,26 @@ def _invalidate_from_locked(project_dir: Path, stage: str, tx: ProjectTransactio
         if owner is not None and RESUME_STAGES.index(owner) >= start:
             removed.append(name)
             del artifacts[name]
+
+    if (project_dir / STAGE_CACHE_PATH).is_file():
+        cached_stages = cache.get("stages")
+        if not isinstance(cached_stages, dict):
+            raise ValueError("stage cache stages must be an object")
+        for downstream in RESUME_STAGES[start:]:
+            cached_stages.pop(downstream, None)
+    return removed
+
+
+def _invalidate_from_locked(project_dir: Path, stage: str, tx: ProjectTransaction) -> list[str]:
+    """Apply standalone invalidation while the caller owns the transaction lock."""
+    manifest = read_project_manifest(project_dir / "project.json", normalize_legacy=False)
+    cache_path = project_dir / STAGE_CACHE_PATH
+    cache, _ = _load_stage_cache(cache_path)
+    removed = _invalidate_state_locked(project_dir, stage, manifest, cache)
+    if cache_path.is_file():
+        tx.stage_bytes(str(STAGE_CACHE_PATH), canonical_artifact_bytes(cache))
     manifest["status"] = _post_invalidation_status(project_dir, stage, str(manifest.get("status")))
     manifest["updated_at"] = _utc_now()
-
-    cache_path = project_dir / STAGE_CACHE_PATH
-    if cache_path.is_file():
-        cache, _ = _load_stage_cache(cache_path)
-        cached_stages = cache.get("stages")
-        if isinstance(cached_stages, dict):
-            for downstream in RESUME_STAGES[start:]:
-                cached_stages.pop(downstream, None)
-            tx.stage_bytes(str(STAGE_CACHE_PATH), canonical_artifact_bytes(cache))
     tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
     return removed
 
@@ -2175,6 +2231,7 @@ def finalize_project(
     caller_project_dir = Path(project_dir)
     project_dir = caller_project_dir.resolve(strict=True)
     with ProjectLock(project_dir, timeout=PROJECT_OPERATION_LOCK_TIMEOUT):
+        ProjectTransaction.recover(project_dir)
         if progress is not None:
             progress(
                 {
@@ -2427,7 +2484,7 @@ def main(argv: list[str] | None = None) -> int:
             manifest = transition(arguments.project_dir, arguments.target, arguments.warning)
             print(f"{manifest['project_id']}: {manifest['status']}")
         elif arguments.command == "status":
-            manifest = read_project_manifest(arguments.project_dir / "project.json")
+            manifest = read_project_status(arguments.project_dir)
             if arguments.as_json:
                 print(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
             else:

@@ -45,7 +45,7 @@ from .comic_sol import (
     record_generation_attempt,
     promote_attempt,
     record_override,
-    read_project_manifest,
+    read_project_status,
     validate_request_settings,
     IDENTIFIER,
 )
@@ -423,8 +423,7 @@ def comic_status(project_id: str) -> dict[str, Any]:
     _validate_project_id(project_id)
     project_dir = _resolve_project(project_id)
     try:
-        manifest = read_project_manifest(project_dir / "project.json")
-        return manifest
+        return read_project_status(project_dir)
     except Exception as e:
         raise _tool_error(e) from None
 
