@@ -78,6 +78,15 @@ diff two engine revisions:
 Deterministic benchmark runs prove pipeline and geometry mechanics only; they never
 substitute for the visual inspection required above.
 
+## Changing dependencies
+
+Every hash lock in `requirements/locks/` is generated from exactly one canonical input
+file in `requirements/`. To change a dependency, edit the `.in` file, then regenerate
+that family's locks **on each platform it ships** and review the three diffs together —
+the exact commands, the expected per-platform differences, and the review checklist are
+in [`requirements/README.md`](requirements/README.md). Never hand-edit a lock file, and
+never commit a lock that no longer carries its input and regeneration command header.
+
 The root `SKILL.md`, deterministic scripts, templates, fonts, and non-host-specific
 references are canonical. Synchronize and verify the self-contained plugin bundle with:
 

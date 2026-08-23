@@ -5,6 +5,43 @@
 `docs/releases/milestone-delivery.md` records what each milestone delivered and which tag
 carries it.
 
+### Security
+
+- Completed the supply-chain provenance gap from issue #211. The complete release subject
+  set and trust chain is now defined in `docs/releases/release-trust-chain.md`: every payload
+  named by the signed `SHA256SUMS` with a build-provenance attestation, the manifest and its
+  Sigstore bundle bound through `candidate-identity.json`, and the qualification order of
+  verification. Release qualification now downloads the published candidate identity on every
+  platform leg and verifies, together with its inputs, the tag, the exact candidate commit,
+  the manifest and signature-bundle digests, and each downloaded payload digest — so the
+  wheel, sdist, every native archive, both installers, and the container tar are checked
+  against both the attestation and the identity record, not either alone.
+
+- Documented an external pre-execution verification path for `install.sh` and `install.ps1`
+  in `docs/install.md`: verify the Sigstore bundle over `SHA256SUMS`, confirm the installer's
+  own digest appears in the signed manifest, and optionally verify its build-provenance
+  attestation with `gh attestation verify` before executing any installer code. Also fixed
+  the doubled backslashes in the existing manual `cosign verify-blob` example.
+
+- Recorded the OCI distribution decision: OCI is an official channel delivered as the
+  attested `comic-sol-<version>-linux-x86_64.container.tar` release asset, not a registry
+  image. `docs/install.md` now shows loading and running the verified asset, and the trust
+  chain document records what a registry distribution would additionally require before
+  that decision can change.
+
+- Added canonical inputs and reproducible regeneration commands for every dependency lock:
+  `requirements/{base,runtime,release}.in` join the existing `audit.in`/`quality.in`, each
+  lock header now names its input and command, and `requirements/README.md` documents the
+  per-platform regeneration procedure with pip-tools 7.6.1 (`--strip-extras` is required)
+  and the required cross-platform diff review. `tests/test_lock_provenance.py` runs on every
+  platform and fails when a lock loses a direct pin, disagrees across platforms, or stops
+  documenting its provenance.
+
+- Added `docs/releases/rollback-runbook.md`: step-by-step withdrawal/yank and rollback
+  procedures that preserve immutable evidence — title/notes-only edits, evidence capture
+  before any mutation, tag-retaining release-entry removal, deployment-state marking, and
+  verification of the fallback release — linked from the stable criteria and install docs.
+
 ### Fixed
 
 - Reconciled the release and project-schema documentation with implementation authorities.

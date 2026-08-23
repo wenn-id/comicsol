@@ -48,6 +48,14 @@ the `main` branch. Changes to `main` require an independent approving review,
 dismiss stale approvals, and keep the existing required CI checks and
 conversation-resolution rule.
 
+Release supply-chain integrity — the complete subject set, the Sigstore-signed
+checksum manifest, build-provenance attestations, and the qualification steps
+that bind tag, commit, workflow identity, and artifact digests together — is
+defined in
+[`docs/releases/release-trust-chain.md`](docs/releases/release-trust-chain.md).
+Dependency locks are generated from canonical inputs under `requirements/` with
+the reproducible commands in `requirements/README.md`.
+
 All third-party GitHub Actions are pinned to full commit SHAs. If an action
 cannot be pinned, the pull request must document the action, the reason, the
 owner responsible for the exception, and an expiry date before merge.

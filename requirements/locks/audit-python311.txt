@@ -3,7 +3,7 @@
 # Generator: pip-tools==7.6.1
 # by the following command:
 #
-#    pip-compile --allow-unsafe --generate-hashes --output-file=requirements/locks/audit-python311.txt requirements/audit.in
+#    pip-compile --allow-unsafe --generate-hashes --strip-extras --output-file=requirements/locks/audit-python311.txt requirements/audit.in
 #
 boolean-py==5.0 \
     --hash=sha256:60cbc4bad079753721d32649545505362c754e121570ada4658b852a3a318d95 \

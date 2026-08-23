@@ -1,3 +1,4 @@
-# Regenerate with pip-tools==7.6.1:
-# python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/audit-python311.txt requirements/audit.in
+# Canonical input for requirements/locks/audit-python311.txt.
+# Regenerate with pip-tools==7.6.1 (see requirements/README.md):
+# python -m piptools compile --allow-unsafe --generate-hashes --strip-extras --output-file=requirements/locks/audit-python311.txt requirements/audit.in
 pip-audit==2.10.1

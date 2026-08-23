@@ -103,6 +103,8 @@ jobs:
             --pattern "$INSTALLER" \
             --pattern "$metadata" \
             --pattern "$sbom" \
+            --pattern candidate-identity.json \
+            --pattern candidate-identity.json.sha256 \
             --dir qualification
           test -s "qualification/$archive"
           test -s qualification/SHA256SUMS
@@ -110,6 +112,57 @@ jobs:
           test -s "qualification/$INSTALLER"
           test -s "qualification/$metadata"
           test -s "qualification/$sbom"
+          test -s qualification/candidate-identity.json
+          test -s qualification/candidate-identity.json.sha256
+      - name: Bind signed manifest and signature bundle to the candidate identity
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+          INSTALLER: ${{ matrix.installer }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("qualification")
+          version = os.environ["RELEASE_TAG"][1:]
+          identity_bytes = (root / "candidate-identity.json").read_bytes()
+          sidecar = (root / "candidate-identity.json.sha256").read_text(encoding="utf-8").split()
+          if sidecar[:1] != [hashlib.sha256(identity_bytes).hexdigest()]:
+              raise RuntimeError("candidate identity sidecar digest mismatch")
+          identity = json.loads(identity_bytes)
+          if identity.get("tag") != os.environ["RELEASE_TAG"]:
+              raise RuntimeError("candidate identity tag does not match qualification input")
+          if identity.get("candidate_commit") != os.environ["CANDIDATE_SHA"]:
+              raise RuntimeError("candidate identity commit does not match qualification input")
+          manifest = root / "SHA256SUMS"
+          if hashlib.sha256(manifest.read_bytes()).hexdigest() != identity["checksum_manifest"]["sha256"]:
+              raise RuntimeError("published checksum manifest does not match candidate identity")
+          recorded = {
+              item["name"]: item["sha256"]
+              for item in [*identity["supporting_assets"], *identity["payloads"]]
+          }
+          for name in ("SHA256SUMS", "SHA256SUMS.sigstore.json"):
+              actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+              if actual != recorded[name]:
+                  raise RuntimeError(f"supporting evidence digest mismatch: {name}")
+          stem = f"comic-sol-{version}-{os.environ['PLATFORM']}-{os.environ['ARCH']}"
+          for name in (
+              f"{stem}.zip",
+              f"{stem}.metadata.json",
+              f"{stem}.sbom.json",
+              os.environ["INSTALLER"],
+          ):
+              actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+              if actual != recorded[name]:
+                  raise RuntimeError(f"published payload does not match candidate identity: {name}")
+          PY
       - name: Verify build provenance for the published native payloads
         shell: bash
         env:
@@ -179,6 +232,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.candidate_sha }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11.9'
       - name: Download published Linux release asset
         shell: bash
         env:
@@ -200,7 +256,51 @@ jobs:
             --pattern install.sh \
             --pattern "$metadata" \
             --pattern "$sbom" \
+            --pattern candidate-identity.json \
+            --pattern candidate-identity.json.sha256 \
             --dir qualification
+      - name: Bind signed manifest and signature bundle to the candidate identity
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          ARCH: x86_64
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("qualification")
+          version = os.environ["RELEASE_TAG"][1:]
+          identity_bytes = (root / "candidate-identity.json").read_bytes()
+          sidecar = (root / "candidate-identity.json.sha256").read_text(encoding="utf-8").split()
+          if sidecar[:1] != [hashlib.sha256(identity_bytes).hexdigest()]:
+              raise RuntimeError("candidate identity sidecar digest mismatch")
+          identity = json.loads(identity_bytes)
+          if identity.get("tag") != os.environ["RELEASE_TAG"]:
+              raise RuntimeError("candidate identity tag does not match qualification input")
+          if identity.get("candidate_commit") != os.environ["CANDIDATE_SHA"]:
+              raise RuntimeError("candidate identity commit does not match qualification input")
+          manifest = root / "SHA256SUMS"
+          if hashlib.sha256(manifest.read_bytes()).hexdigest() != identity["checksum_manifest"]["sha256"]:
+              raise RuntimeError("published checksum manifest does not match candidate identity")
+          recorded = {
+              item["name"]: item["sha256"]
+              for item in [*identity["supporting_assets"], *identity["payloads"]]
+          }
+          for name in (
+              "SHA256SUMS",
+              "SHA256SUMS.sigstore.json",
+              f"comic-sol-{version}-linux-{os.environ['ARCH']}.zip",
+              "install.sh",
+          ):
+              actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+              if actual != recorded[name]:
+                  raise RuntimeError(f"published bytes do not match candidate identity: {name}")
+          PY
       - name: Install cosign verifier
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
         with:
@@ -306,7 +406,53 @@ jobs:
             --pattern '*.whl' --pattern '*.tar.gz' --pattern '*.container.tar' \
             --pattern install.sh --pattern install.ps1 \
             --pattern SHA256SUMS --pattern SHA256SUMS.sigstore.json \
+            --pattern candidate-identity.json --pattern candidate-identity.json.sha256 \
             --dir qualification
+      - name: Bind signed manifest and signature bundle to the candidate identity
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("qualification")
+          identity_bytes = (root / "candidate-identity.json").read_bytes()
+          sidecar = (root / "candidate-identity.json.sha256").read_text(encoding="utf-8").split()
+          if sidecar[:1] != [hashlib.sha256(identity_bytes).hexdigest()]:
+              raise RuntimeError("candidate identity sidecar digest mismatch")
+          identity = json.loads(identity_bytes)
+          if identity.get("tag") != os.environ["RELEASE_TAG"]:
+              raise RuntimeError("candidate identity tag does not match qualification input")
+          if identity.get("candidate_commit") != os.environ["CANDIDATE_SHA"]:
+              raise RuntimeError("candidate identity commit does not match qualification input")
+          if hashlib.sha256((root / "SHA256SUMS").read_bytes()).hexdigest() != identity["checksum_manifest"]["sha256"]:
+              raise RuntimeError("published checksum manifest does not match candidate identity")
+          recorded = {
+              item["name"]: item["sha256"]
+              for item in [*identity["supporting_assets"], *identity["payloads"]]
+          }
+          payload_names = sorted(
+              path.name
+              for path in root.iterdir()
+              if path.name
+              not in {
+                  "SHA256SUMS",
+                  "SHA256SUMS.sigstore.json",
+                  "candidate-identity.json",
+                  "candidate-identity.json.sha256",
+              }
+          )
+          for name in payload_names:
+              actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+              if actual != recorded.get(name):
+                  raise RuntimeError(f"published bytes do not match candidate identity: {name}")
+          PY
       - name: Install locked release and audit tools
         shell: bash
         run: |
@@ -426,6 +572,8 @@ jobs:
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern candidate-identity.json \
             --pattern candidate-identity.json.sha256 \
+            --pattern SHA256SUMS \
+            --pattern SHA256SUMS.sigstore.json \
             --dir qualification-identity
           (cd qualification-identity && sha256sum -c candidate-identity.json.sha256)
           # The harness emits RELEASE READY or RELEASE BLOCKED and exits non-zero when blocked.
@@ -434,17 +582,30 @@ jobs:
             --aggregate-output qualification/release-summary.json \
             --require-source
           python - <<'PY'
+          import hashlib
           import json
           import os
           from pathlib import Path
 
-          identity = json.loads(
-              Path("qualification-identity/candidate-identity.json").read_text(encoding="utf-8")
-          )
+          identity_path = Path("qualification-identity/candidate-identity.json")
+          identity = json.loads(identity_path.read_text(encoding="utf-8"))
           if identity.get("tag") != os.environ["RELEASE_TAG"]:
               raise RuntimeError("candidate identity tag does not match qualification input")
           if identity.get("candidate_commit") != os.environ["CANDIDATE_SHA"]:
               raise RuntimeError("candidate identity commit does not match qualification input")
+          manifest = Path("qualification-identity/SHA256SUMS")
+          if hashlib.sha256(manifest.read_bytes()).hexdigest() != identity["checksum_manifest"]["sha256"]:
+              raise RuntimeError("published checksum manifest does not match candidate identity")
+          recorded = {
+              item["name"]: item["sha256"]
+              for item in [*identity["supporting_assets"], *identity["payloads"]]
+          }
+          for name in ("SHA256SUMS", "SHA256SUMS.sigstore.json"):
+              actual = hashlib.sha256(
+                  (Path("qualification-identity") / name).read_bytes()
+              ).hexdigest()
+              if actual != recorded[name]:
+                  raise RuntimeError(f"supporting evidence digest mismatch: {name}")
           path = Path("qualification/release-summary.json")
           summary = json.loads(path.read_text(encoding="utf-8"))
           summary["candidate"] = {
