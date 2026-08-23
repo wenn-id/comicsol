@@ -448,10 +448,13 @@ class SupplyChainProvenanceContractTests(unittest.TestCase):
             "sha256sum -c -",
             "must not be executed",
             "release page",
+            "not the `installers/` paths from a repository checkout",
         ):
             self.assertIn(phrase, section)
-        self.assertIn("installers/install.ps1", section)
-        self.assertIn("installers/install.sh", section)
+        # The attestation commands must target the downloaded release-asset
+        # file names, which exist in the download directory.
+        self.assertIn("gh attestation verify ./install.sh", section)
+        self.assertIn(".\\install.ps1", section)
         # The manual cosign example must stay executable: no doubled backslashes.
         self.assertNotIn("\\\\", self.install)
 
@@ -463,13 +466,19 @@ class SupplyChainProvenanceContractTests(unittest.TestCase):
             "WITHDRAWN",
             "ROLLED BACK",
             "candidate-identity.json",
-            "--method DELETE",
             "--method PATCH",
             "blocked",
             "must not imply those systems were yanked",
             "fresh version and tag",
+            "never delete the release yourself",
+            "removes GitHub's immutable-release binding",
+            "administrator-only escalation",
+            "rulesets?includes_parents=true",
         ):
             self.assertIn(phrase, collapsed)
+        # Deleting an immutable release is an escalation path guarded by the tag
+        # ruleset, never a documented standard withdrawal command.
+        self.assertNotIn("--method DELETE", self.runbook)
         for document_text in (self.criteria, self.install, self.readme):
             self.assertIn("rollback-runbook.md", document_text)
         self.assertIn("release-trust-chain.md", self.criteria)
@@ -490,6 +499,23 @@ class SupplyChainProvenanceContractTests(unittest.TestCase):
             "supporting evidence digest mismatch",
         ):
             self.assertIn(phrase, workflow)
+
+    def test_source_payload_checksum_filter_excludes_manifest_and_identity_files(self):
+        """SHA256SUMS names neither itself nor the identity files; the filter must match.
+
+        Regression test: the source leg passes every downloaded file except the
+        four excluded names to verify_payload_checksums, which fails coverage
+        when a file absent from the manifest is included.
+        """
+        workflow = self.qualification_workflow
+        filter_block = workflow.split("verify_payload_checksums", 1)[1].split("PY", 1)[0]
+        for name in (
+            "SHA256SUMS",
+            "SHA256SUMS.sigstore.json",
+            "candidate-identity.json",
+            "candidate-identity.json.sha256",
+        ):
+            self.assertIn(f'"{name}"', filter_block)
 
     def test_stable_criteria_gate_the_new_provenance_requirements(self):
         criteria = self.criteria

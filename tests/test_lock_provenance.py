@@ -3,11 +3,11 @@
 The acceptance criteria behind these tests come from the supply-chain audit: no
 generated dependency lock may exist without a canonical input manifest and a
 reproducible regeneration command, and the same family of locks must agree
-about every pinned version across platforms. The tests are offline; they prove
-the recorded provenance is internally consistent, not that a fresh pip-compile
-run reproduces each committed lock byte-for-byte (the resolver moves as indexes
-change — the cross-platform regeneration procedure is documented in
-requirements/README.md).
+about package sets and pinned versions across platforms. The tests are
+offline; they prove the recorded provenance is internally consistent, not that
+a fresh pip-compile run reproduces each committed lock byte-for-byte (the
+resolver moves as indexes change — the cross-platform regeneration procedure
+is documented in requirements/README.md).
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIREMENTS = ROOT / "requirements"
 LOCKS = REQUIREMENTS / "locks"
 PLATFORMS = ("linux", "macos", "windows")
-REGENERATION_FLAG_ORDER = (
+REGENERATION_FLAGS = (
     "--allow-unsafe",
     "--generate-hashes",
     "--strip-extras",
@@ -33,6 +33,19 @@ FAMILY_INPUTS = {
     "release": "release.in",
     "quality": "quality.in",
     "audit": "audit.in",
+}
+
+# Marker-gated transitive packages each platform may add to the release lock
+# and (for windows) the runtime lock. Everything else must be portable.
+RELEASE_MARKER_PACKAGES = {
+    "linux": frozenset(),
+    "macos": frozenset({"macholib"}),
+    "windows": frozenset({"colorama", "pefile", "pywin32", "pywin32-ctypes"}),
+}
+RUNTIME_MARKER_PACKAGES = {
+    "linux": frozenset(),
+    "macos": frozenset(),
+    "windows": frozenset({"colorama", "pywin32"}),
 }
 
 
@@ -66,6 +79,47 @@ def body_pins(path: Path) -> dict[str, str]:
     return pins
 
 
+def assert_family_agrees(
+    test: unittest.TestCase,
+    family: str,
+    marker_packages: dict[str, frozenset[str]] | None = None,
+) -> None:
+    """Compare complete package sets and versions across one family's locks.
+
+    A platform lock may add only its documented marker packages; a surplus or
+    missing package anywhere else, or any shared package pinned to different
+    versions, fails. Comparing the complete sets (not just shared names) is
+    what stops a platform from quietly accumulating extra dependencies.
+    """
+    with test.subTest(family=family):
+        locks = lock_paths(family)
+        reference = body_pins(locks[0])
+        for index, lock in enumerate(locks[1:], start=1):
+            pins = body_pins(lock)
+            platform = PLATFORMS[index] if family in {"base", "runtime", "release"} else "linux"
+            allowed = (marker_packages or {}).get(platform, frozenset())
+            surplus = set(pins) - set(reference) - allowed
+            test.assertFalse(
+                surplus,
+                f"{lock.name} added packages beyond the portable set and "
+                f"documented markers: {sorted(surplus)}",
+            )
+            missing = set(reference) - set(pins)
+            test.assertFalse(
+                missing,
+                f"{lock.name} lost portable packages: {sorted(missing)}",
+            )
+            differing = {
+                name
+                for name, version in pins.items()
+                if name in reference and version != reference[name]
+            }
+            test.assertFalse(
+                differing,
+                f"{lock.name} disagrees with {locks[0].name} on {sorted(differing)}",
+            )
+
+
 class LockProvenanceTests(unittest.TestCase):
     def test_every_lock_family_has_a_canonical_input(self):
         for family, input_name in FAMILY_INPUTS.items():
@@ -79,9 +133,12 @@ class LockProvenanceTests(unittest.TestCase):
             for lock in lock_paths(family):
                 with self.subTest(lock=lock.name):
                     text = lock.read_text(encoding="utf-8")
+                    # pip-compile 7.6.1 writes this exact header line; keep the
+                    # committed header identical to what regeneration produces.
                     command = (
-                        f"pip-compile --allow-unsafe --generate-hashes --strip-extras "
-                        f"--output-file=requirements/locks/{lock.name} requirements/{input_name}"
+                        f"pip-compile --allow-unsafe --generate-hashes "
+                        f"--output-file=requirements/locks/{lock.name} "
+                        f"--strip-extras requirements/{input_name}"
                     )
                     self.assertIn(command, text)
                     position = text.find(command)
@@ -95,24 +152,18 @@ class LockProvenanceTests(unittest.TestCase):
                     text = (REQUIREMENTS / input_name).read_text(encoding="utf-8")
                     command = (
                         f"python -m piptools compile --allow-unsafe --generate-hashes "
-                        f"--strip-extras "
-                        f"--output-file=requirements/locks/{lock.name} requirements/{input_name}"
+                        f"--output-file=requirements/locks/{lock.name} "
+                        f"--strip-extras requirements/{input_name}"
                     )
                     self.assertIn(command, text)
 
-    def test_regeneration_command_keeps_flag_order_stable(self):
-        """A reordered flag set would make documented commands diverge from pip-compile headers."""
-        flags = list(REGENERATION_FLAG_ORDER)
+    def test_regeneration_command_flags_are_all_present(self):
         for family in FAMILY_INPUTS:
             for lock in lock_paths(family):
                 with self.subTest(lock=lock.name):
                     text = lock.read_text(encoding="utf-8")
-                    positions = [text.find(flag) for flag in flags]
-                    self.assertTrue(
-                        all(position >= 0 for position in positions),
-                        f"{lock.name} is missing a regeneration flag",
-                    )
-                    self.assertEqual(positions, sorted(positions), f"{lock.name} reorders flags")
+                    for flag in REGENERATION_FLAGS:
+                        self.assertIn(flag, text, f"{lock.name} is missing {flag}")
 
     def test_every_direct_input_pin_is_locked_identically_in_every_family_lock(self):
         for family, input_name in FAMILY_INPUTS.items():
@@ -128,45 +179,35 @@ class LockProvenanceTests(unittest.TestCase):
                             f"{lock.name} must lock {name}=={version} from {input_name}",
                         )
 
-    def test_portable_families_agree_on_versions_across_platforms(self):
-        """base and runtime environments are portable: their locks must not drift apart."""
-        for family in ("base", "runtime", "quality", "audit"):
-            with self.subTest(family=family):
-                reference: dict[str, str] | None = None
-                reference_name = ""
-                for lock in lock_paths(family):
-                    pins = body_pins(lock)
-                    if reference is None:
-                        reference, reference_name = pins, lock.name
-                        continue
-                    differing = {
-                        name for name in reference if name in pins and pins[name] != reference[name]
-                    }
-                    self.assertFalse(
-                        differing,
-                        f"{lock.name} disagrees with {reference_name} on {sorted(differing)}",
-                    )
+    def test_no_lock_carries_extras_qualified_pins(self):
+        """--strip-extras is canonical: an extras pin means a stale or hand-edited lock."""
+        for family in FAMILY_INPUTS:
+            for lock in lock_paths(family):
+                with self.subTest(lock=lock.name):
+                    for line in lock.read_text(encoding="utf-8").splitlines():
+                        if line.startswith("#"):
+                            continue
+                        self.assertNotRegex(
+                            line,
+                            r"^[A-Za-z0-9][A-Za-z0-9._-]*\[[^]]+\]==",
+                            f"{lock.name} still carries an extras-qualified pin; "
+                            f"regenerate with --strip-extras",
+                        )
+
+    def test_base_locks_are_identical_across_platforms(self):
+        """The bootstrap environment is fully portable: no platform may add anything."""
+        assert_family_agrees(self, "base")
+
+    def test_runtime_locks_differ_only_by_documented_windows_markers(self):
+        assert_family_agrees(self, "runtime", RUNTIME_MARKER_PACKAGES)
 
     def test_release_locks_differ_only_by_environment_marker_packages(self):
-        """Platform-specific transitive packages must stay on their own platform only."""
-        marker_packages = {
-            "linux": set(),
-            "macos": {"macholib"},
-            "windows": {"colorama", "pefile", "pywin32", "pywin32-ctypes"},
-        }
-        pins = {lock.name: body_pins(lock) for lock in lock_paths("release")}
-        by_platform = {platform: pins[f"release-{platform}-x86_64.txt"] for platform in PLATFORMS}
-        for platform, expected_only in marker_packages.items():
-            own = set(by_platform[platform])
-            for other, other_pins in by_platform.items():
-                if other == platform:
-                    continue
-                leaked = own - set(other_pins) - expected_only
-                self.assertFalse(
-                    leaked,
-                    f"{platform} lock gained packages that are neither portable "
-                    f"nor documented as {platform}-only: {sorted(leaked)}",
-                )
+        assert_family_agrees(self, "release", RELEASE_MARKER_PACKAGES)
+
+    def test_single_platform_families_exist(self):
+        for family in ("quality", "audit"):
+            with self.subTest(family=family):
+                self.assertEqual(len(lock_paths(family)), 1)
 
 
 if __name__ == "__main__":

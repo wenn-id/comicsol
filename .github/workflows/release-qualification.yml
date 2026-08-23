@@ -481,9 +481,19 @@ jobs:
           from pathlib import Path
           from scripts.release_qualification import verify_payload_checksums
           root = Path("qualification")
+          # SHA256SUMS predates the candidate identity files, so the manifest
+          # deliberately names neither them nor itself; exclude all four from
+          # the coverage check. The dedicated candidate-identity step binds
+          # the identity files and both manifest artifacts by digest.
           payloads = sorted(
               path for path in root.iterdir()
-              if path.name not in {"SHA256SUMS", "SHA256SUMS.sigstore.json"}
+              if path.name
+              not in {
+                  "SHA256SUMS",
+                  "SHA256SUMS.sigstore.json",
+                  "candidate-identity.json",
+                  "candidate-identity.json.sha256",
+              }
           )
           verify_payload_checksums(root / "SHA256SUMS", payloads)
           PY

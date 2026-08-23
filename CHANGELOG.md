@@ -15,7 +15,10 @@ carries it.
   platform leg and verifies, together with its inputs, the tag, the exact candidate commit,
   the manifest and signature-bundle digests, and each downloaded payload digest — so the
   wheel, sdist, every native archive, both installers, and the container tar are checked
-  against both the attestation and the identity record, not either alone.
+  against both the attestation and the identity record, not either alone. The source leg's
+  manifest coverage check excludes the manifest itself, its Sigstore bundle, and both
+  candidate-identity files — the four files `SHA256SUMS` deliberately does not name — with
+  a functional regression test pinning that filter contract.
 
 - Documented an external pre-execution verification path for `install.sh` and `install.ps1`
   in `docs/install.md`: verify the Sigstore bundle over `SHA256SUMS`, confirm the installer's
@@ -39,8 +42,16 @@ carries it.
 
 - Added `docs/releases/rollback-runbook.md`: step-by-step withdrawal/yank and rollback
   procedures that preserve immutable evidence — title/notes-only edits, evidence capture
-  before any mutation, tag-retaining release-entry removal, deployment-state marking, and
-  verification of the fallback release — linked from the stable criteria and install docs.
+  before any mutation, deployment-state marking, and verification of the fallback release.
+  Removing a public release entry is an administrator-only escalation guarded by the active
+  tag ruleset (deleting an immutable release removes GitHub's immutable-release tag
+  binding), never a standard withdrawal step. Linked from the stable criteria and install
+  docs.
+
+- Regenerated `requirements/locks/audit-python311.txt` with the documented pip-tools
+  7.6.1 command so it matches its canonical provenance: `cachecontrol[filecache]==0.14.4`
+  became the extras-stripped `cachecontrol==0.14.4`; all pins and hashes are otherwise
+  unchanged, and a regression test now rejects extras-qualified pins in every lock.
 
 ### Fixed
 

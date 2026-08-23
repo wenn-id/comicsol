@@ -49,15 +49,15 @@ This release uses a keyless Sigstore signature for `SHA256SUMS`; it is not Authe
    (Get-FileHash .\install.ps1 -Algorithm SHA256).Hash.ToLower()
    ```
 
-4. Optionally verify the installer's build provenance with the GitHub CLI (`gh auth login` once):
+4. Optionally verify the installer's build provenance with the GitHub CLI (`gh auth login` once), using the downloaded release-asset file names — `install.sh` and `install.ps1`, not the `installers/` paths from a repository checkout:
 
    ```bash
-   gh attestation verify installers/install.sh \
+   gh attestation verify ./install.sh \
      --repo wenn-id/comicsol \
      --signer-workflow wenn-id/comicsol/.github/workflows/release.yml
    ```
 
-   The same command with `installers/install.ps1` verifies the PowerShell installer.
+   The same command with `.\install.ps1` verifies the PowerShell installer.
 
 5. Read the installer, then run it with the commands below.
 

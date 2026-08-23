@@ -212,6 +212,58 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "SHA256 mismatch"):
                 verify_payload_checksums(manifest, payloads)
 
+    def test_verify_payload_checksums_with_candidate_identity_files_present(self):
+        """The source-job filter must exclude the identity files from payloads.
+
+        SHA256SUMS is generated before candidate-identity.json exists, so the
+        manifest deliberately has no entries for the identity files, its
+        sidecar, or itself. Passing them as payloads would fail the coverage
+        check, so the workflow filters exactly these four names out and binds
+        them by digest in the dedicated candidate-identity step instead.
+        """
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            payloads = []
+            for name, content in (
+                ("comic-sol-1.0.0-py3-none-any.whl", b"wheel"),
+                ("comic-sol-1.0.0.tar.gz", b"sdist"),
+                ("comic-sol-1.0.0-linux-x86_64.container.tar", b"image"),
+                ("install.sh", b"#!/bin/sh\n"),
+                ("install.ps1", b"pwsh\n"),
+            ):
+                path = root / name
+                path.write_bytes(content)
+                payloads.append(path)
+            manifest = root / "SHA256SUMS"
+            manifest.write_text(
+                "".join(
+                    f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+                    for path in payloads
+                ),
+                encoding="utf-8",
+            )
+            for name in (
+                "SHA256SUMS.sigstore.json",
+                "candidate-identity.json",
+                "candidate-identity.json.sha256",
+            ):
+                (root / name).write_bytes(b"supporting evidence\n")
+
+            excluded = {
+                "SHA256SUMS",
+                "SHA256SUMS.sigstore.json",
+                "candidate-identity.json",
+                "candidate-identity.json.sha256",
+            }
+            filtered = [path for path in sorted(root.iterdir()) if path.name not in excluded]
+            self.assertEqual(5, verify_payload_checksums(manifest, filtered))
+
+            everything = [path for path in sorted(root.iterdir()) if path.name != "SHA256SUMS"]
+            with self.assertRaisesRegex(RuntimeError, "payload coverage mismatch"):
+                verify_payload_checksums(manifest, everything)
+
     def test_verify_payload_checksums_rejects_duplicate_global_manifest_names(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

@@ -1,8 +1,8 @@
 # Canonical input for requirements/locks/release-<platform>-x86_64.txt.
 # Regenerate with pip-tools==7.6.1 on the target platform (see requirements/README.md):
-# python -m piptools compile --allow-unsafe --generate-hashes --strip-extras --output-file=requirements/locks/release-linux-x86_64.txt requirements/release.in
-# python -m piptools compile --allow-unsafe --generate-hashes --strip-extras --output-file=requirements/locks/release-macos-x86_64.txt requirements/release.in
-# python -m piptools compile --allow-unsafe --generate-hashes --strip-extras --output-file=requirements/locks/release-windows-x86_64.txt requirements/release.in
+# python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/release-linux-x86_64.txt --strip-extras requirements/release.in
+# python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/release-macos-x86_64.txt --strip-extras requirements/release.in
+# python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/release-windows-x86_64.txt --strip-extras requirements/release.in
 #
 # The frozen release environment: python-build for wheel/sdist builds,
 # pyinstaller for the portable runtime, cyclonedx-bom for SBOM generation,

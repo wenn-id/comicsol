@@ -1,8 +1,8 @@
 # Canonical input for requirements/locks/base-<platform>-x86_64.txt.
 # Regenerate with pip-tools==7.6.1 on the target platform (see requirements/README.md):
-# python -m piptools compile --allow-unsafe --generate-hashes --strip-extras --output-file=requirements/locks/base-linux-x86_64.txt requirements/base.in
-# python -m piptools compile --allow-unsafe --generate-hashes --strip-extras --output-file=requirements/locks/base-macos-x86_64.txt requirements/base.in
-# python -m piptools compile --allow-unsafe --generate-hashes --strip-extras --output-file=requirements/locks/base-windows-x86_64.txt requirements/base.in
+# python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/base-linux-x86_64.txt --strip-extras requirements/base.in
+# python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/base-macos-x86_64.txt --strip-extras requirements/base.in
+# python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/base-windows-x86_64.txt --strip-extras requirements/base.in
 #
 # pillow is the product runtime dependency from pyproject.toml. pip is pinned
 # explicitly so the interpreter that later performs --require-hashes installs is

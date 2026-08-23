@@ -39,15 +39,20 @@ qualification failure discovered after publication, or a security report).
    `withdrawn-notes.md` must state: the reason, the incident link, that all
    bytes remain published for audit, that the tag is not reused, and which
    version users should install instead (or that none exists yet).
-4. **If mere annotation is insufficient**, remove the public release entry while
-   retaining the immutable evidence:
+4. **If annotation is insufficient, escalate — never delete the release yourself.**
+   Deleting an immutable release removes GitHub's immutable-release binding between
+   that release and its tag, which re-enables tag deletion that only the separately
+   configured tag ruleset then prevents. Removing a public release entry is therefore
+   an administrator-only escalation: confirm the active `refs/tags/v*` ruleset
+   restricting updates and deletions is enforced before and after the action, perform
+   the removal under that recorded review, and capture the API audit trail. The tag
+   itself is never deleted, so the attestations, the Sigstore identity, and the run
+   evidence remain verifiable against it.
    ```bash
-   gh api "repos/wenn-id/comicsol/releases/<id>" --method DELETE
+   # Escalation precondition: an active tag ruleset must still restrict deletions.
+   gh api "repos/wenn-id/comicsol/rulesets?includes_parents=true&per_page=100" \
+     --jq '.[] | select(.target == "tag" and .enforcement == "active") | .id'
    ```
-   This hides the release page; **it must never be accompanied by tag deletion**
-   (`git push --delete` / ruleset bypass). The protected tag keeps pointing at
-   the candidate commit so the attestations, the Sigstore identity, and the run
-   evidence remain verifiable against it forever.
 5. **Mark the deployment state** if promotion had already happened: set the
    `release-production` deployment for that commit to `blocked`/`inactive`
    through an API status that links the incident, so the audit trail shows the
