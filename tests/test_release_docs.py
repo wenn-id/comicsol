@@ -360,6 +360,173 @@ class ReleaseDocumentationTests(unittest.TestCase):
         self.assertNotIn("The prerelease also includes:", self.notes)
 
 
+class SupplyChainProvenanceContractTests(unittest.TestCase):
+    """Keep the #211 supply-chain deliverables from silently regressing.
+
+    The trust chain document, the installer bootstrap verification section, the
+    rollback runbook, and the qualification-side candidate-identity binding are
+    release-gate properties; these checks keep them linked and named exactly.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(__file__).resolve().parents[1]
+        cls.install = (cls.root / "docs/install.md").read_text(encoding="utf-8")
+        cls.trust_chain = (cls.root / "docs/releases/release-trust-chain.md").read_text(
+            encoding="utf-8"
+        )
+        cls.runbook = (cls.root / "docs/releases/rollback-runbook.md").read_text(encoding="utf-8")
+        cls.criteria = (cls.root / "docs/releases/v2.0-stable-criteria.md").read_text(
+            encoding="utf-8"
+        )
+        cls.qualification_workflow = (
+            cls.root / ".github/workflows/release-qualification.yml"
+        ).read_text(encoding="utf-8")
+        cls.security = (cls.root / "SECURITY.md").read_text(encoding="utf-8")
+        cls.readme = (cls.root / "README.md").read_text(encoding="utf-8")
+
+    def test_trust_chain_defines_the_complete_subject_set(self):
+        from comic_sol_product import __version__
+        from comic_sol_product.distribution import ReleaseIdentity, native_payload_names
+
+        document = self.trust_chain
+        collapsed = " ".join(document.split())
+        for phrase in (
+            "# Release subject set and trust chain",
+            "authoritative provenance reference",
+            "Nothing else is a release asset",
+            "candidate-identity.json",
+            "SHA256SUMS.sigstore.json",
+            "build-provenance attestation",
+            "token.actions.githubusercontent.com",
+            "self-hosted runners denied",
+        ):
+            self.assertIn(phrase, collapsed)
+        # The table uses the `X` version placeholder; assert the exact subject
+        # name patterns for every matrix target plus the shared payloads.
+        for platform, architecture in (
+            ("linux", "x86_64"),
+            ("macos", "arm64"),
+            ("windows", "x86_64"),
+        ):
+            identity = ReleaseIdentity(__version__, platform, architecture)
+            for name in native_payload_names(identity):
+                self.assertIn(name.replace(__version__, "X"), document)
+        for payload in (
+            "py3-none-any.whl",
+            "container.tar",
+            "install.sh",
+            "install.ps1",
+        ):
+            self.assertIn(payload, document)
+
+    def test_trust_chain_records_the_oci_decision_and_its_boundary(self):
+        collapsed = " ".join(self.trust_chain.split())
+        oci_section = collapsed.split("## OCI distribution decision", 1)[1].split(" ## ", 1)[0]
+        for phrase in (
+            "official distribution channel",
+            "not (yet) as a registry image",
+            "packages: write",
+            "cosign sign",
+            "no release may claim a registry image",
+        ):
+            self.assertIn(phrase, oci_section)
+        # The install guide must agree with the decision.
+        install_collapsed = " ".join(self.install.split())
+        self.assertIn("official distribution channel", install_collapsed)
+        self.assertIn("no `ghcr.io` image", install_collapsed)
+
+    def test_install_guide_documents_pre_execution_installer_verification(self):
+        section = self.install.split("## Verify installer bytes before first execution", 1)[
+            1
+        ].split("\n## ", 1)[0]
+        for phrase in (
+            "bootstrap gap",
+            "cosign verify-blob",
+            "gh attestation verify",
+            "Get-FileHash .\\install.ps1 -Algorithm SHA256",
+            "sha256sum -c -",
+            "must not be executed",
+            "release page",
+            "not the `installers/` paths from a repository checkout",
+        ):
+            self.assertIn(phrase, section)
+        # The attestation commands must target the downloaded release-asset
+        # file names, which exist in the download directory.
+        self.assertIn("gh attestation verify ./install.sh", section)
+        self.assertIn(".\\install.ps1", section)
+        # The manual cosign example must stay executable: no doubled backslashes.
+        self.assertNotIn("\\\\", self.install)
+
+    def test_rollback_runbook_preserves_immutable_evidence(self):
+        collapsed = " ".join(self.runbook.split())
+        for phrase in (
+            "adding evidence, never replacing bytes",
+            "never delete the tag",
+            "WITHDRAWN",
+            "ROLLED BACK",
+            "candidate-identity.json",
+            "--method PATCH",
+            "blocked",
+            "must not imply those systems were yanked",
+            "fresh version and tag",
+            "never delete the release yourself",
+            "removes GitHub's immutable-release binding",
+            "administrator-only escalation",
+            "rulesets?includes_parents=true",
+        ):
+            self.assertIn(phrase, collapsed)
+        # Deleting an immutable release is an escalation path guarded by the tag
+        # ruleset, never a documented standard withdrawal command.
+        self.assertNotIn("--method DELETE", self.runbook)
+        for document_text in (self.criteria, self.install, self.readme):
+            self.assertIn("rollback-runbook.md", document_text)
+        self.assertIn("release-trust-chain.md", self.criteria)
+        self.assertIn("release-trust-chain.md", self.security)
+        self.assertIn("release-trust-chain.md", self.readme)
+
+    def test_qualification_binds_candidate_identity_on_every_leg(self):
+        workflow = self.qualification_workflow
+        # Every platform leg (native matrix, WSL, source) downloads and verifies the
+        # published candidate identity together with its own inputs.
+        self.assertEqual(workflow.count("Bind signed manifest and signature bundle"), 3)
+        self.assertGreaterEqual(workflow.count("--pattern candidate-identity.json"), 4)
+        for phrase in (
+            "candidate identity sidecar digest mismatch",
+            "candidate identity tag does not match qualification input",
+            "candidate identity commit does not match qualification input",
+            "published checksum manifest does not match candidate identity",
+            "supporting evidence digest mismatch",
+        ):
+            self.assertIn(phrase, workflow)
+
+    def test_source_payload_checksum_filter_excludes_manifest_and_identity_files(self):
+        """SHA256SUMS names neither itself nor the identity files; the filter must match.
+
+        Regression test: the source leg passes every downloaded file except the
+        four excluded names to verify_payload_checksums, which fails coverage
+        when a file absent from the manifest is included.
+        """
+        workflow = self.qualification_workflow
+        filter_block = workflow.split("verify_payload_checksums", 1)[1].split("PY", 1)[0]
+        for name in (
+            "SHA256SUMS",
+            "SHA256SUMS.sigstore.json",
+            "candidate-identity.json",
+            "candidate-identity.json.sha256",
+        ):
+            self.assertIn(f'"{name}"', filter_block)
+
+    def test_stable_criteria_gate_the_new_provenance_requirements(self):
+        criteria = self.criteria
+        self.assertIn(
+            "canonical input file with a reproducible regeneration command",
+            criteria,
+        )
+        self.assertIn("pre-execution installer verification", criteria)
+        self.assertIn("requirements/README.md", criteria)
+
+
 class MilestoneDeliveryRecordTests(unittest.TestCase):
     """Keep the milestone delivery record from silently omitting a delivered change.
 

@@ -131,7 +131,10 @@ deterministic metadata, and a CycloneDX SBOM. The RC artifacts use keyless
 Sigstore verification (not Authenticode-signed or Apple-notarized); verify the
 manifest signature and archive digest before execution. Exact install, upgrade, rollback,
 uninstall, and security instructions are in [`docs/install.md`](docs/install.md). The authoritative
-stable-release checklist is [`docs/releases/v2.0-stable-criteria.md`](docs/releases/v2.0-stable-criteria.md).
+stable-release checklist is [`docs/releases/v2.0-stable-criteria.md`](docs/releases/v2.0-stable-criteria.md),
+the complete release subject set and trust chain — including the OCI distribution
+decision — is [`docs/releases/release-trust-chain.md`](docs/releases/release-trust-chain.md), and the
+immutable-evidence rollback/yank procedures are [`docs/releases/rollback-runbook.md`](docs/releases/rollback-runbook.md).
 
 What each milestone delivered, and which issue and pull request delivered it, is recorded in
 [`docs/releases/milestone-delivery.md`](docs/releases/milestone-delivery.md). Milestones v2.0,

@@ -5,6 +5,54 @@
 `docs/releases/milestone-delivery.md` records what each milestone delivered and which tag
 carries it.
 
+### Security
+
+- Completed the supply-chain provenance gap from issue #211. The complete release subject
+  set and trust chain is now defined in `docs/releases/release-trust-chain.md`: every payload
+  named by the signed `SHA256SUMS` with a build-provenance attestation, the manifest and its
+  Sigstore bundle bound through `candidate-identity.json`, and the qualification order of
+  verification. Release qualification now downloads the published candidate identity on every
+  platform leg and verifies, together with its inputs, the tag, the exact candidate commit,
+  the manifest and signature-bundle digests, and each downloaded payload digest — so the
+  wheel, sdist, every native archive, both installers, and the container tar are checked
+  against both the attestation and the identity record, not either alone. The source leg's
+  manifest coverage check excludes the manifest itself, its Sigstore bundle, and both
+  candidate-identity files — the four files `SHA256SUMS` deliberately does not name — with
+  a functional regression test pinning that filter contract.
+
+- Documented an external pre-execution verification path for `install.sh` and `install.ps1`
+  in `docs/install.md`: verify the Sigstore bundle over `SHA256SUMS`, confirm the installer's
+  own digest appears in the signed manifest, and optionally verify its build-provenance
+  attestation with `gh attestation verify` before executing any installer code. Also fixed
+  the doubled backslashes in the existing manual `cosign verify-blob` example.
+
+- Recorded the OCI distribution decision: OCI is an official channel delivered as the
+  attested `comic-sol-<version>-linux-x86_64.container.tar` release asset, not a registry
+  image. `docs/install.md` now shows loading and running the verified asset, and the trust
+  chain document records what a registry distribution would additionally require before
+  that decision can change.
+
+- Added canonical inputs and reproducible regeneration commands for every dependency lock:
+  `requirements/{base,runtime,release}.in` join the existing `audit.in`/`quality.in`, each
+  lock header now names its input and command, and `requirements/README.md` documents the
+  per-platform regeneration procedure with pip-tools 7.6.1 (`--strip-extras` is required)
+  and the required cross-platform diff review. `tests/test_lock_provenance.py` runs on every
+  platform and fails when a lock loses a direct pin, disagrees across platforms, or stops
+  documenting its provenance.
+
+- Added `docs/releases/rollback-runbook.md`: step-by-step withdrawal/yank and rollback
+  procedures that preserve immutable evidence — title/notes-only edits, evidence capture
+  before any mutation, deployment-state marking, and verification of the fallback release.
+  Removing a public release entry is an administrator-only escalation guarded by the active
+  tag ruleset (deleting an immutable release removes GitHub's immutable-release tag
+  binding), never a standard withdrawal step. Linked from the stable criteria and install
+  docs.
+
+- Regenerated `requirements/locks/audit-python311.txt` with the documented pip-tools
+  7.6.1 command so it matches its canonical provenance: `cachecontrol[filecache]==0.14.4`
+  became the extras-stripped `cachecontrol==0.14.4`; all pins and hashes are otherwise
+  unchanged, and a regression test now rejects extras-qualified pins in every lock.
+
 ### Fixed
 
 - Reconciled the release and project-schema documentation with implementation authorities.

@@ -20,7 +20,48 @@ bundled with or required by Comic Sol.
 
 ## Security status
 
-This release uses a keyless Sigstore signature for `SHA256SUMS`; it is not Authenticode-signed, Apple-notarized, or GPG-signed. Every release includes `SHA256SUMS`, `SHA256SUMS.sigstore.json`, per-platform metadata with `signature_status: sigstore`, and a CycloneDX SBOM. Installers require `cosign` and verify the bundle against the GitHub Actions release workflow identity before checking the archive digest. Never pipe a remote installer directly into a shell.
+This release uses a keyless Sigstore signature for `SHA256SUMS`; it is not Authenticode-signed, Apple-notarized, or GPG-signed. Every release includes `SHA256SUMS`, `SHA256SUMS.sigstore.json`, per-platform metadata with `signature_status: sigstore`, and a CycloneDX SBOM. Installers require `cosign` and verify the bundle against the GitHub Actions release workflow identity before checking the archive digest. Never pipe a remote installer directly into a shell. The complete list of release subjects and how each is bound — payload manifest entries, build-provenance attestations, the signed manifest, and the candidate identity — is defined in [`docs/releases/release-trust-chain.md`](releases/release-trust-chain.md).
+
+## Verify installer bytes before first execution
+
+`install.sh` and `install.ps1` are release payloads exactly like the archives: each one is named by the signed `SHA256SUMS`, carries a GitHub build-provenance attestation, and is verified during release qualification. The installers verify the archive, the signed manifest, and the Sigstore bundle before installing anything — but that code runs only after you execute the installer. Close the bootstrap gap by verifying the installer itself from outside it first:
+
+1. Download, from the release page of the exact version you are installing (never from a branch), the installer for your platform plus `SHA256SUMS` and `SHA256SUMS.sigstore.json`.
+2. Verify the Sigstore signature over the manifest (requires `cosign`):
+
+   ```bash
+   cosign verify-blob \
+     --bundle SHA256SUMS.sigstore.json \
+     --certificate-identity-regexp '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v' \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+     SHA256SUMS
+   ```
+
+3. Confirm the installer's own digest appears in the now-trusted manifest. On Linux/macOS, from the directory containing the downloaded files:
+
+   ```bash
+   grep -E '  install\.sh$' SHA256SUMS | sha256sum -c -
+   ```
+
+   On Windows, compare the hash to the `install.ps1` line of `SHA256SUMS`:
+
+   ```powershell
+   (Get-FileHash .\install.ps1 -Algorithm SHA256).Hash.ToLower()
+   ```
+
+4. Optionally verify the installer's build provenance with the GitHub CLI (`gh auth login` once), using the downloaded release-asset file names — `install.sh` and `install.ps1`, not the `installers/` paths from a repository checkout:
+
+   ```bash
+   gh attestation verify ./install.sh \
+     --repo wenn-id/comicsol \
+     --signer-workflow wenn-id/comicsol/.github/workflows/release.yml
+   ```
+
+   The same command with `.\install.ps1` verifies the PowerShell installer.
+
+5. Read the installer, then run it with the commands below.
+
+A digest or signature mismatch at any step means the installer must not be executed. Copying an installer from a repository checkout instead of the release is acceptable only when you trust that checkout, because branch copies have no release attestation.
 
 ## Linux and macOS
 
@@ -98,7 +139,7 @@ On Windows use `.\comic-sol\comic-sol.exe`.
 
 Running the installer again with a verified newer archive performs an upgrade. Runtime versions live beneath `versions/`, the stable runtime is exposed at `bin/`, and `active-version` records the active release. The new runtime runs `doctor` before activation. Transactional lifecycle code restores the previous `bin/` runtime and `active-version` if verification fails.
 
-For manual rollback, reinstall the previously verified archive and matching SHA-256 digest. Never edit `active-version` alone: the entire one-directory runtime must change together.
+For manual rollback, reinstall the previously verified archive and matching SHA-256 digest. Never edit `active-version` alone: the entire one-directory runtime must change together. Repository-side withdrawal and production rollback procedures — which preserve the immutable release evidence instead of replacing bytes — are in [`docs/releases/rollback-runbook.md`](releases/rollback-runbook.md).
 
 ## Uninstall
 
@@ -118,7 +159,16 @@ Uninstall validates the installation sentinel and active version, rejects filesy
 
 ## OCI image
 
-Build and run the non-root image from a checkout:
+OCI is an official distribution channel delivered as the attested release asset `comic-sol-<version>-linux-x86_64.container.tar` — not as a registry image. Every release builds the image once from locked source and a digest-pinned base, smokes it, and publishes the tar inside the signed `SHA256SUMS` with a build-provenance attestation; qualification loads and runs the downloaded bytes. There is no `ghcr.io` image yet, so do not trust one claiming to be Comic Sol. The full decision record and what a registry distribution would additionally require are in [`docs/releases/release-trust-chain.md`](releases/release-trust-chain.md#oci-distribution-decision).
+
+To run the official image, download the container tar from the release, verify it against `SHA256SUMS` (see above), and load it:
+
+```bash
+docker load --input comic-sol-2.0.0rc4-linux-x86_64.container.tar
+docker run --rm --entrypoint comic-sol comic-sol:2.0.0rc4 doctor --output-root /tmp/comic-sol-doctor
+```
+
+Alternatively, build and run the non-root image from a checkout:
 
 ```bash
 docker build -t comic-sol:2.0.0rc4 .
@@ -145,10 +195,10 @@ Each platform bundle contains:
 The GitHub prerelease also provides a global `SHA256SUMS` and its Sigstore bundle. To verify manually:
 
 ```bash
-cosign verify-blob \\
-  --bundle SHA256SUMS.sigstore.json \\
-  --certificate-identity-regexp '^https://github\\.com/wenn-id/comicsol/\\.github/workflows/release\\.yml@refs/tags/v' \\
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
+cosign verify-blob \
+  --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity-regexp '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   SHA256SUMS
 ```
 
