@@ -53,7 +53,12 @@ class CommandService:
             source = self._required(kwargs, "source")
             request = self._required(kwargs, "request")
             engine.validate_source_bytes(source, kwargs.get("suffix"))
-            return engine.init_project(output_root, title, source, request)
+            image_capability = kwargs.get("image_capability")
+            if image_capability is None:
+                return engine.init_project(output_root, title, source, request)
+            return engine.init_project(
+                output_root, title, source, request, image_capability=image_capability
+            )
         if project_dir is None:
             raise TypeError(f"{command} requires project_dir")
         if command == "status":

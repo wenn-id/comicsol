@@ -294,6 +294,8 @@ def _manifest_from_template(
     title: str,
     source: bytes,
     request: dict[str, object],
+    *,
+    image_capability: object | None = None,
 ) -> dict[str, object]:
     manifest = read_json(TEMPLATES / "manifest.json")
     timestamp = _utc_now()
@@ -308,6 +310,25 @@ def _manifest_from_template(
     manifest_input["mode"] = request.get("mode", "short_prompt")
     manifest_input["language"] = request.get("language", "en")
     manifest_input["source_sha256"] = hashlib.sha256(source).hexdigest()
+    if image_capability is not None:
+        try:
+            _, _, _, details, _ = _image_capability_diagnostic(image_capability)
+            capability = details.get("capability")
+            if isinstance(capability, dict):
+                manifest_capability = manifest.get("capability")
+                if isinstance(manifest_capability, dict):
+                    manifest_capability["status"] = capability.get("status", "not_checked")
+                    manifest_capability["name"] = capability.get("name")
+                    manifest_capability["supports_reference_images"] = capability.get(
+                        "supports_reference_images", False
+                    )
+                    manifest_capability["supports_dimensions"] = capability.get(
+                        "supports_dimensions", False
+                    )
+                    manifest_capability["detected_at"] = timestamp
+        except Exception:
+            # Capability detection failures should not block project initialization
+            pass
     return manifest
 
 
@@ -316,6 +337,8 @@ def init_project(
     title: str,
     source: bytes,
     request: dict[str, object],
+    *,
+    image_capability: object | None = None,
 ) -> Path:
     """Stage a complete project, then atomically publish an exclusive slug."""
     if not isinstance(source, bytes):
@@ -354,6 +377,7 @@ def init_project(
                 title.strip(),
                 source,
                 validated_request,
+                image_capability=image_capability,
             )
             atomic_write_json(staging / "project.json", manifest)
             append_event(

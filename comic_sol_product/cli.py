@@ -75,6 +75,10 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--title", required=True)
     init.add_argument("--source", required=True, type=Path)
     init.add_argument("--request-json", required=True, type=Path)
+    init.add_argument("--image-capability-status", choices=("available", "unavailable"))
+    init.add_argument("--image-capability-name")
+    init.add_argument("--supports-reference-images", action="store_true")
+    init.add_argument("--supports-dimensions", action="store_true")
 
     status = subparsers.add_parser("status")
     status.add_argument("project_dir", type=Path)
@@ -195,6 +199,19 @@ def _run(
         source = arguments.source.read_bytes()
         engine.validate_source_bytes(source, arguments.source.suffix)
         request = engine.read_json(arguments.request_json)
+        image_capability = None
+        if (
+            arguments.image_capability_status is not None
+            or arguments.image_capability_name is not None
+            or arguments.supports_reference_images
+            or arguments.supports_dimensions
+        ):
+            image_capability = {
+                "status": arguments.image_capability_status,
+                "name": arguments.image_capability_name,
+                "supports_reference_images": arguments.supports_reference_images,
+                "supports_dimensions": arguments.supports_dimensions,
+            }
         project = service.execute(
             "init",
             output_root=arguments.output_root,
@@ -202,6 +219,7 @@ def _run(
             source=source,
             request=request,
             suffix=arguments.source.suffix,
+            image_capability=image_capability,
         )
         return {"project_id": project.name, "project_dir": project.name}
     if arguments.command == "status":

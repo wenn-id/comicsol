@@ -515,6 +515,93 @@ class ManifestTests(unittest.TestCase):
         self.assertTrue(callable(layout_rects))
         self.assertTrue(callable(rectangles_overlap))
 
+    def test_init_persists_sanitized_image_capability_in_manifest(self):
+        cases = (
+            (
+                {
+                    "status": "available",
+                    "name": "agent-image-generation",
+                    "supports_reference_images": True,
+                    "supports_dimensions": True,
+                },
+                {
+                    "status": "available",
+                    "name": "agent-image-generation",
+                    "supports_reference_images": True,
+                    "supports_dimensions": True,
+                },
+            ),
+            (
+                {
+                    "status": "available",
+                    "name": "agent-image-generation",
+                    "supports_reference_images": False,
+                    "supports_dimensions": False,
+                },
+                {
+                    "status": "available",
+                    "name": "agent-image-generation",
+                    "supports_reference_images": False,
+                    "supports_dimensions": False,
+                },
+            ),
+            (
+                {
+                    "status": "unavailable",
+                    "name": None,
+                    "supports_reference_images": False,
+                    "supports_dimensions": False,
+                },
+                {
+                    "status": "unavailable",
+                    "name": None,
+                    "supports_reference_images": False,
+                    "supports_dimensions": False,
+                },
+            ),
+        )
+        for input_capability, expected_capability in cases:
+            with self.subTest(status=input_capability["status"]):
+                project = init_project(
+                    self.root,
+                    f"Capability Test {input_capability['status']}",
+                    b"A story with capability",
+                    {"mode": "short_prompt", "language": "en"},
+                    image_capability=input_capability,
+                )
+
+                manifest = read_json(project / "project.json")
+                self.assertIn("capability", manifest)
+                capability = manifest["capability"]
+                self.assertEqual(expected_capability["status"], capability["status"])
+                self.assertEqual(expected_capability["name"], capability["name"])
+                self.assertEqual(
+                    expected_capability["supports_reference_images"],
+                    capability["supports_reference_images"],
+                )
+                self.assertEqual(
+                    expected_capability["supports_dimensions"],
+                    capability["supports_dimensions"],
+                )
+                self.assertIsNotNone(capability.get("detected_at"))
+
+    def test_init_without_image_capability_uses_template_defaults(self):
+        project = init_project(
+            self.root,
+            "No Capability",
+            b"A story without capability",
+            {"mode": "short_prompt", "language": "en"},
+        )
+
+        manifest = read_json(project / "project.json")
+        self.assertIn("capability", manifest)
+        capability = manifest["capability"]
+        self.assertEqual("not_checked", capability["status"])
+        self.assertIsNone(capability["name"])
+        self.assertFalse(capability["supports_reference_images"])
+        self.assertFalse(capability["supports_dimensions"])
+        self.assertIsNone(capability["detected_at"])
+
     def test_doctor_checks_local_runtime_and_defers_image_capability(self):
         healthy, messages = doctor(self.root / "doctor-output")
         self.assertTrue(healthy, messages)
