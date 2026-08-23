@@ -85,9 +85,6 @@ def _rectangle(value: object) -> Rectangle:
     return values  # type: ignore[return-value]
 
 
-_overlap = rectangles_overlap
-
-
 def validate_custom_layout(
     rectangles: Iterable[object], reading_order: Sequence[int]
 ) -> tuple[Rectangle, ...]:
@@ -102,7 +99,7 @@ def validate_custom_layout(
             raise ValueError("layout rectangles must be contained by the canonical page")
     for index, first in enumerate(canonical):
         for second in canonical[index + 1 :]:
-            if _overlap(first, second):
+            if rectangles_overlap(first, second):
                 raise ValueError("layout rectangles overlap")
     expected_order = tuple(range(1, len(canonical) + 1))
     if tuple(reading_order) != expected_order:
@@ -119,6 +116,14 @@ _LAYOUTS = {
     )
     for name, rectangles in _legacy_layouts().items()
 }
+
+
+def layout_rects(name: str) -> list[dict[str, int]]:
+    """Return fresh rectangle mappings from the shared layout registry."""
+    return [
+        {"x": x, "y": y, "width": width, "height": height}
+        for x, y, width, height in get_layout(name).rectangles
+    ]
 
 
 def get_layout(name: str) -> LayoutDefinition:

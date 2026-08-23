@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+import re
 
 from .core_primitives import canonical_artifact_bytes
 from .project_io import ProjectTransaction, read_json_nofollow
@@ -18,6 +19,20 @@ Migration = Callable[[Manifest], Manifest]
 # schema change must add a hook here, update the version constants, and add a
 # fixture/test before it can be accepted.
 PROJECT_MIGRATIONS: dict[tuple[str, str], Migration] = {}
+_VERSION_PATTERN = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+
+
+def parse_schema_version(version: str) -> tuple[int, int] | None:
+    """Return ``(major, minor)`` for a well-formed version, otherwise ``None``.
+
+    Ordering must be numeric. Comparing version strings directly places
+    ``"10.0"`` below ``"2.0"`` and ``"1.10"`` below ``"1.9"``, which would give
+    a future project the wrong compatibility diagnosis.
+    """
+    match = _VERSION_PATTERN.fullmatch(version)
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2))
 
 
 class UnsupportedSchemaVersionError(ValueError):
@@ -50,9 +65,26 @@ def _read_manifest(path: Path) -> Manifest:
 
 def schema_version_error(version: object) -> UnsupportedSchemaVersionError | None:
     """Return the explicit compatibility error for a manifest version."""
-    if isinstance(version, str) and version in SUPPORTED_PROJECT_SCHEMA_VERSIONS:
+    if not isinstance(version, str):
+        return UnsupportedSchemaVersionError(
+            version,
+            reason="schema version must be a string in major.minor format",
+        )
+    parsed = parse_schema_version(version)
+    if parsed is None:
+        return UnsupportedSchemaVersionError(
+            version,
+            reason="invalid version format; expected major.minor",
+        )
+    current = parse_schema_version(CURRENT_PROJECT_SCHEMA_VERSION)
+    if current is None:  # pragma: no cover - guarded by the constant test below
+        raise ValueError(
+            f"CURRENT_PROJECT_SCHEMA_VERSION {CURRENT_PROJECT_SCHEMA_VERSION!r} "
+            "is not a major.minor version"
+        )
+    if version in SUPPORTED_PROJECT_SCHEMA_VERSIONS:
         return None
-    if isinstance(version, str) and version > CURRENT_PROJECT_SCHEMA_VERSION:
+    if parsed > current:
         return UnsupportedSchemaVersionError(
             version,
             reason=(

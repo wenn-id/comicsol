@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import errno
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,17 @@ SOURCE_SUFFIXES = {".txt", ".md"}
 # smaller JSON limit explicitly; rasters and other binary artifacts are the
 # only inputs that may approach this bound.
 MAX_READ_BYTES = MAX_ENCODED_RASTER_BYTES
+
+
+def sha256_file(path: Path) -> str:
+    """Return a lowercase SHA-256 digest for a file read without symlink following."""
+    digest = hashlib.sha256()
+    with open_path_nofollow(Path(path)) as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 _DRIVE = re.compile(r"^[A-Za-z]:")
 _LOCK_RETRY_SECONDS = 0.05
 PROJECT_OPERATION_LOCK_TIMEOUT = 300.0

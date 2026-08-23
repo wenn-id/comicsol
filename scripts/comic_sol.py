@@ -35,11 +35,11 @@ from .project_io import (
     contained_project_path,
     durable_atomic_write,
     fsync_directory_tree,
-    open_path_nofollow,
     publish_directory_noreplace,
     read_bytes_nofollow,
     read_contained_bytes,
     read_json_nofollow,
+    sha256_file,
     validate_source_bytes,
 )
 from .input_limits import (
@@ -75,7 +75,20 @@ from .core_primitives import (
     rectangles_overlap as _rectangles_overlap,
 )
 
+# Public compatibility exports: sibling engines and downstream callers import
+# layout geometry from this facade.
+from .layouts import MARGIN, PAGE_HEIGHT, PAGE_WIDTH, layout_rects  # noqa: F401
+from .lifecycle_contracts import (
+    ALL_STATUSES,  # noqa: F401  (public facade export; mcp_server imports it here)
+    CATEGORY,
+    IDENTIFIER,
+    LINEAR_STATUSES,
+    TERMINAL_STATUSES,
+    allowed_transition as _allowed_transition_impl,
+)
+
 rectangles_overlap = _rectangles_overlap
+_allowed_transition = _allowed_transition_impl
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,26 +97,7 @@ FONT_PATH_COMIC_REGULAR = ROOT / "assets/fonts/ComicNeue-Regular.ttf"
 FONT_PATH_COMIC_BOLD = ROOT / "assets/fonts/ComicNeue-Bold.ttf"
 FONT_PATH_FALLBACK = ROOT / "assets/fonts/NotoSans-Regular.ttf"
 FONT_PATH = FONT_PATH_COMIC_REGULAR
-PAGE_WIDTH = 1600
-PAGE_HEIGHT = 2400
-MARGIN = 64
 GUTTER = 32
-
-LINEAR_STATUSES = (
-    "INIT",
-    "PLANNED",
-    "SCRIPTED",
-    "STORYBOARDED",
-    "REFERENCES_READY",
-    "PANELS_READY",
-    "QA_READY",
-    "LETTERED",
-    "COMPOSED",
-    "EXPORTED",
-    "COMPLETE",
-)
-TERMINAL_STATUSES = {"COMPLETE", "COMPLETE_WITH_WARNINGS"}
-ALL_STATUSES = set(LINEAR_STATUSES) | {"BLOCKED", "COMPLETE_WITH_WARNINGS"}
 
 TIMESTAMP_KEYS = {"created_at", "updated_at", "detected_at", "completed_at", "timestamp"}
 STAGE_CACHE_PATH = Path("logs/stage-cache.json")
@@ -158,8 +152,6 @@ SENSITIVE_KEY = re.compile(
 REQUEST_SETTING_ALLOWLIST = frozenset({"mode", "language", "title"})
 REQUEST_MODES = frozenset({"short_prompt", "pasted_story", "source_file", "resume"})
 REQUIRED_PILLOW = "12.3.0"
-IDENTIFIER = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
-CATEGORY = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 EVENT_DETAIL_KINDS = {
     "project_id": "identifier",
@@ -210,15 +202,6 @@ def atomic_write_json(path: Path, value: object) -> None:
     atomic_write_bytes(path, canonical_artifact_bytes(value))
 
 
-def sha256_file(path: Path) -> str:
-    """Return a lowercase SHA-256 digest for a file."""
-    digest = hashlib.sha256()
-    with open_path_nofollow(Path(path)) as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def slugify(title: str) -> str:
     """Convert a title to a portable version-1.0 project ID."""
     normalized = unicodedata.normalize("NFKD", title)
@@ -227,16 +210,6 @@ def slugify(title: str) -> str:
     if not slug or not slug[0].isalpha():
         slug = f"comic-sol-{slug}" if slug else "comic-sol-project"
     return slug[:48].rstrip("-")
-
-
-def layout_rects(name: str) -> list[dict[str, int]]:
-    """Return fresh rectangle mappings from the shared layout registry."""
-    from .layouts import get_layout
-
-    return [
-        {"x": x, "y": y, "width": width, "height": height}
-        for x, y, width, height in get_layout(name).rectangles
-    ]
 
 
 def _project_directory_candidate(output_root: Path, base_slug: str, suffix: int) -> Path:
@@ -264,6 +237,21 @@ def _staging_directory_identity(staging: Path) -> tuple[int, int]:
     """Capture the filesystem identity used to authorize staging cleanup."""
     metadata = staging.lstat()
     return metadata.st_dev, metadata.st_ino
+
+
+def _allocate_project_directory(output_root: Path, base_slug: str) -> Path:
+    output_root.mkdir(parents=True, exist_ok=True)
+    suffix = 1
+    while True:
+        suffix_text = "" if suffix == 1 else f"-{suffix}"
+        candidate_slug = f"{base_slug[: 48 - len(suffix_text)].rstrip('-')}{suffix_text}"
+        candidate = output_root / candidate_slug
+        try:
+            candidate.mkdir()
+        except FileExistsError:
+            suffix += 1
+            continue
+        return candidate
 
 
 def validate_request_settings(request: dict[str, object]) -> dict[str, object]:
@@ -470,21 +458,6 @@ def append_event(
             canonical_event_record(event, details),
             repair_torn_jsonl=True,
         )
-
-
-def _allowed_transition(current: str, target: str) -> bool:
-    if current not in ALL_STATUSES or target not in ALL_STATUSES:
-        return False
-    if current in TERMINAL_STATUSES or current == "BLOCKED":
-        return False
-    if target == "BLOCKED":
-        return True
-    if current == "EXPORTED" and target == "COMPLETE_WITH_WARNINGS":
-        return True
-    if current in LINEAR_STATUSES:
-        index = LINEAR_STATUSES.index(current)
-        return index + 1 < len(LINEAR_STATUSES) and LINEAR_STATUSES[index + 1] == target
-    return False
 
 
 def transition(
@@ -2466,25 +2439,36 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the deterministic Comic Sol lifecycle CLI."""
+    from .command_service import CommandService
+
+    service = CommandService(
+        engine=sys.modules[__name__],
+        validation=importlib.import_module(".validate_project", __package__),
+    )
     parser = _build_parser()
     arguments = parser.parse_args(argv)
     try:
         if arguments.command == "init":
-            request = read_json(arguments.request_json)
             source = arguments.source.read_bytes()
-            validate_source_bytes(source, arguments.source.suffix)
-            project = init_project(
-                arguments.output_root,
-                arguments.title,
-                source,
-                request,
+            project = service.execute(
+                "init",
+                output_root=arguments.output_root,
+                title=arguments.title,
+                source=source,
+                request=read_json(arguments.request_json),
+                suffix=arguments.source.suffix,
             )
             print(project.resolve())
         elif arguments.command == "transition":
-            manifest = transition(arguments.project_dir, arguments.target, arguments.warning)
+            manifest = service.execute(
+                "transition",
+                project_dir=arguments.project_dir,
+                target=arguments.target,
+                warning=arguments.warning,
+            )
             print(f"{manifest['project_id']}: {manifest['status']}")
         elif arguments.command == "status":
-            manifest = read_project_status(arguments.project_dir)
+            manifest = service.execute("status", project_dir=arguments.project_dir)
             if arguments.as_json:
                 print(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
             else:
@@ -2494,7 +2478,7 @@ def main(argv: list[str] | None = None) -> int:
             print("\n".join(messages))
             return 0 if healthy else 1
         elif arguments.command == "resume-plan":
-            actions = build_resume_plan(arguments.project_dir)
+            actions = service.execute("resume-plan", project_dir=arguments.project_dir)
             if arguments.as_json:
                 print(
                     json.dumps(
@@ -2508,7 +2492,7 @@ def main(argv: list[str] | None = None) -> int:
                 for action in actions:
                     print(f"{action.stage}: {action.action} {action.artifact} — {action.reason}")
         elif arguments.command == "resume":
-            result = resume_project(arguments.project_dir)
+            result = service.execute("resume", project_dir=arguments.project_dir)
             if arguments.as_json:
                 print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
             else:
@@ -2531,23 +2515,43 @@ def main(argv: list[str] | None = None) -> int:
                     "project is BLOCKED; run `comic_sol.py resume PROJECT_DIR` "
                     "to clear the block before invalidating a stage"
                 )
-            removed = invalidate_from(arguments.project_dir, arguments.stage)
+            removed = service.execute(
+                "invalidate", project_dir=arguments.project_dir, stage=arguments.stage
+            )
             print("\n".join(removed) if removed else "no manifest artifacts removed")
         elif arguments.command == "record-stage":
-            recorded = record_stage(arguments.project_dir, arguments.stage)
+            recorded = service.execute(
+                "record-stage", project_dir=arguments.project_dir, stage=arguments.stage
+            )
             print(f"{recorded['stage']}: recorded {recorded['artifacts']} artifact(s)")
         elif arguments.command == "record-attempt":
-            counts = record_generation_attempt(
-                arguments.project_dir, arguments.panel_id, arguments.kind, arguments.path
+            counts = service.execute(
+                "record-attempt",
+                project_dir=arguments.project_dir,
+                panel_id=arguments.panel_id,
+                kind=arguments.kind,
+                path=arguments.path,
             )
             print(json.dumps(counts, sort_keys=True))
         elif arguments.command == "promote-attempt":
-            print(promote_attempt(arguments.project_dir, arguments.panel_id, arguments.path))
+            print(
+                service.execute(
+                    "promote-attempt",
+                    project_dir=arguments.project_dir,
+                    panel_id=arguments.panel_id,
+                    path=arguments.path,
+                )
+            )
         elif arguments.command == "override-panel":
-            record_override(arguments.project_dir, arguments.panel_id, arguments.reason)
+            service.execute(
+                "override-panel",
+                project_dir=arguments.project_dir,
+                panel_id=arguments.panel_id,
+                reason=arguments.reason,
+            )
             print(f"{arguments.panel_id}: accepted with warnings")
         elif arguments.command == "finalize":
-            result = finalize_project(arguments.project_dir)
+            result = service.execute("finalize", project_dir=arguments.project_dir)
             if arguments.as_json:
                 print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
             else:
