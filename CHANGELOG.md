@@ -16,6 +16,13 @@ carries it.
   provider payload, project state, provider SDK, or automatic provider setup is
   introduced.
 
+- Added a diagnostic-driven client integration repair workflow. `comic-sol repair
+  --dry-run` previews the verified config path, intended `comic-sol` MCP entry, action,
+  and backup requirement without writing. Applying repair recomputes under the config
+  lock, verifies backup and persisted mutation, verifies rollback after failure, is
+  idempotent when repeated, and returns explicit per-client `success`, `no-op`, or
+  `failure` states with `CS-INSTALL-002`/`CS-INSTALL-003` doctor guidance.
+
 - Aligned the user-facing documentation contract from issue #213. New
   `docs/surfaces.md` separates the Skill checkout, Codex Plugin, source
   development, installed CLI wheel, native portable archive, MCP server, and OCI

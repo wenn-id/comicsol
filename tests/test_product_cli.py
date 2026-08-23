@@ -216,23 +216,120 @@ class ProductCliTests(unittest.TestCase):
         self.assertIn("source file must use .txt or .md", stderr)
         self.assertNotIn(str(source), stderr)
 
-    def test_setup_and_repair_pass_the_current_console_launcher(self):
-        for command in ("setup", "repair"):
-            with self.subTest(command=command):
-                arguments = cli.build_parser().parse_args(
-                    [command, "--output-root", "/tmp/projects", "--client", "codex"]
-                )
-                with (
-                    mock.patch.object(cli.sys, "argv", ["/opt/Comic Sol/bin/comic-sol"]),
-                    mock.patch("comic_sol_product.setup.setup_clients", return_value=[]) as setup,
-                ):
-                    self.assertEqual([], cli._run(arguments))
+    def test_setup_passes_the_current_console_launcher(self):
+        arguments = cli.build_parser().parse_args(
+            ["setup", "--output-root", "/tmp/projects", "--client", "codex"]
+        )
+        with (
+            mock.patch.object(cli.sys, "argv", ["/opt/Comic Sol/bin/comic-sol"]),
+            mock.patch("comic_sol_product.setup.setup_clients", return_value=[]) as setup,
+        ):
+            self.assertEqual([], cli._run(arguments))
 
-                setup.assert_called_once_with(
-                    arguments.output_root,
-                    selected=["codex"],
-                    executable="/opt/Comic Sol/bin/comic-sol",
-                )
+        setup.assert_called_once_with(
+            arguments.output_root,
+            selected=["codex"],
+            executable="/opt/Comic Sol/bin/comic-sol",
+        )
+
+    def test_repair_routes_dry_run_to_the_repair_workflow(self):
+        arguments = cli.build_parser().parse_args(
+            [
+                "repair",
+                "--dry-run",
+                "--output-root",
+                "/tmp/projects",
+                "--client",
+                "codex",
+            ]
+        )
+        with (
+            mock.patch.object(cli.sys, "argv", ["/opt/Comic Sol/bin/comic-sol"]),
+            mock.patch("comic_sol_product.setup.repair_clients", return_value=[]) as repair,
+        ):
+            self.assertEqual([], cli._run(arguments))
+
+        repair.assert_called_once_with(
+            arguments.output_root,
+            selected=["codex"],
+            executable="/opt/Comic Sol/bin/comic-sol",
+            dry_run=True,
+        )
+
+    def test_unknown_repair_client_is_a_usage_error(self):
+        code, stdout, stderr = self.invoke(["--json", "repair", "--client", "curser"])
+
+        self.assertEqual(2, code)
+        self.assertEqual("", stderr)
+        payload = json.loads(stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("CS-CLI-001", payload["error"]["code"])
+
+    def test_json_repair_prioritizes_rollback_failure(self):
+        safe_failure = {
+            "client": "cursor",
+            "state": "failure",
+            "status": "failed",
+            "action": "none",
+            "config_path": None,
+            "backup_path": None,
+            "backup_required": False,
+            "planned_entry": None,
+            "verified": False,
+            "restored": None,
+            "message": "repair failed",
+            "error": {"code": "CS-INSTALL-002"},
+        }
+        rollback_failure = {
+            **safe_failure,
+            "client": "codex",
+            "status": "rollback-failed",
+            "backup_path": "/private/config.toml.bak",
+            "error": {"code": "CS-INSTALL-003"},
+        }
+        with mock.patch.object(cli, "_run", return_value=[safe_failure, rollback_failure]):
+            code, stdout, stderr = self.invoke(["--json", "repair"])
+
+        self.assertEqual(1, code)
+        self.assertEqual("", stderr)
+        payload = json.loads(stdout)
+        self.assertEqual("CS-INSTALL-003", payload["error"]["code"])
+
+    def test_json_repair_failure_returns_data_and_structured_error(self):
+        result = {
+            "client": "cursor",
+            "state": "failure",
+            "status": "rollback-failed",
+            "action": "set-comic-sol-entry",
+            "config_path": "/private/config.json",
+            "backup_path": "/private/config.json.bak",
+            "backup_required": True,
+            "planned_entry": {
+                "command": "/opt/comic-sol",
+                "args": ["mcp", "--root", "/tmp/projects"],
+            },
+            "verified": False,
+            "restored": False,
+            "message": "rollback could not be verified",
+            "error": {
+                "code": "CS-INSTALL-003",
+                "category": "rollback-failed",
+                "message": "Comic Sol could not verify client configuration rollback.",
+                "reason": "A failed repair could not prove restoration.",
+                "recovery": "Restore the reported backup, then run comic-sol doctor.",
+                "command": "repair",
+            },
+        }
+        with mock.patch.object(cli, "_run", return_value=[result]):
+            code, stdout, stderr = self.invoke(["--json", "repair"])
+
+        self.assertEqual(1, code)
+        self.assertEqual("", stderr)
+        payload = json.loads(stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("repair", payload["command"])
+        self.assertEqual([result], payload["data"])
+        self.assertEqual(result["error"], payload["error"])
 
     def test_setup_passes_the_frozen_executable(self):
         arguments = cli.build_parser().parse_args(

@@ -179,6 +179,47 @@ def main() -> int:
                 raise RuntimeError("Claude setup did not preserve the existing entry")
             if claude_record["mcpServers"].get("comic-sol") != entry:
                 raise RuntimeError("Claude and Codex MCP entries differ")
+        if arguments.mcp:
+            codex.write_text(
+                codex.read_text(encoding="utf-8").replace(
+                    f"command = {json.dumps(entry['command'])}",
+                    'command = "stale-comic-sol"',
+                ),
+                encoding="utf-8",
+            )
+            if sys.platform == "darwin":
+                claude_record["mcpServers"]["comic-sol"]["command"] = "stale-comic-sol"
+                claude.write_text(json.dumps(claude_record), encoding="utf-8")
+            repair_command = [
+                str(executable),
+                "--json",
+                "repair",
+                "--output-root",
+                str(output_root),
+            ]
+            for client in clients:
+                repair_command.extend(["--client", client])
+            preview = json.loads(run([*repair_command, "--dry-run"], cwd=root, env=env))
+            preview_results = {result["client"]: result for result in preview["data"]}
+            if any(preview_results[client]["status"] != "planned" for client in clients):
+                raise RuntimeError("installed repair preview did not plan selected clients")
+            first_repair = json.loads(run(repair_command, cwd=root, env=env))
+            first_results = {result["client"]: result for result in first_repair["data"]}
+            if any(
+                (first_results[client]["state"], first_results[client]["status"])
+                != ("success", "configured")
+                for client in clients
+            ):
+                raise RuntimeError("installed repair did not repair selected clients")
+            second_repair = json.loads(run(repair_command, cwd=root, env=env))
+            second_results = {result["client"]: result for result in second_repair["data"]}
+            if any(
+                (second_results[client]["state"], second_results[client]["status"])
+                != ("no-op", "unchanged")
+                for client in clients
+            ):
+                raise RuntimeError("installed repair is not idempotent")
+            entry = read_codex_entry(codex, output_root, executable)
         uninstall_command = [
             str(executable),
             "--json",

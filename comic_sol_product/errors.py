@@ -46,6 +46,14 @@ class ValidationFailureError(ValueError):
         self.issue_count = issue_count
 
 
+class IntegrationRepairError(RuntimeError):
+    """Signal that client integration repair failed safely."""
+
+
+class IntegrationRollbackError(RuntimeError):
+    """Signal that client integration rollback could not be verified."""
+
+
 @dataclass(frozen=True)
 class ClassifiedError:
     """A definition selected for one exception without exposing its raw text."""
@@ -131,6 +139,20 @@ _DEFINITIONS = (
         "Reinstall Comic Sol with the required extra and retry.",
     ),
     ErrorDefinition(
+        "CS-INSTALL-002",
+        "repair-failed",
+        "Comic Sol client integration repair failed.",
+        "The planned client configuration change could not be applied or verified safely.",
+        "Run comic-sol doctor, fix the reported problem, then retry repair.",
+    ),
+    ErrorDefinition(
+        "CS-INSTALL-003",
+        "rollback-failed",
+        "Comic Sol could not verify client configuration rollback.",
+        "A failed repair could not prove that the original client configuration was restored.",
+        "Stop the affected client, restore the reported backup, then run comic-sol doctor.",
+    ),
+    ErrorDefinition(
         "CS-SEC-001",
         "security-error",
         "The project failed a security boundary check.",
@@ -194,6 +216,8 @@ _BOUNDARY_TYPE_NAMES = {
     "ValidationFailureError": "CS-QA-001",
     "TypographyPreflightError": "CS-FONT-001",
     "CliUsageError": "CS-CLI-001",
+    "IntegrationRepairError": "CS-INSTALL-002",
+    "IntegrationRollbackError": "CS-INSTALL-003",
 }
 
 _BOUNDARY_MESSAGE_PREFIXES = (

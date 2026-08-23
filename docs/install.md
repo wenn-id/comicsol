@@ -148,6 +148,23 @@ fields. Required runtime, Pillow, fonts, templates, references, and output-root
 checks fail closed. Optional MCP and image-generation checks report actionable
 warnings.
 
+Preview integration recovery before applying it:
+
+```bash
+comic-sol --json repair --dry-run --output-root /absolute/path/to/comic-sol-output
+comic-sol --json repair --output-root /absolute/path/to/comic-sol-output
+```
+
+Repair handles only the product-owned `comic-sol` MCP entry in existing verified
+client config files. It safely adds or replaces stale executable, MCP arguments, and
+output-root values; it never creates missing third-party config, guesses unsupported
+formats, invokes an installer, or repairs unrelated application settings. Each change
+uses a verified private backup, atomic publication, persisted verification, and
+verified rollback. Results expose `success`, `no-op`, or `failure`; their compatible
+statuses are `planned` (preview), `configured` (applied), and `unchanged` (no-op).
+Failures keep per-client evidence and direct operators to `comic-sol doctor` or a named
+backup.
+
 ## OCI image
 
 OCI is an official distribution channel delivered as the attested release asset

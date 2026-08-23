@@ -13,6 +13,7 @@ TYPED_FILES = [
     "scripts/project_io.py",
     "scripts/core_primitives.py",
     "comic_sol_product/cli.py",
+    "comic_sol_product/setup.py",
     "comic_sol_product/mcp.py",
     "scripts/stage_registry.py",
     "comic_sol_product/release.py",

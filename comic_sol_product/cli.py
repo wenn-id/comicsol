@@ -99,7 +99,16 @@ def build_parser() -> argparse.ArgumentParser:
     for command in ("setup", "repair", "uninstall"):
         integration = subparsers.add_parser(command)
         integration.add_argument("--output-root", type=Path, default=default_output_root())
-        integration.add_argument("--client", action="append", dest="clients")
+        client_options = None
+        if command == "repair":
+            from .setup import SUPPORTED_CLIENT_NAMES
+
+            client_options = SUPPORTED_CLIENT_NAMES
+        integration.add_argument(
+            "--client", action="append", dest="clients", choices=client_options
+        )
+        if command == "repair":
+            integration.add_argument("--dry-run", action="store_true")
     return parser
 
 
@@ -234,21 +243,22 @@ def _run(
     if arguments.command == "finalize":
         return service.execute("finalize", project_dir=arguments.project_dir, progress=progress)
     if arguments.command in {"setup", "repair", "uninstall"}:
-        from .setup import setup_clients, uninstall_clients
+        from .setup import repair_clients, setup_clients, uninstall_clients
 
-        operation = {
-            "setup": setup_clients,
-            "repair": setup_clients,
-            "uninstall": uninstall_clients,
-        }[arguments.command]
         operation_arguments: dict[str, Any] = {"selected": arguments.clients}
-        if arguments.command != "uninstall":
+        results: Any
+        if arguments.command == "uninstall":
+            results = uninstall_clients(arguments.output_root, **operation_arguments)
+        else:
             operation_arguments["executable"] = (
                 sys.executable if getattr(sys, "frozen", False) else sys.argv[0]
             )
-        return [
-            asdict(result) for result in operation(arguments.output_root, **operation_arguments)
-        ]
+            if arguments.command == "repair":
+                operation_arguments["dry_run"] = arguments.dry_run
+                results = repair_clients(arguments.output_root, **operation_arguments)
+            else:
+                results = setup_clients(arguments.output_root, **operation_arguments)
+        return [asdict(result) for result in results]
     raise ValueError(f"unsupported command: {arguments.command}")
 
 
@@ -294,6 +304,40 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(data, ensure_ascii=False, sort_keys=True))
                 print(format_human_error(failure, command=command), file=sys.stderr)
             return 2
+        if command == "repair":
+            failures = [result for result in data if result["state"] == "failure"]
+            if failures:
+                aggregate = next(
+                    (result for result in failures if result["error"]["code"] == "CS-INSTALL-003"),
+                    failures[0],
+                )
+                if arguments.as_json:
+                    payload = {
+                        "ok": False,
+                        "command": command,
+                        "data": data,
+                        "error": aggregate["error"],
+                    }
+                    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+                else:
+                    for result in data:
+                        evidence = (
+                            f"; backup={result['backup_path']}"
+                            if result["backup_path"] is not None
+                            else ""
+                        )
+                        print(
+                            f"{result['client']}: {result['state']}/{result['status']} — "
+                            f"{result['message']}{evidence}"
+                        )
+                    repair_error = aggregate["error"]
+                    print(
+                        f"ERROR {repair_error['code']} [{repair_error['category']}]: "
+                        f"{repair_error['message']}\nReason: {repair_error['reason']}\n"
+                        f"Recovery: {repair_error['recovery']}",
+                        file=sys.stderr,
+                    )
+                return 1
         if arguments.as_json:
             print(json.dumps(_success(command, data), ensure_ascii=False, sort_keys=True))
         elif command == "doctor":

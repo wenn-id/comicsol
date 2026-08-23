@@ -65,6 +65,44 @@ def _call_verify_hook(hook: Callable[..., bool], expected: dict[str, Any] | None
     return bool(hook(expected))
 
 
+def _indent_of(line: str) -> str:
+    return line[: len(line) - len(line.lstrip())]
+
+
+def _json_member_spans(text: str, container_start: int, container_end: int):
+    decoder = json.JSONDecoder()
+    member_spans = []
+    offset = container_start
+    while offset < container_end:
+        while offset < container_end and text[offset] in " \t\r\n,":
+            offset += 1
+        if offset >= container_end or text[offset] == "}":
+            break
+        member_start = offset
+        try:
+            key, _ = decoder.scan_once(text, offset)
+        except StopIteration as error:
+            raise ValueError("client config member key could not be decoded") from error
+        offset = _end_of_value(text, offset)
+        while offset < container_end and text[offset] in " \t\r\n":
+            offset += 1
+        if offset < container_end and text[offset] == ":":
+            offset = _end_of_value(text, offset + 1)
+        member_spans.append((key, member_start, offset))
+    return member_spans
+
+
+def _end_of_value(text: str, offset: int) -> int:
+    while offset < len(text) and text[offset] in " \t\r\n":
+        offset += 1
+    decoder = json.JSONDecoder()
+    try:
+        _, end = decoder.scan_once(text, offset)
+    except StopIteration as error:
+        raise ValueError("client config value could not be decoded") from error
+    return end
+
+
 @runtime_checkable
 class ClientAdapter(Protocol):
     name: str
@@ -109,11 +147,11 @@ class JsonClientAdapter:
         return value
 
     def mutate(self, config: dict[str, Any], entry: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        if config.get(self.servers_key, {}).get(MCP_SERVER_NAME) == entry:
+            return config, False
         updated = dict(config)
         servers = dict(updated.get(self.servers_key, {}))
-        if servers.get(MCP_SERVER_NAME) == entry:
-            return config, False
-        servers[MCP_SERVER_NAME] = entry
+        servers[MCP_SERVER_NAME] = dict(entry)
         updated[self.servers_key] = servers
         return updated, True
 
@@ -128,6 +166,81 @@ class JsonClientAdapter:
 
     def dump(self, config: dict[str, Any]) -> bytes:
         return (json.dumps(config, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+            "utf-8"
+        )
+
+    def publish(self, raw: bytes, entry: dict[str, Any]) -> bytes:
+        """Return raw with only the product-owned member replaced byte-surgically."""
+        text = raw.decode("utf-8")
+        document = json.loads(text)
+        if not isinstance(document, dict):
+            raise ValueError("client config root must be an object")
+        servers = document.get(self.servers_key)
+        if servers is not None and not isinstance(servers, dict):
+            raise ValueError(f"{self.servers_key} must be an object")
+        entry_text = json.dumps(entry, ensure_ascii=False, indent=2, sort_keys=True)
+        owned_key = json.dumps(MCP_SERVER_NAME, ensure_ascii=False)
+        owned_pattern = re.compile(rf'"{re.escape(MCP_SERVER_NAME)}"\s*:')
+        owned_match = owned_pattern.search(text)
+        if owned_match is not None:
+            value_start = _end_of_value(text, owned_match.end())
+            depth = 0
+            index = value_start - 1
+            while index < len(text):
+                if text[index] == "{":
+                    depth += 1
+                elif text[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            value_end = index + 1
+            context = text[owned_match.start() : value_start]
+            indent = _indent_of(context) if context.strip() else ""
+            replacement = "\n".join(
+                indent + line if line.strip() else line for line in entry_text.splitlines()
+            )
+            return (
+                text[: owned_match.start()] + f"{owned_key}: " + replacement + text[value_end:]
+            ).encode("utf-8")
+
+        servers_pattern = re.compile(rf'"{re.escape(self.servers_key)}"\s*:\s*\{{')
+        servers_match = servers_pattern.search(text)
+        if servers_match is None:
+            if servers is not None:
+                raise ValueError(f"{self.servers_key} mapping could not be located")
+            stripped = text.rstrip()
+            if not stripped.endswith("}"):
+                raise ValueError("client config root object could not be located")
+            body = stripped[:-1].rstrip()
+            member_indent = "  "
+            member = f"{owned_key}: {entry_text}"
+            padded = member.replace("\n", "\n" + member_indent * 2)
+            addition = f"{member_indent}{json.dumps(self.servers_key)}: {{\n{member_indent * 2}{padded}\n{member_indent}}}"
+            if body.endswith("{"):
+                return (body + "\n" + addition + "\n}\n").encode("utf-8")
+            return (body + ",\n" + addition + "\n}\n").encode("utf-8")
+        open_brace = servers_match.end() - 1
+        depth = 0
+        index = open_brace
+        while index < len(text):
+            if text[index] == "{":
+                depth += 1
+            elif text[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            index += 1
+        closing = index
+        body = text[open_brace + 1 : closing].rstrip()
+        member_indent = "    "
+        member = f"{owned_key}: {entry_text}"
+        padded = member.replace("\n", "\n" + member_indent)
+        if body:
+            return (text[:closing] + ",\n" + member_indent + padded + text[closing:]).encode(
+                "utf-8"
+            )
+        return (text[: open_brace + 1] + "\n" + member_indent + padded + text[closing:]).encode(
             "utf-8"
         )
 
