@@ -2,11 +2,15 @@ import hashlib
 import json
 import os
 import re
+import socket
+import struct
+import tarfile
 import tempfile
 import unittest
 import zipfile
 import uuid
 from pathlib import Path
+from unittest import mock
 
 from comic_sol_product import __version__ as RELEASE_VERSION
 
@@ -30,6 +34,28 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.identity = ReleaseIdentity(
             version=RELEASE_VERSION, platform="linux", architecture="x86_64"
         )
+
+    @staticmethod
+    def _elf(architecture: str) -> bytes:
+        payload = bytearray(64)
+        payload[:6] = b"\x7fELF\x02\x01"
+        payload[6] = 1
+        struct.pack_into("<H", payload, 18, {"x86_64": 62, "arm64": 183}[architecture])
+        struct.pack_into("<I", payload, 20, 1)
+        struct.pack_into("<H", payload, 52, 64)
+        return bytes(payload)
+
+    def _portable_runtime(self, root: Path, architecture: str = "x86_64") -> Path:
+        runtime = root / "runtime"
+        for member in REQUIRED_RUNTIME_SUFFIXES:
+            relative = member.removeprefix("comic-sol/")
+            target = runtime / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"runtime")
+        launcher = runtime / "comic-sol"
+        launcher.write_bytes(self._elf(architecture))
+        launcher.chmod(0o755)
+        return runtime
 
     def _write_environment_sbom(self, release: Path) -> Path:
         components = [
@@ -230,6 +256,311 @@ class NativeDistributionContractTests(unittest.TestCase):
             validate_runtime_members(members)
             if os.name != "nt":
                 self.assertEqual(0o755, executable_mode & 0o777)
+
+    def test_binary_architecture_detection_covers_release_formats(self):
+        from comic_sol_product.portable import detect_binary_architectures
+
+        self.assertEqual(frozenset({"x86_64"}), detect_binary_architectures(self._elf("x86_64")))
+        self.assertEqual(frozenset({"arm64"}), detect_binary_architectures(self._elf("arm64")))
+
+        macho_x86 = bytearray(32)
+        macho_x86[:4] = b"\xcf\xfa\xed\xfe"
+        struct.pack_into("<I", macho_x86, 4, 0x01000007)
+        struct.pack_into("<I", macho_x86, 12, 2)
+        macho_arm = bytearray(macho_x86)
+        struct.pack_into("<I", macho_arm, 4, 0x0100000C)
+        self.assertEqual(frozenset({"arm64"}), detect_binary_architectures(bytes(macho_arm)))
+
+        fat = bytearray(48 + len(macho_x86) + len(macho_arm))
+        fat[:8] = b"\xca\xfe\xba\xbe" + struct.pack(">I", 2)
+        struct.pack_into(">IIIII", fat, 8, 0x01000007, 0, 48, len(macho_x86), 0)
+        struct.pack_into(">IIIII", fat, 28, 0x0100000C, 0, 80, len(macho_arm), 0)
+        fat[48:80] = macho_x86
+        fat[80:112] = macho_arm
+        self.assertEqual(frozenset({"arm64", "x86_64"}), detect_binary_architectures(bytes(fat)))
+
+        pe = bytearray(64 + 24 + 112 + 40)
+        pe[:2] = b"MZ"
+        struct.pack_into("<I", pe, 0x3C, 64)
+        pe[64:68] = b"PE\0\0"
+        struct.pack_into("<HH", pe, 68, 0x8664, 1)
+        struct.pack_into("<H", pe, 84, 112)
+        struct.pack_into("<H", pe, 88, 0x20B)
+        self.assertEqual(frozenset({"x86_64"}), detect_binary_architectures(bytes(pe)))
+
+        malformed_elf = bytearray(self._elf("x86_64"))
+        struct.pack_into("<Q", malformed_elf, 32, 64)
+        struct.pack_into("<H", malformed_elf, 54, 56)
+        struct.pack_into("<H", malformed_elf, 56, 1)
+        malformed_macho = bytearray(macho_arm)
+        struct.pack_into("<I", malformed_macho, 16, 1)
+        malformed_fat = bytearray(fat)
+        struct.pack_into("<I", malformed_fat, 48 + 16, 1)
+        malformed_pe = bytearray(pe)
+        struct.pack_into("<I", malformed_pe, 88 + 108, 16)
+        for malformed in (
+            self._elf("x86_64")[:20],
+            bytes(macho_arm[:8]),
+            bytes(fat[:48]),
+            bytes(pe[:70]),
+            bytes(malformed_elf),
+            bytes(malformed_macho),
+            bytes(malformed_fat),
+            bytes(malformed_pe),
+        ):
+            with self.subTest(malformed=malformed[:4]):
+                with self.assertRaisesRegex(ValueError, "invalid"):
+                    detect_binary_architectures(malformed)
+
+    def test_portable_archive_rejects_architecture_mismatch_atomically(self):
+        from comic_sol_product.portable import create_portable_archive
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            runtime = self._portable_runtime(root, architecture="arm64")
+            for extension in ("zip", "tar.gz"):
+                archive = root / f"portable.{extension}"
+                with self.subTest(extension=extension):
+                    with self.assertRaisesRegex(
+                        ValueError, "architecture mismatch.*requested x86_64"
+                    ):
+                        create_portable_archive(runtime, archive, architecture="x86_64")
+                    self.assertFalse(archive.exists())
+
+    def test_release_assembly_rejects_architecture_mismatch(self):
+        from scripts import assemble_release
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            runtime = self._portable_runtime(root, architecture="arm64")
+            environment = root / "environment.json"
+            environment.write_text("{}", encoding="utf-8")
+            output = root / "release"
+            argv = [
+                "assemble_release.py",
+                "--runtime",
+                os.fspath(runtime),
+                "--environment",
+                os.fspath(environment),
+                "--output",
+                os.fspath(output),
+                "--platform",
+                "linux",
+                "--architecture",
+                "x86_64",
+            ]
+            with mock.patch("sys.argv", argv):
+                with self.assertRaisesRegex(ValueError, "architecture mismatch"):
+                    assemble_release.main()
+            self.assertEqual([], list(output.iterdir()))
+
+    def test_portable_archives_reject_symlinked_runtime_root(self):
+        from comic_sol_product.portable import create_portable_archive
+        from scripts import assemble_release
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            runtime = self._portable_runtime(root)
+            linked_runtime = root / "linked-runtime"
+            try:
+                linked_runtime.symlink_to(runtime, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlinks are unavailable: {error}")
+            for extension in ("zip", "tar.gz"):
+                with self.subTest(extension=extension):
+                    with self.assertRaisesRegex(ValueError, "symlinks or reparse points"):
+                        create_portable_archive(
+                            linked_runtime,
+                            root / f"portable.{extension}",
+                            architecture="x86_64",
+                        )
+
+            environment = root / "environment.json"
+            environment.write_text("{}", encoding="utf-8")
+            argv = [
+                "assemble_release.py",
+                "--runtime",
+                os.fspath(linked_runtime),
+                "--environment",
+                os.fspath(environment),
+                "--output",
+                os.fspath(root / "release"),
+                "--platform",
+                "linux",
+                "--architecture",
+                "x86_64",
+            ]
+            with mock.patch("sys.argv", argv):
+                with self.assertRaisesRegex(ValueError, "symlinks or reparse points"):
+                    assemble_release.main()
+
+    def test_portable_archives_reject_symlinked_files_and_directories(self):
+        from comic_sol_product.portable import create_portable_archive
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            runtime = self._portable_runtime(root)
+            outside = root / "outside"
+            outside.write_bytes(b"outside")
+            try:
+                (runtime / "linked-file").symlink_to(outside)
+            except OSError as error:
+                self.skipTest(f"file symlinks are unavailable: {error}")
+            for extension in ("zip", "tar.gz"):
+                with self.subTest(extension=extension):
+                    with self.assertRaisesRegex(ValueError, "symlinks or reparse points"):
+                        create_portable_archive(
+                            runtime, root / f"portable.{extension}", architecture="x86_64"
+                        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            runtime = self._portable_runtime(root)
+            outside = root / "outside"
+            outside.mkdir()
+            try:
+                (runtime / "linked-directory").symlink_to(outside, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlinks are unavailable: {error}")
+            for extension in ("zip", "tar.gz"):
+                with self.subTest(extension=extension):
+                    with self.assertRaisesRegex(ValueError, "symlinks or reparse points"):
+                        create_portable_archive(
+                            runtime,
+                            root / f"portable.{extension}",
+                            architecture="x86_64",
+                        )
+
+    @unittest.skipIf(os.name == "nt", "FIFOs are a POSIX filesystem feature")
+    def test_portable_archives_reject_non_regular_members(self):
+        from comic_sol_product.portable import create_portable_archive
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            runtime = self._portable_runtime(root)
+            os.mkfifo(runtime / "named-pipe")
+            for extension in ("zip", "tar.gz"):
+                with self.subTest(extension=extension):
+                    with self.assertRaisesRegex(ValueError, "regular file or directory"):
+                        create_portable_archive(
+                            runtime, root / f"portable.{extension}", architecture="x86_64"
+                        )
+
+    @unittest.skipIf(os.name == "nt", "Unix sockets are a POSIX filesystem feature")
+    def test_portable_archives_reject_socket_members(self):
+        from comic_sol_product.portable import create_portable_archive
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            runtime = self._portable_runtime(root)
+            with socket.socket(socket.AF_UNIX) as listener:
+                listener.bind(os.fspath(runtime / "runtime.sock"))
+                for extension in ("zip", "tar.gz"):
+                    with self.subTest(extension=extension):
+                        with self.assertRaisesRegex(ValueError, "regular file or directory"):
+                            create_portable_archive(
+                                runtime,
+                                root / f"portable.{extension}",
+                                architecture="x86_64",
+                            )
+
+    def test_portable_archive_rejects_member_replaced_after_scan(self):
+        from comic_sol_product import portable
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            runtime = self._portable_runtime(root)
+            replacement = root / "replacement"
+            replacement.write_bytes(b"replacement")
+            original_read = portable._read_member
+            replaced = False
+
+            def replace_before_read(runtime_root, root_descriptor, member, directories):
+                nonlocal replaced
+                if not replaced:
+                    os.replace(replacement, runtime_root / member.relative)
+                    replaced = True
+                return original_read(runtime_root, root_descriptor, member, directories)
+
+            with mock.patch.object(portable, "_read_member", side_effect=replace_before_read):
+                with self.assertRaisesRegex(ValueError, "changed before it could be read"):
+                    portable.create_portable_archive(
+                        runtime, root / "portable.zip", architecture="x86_64"
+                    )
+            self.assertFalse((root / "portable.zip").exists())
+
+    def test_portable_archive_rejects_same_inode_rewrite_after_scan(self):
+        from comic_sol_product import portable
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            runtime = self._portable_runtime(root)
+            original_write = portable._write_zip
+
+            def rewrite_before_write(
+                destination,
+                runtime_root,
+                root_descriptor,
+                members,
+                directories,
+                architecture,
+            ):
+                member = members[0]
+                target = runtime_root / member.relative
+                metadata = target.stat()
+                target.write_bytes(b"x" * member.size)
+                os.utime(target, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
+                return original_write(
+                    destination,
+                    runtime_root,
+                    root_descriptor,
+                    members,
+                    directories,
+                    architecture,
+                )
+
+            with mock.patch.object(portable, "_write_zip", side_effect=rewrite_before_write):
+                with self.assertRaisesRegex(ValueError, "changed before it could be read"):
+                    portable.create_portable_archive(
+                        runtime, root / "portable.zip", architecture="x86_64"
+                    )
+
+    def test_zip_and_tar_apply_the_same_deterministic_member_policy(self):
+        from comic_sol_product.portable import create_portable_archive
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            runtime = self._portable_runtime(root)
+            zip_first = create_portable_archive(runtime, root / "first.zip", architecture="x86_64")
+            zip_second = create_portable_archive(
+                runtime, root / "second.zip", architecture="x86_64"
+            )
+            tar_first = create_portable_archive(
+                runtime, root / "first.tar.gz", architecture="x86_64"
+            )
+            tar_second = create_portable_archive(
+                runtime, root / "second.tar.gz", architecture="x86_64"
+            )
+
+            self.assertEqual(zip_first.read_bytes(), zip_second.read_bytes())
+            self.assertEqual(tar_first.read_bytes(), tar_second.read_bytes())
+            with zipfile.ZipFile(zip_first) as zip_reader:
+                zip_members = zip_reader.namelist()
+                zip_payloads = {name: zip_reader.read(name) for name in zip_members}
+                zip_modes = {
+                    name: zip_reader.getinfo(name).external_attr >> 16 & 0o777
+                    for name in zip_members
+                }
+            with tarfile.open(tar_first, "r:gz") as tar_reader:
+                tar_members = tar_reader.getnames()
+                tar_payloads = {
+                    member.name: tar_reader.extractfile(member).read()
+                    for member in tar_reader.getmembers()
+                }
+                tar_modes = {member.name: member.mode for member in tar_reader.getmembers()}
+            self.assertEqual(zip_members, tar_members)
+            self.assertEqual(zip_payloads, tar_payloads)
+            self.assertEqual(zip_modes, tar_modes)
 
     def test_pyinstaller_spec_freezes_console_entrypoint_and_resources(self):
         root = Path(__file__).resolve().parents[1]

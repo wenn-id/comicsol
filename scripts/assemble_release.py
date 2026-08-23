@@ -37,7 +37,7 @@ def main() -> int:
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     archive = output / artifact_name(identity, "zip")
-    create_portable_archive(args.runtime.resolve(strict=True), archive)
+    create_portable_archive(args.runtime, archive, architecture=identity.architecture)
     sbom = write_sbom(output, identity, args.environment, archive.name)
     validate_sbom_schema(sbom)
     write_release_metadata(output, identity, [archive.name])
