@@ -9,6 +9,13 @@ from typing import Any
 from urllib.parse import quote
 
 
+_APPROVED_RELEASE_BYPASS_ACTOR = {
+    "actor_type": "RepositoryRole",
+    "actor_id": 5,
+    "bypass_mode": "always",
+}
+
+
 def _read_object(path: Path) -> dict[str, Any]:
     record = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(record, dict):
@@ -21,6 +28,14 @@ def _read_array(path: Path) -> list[Any]:
     if not isinstance(record, list):
         raise RuntimeError(f"expected a JSON array: {path}")
     return record
+
+
+def _is_git_sha(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 40
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 def _is_sha256(value: object) -> bool:
@@ -89,17 +104,33 @@ def build_evidence(
         raise RuntimeError("summary digest identity is invalid")
 
     tag = candidate_identity.get("tag")
+    tag_object_sha = candidate_identity.get("tag_object_sha")
     commit_sha = candidate_identity.get("candidate_commit")
+    protected_main_sha = candidate_identity.get("protected_main_sha")
+    matched_ruleset_ids = candidate_identity.get("matched_ruleset_ids")
+    approved_bypass_actors = candidate_identity.get("approved_bypass_actors")
     manifest = candidate_identity.get("checksum_manifest")
     payloads = candidate_identity.get("payloads")
     if (
         not isinstance(tag, str)
         or not tag.startswith("v")
-        or not isinstance(commit_sha, str)
-        or len(commit_sha) != 40
-        or any(character not in "0123456789abcdef" for character in commit_sha)
+        or not _is_git_sha(tag_object_sha)
+        or not _is_git_sha(commit_sha)
+        or not _is_git_sha(protected_main_sha)
     ):
         raise RuntimeError("candidate tag or commit identity is invalid")
+    if (
+        not isinstance(matched_ruleset_ids, list)
+        or not matched_ruleset_ids
+        or any(
+            isinstance(ruleset_id, bool) or not isinstance(ruleset_id, int) or ruleset_id <= 0
+            for ruleset_id in matched_ruleset_ids
+        )
+        or matched_ruleset_ids != sorted(set(matched_ruleset_ids))
+    ):
+        raise RuntimeError("candidate matched ruleset identity is invalid")
+    if approved_bypass_actors != [_APPROVED_RELEASE_BYPASS_ACTOR]:
+        raise RuntimeError("candidate release bypass authority is invalid")
     if not isinstance(manifest, dict) or not _is_sha256(manifest.get("sha256")):
         raise RuntimeError("candidate checksum identity is invalid")
     if not isinstance(payloads, list) or any(
@@ -116,7 +147,12 @@ def build_evidence(
     qualification_candidate = qualification.get("candidate")
     expected_qualification_identity = {
         "tag": tag,
+        "tag_object_sha": tag_object_sha,
         "commit_sha": commit_sha,
+        "protected_main_sha": protected_main_sha,
+        "matched_ruleset_ids": matched_ruleset_ids,
+        "approved_bypass_actors": approved_bypass_actors,
+        "release_state": {"draft": False, "prerelease": True, "immutable": True},
         "checksum_manifest_sha256": manifest["sha256"],
     }
     if qualification_candidate != expected_qualification_identity:
@@ -172,7 +208,12 @@ def build_evidence(
         "state": "promotion-ready",
         "candidate": {
             "tag": tag,
+            "tag_object_sha": tag_object_sha,
             "commit_sha": commit_sha,
+            "protected_main_sha": protected_main_sha,
+            "matched_ruleset_ids": matched_ruleset_ids,
+            "approved_bypass_actors": approved_bypass_actors,
+            "release_state": expected_qualification_identity["release_state"],
             "release_url": release_url,
             "workflow_run_id": run_id,
             "workflow_run_url": run_url,

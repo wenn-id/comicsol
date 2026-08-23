@@ -9,10 +9,17 @@ bytes**: the tag, assets, Sigstore signature, attestations, and the locked
 prerelease field of the affected release stay exactly as published, and every
 action below appends a public record explaining what changed operationally.
 
-The same rule applies in both directions: never delete the tag, never re-upload
-or "fix" an asset under the same name, and never rebuild the old version as a
-new candidate of the same version number. A replacement is always a **fresh
-version and a fresh tag** through the normal release workflow.
+The same rule applies in both directions: never delete the signed annotated tag,
+never change its captured tag-object SHA, never re-upload or "fix" an asset
+under the same name, and never rebuild the old version as a new candidate of
+the same version number. A replacement is always a **fresh version and a fresh
+signed annotated tag** through the normal release workflow. The active matching tag rulesets must collectively restrict creation, updates,
+and deletions and enable `required_signatures` throughout incident handling.
+Their only approved bypass actor is repository admin
+(`actor_type=RepositoryRole`, `actor_id=5`, `bypass_mode=always`), and every
+matching ruleset containing `creation` must contain exactly that actor; write or
+maintain roles, teams, integrations, and pull-request-only bypasses are not
+trusted release authority.
 
 ## 1. Withdrawal (yank) of a published candidate
 
@@ -45,11 +52,18 @@ qualification failure discovered after publication, or a security report).
    configured tag ruleset then prevents. Removing a public release entry is therefore
    an administrator-only escalation: confirm the active `refs/tags/v*` ruleset
    restricting updates and deletions is enforced before and after the action, perform
-   the removal under that recorded review, and capture the API audit trail. The tag
-   itself is never deleted, so the attestations, the Sigstore identity, and the run
-   evidence remain verifiable against it.
+   the removal under that recorded review, and capture the API audit trail. Before
+   and after it, verify that the matching rulesets collectively restrict
+   creation, updates, and deletions, enable `required_signatures`, and contain
+   no bypass actor other than repository admin (`RepositoryRole`, actor ID `5`,
+   mode `always`), with every matching ruleset containing `creation` granting
+   exactly that actor. The signed
+   annotated tag itself is never deleted or recreated, so its captured tag-object SHA,
+   attestations, Sigstore identity, direct tag-object SHA and peeled target commit, and run evidence remain
+   verifiable against the same identity.
    ```bash
-   # Escalation precondition: an active tag ruleset must still restrict deletions.
+   # Escalation precondition: the active v* ruleset must restrict creation,
+   # updates, and deletions and must enable required_signatures.
    gh api "repos/wenn-id/comicsol/rulesets?includes_parents=true&per_page=100" \
      --jq '.[] | select(.target == "tag" and .enforcement == "active") | .id'
    ```
@@ -94,8 +108,10 @@ previous qualified release.
   bytes requires a fresh version and tag (criteria state 3).
 - **Change the prerelease flag or assets**: forbidden; immutable-release
   locking is the property that makes all other evidence binding.
-- **Reuse the tag after deletion**: forbidden; the tag ruleset restricts
-  updates and deletions, and attestations for a reused tag would be ambiguous.
+- **Reuse the tag after deletion**: forbidden; the signed annotated tag's object
+  SHA is immutable, and the ruleset restricts creation, updates, and deletions
+  and requires signatures. Recreating even a tag that peels to the same commit
+  creates a different tag object and breaks the recorded identity.
 - **Yank external registries**: out of scope because nothing is published
   there; state that plainly rather than implying coverage.
 

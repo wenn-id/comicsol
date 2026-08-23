@@ -243,7 +243,18 @@ class ReleaseDocumentationTests(unittest.TestCase):
             "Disposable-candidate drill",
             "release-production",
             "tag ruleset",
-            "restricts updates and deletions",
+            "actor_id: 5",
+            "bypass_mode: always",
+            "Every matching ruleset containing `creation`",
+            "draft=false",
+            "prerelease=true",
+            "immutable=true",
+            "restricts tag creation, updates, and deletions",
+            "required_signatures",
+            "signed annotated tag",
+            "tag-object SHA",
+            "protected `main`",
+            "target_commitish",
             "ownership marker",
             "newest deployment status",
             "required reviewers",
@@ -400,6 +411,17 @@ class SupplyChainProvenanceContractTests(unittest.TestCase):
             "build-provenance attestation",
             "token.actions.githubusercontent.com",
             "self-hosted runners denied",
+            "signed annotated tag",
+            "tag-object SHA",
+            "protected `main`",
+            "required_signatures",
+            "actor_type=RepositoryRole",
+            "actor_id=5",
+            "bypass_mode=always",
+            "Every matching ruleset containing `creation`",
+            "target_commitish=main",
+            "raw field is non-authoritative",
+            "captured direct tag-object SHA and peeled candidate commit",
         ):
             self.assertIn(phrase, collapsed)
         # The table uses the `X` version placeholder; assert the exact subject
@@ -462,7 +484,7 @@ class SupplyChainProvenanceContractTests(unittest.TestCase):
         collapsed = " ".join(self.runbook.split())
         for phrase in (
             "adding evidence, never replacing bytes",
-            "never delete the tag",
+            "never delete the signed annotated tag",
             "WITHDRAWN",
             "ROLLED BACK",
             "candidate-identity.json",
@@ -474,6 +496,12 @@ class SupplyChainProvenanceContractTests(unittest.TestCase):
             "removes GitHub's immutable-release binding",
             "administrator-only escalation",
             "rulesets?includes_parents=true",
+            "signed annotated tag",
+            "captured tag-object SHA",
+            "required_signatures",
+            "RepositoryRole",
+            "actor ID `5`",
+            "restrict creation, updates, and deletions",
         ):
             self.assertIn(phrase, collapsed)
         # Deleting an immutable release is an escalation path guarded by the tag
@@ -495,6 +523,8 @@ class SupplyChainProvenanceContractTests(unittest.TestCase):
             "candidate identity sidecar digest mismatch",
             "candidate identity tag does not match qualification input",
             "candidate identity commit does not match qualification input",
+            "candidate identity tag object does not match qualification input",
+            "candidate identity protected main does not match qualification input",
             "published checksum manifest does not match candidate identity",
             "supporting evidence digest mismatch",
         ):
