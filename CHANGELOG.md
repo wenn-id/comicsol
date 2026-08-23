@@ -51,6 +51,25 @@ carries it.
   left as separate work because `CONTRIBUTING.md`, `docs/onboarding.md`, `README.md`, and the
   lock-completeness test all reference those paths.
 
+- Disclosed the macOS architecture mislabelling in the release notes of the four prereleases
+  that carry it. `docs/install.md` recorded it only for `2.0.0rc4`, the archive it tells people
+  to download, so `2.0.0rc1` through `2.0.0rc3` still described themselves as publishing
+  `x86_64` archives with no correction anywhere near them. Each of
+  `docs/releases/v2.0.0rc1.md` … `v2.0.0rc4.md` now carries a `Published archive correction`
+  section naming its own archive, stating that the contents are arm64, and saying the immutable
+  asset was not replaced. The distribution and known-limitation lines in those same notes no
+  longer claim the macOS archive is x86_64 or that "no arm64 artifact is claimed"; the archive
+  that shipped was the arm64 one.
+
+  The published assets are deliberately left untouched. These are prereleases; a release tag
+  and its assets name exact bytes, and rewriting a name or a `metadata.json` after publication
+  would cost more than retroactively accurate naming buys. No `SHA256SUMS` digest is wrong —
+  only the filename recorded beside it. Sigstore checksum signing landed after `rc4`, so no
+  signature covers these four archives and none is invalidated by leaving them alone.
+  The release pipeline targets macOS arm64 from `2.0.0rc6` onward; binary-architecture
+  verification during assembly remains tracked in #206. Nothing here relies on the historical
+  publisher's `--architecture` argument being honest.
+
 ### Changed
 
 - Added a fail-closed publication contract for v2.2 live visual evidence. The local-only

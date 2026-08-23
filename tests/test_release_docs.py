@@ -316,6 +316,22 @@ class ReleaseDocumentationTests(unittest.TestCase):
             self.assertIn(phrase.lower(), self.notes.lower())
         self.assertIn("2.0.0rc1", self.changelog)
 
+    def test_historical_macos_architecture_mislabel_is_disclosed_per_release(self):
+        """Keep the immutable rc1-rc4 correction visible in every release note."""
+        for version in ("rc1", "rc2", "rc3", "rc4"):
+            with self.subTest(version=version):
+                document = (self.root / f"docs/releases/v2.0.0{version}.md").read_text(
+                    encoding="utf-8"
+                )
+                self.assertIn("## Published archive correction", document)
+                self.assertIn("contains **arm64** binaries, not x86_64 binaries", document)
+                # The sentence is hard-wrapped in Markdown, so match across the wrap.
+                self.assertRegex(document, r"Intel Macs cannot run this\s+archive natively")
+                self.assertIn("immutable asset has not been replaced", document)
+                self.assertIn("macos-arm64", document)
+                self.assertNotIn("This RC publishes x86_64 archives only", document)
+                self.assertNotIn("Linux, macOS, and Windows x86_64 portable archives", document)
+
     def test_public_docs_describe_provider_and_pdf_contracts(self):
         provider_setup = (self.root / "references/image-provider-setup.md").read_text(
             encoding="utf-8"
