@@ -190,7 +190,7 @@ class McpServerUnitTests(unittest.TestCase):
         ) as status:
             self.assertIs(expected, mcp_server.comic_status("project"))
 
-        status.assert_called_once_with(project)
+        status.assert_called_once_with(project.resolve())
 
     def test_init_rejects_oversized_utf8_before_project_allocation(self):
         before = list(self.root.iterdir())
