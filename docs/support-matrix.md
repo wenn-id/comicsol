@@ -46,9 +46,21 @@ Notes on each mode:
   are per-platform but architecture-agnostic). `--root` is always an explicit
   absolute path; see the trust boundary in
   [`README.md` → MCP Server](../README.md#mcp-server-optional).
-- **OCI image** — a non-root `linux/amd64` image distributed as the attested
-  release asset `comic-sol-<version>-linux-x86_64.container.tar`, not a
-  registry image. See [`docs/install-manual.md` → OCI image](install-manual.md#oci-image).
+- **OCI image** — a `linux/amd64` image distributed as the attested release
+  assets `comic-sol-<version>-linux-x86_64.container.tar` and its CycloneDX
+  SBOM `comic-sol-<version>-linux-x86_64.container.sbom.json`, not a registry
+  image. The supported runtime contract is: fixed numeric user `10001:10001`
+  (never root), read-only root filesystem, no network, all Linux capabilities
+  dropped, `no-new-privileges`, an init process, a 64-process limit, and the
+  engine's default seccomp profile (no custom profile; `seccomp=unconfined`
+  is unsupported). The only writable paths are the `/data` volume and a
+  `/tmp` tmpfs. Only Docker Engine-compatible runtimes that provide the
+  default seccomp profile are supported; the image is not published for other
+  architectures and there is no registry image. See
+  [`docs/install.md` → OCI image](install.md#oci-image) for the verification
+  commands and the hardening audit each release runs, and
+  [`docs/install-manual.md` → OCI image](install-manual.md#oci-image) for the
+  manual and advanced installation overview.
 
 ## Runtime extras
 

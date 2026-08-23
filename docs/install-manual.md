@@ -133,13 +133,17 @@ have exactly one record in the signed manifest. The complete subject contract is
 
 ## OCI image
 
-The official OCI distribution is the attested
-`comic-sol-<version>-linux-x86_64.container.tar` release asset. Verify it against
-the signed manifest, then load it:
+The official OCI distribution consists of the attested
+`comic-sol-<version>-linux-x86_64.container.tar` release asset and its CycloneDX
+SBOM, `comic-sol-<version>-linux-x86_64.container.sbom.json`. Verify both against
+the signed manifest, then load and run the image under the supported hardening
+contract:
 
 ```bash
 docker load --input comic-sol-<version>-linux-x86_64.container.tar
-docker run --rm --entrypoint comic-sol comic-sol:<version> doctor --output-root /tmp/comic-sol-doctor
+docker run --rm --init --read-only --network none --cap-drop ALL --pids-limit 64 \
+  --security-opt no-new-privileges --tmpfs /tmp \
+  --entrypoint comic-sol comic-sol:<version> doctor --output-root /data/doctor
 ```
 
 A checkout build is development-only:
@@ -149,5 +153,10 @@ docker build -t comic-sol:local .
 docker compose up
 ```
 
-The image runs as `comic-sol`, uses `/data` for persistent projects, and exposes
-the MCP server over stdio. There is no official registry image yet.
+The image runs as fixed numeric identity `10001:10001`, uses `/data` for
+persistent projects, allows only `/data` and the `/tmp` tmpfs to be writable,
+and exposes the MCP server over stdio. The supported runtime requires the
+container engine's default seccomp profile; `seccomp=unconfined` is unsupported.
+See the complete verification and runtime-audit contract in
+[`docs/install.md`](install.md#oci-image). There is no official registry image
+yet.

@@ -65,6 +65,7 @@ select = ["E4", "E7", "E9", "F"]
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/assemble_release.py" = ["E402"]  # Imports follow the repository path bootstrap.
+"scripts/container_sbom.py" = ["E402"]  # Imports follow the repository path bootstrap.
 
 [tool.ruff.format]
 quote-style = "double"

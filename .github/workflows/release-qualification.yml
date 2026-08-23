@@ -521,6 +521,7 @@ jobs:
           mkdir qualification
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern '*.whl' --pattern '*.tar.gz' --pattern '*.container.tar' \
+            --pattern '*.container.sbom.json' \
             --pattern install.sh --pattern install.ps1 \
             --pattern SHA256SUMS --pattern SHA256SUMS.sigstore.json \
             --pattern candidate-identity.json --pattern candidate-identity.json.sha256 \
@@ -621,7 +622,7 @@ jobs:
           verify_payload_checksums(root / "SHA256SUMS", payloads)
           PY
           python -m comic_sol_product.release qualification/*.whl qualification/*.tar.gz
-          for subject in qualification/*.whl qualification/*.tar.gz qualification/*.container.tar qualification/install.sh qualification/install.ps1; do
+          for subject in qualification/*.whl qualification/*.tar.gz qualification/*.container.tar qualification/*.container.sbom.json qualification/install.sh qualification/install.ps1; do
             gh attestation verify "$subject" \
               --repo "$GITHUB_REPOSITORY" \
               --signer-workflow wenn-id/comicsol/.github/workflows/release.yml \
@@ -630,8 +631,16 @@ jobs:
               --deny-self-hosted-runners
           done
           docker load --input qualification/*.container.tar
-          docker run --rm --entrypoint comic-sol "comic-sol:${RELEASE_TAG#v}" --version
-          docker run --rm --entrypoint comic-sol "comic-sol:${RELEASE_TAG#v}" doctor --output-root /data/doctor
+          version="${RELEASE_TAG#v}"
+          python - <<'PY'
+          from pathlib import Path
+          from comic_sol_product.distribution import validate_sbom_schema
+          for sbom in sorted(Path("qualification").glob("*.container.sbom.json")):
+              validate_sbom_schema(sbom)
+          PY
+          python scripts/container_runtime_audit.py \
+            --image "comic-sol:${version}" \
+            --expect-version "$version"
       - name: Run pip-audit security gate and source P0 qualification gates
         shell: bash
         run: |
@@ -658,6 +667,7 @@ jobs:
               "status": os.environ["QUALIFY_STATUS"],
               "checks": [
                   "published-source-bytes", "published-container-bytes", "provenance",
+                  "container-hardening-audit", "container-sbom",
                   "unit-integration", "golden", "resume", "failure-injection", "security", "artifact-contract",
               ],
               "exceptions": os.environ["QUALIFY_FAILURES"].split() if os.environ["QUALIFY_FAILURES"] else [],

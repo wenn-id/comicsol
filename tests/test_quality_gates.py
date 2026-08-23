@@ -31,7 +31,10 @@ class QualityGateContractTests(unittest.TestCase):
         self.assertIn("lint", ruff)
         self.assertIn("format", ruff)
         self.assertEqual(
-            {"scripts/assemble_release.py": ["E402"]},
+            {
+                "scripts/assemble_release.py": ["E402"],
+                "scripts/container_sbom.py": ["E402"],
+            },
             ruff["lint"]["per-file-ignores"],
         )
 

@@ -151,10 +151,68 @@ warnings.
 ## OCI image
 
 OCI is an official distribution channel delivered as the attested release asset
-`comic-sol-<version>-linux-x86_64.container.tar`, not a registry image. Loading,
-verification, and checkout-build commands are in
-[`docs/install-manual.md`](install-manual.md#oci-image). There is no `ghcr.io` image
-yet.
+`comic-sol-<version>-linux-x86_64.container.tar` plus its CycloneDX SBOM
+`comic-sol-<version>-linux-x86_64.container.sbom.json` — not as a registry image.
+Every release builds the image once from locked source and the Dockerfile's single
+digest-pinned base argument, audits the running container's hardening, scans the
+image dependency set with `pip-audit`, and publishes the tar and its SBOM inside
+the signed `SHA256SUMS` with build-provenance attestations; qualification loads
+and runs the downloaded bytes under the same audit. There is no `ghcr.io` image
+yet, so do not trust one claiming to be Comic Sol. The full decision record and
+what a registry distribution would additionally require are in
+[`docs/releases/release-trust-chain.md`](releases/release-trust-chain.md#oci-distribution-decision).
+Manual and advanced OCI installation context is in
+[`docs/install-manual.md`](install-manual.md#oci-image).
+
+To run the official image, download the container tar and its SBOM from the
+release, verify both against the signed `SHA256SUMS`, and load the image:
+
+```bash
+docker load --input comic-sol-2.0.0rc6-linux-x86_64.container.tar
+docker run --rm --init --read-only --network none --cap-drop ALL --pids-limit 64 \
+  --security-opt no-new-privileges --tmpfs /tmp \
+  --entrypoint comic-sol comic-sol:2.0.0rc6 doctor --output-root /data/doctor
+```
+
+Alternatively, build and run the non-root image from a checkout:
+
+```bash
+docker build -t comic-sol:2.0.0rc6 .
+docker run --rm --init --read-only --network none --cap-drop ALL --pids-limit 64 \
+  --security-opt no-new-privileges --tmpfs /tmp \
+  --entrypoint comic-sol comic-sol:2.0.0rc6 doctor --output-root /data/doctor
+docker compose up
+```
+
+### Container runtime hardening
+
+The image runs as the fixed numeric identity `10001:10001` (the `comic-sol`
+account; never root), uses `/data` for persistent projects, and exposes the MCP
+server over stdio by default. `compose.yaml` mounts a named `/data` volume, uses
+a read-only root filesystem, disables network access, drops every Linux
+capability, applies a 64-process limit, an init process, CPU/memory limits, and
+`no-new-privileges`. The only writable paths at runtime are the `/data` volume
+and a `/tmp` tmpfs.
+
+The effective seccomp policy is the container engine's **default profile**:
+neither the image nor `compose.yaml` installs a custom profile, and nothing may
+run the image with `seccomp=unconfined`. Docker's default profile is maintained
+by the engine vendor and already blocks the privileged syscall classes the
+runtime never needs. Verify the effective policy on your host with:
+
+```bash
+docker info --format '{{.SecurityOptions}}'   # must report seccomp with profile=default
+docker run --rm --cap-drop ALL --security-opt no-new-privileges --entrypoint python comic-sol:2.0.0rc6 \
+  -c "print([line for line in open('/proc/self/status') if line.startswith(('CapEff','NoNewPrivs','Seccomp'))])"
+# expect CapEff: 0000000000000000, NoNewPrivs: 1, Seccomp: 2
+```
+
+The release workflow asserts all of this fail-closed with
+`scripts/container_runtime_audit.py` — engine seccomp profile, image user, CLI
+version, runtime UID/GID, zero effective capabilities, seccomp filter mode, the
+process limit, the read-only root filesystem, the absent network, and working
+`doctor` and MCP handshake under the full hardening set — on the built image,
+and qualification repeats the audit against the published bytes.
 
 ### MCP trust boundary
 

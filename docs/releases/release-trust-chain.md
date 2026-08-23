@@ -29,6 +29,7 @@ digest cannot create a cycle. For version `X` and tag `vX`:
 | `comic_sol-X-py3-none-any.whl` | Source wheel | `SHA256SUMS` entry + attestation |
 | `comic-sol-X.tar.gz` | Source sdist | `SHA256SUMS` entry + attestation |
 | `comic-sol-X-linux-x86_64.container.tar` | OCI image (Docker `save`) | `SHA256SUMS` entry + attestation |
+| `comic-sol-X-linux-x86_64.container.sbom.json` | CycloneDX 1.6 SBOM of the image's installed runtime (inventoried from the image's own `site-packages`) | `SHA256SUMS` entry + attestation |
 | `installers/install.sh` → `install.sh` | POSIX installer | `SHA256SUMS` entry + attestation |
 | `installers/install.ps1` → `install.ps1` | Windows installer | `SHA256SUMS` entry + attestation |
 | `SHA256SUMS` | Signed checksum manifest | Sigstore keyless signature (`SHA256SUMS.sigstore.json`) + digest recorded in `candidate-identity.json` |
@@ -131,13 +132,18 @@ wenn-id/comicsol --signer-workflow wenn-id/comicsol/.github/workflows/release.ym
 **OCI is an official distribution channel, delivered as the attested
 `comic-sol-X-linux-x86_64.container.tar` release asset — not (yet) as a
 registry image.** The release workflow builds the image once from the locked
-source and the digest-pinned base (`DOCKER_BASE_DIGEST`), smokes it with
-`comic-sol doctor`, exports it with `docker save`, and publishes the tar as a
-payload: it is named by the signed manifest, covered by a build-provenance
-attestation, and qualified by `docker load` plus `--version`/`doctor` runs
-against the downloaded bytes. Publishing "by digest" is therefore the
-`SHA256SUMS` entry plus the attestation, and the signing story is the Sigstore
-bundle over that manifest.
+source and the Dockerfile's single digest-pinned base `ARG` (the workflow
+passes no base-image build argument, so the digest cannot drift from the
+audited pin), audits the running container's hardening with
+`scripts/container_runtime_audit.py`, blocks on a `pip-audit` scan of the
+image's exact hash-locked dependency set, generates
+`comic-sol-X-linux-x86_64.container.sbom.json` by inventorying the image's own
+`site-packages`, exports the image with `docker save`, and publishes the tar
+and its SBOM as payloads: both are named by the signed manifest, covered by
+build-provenance attestations, and qualified by `docker load` plus the same
+runtime audit against the downloaded bytes. Publishing "by digest" is
+therefore the `SHA256SUMS` entry plus the attestation, and the signing story
+is the Sigstore bundle over that manifest.
 
 A registry distribution (for example `ghcr.io`) would additionally require:
 push-by-digest with `packages: write` scoped to the release job alone, a
