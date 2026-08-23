@@ -2,6 +2,10 @@ services:
   comic-sol:
     build: .
     image: comic-sol:2.0.0rc6
+    # Fixed numeric identity of the image's comic-sol account.
+    user: "10001:10001"
+    # docker-init reaps zombies without any added capability.
+    init: true
     read_only: true
     command: ["mcp", "--root", "/data"]
     volumes:
@@ -9,11 +13,18 @@ services:
     tmpfs:
       - /tmp
     network_mode: none
+    # The runtime keeps the engine's default seccomp profile: compose sets no
+    # custom profile and never seccomp=unconfined (see docs/install.md).
+    cap_drop:
+      - ALL
     deploy:
       resources:
         limits:
           cpus: "2.0"
           memory: 2G
+          # Process-count limit; the service-level pids_limit key cannot
+          # coexist with this block on current Docker Compose.
+          pids: 64
     security_opt:
       - no-new-privileges:true
 

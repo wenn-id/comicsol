@@ -116,8 +116,16 @@ def write_sbom(
     identity: ReleaseIdentity,
     environment_sbom: Path,
     artifact: str,
+    *,
+    destination_name: str | None = None,
 ) -> Path:
-    """Finalize the CycloneDX BOM produced from the frozen build environment."""
+    """Finalize the CycloneDX BOM produced from the frozen build environment.
+
+    ``destination_name`` overrides the native-bundle SBOM filename for payload
+    BOMs that travel under a different release-asset name (for example the
+    container image SBOM); the serial number is then derived from that name so
+    the two BOMs never share an identity.
+    """
 
     source = environment_sbom.resolve(strict=True)
     record = json.loads(source.read_text(encoding="utf-8"))
@@ -183,8 +191,9 @@ def write_sbom(
     record["bomFormat"] = "CycloneDX"
     record["specVersion"] = "1.6"
     record["version"] = 1
-    record["serialNumber"] = f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, identity.stem)}"
-    destination = release_dir / sbom_name(identity)
+    serial_stem = Path(destination_name).stem if destination_name is not None else identity.stem
+    record["serialNumber"] = f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, serial_stem)}"
+    destination = release_dir / _safe_member(destination_name or sbom_name(identity))
     release_dir.mkdir(parents=True, exist_ok=True)
     destination.write_text(_canonical_json(record), encoding="utf-8", newline="\n")
     return destination

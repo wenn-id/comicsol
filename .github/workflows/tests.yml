@@ -203,9 +203,8 @@ jobs:
         python scripts/build_portable.py --wheel dist/*.whl --output native --lock requirements/locks/release-linux-x86_64.txt
         python scripts/portable_release_smoke.py --runtime native/comic-sol
         python scripts/assemble_release.py --runtime native/comic-sol --environment native/build-environment.sbom.json --output release --platform linux --architecture x86_64
-    - name: Build and smoke non-root OCI image
+    - name: Build and audit hardened non-root OCI image
       run: |
         docker build -t comic-sol:pr .
         docker run --rm --entrypoint comic-sol comic-sol:pr --version
-        docker run --rm --entrypoint comic-sol comic-sol:pr doctor --output-root /data/doctor
-        test "$(docker run --rm --entrypoint sh comic-sol:pr -c 'id -u')" != "0"
+        python scripts/container_runtime_audit.py --image comic-sol:pr --expect-version "$(python -c 'from comic_sol_product import __version__; print(__version__)')"

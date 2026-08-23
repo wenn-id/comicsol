@@ -208,6 +208,38 @@ class NativeDistributionContractTests(unittest.TestCase):
             environment = self._write_environment_sbom(release)
             validate_sbom_schema(write_sbom(release, self.identity, environment, artifact.name))
 
+    def test_container_sbom_override_writes_payload_name_and_distinct_serial(self):
+        try:
+            import cyclonedx  # noqa: F401
+            import jsonschema  # noqa: F401
+        except ImportError:
+            self.skipTest("CycloneDX JSON validation dependencies are not installed")
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            release = Path(temporary_directory)
+            artifact = release / f"comic-sol-{RELEASE_VERSION}-linux-x86_64.container.tar"
+            artifact.write_bytes(b"container-image")
+            environment = self._write_environment_sbom(release)
+            native = write_sbom(release, self.identity, environment, "payload.zip")
+            override_name = f"comic-sol-{RELEASE_VERSION}-linux-x86_64.container.sbom.json"
+            container = write_sbom(
+                release,
+                self.identity,
+                environment,
+                artifact.name,
+                destination_name=override_name,
+            )
+            self.assertEqual(override_name, container.name)
+            self.assertNotEqual(native.name, container.name)
+            native_record = json.loads(native.read_text(encoding="utf-8"))
+            container_record = json.loads(container.read_text(encoding="utf-8"))
+            self.assertNotEqual(native_record["serialNumber"], container_record["serialNumber"])
+            properties = {
+                item["name"]: item["value"] for item in container_record["metadata"]["properties"]
+            }
+            self.assertEqual(artifact.name, properties["comic-sol:release:artifact"])
+            validate_sbom_schema(container)
+
     def test_verifier_rejects_missing_or_tampered_artifact(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             release = Path(temporary_directory)
@@ -586,7 +618,10 @@ class NativeDistributionContractTests(unittest.TestCase):
         compose = (root / "compose.yaml").read_text(encoding="utf-8")
         workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
-        self.assertIn("USER comic-sol", dockerfile)
+        self.assertIn("USER 10001:10001", dockerfile)
+        self.assertNotIn("USER comic-sol", dockerfile)
+        self.assertIn("--uid 10001", dockerfile)
+        self.assertIn("--gid 10001", dockerfile)
         self.assertIn(
             "mcp==2.0.0",
             dockerfile
@@ -598,6 +633,14 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn('["comic-sol", "doctor"', dockerfile)
         self.assertIn("read_only: true", compose)
         self.assertIn("/data", compose)
+        self.assertIn("cap_drop:", compose)
+        self.assertIn("- ALL", compose)
+        self.assertIn("pids: 64", compose)
+        self.assertIn('user: "10001:10001"', compose)
+        self.assertIn("init: true", compose)
+        self.assertIn("network_mode: none", compose)
+        self.assertIn("no-new-privileges:true", compose)
+        self.assertIsNone(re.search(r"^\s*-\s*seccomp", compose, re.MULTILINE))
 
         self.assertNotIn("workflow_dispatch:", workflow)
         self.assertNotIn("inputs.tag", workflow)
@@ -622,8 +665,21 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertNotIn("if: startsWith(github.ref, 'refs/tags/v')", workflow)
         self.assertIn("requirements/locks/release-${{ matrix.platform }}-x86_64.txt", workflow)
         self.assertIn("--require-hashes", workflow)
-        self.assertIn("DOCKER_BASE_DIGEST", workflow)
+        self.assertNotIn("DOCKER_BASE_DIGEST", workflow)
+        self.assertNotIn("--build-arg", workflow)
+        self.assertIn("ARG PYTHON_BASE=", dockerfile)
+        self.assertEqual(1, dockerfile.count("sha256:"))
         self.assertIn("python:3.11.15-slim@sha256:", dockerfile)
+        self.assertIn("FROM ${PYTHON_BASE} AS builder", dockerfile)
+        self.assertIn("FROM ${PYTHON_BASE}", dockerfile)
+        self.assertIn("scripts/container_runtime_audit.py", workflow)
+        self.assertIn("--expect-version", workflow)
+        self.assertIn("scripts/container_sbom.py", workflow)
+        self.assertIn(
+            "comic-sol-${{ needs.prepare.outputs.version }}-linux-x86_64.container.sbom.json",
+            workflow,
+        )
+        self.assertIn("pip_audit -r requirements/locks/runtime-linux-x86_64.txt", workflow)
         self.assertIn("requirements/locks/runtime-linux-x86_64.txt", dockerfile)
         self.assertNotIn(f"refs/tags/v{RELEASE_VERSION}", workflow)
         for runner in ("ubuntu-latest", "macos-latest", "windows-latest"):
