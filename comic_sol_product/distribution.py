@@ -191,7 +191,7 @@ def write_sbom(
     record["bomFormat"] = "CycloneDX"
     record["specVersion"] = "1.6"
     record["version"] = 1
-    serial_stem = Path(destination_name).stem if destination_name is not None else identity.stem
+    serial_stem = destination_name if destination_name is not None else identity.stem
     record["serialNumber"] = f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, serial_stem)}"
     destination = release_dir / _safe_member(destination_name or sbom_name(identity))
     release_dir.mkdir(parents=True, exist_ok=True)

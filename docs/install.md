@@ -188,7 +188,7 @@ The effective seccomp policy is the container engine's **default profile**: neit
 
 ```bash
 docker info --format '{{.SecurityOptions}}'   # must report seccomp with profile=default
-docker run --rm --cap-drop ALL --entrypoint python comic-sol:2.0.0rc6 \
+docker run --rm --cap-drop ALL --security-opt no-new-privileges --entrypoint python comic-sol:2.0.0rc6 \
   -c "print([line for line in open('/proc/self/status') if line.startswith(('CapEff','NoNewPrivs','Seccomp'))])"
 # expect CapEff: 0000000000000000, NoNewPrivs: 1, Seccomp: 2
 ```

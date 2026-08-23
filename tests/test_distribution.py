@@ -209,12 +209,6 @@ class NativeDistributionContractTests(unittest.TestCase):
             validate_sbom_schema(write_sbom(release, self.identity, environment, artifact.name))
 
     def test_container_sbom_override_writes_payload_name_and_distinct_serial(self):
-        try:
-            import cyclonedx  # noqa: F401
-            import jsonschema  # noqa: F401
-        except ImportError:
-            self.skipTest("CycloneDX JSON validation dependencies are not installed")
-
         with tempfile.TemporaryDirectory() as temporary_directory:
             release = Path(temporary_directory)
             artifact = release / f"comic-sol-{RELEASE_VERSION}-linux-x86_64.container.tar"
@@ -238,7 +232,38 @@ class NativeDistributionContractTests(unittest.TestCase):
                 item["name"]: item["value"] for item in container_record["metadata"]["properties"]
             }
             self.assertEqual(artifact.name, properties["comic-sol:release:artifact"])
+            try:
+                import cyclonedx  # noqa: F401
+                import jsonschema  # noqa: F401
+            except ImportError:
+                self.skipTest("CycloneDX JSON validation dependencies are not installed")
             validate_sbom_schema(container)
+
+    def test_noncanonical_output_filename_uses_exact_destination_name(self):
+        try:
+            import cyclonedx  # noqa: F401
+            import jsonschema  # noqa: F401
+        except ImportError:
+            self.skipTest("CycloneDX JSON validation dependencies are not installed")
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            release = Path(temporary_directory)
+            artifact = release / f"comic-sol-{RELEASE_VERSION}-linux-x86_64.container.tar"
+            artifact.write_bytes(b"container-image")
+            environment = self._write_environment_sbom(release)
+            noncanonical_name = "custom.output.name.sbom.json"
+            sbom = write_sbom(
+                release,
+                self.identity,
+                environment,
+                artifact.name,
+                destination_name=noncanonical_name,
+            )
+            self.assertEqual(noncanonical_name, sbom.name)
+            self.assertTrue((release / noncanonical_name).exists())
+            sbom_record = json.loads(sbom.read_text(encoding="utf-8"))
+            expected_serial = f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, noncanonical_name)}"
+            self.assertEqual(expected_serial, sbom_record["serialNumber"])
 
     def test_verifier_rejects_missing_or_tampered_artifact(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

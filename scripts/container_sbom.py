@@ -153,7 +153,7 @@ def main() -> int:
             identity,
             environment_sbom,
             container_tar_name(args.version),
-            destination_name=container_sbom_name(args.version),
+            destination_name=output.name,
         )
         validate_sbom_schema(sbom)
     print(sbom)

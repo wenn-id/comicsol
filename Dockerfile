@@ -1,6 +1,6 @@
-# Single canonical base-image reference for every stage; digest checked
-# 2026-08-07. The release workflow deliberately passes no base-image build
-# argument so this pinned digest cannot drift from the audited value.
+# Single canonical base-image reference for every stage. The release workflow
+# deliberately passes no base-image build argument so this pinned digest cannot
+# drift from the audited value.
 ARG PYTHON_BASE="python:3.11.15-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff"
 FROM ${PYTHON_BASE} AS builder
 WORKDIR /src
