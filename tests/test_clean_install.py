@@ -13,6 +13,8 @@ from comic_sol_product.release import (
     REQUIRED_WHEEL_MEMBERS,
     validate_sdist_members,
     validate_wheel_members,
+    validate_wheel_metadata,
+    wheel_metadata_member,
 )
 from scripts import clean_install_smoke
 
@@ -63,6 +65,133 @@ class DistributionContractTests(unittest.TestCase):
         validate_sdist_members(members)
         with self.assertRaisesRegex(ValueError, "SKILL.md"):
             validate_sdist_members({name for name in members if not name.endswith("/SKILL.md")})
+
+
+class WheelMetadataContractTests(unittest.TestCase):
+    """The wheel METADATA must keep its discovery fields (issue #213).
+
+    Project URLs, classifiers, keywords, and maintainer entries are what PyPI
+    and package tooling read; a wheel that loses them still installs and still
+    passes the member check above, so only this contract makes the loss
+    visible before a release.
+    """
+
+    COMPLETE_METADATA = "\n".join(
+        [
+            "Metadata-Version: 2.4",
+            "Name: comic-sol",
+            "Version: 2.0.0rc6",
+            "Summary: Local-first deterministic comic production pipeline",
+            "Author: Alwan Juliawan",
+            "Maintainer: Alwan Juliawan",
+            "License-Expression: MIT",
+            "Keywords: comic,manga,pdf-export",
+            "Classifier: Development Status :: 4 - Beta",
+            "Classifier: Intended Audience :: End Users/Desktop",
+            "Classifier: Operating System :: MacOS",
+            "Classifier: Programming Language :: Python :: 3.11",
+            "Classifier: Topic :: Artistic Software",
+            "Project-URL: Homepage, https://github.com/wenn-id/comicsol",
+            "Project-URL: Repository, https://github.com/wenn-id/comicsol",
+            "Project-URL: Documentation, https://github.com/wenn-id/comicsol/tree/main/docs",
+            "Project-URL: Changelog, https://github.com/wenn-id/comicsol/blob/main/CHANGELOG.md",
+            "Project-URL: Issue Tracker, https://github.com/wenn-id/comicsol/issues",
+            "Project-URL: Security Policy, https://github.com/wenn-id/comicsol/blob/main/SECURITY.md",
+            "Requires-Python: >=3.11",
+            "Requires-Dist: Pillow==12.3.0",
+            "",
+        ]
+    )
+
+    def test_complete_metadata_passes(self):
+        validate_wheel_metadata(self.COMPLETE_METADATA)
+
+    def test_missing_project_urls_are_named(self):
+        broken = self.COMPLETE_METADATA.replace(
+            "Project-URL: Homepage, https://github.com/wenn-id/comicsol\n", ""
+        ).replace("Project-URL: Security Policy, https://github.com/wenn-id/comicsol/blob/main/SECURITY.md\n", "")
+        with self.assertRaisesRegex(ValueError, "Homepage.*Security Policy"):
+            validate_wheel_metadata(broken)
+
+    def test_missing_keywords_classifiers_and_maintainer_fail(self):
+        with self.assertRaisesRegex(ValueError, "missing Keywords"):
+            validate_wheel_metadata(
+                self.COMPLETE_METADATA.replace("Keywords: comic,manga,pdf-export\n", "")
+            )
+        no_contact = self.COMPLETE_METADATA.replace("Author: Alwan Juliawan\n", "").replace(
+            "Maintainer: Alwan Juliawan\n", ""
+        )
+        with self.assertRaisesRegex(ValueError, "neither Author nor Maintainer"):
+            validate_wheel_metadata(no_contact)
+        no_classifiers = "\n".join(
+            line
+            for line in self.COMPLETE_METADATA.splitlines()
+            if not line.startswith("Classifier: ")
+        )
+        with self.assertRaisesRegex(ValueError, "missing Classifiers"):
+            validate_wheel_metadata(no_classifiers)
+        missing_prefix = "\n".join(
+            line
+            for line in self.COMPLETE_METADATA.splitlines()
+            if not line.startswith("Classifier: Operating System")
+        )
+        with self.assertRaisesRegex(ValueError, "no Operating System classifier"):
+            validate_wheel_metadata(missing_prefix)
+
+    def test_deprecated_license_classifier_is_rejected(self):
+        legacy = self.COMPLETE_METADATA.replace(
+            "Classifier: Topic :: Artistic Software",
+            "Classifier: License :: OSI Approved :: MIT License",
+        )
+        with self.assertRaisesRegex(ValueError, "deprecated License :: classifier"):
+            validate_wheel_metadata(legacy)
+
+    def test_requires_python_floor_is_enforced(self):
+        for relaxed in ("", "Requires-Python: >=3.9\n"):
+            broken = self.COMPLETE_METADATA.replace("Requires-Python: >=3.11\n", relaxed)
+            with self.assertRaisesRegex(ValueError, "Requires-Python"):
+                validate_wheel_metadata(broken)
+
+    def test_wheel_must_carry_exactly_one_metadata_member(self):
+        self.assertEqual(
+            "comic_sol_product-2.0.0rc6.dist-info/METADATA",
+            wheel_metadata_member(
+                REQUIRED_WHEEL_MEMBERS | {"comic_sol_product-2.0.0rc6.dist-info/METADATA"}
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            wheel_metadata_member(set(REQUIRED_WHEEL_MEMBERS))
+
+    def test_pyproject_declares_the_required_metadata(self):
+        import tomllib
+
+        pyproject = tomllib.loads(
+            (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
+                encoding="utf-8"
+            )
+        )
+        project = pyproject["project"]
+        self.assertEqual(["version"], project["dynamic"])
+        self.assertTrue(project["keywords"], "keywords must not be empty")
+        self.assertTrue(project["classifiers"], "classifiers must not be empty")
+        self.assertTrue(project["maintainers"], "maintainers must not be empty")
+        urls = set(project["urls"])
+        for label in (
+            "Homepage",
+            "Repository",
+            "Documentation",
+            "Changelog",
+            "Issue Tracker",
+            "Security Policy",
+        ):
+            self.assertIn(label, urls)
+        for classifier in project["classifiers"]:
+            self.assertFalse(
+                classifier.startswith("License ::"),
+                "license is declared as SPDX; License :: classifiers are deprecated",
+            )
+        self.assertEqual("MIT", project["license"])
+        self.assertEqual(">=3.11", project["requires-python"])
 
 
 class CleanInstallSmokeTests(unittest.TestCase):

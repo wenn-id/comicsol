@@ -1,138 +1,131 @@
 # Image provider setup by platform
 
 Comic Sol is provider-agnostic — it never embeds credentials or vendor client
-libraries. The agent session must expose a compatible text-to-image tool; Comic Sol
+libraries, and the deterministic engine never calls a network service. The
+agent session must expose a compatible text-to-image capability; Comic Sol
 detects it automatically (see [capability-detection.md](capability-detection.md)).
 
-This platform-specific document lists concrete setup steps for the most common
-MCP-capable agent platforms.
+This platform-specific document describes the capability Comic Sol needs and
+how to wire one into the most common agent platforms, without prescribing a
+vendor, endpoint, or credential mechanism.
 
----
+## The capability, not a vendor
 
-## Codex (OpenAI)
+Whatever the host, Comic Sol needs exactly one thing from the agent session:
 
-**Built-in.** Codex includes GPT-5.6 Sol / GPT-5.5 Image generation as a native tool.
-No extra setup needed. Comic Sol's capability detection finds the tool and records it.
+- a tool that can **create a raster image from text alone** and return or save
+  it as a **local file** (PNG) that the session can place on disk;
 
-If agent cannot find the tool, confirm your Codex model supports image generation.
-GPT-5.6 Sol and newer GPT-5.x models include it.
+and, to get the most from it:
 
----
+- acceptance of one or more **reference images** for character consistency;
+- acceptance of **exact output dimensions** matching the panel format;
+- the ability to render **authored SFX text** into the artwork.
 
-## Claude Desktop / Claude Code
+An editing-only image tool (crop, resize, retouch) is not sufficient — the first
+panel of a new comic must be drawable from the prompt alone. If no compatible
+capability is exposed, Comic Sol preserves the project, marks it `BLOCKED`, and
+reports exactly what is missing; it never fabricates a placeholder image.
 
-Neither Claude Desktop nor Claude Code ships a native image-generation tool.
-You must provide one via a separate MCP server.
+## Credential safety
 
-### Option A — FAL MCP (recommended, free tier up to ~400 credits/month)
+Comic Sol stores no provider credentials, and none belong in its files:
 
-1. Create an account at [fal.ai](https://fal.ai) and get an API key.
-2. Install `uv` (universal Python package installer):
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
-3. Add the FAL MCP server to `claude_desktop_config.json`:
+- Keep API keys in the **agent or MCP client's own configuration** (typically an
+  environment block or secret store managed by that client), never in prompts,
+  story text, `SKILL.md`, project JSON, or generated logs.
+- Never paste an API key into a prompt to "give the agent access". Logs and QA
+  records keep sanitized paths, hashes, and categories precisely so a credential
+  that never entered the pipeline can never leak back out of it.
+- If a credential may have been exposed, revoke it before filing any report, and
+  use the private reporting route in [`SUPPORT.md`](../SUPPORT.md) rather than a
+  public issue.
 
-   **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-   **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+## Wiring a capability by platform
 
-   ```json
-   {
-     "mcpServers": {
-       "image-gen": {
-         "command": "uvx",
-         "args": ["mcp-fal"]
-       }
-     }
-   }
-   ```
+### Codex
 
-4. Set the `FAL_KEY` environment variable or configure it in the same JSON:
-   ```json
-   "env": {
-     "FAL_KEY": "your-fal-api-key"
-   }
-   ```
+Codex may expose a native image-generation capability. When the active session
+has one, Comic Sol detects and records it with no extra setup. If the tool
+cannot be found, confirm the session's configured model exposes image
+generation; Comic Sol only sees the tools the session actually offers.
 
-5. Restart Claude Desktop. The agent session gains image-generation tools exposed
-   by the configured MCP server.
-6. Comic Sol detects and uses them at the planning step.
+### Claude Desktop / Claude Code
 
-### Option B — Direct API via bash (no MCP server needed)
-
-The agent can call an image API directly. Simplify the skill prompt to include:
-
-> You have access to bash. Use curl to call OpenAI / Stability / Replicate
-> image API and save the result as a PNG file. Your API key is set as
-> `$OPENAI_API_KEY`/`$STABILITY_KEY`.
-
-This pattern works but relies on the agent writing correct API calls; prefer
-the MCP approach for reliability.
-
-### Option C — Any image MCP server from the market
-
-- [mcp-server-to-images](https://github.com/nicholasgriffintn/mcp-server-to-images)
-  — wraps multiple providers
-- [mcp-fal](https://github.com/fal-ai/mcp-fal) — FAL AI, fast SD/Flux models
-- [sequential-thinking](https://github.com/modelcontextprotocol/servers) + Replicate
-
----
-
-## Cline / Continue / Roo Code (IDE plugins)
-
-These IDE agents load MCP servers from their own config file (typically
-`.vscode/mcp.json` or Continue's `config.json`). Add the same image-gen
-server there:
+Neither ships a native image-generation tool. Provide one through a separate
+stdio MCP server of your choosing, registered in the client's MCP
+configuration (for Claude Desktop, `claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "image-gen": {
-      "command": "uvx",
-      "args": ["mcp-fal"]
+      "command": "<launcher for your chosen MCP image server>",
+      "args": ["<its arguments>"],
+      "env": {
+        "<ITS_CREDENTIAL_VARIABLE>": "<key stored by the client, not by Comic Sol>"
+      }
     }
   }
 }
 ```
 
-The agent exposes tools from all configured MCP servers. Comic Sol's
-capability detection scans them.
+Restart the client; the session gains the server's image tools and Comic Sol's
+capability detection finds them at the planning step.
 
----
+### Cline / Continue / Roo Code (IDE agents)
 
-## Hermes Agent (Nous Research)
+These agents load MCP servers from their own config file (typically
+`.vscode/mcp.json` or the editor's `config.json`). Register the same
+`mcpServers` entry there. Tools from every configured server are exposed to the
+session and scanned by capability detection.
 
-Hermes has a built-in `image_generate` tool. No extra MCP server is needed
-for image generation if a provider is configured under `image_gen` in
-`config.yaml` (OpenAI, FAL, xAI, or 9Router).
+### Any agent with shell access (direct HTTP pattern)
 
-If you also want the Comic Sol MCP deterministic pipeline, register the
-MCP server in `~/.hermes/config.yaml`:
+An agent with a shell can call any image API directly and save the PNG itself.
+Treat this as a fallback, not a recommendation: it relies on the agent writing
+a correct API call each time, and it puts request-shaping in the prompt instead
+of a reviewed tool. If you use it, keep credentials in environment variables
+read by the command — never inline keys in the prompt — and prefer an MCP
+server for reliability.
 
-```yaml
-mcp_servers:
-  comic-sol:
-    command: "/path/to/selected-python"
-    args:
-      - "/path/to/comic-sol/scripts/mcp_server.py"
-      - "--root"
-      - "/path/to/output-root"
-    sampling:
-      enabled: false
-```
+### Hermes Agent
 
----
+Hermes has a built-in `image_generate` tool driven by whatever provider is
+configured under `image_gen` in its `config.yaml`; no MCP server is needed for
+image generation.
+
+If you also want the Comic Sol deterministic pipeline over MCP, register the
+`comic_*` server separately (see
+[`docs/surfaces.md` → MCP server](../docs/surfaces.md#mcp-server)).
 
 ## Summary table
 
 | Platform | Native image gen | Extra setup | MCP deterministic server |
 |---|---|---|---|
-| Codex | ✅ built-in | None | Optional (for MCP tools) |
-| Claude Desktop | ❌ | FAL/MCP or direct API | Optional |
-| Claude Code | ❌ | FAL/MCP or direct API | Optional |
-| Cline / Continue | ❌ | MCP server config | Optional |
-| Hermes Agent | ✅ built-in | None | Optional |
+| Codex | ✅ when the session's model exposes it | None | Optional (for MCP tools) |
+| Claude Desktop | ❌ | any image MCP server, or direct API | Optional |
+| Claude Code | ❌ | any image MCP server, or direct API | Optional |
+| Cline / Continue / Roo Code | ❌ | image MCP server config | Optional |
+| Hermes Agent | ✅ built-in `image_generate` | provider configured in `config.yaml` | Optional |
 
 > The `comic_*` deterministic MCP server is separate from image generation.
 > You can run Comic Sol as a pure Skill (no MCP server, image via native tool)
 > or as a Skill + MCP server (image via native tool, pipeline via MCP tools).
+
+## Non-normative vendor pointers
+
+The following pointers are **not normative** and are retained only as dated
+convenience leads. Comic Sol endorses none of them; availability, pricing,
+free-tier terms, and model behavior change without notice, so verify each
+against its own current documentation before relying on it:
+
+- MCP server directories and registries published by the MCP project and by
+  each agent client (search for "image generation" MCP servers).
+- `fal.ai` publishes `mcp-fal`, an MCP server wrapping its image models
+  (checked 2026-08; see its repository for current terms).
+- Community MCP servers that wrap multiple image providers exist on GitHub;
+  review any server's code and network behavior before granting it a credential.
+
+Nothing in Comic Sol depends on these services, and a report about one of them
+belongs with that vendor, not in this repository's issue tracker.

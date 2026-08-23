@@ -1,0 +1,332 @@
+"""Contract tests for the user-facing documentation set (issue #213).
+
+The audited gaps this module keeps closed: surfaces and output roots, the
+support matrix, vendor-neutral provider guidance, README artifact examples and
+accessibility limitations, the expanded SUPPORT/PRIVACY/TERMS scope with a
+private sensitive-report route, and the README links that make those documents
+reachable. Everything is derived from repository files, so the suite stays
+offline.
+"""
+
+import re
+import unittest
+from pathlib import Path
+
+from comic_sol_product.config import default_output_root
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def read(relative: str) -> str:
+    return (ROOT / relative).read_text(encoding="utf-8")
+
+
+def collapsed(text: str) -> str:
+    return " ".join(text.split())
+
+
+class SurfacesDocumentTests(unittest.TestCase):
+    """docs/surfaces.md separates every workflow and its output root."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.document = read("docs/surfaces.md")
+
+    def test_every_surface_has_a_section(self):
+        for surface in (
+            "Codex Skill checkout",
+            "Codex Plugin bundle",
+            "Source checkout (development)",
+            "Installed CLI (wheel)",
+            "Native portable archive",
+            "MCP server",
+            "OCI image",
+        ):
+            self.assertIn(f"## {surface}", self.document, surface)
+
+    def test_platform_default_table_matches_the_engine(self):
+        for platform in ("linux", "darwin", "win32"):
+            expected = default_output_root(platform=platform, home=Path("/home/user"))
+            self.assertIn(
+                expected.as_posix().replace("/home/user", "$HOME"),
+                self.document,
+                platform,
+            )
+        self.assertIn("`%USERPROFILE%\\Documents\\Comic Sol`", self.document)
+
+    def test_mcp_and_oci_roots_are_stated_as_non_defaults(self):
+        document = collapsed(self.document)
+        self.assertIn("no default output root", document)
+        self.assertIn("explicit `--root` required", document)
+        self.assertIn("/data", document)
+
+    def test_native_runtime_root_is_separate_from_project_output(self):
+        self.assertIn("$HOME/.local/share/comic-sol", self.document)
+        self.assertIn("$HOME\\AppData\\Local\\ComicSol", self.document)
+        self.assertIn("never holds user projects", collapsed(self.document))
+
+    def test_links_the_support_matrix_and_onboarding(self):
+        self.assertIn("support-matrix.md", self.document)
+        self.assertIn("onboarding.md", self.document)
+
+
+class SupportMatrixDocumentTests(unittest.TestCase):
+    """docs/support-matrix.md publishes the platform/mode/architecture/runtime set."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.document = read("docs/support-matrix.md")
+
+    def test_states_the_distribution_contracts(self):
+        document = collapsed(self.document)
+        for phrase in (
+            "Linux x86_64",
+            "macOS arm64",
+            "Windows x86_64",
+            "WSL2 uses the Linux x86_64 archive; it has no separate native archive.",
+            "Source installation supports Linux, macOS, Windows, and WSL2 on Python 3.11+.",
+            "Intel macOS is source-install-only; it has no native archive.",
+        ):
+            self.assertIn(phrase, document)
+
+    def test_matrix_covers_every_install_mode(self):
+        for mode in (
+            "Codex Skill / Plugin",
+            "Source / development",
+            "Installed CLI wheel",
+            "Native portable archive",
+            "MCP server",
+            "OCI image",
+        ):
+            self.assertIn(mode, self.document, mode)
+
+    def test_matrix_separates_runtime_and_extras(self):
+        document = collapsed(self.document)
+        self.assertIn("bundled Python 3.11", document)
+        self.assertIn("Python 3.11+", document)
+        self.assertIn("MCP SDK", document)
+        self.assertIn("linux/amd64", document)
+
+    def test_extra_table_matches_the_declared_dependencies(self):
+        self.assertIn("`mcp==2.0.0`", self.document)
+        self.assertIn("`Pillow==12.3.0`", self.document)
+
+
+class ProviderGuideTests(unittest.TestCase):
+    """Provider guidance stays capability-based, credential-safe, vendor-neutral."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root_guide = read("references/image-provider-setup.md")
+        cls.bundle_guide = read("skills/comic-sol/references/image-provider-setup.md")
+
+    def test_describes_the_capability_not_a_vendor(self):
+        document = collapsed(self.root_guide)
+        for phrase in (
+            "create a raster image from text alone",
+            "editing-only image tool",
+            "never embeds credentials",
+        ):
+            self.assertIn(phrase, document)
+
+    def test_no_api_key_in_prompt_pattern_survives_anywhere(self):
+        for name, document in (
+            ("root", self.root_guide),
+            ("bundle", self.bundle_guide),
+        ):
+            self.assertNotIn("Your API key is set as", document, name)
+            self.assertNotIn("API key is set as", document, name)
+
+    def test_vendor_links_are_isolated_in_a_dated_non_normative_appendix(self):
+        appendix = self.root_guide.split("## Non-normative vendor pointers", 1)[1]
+        self.assertIn("**not normative**", appendix)
+        self.assertIn("dated", appendix.lower())
+        # Endorsement language and free-tier claims stay out of the guidance.
+        guidance = self.root_guide.split("## Non-normative vendor pointers", 1)[0]
+        self.assertNotIn("free tier", guidance)
+        self.assertNotIn("recommended, free", guidance)
+        self.assertNotIn("fal.ai", guidance)
+
+    def test_credential_safety_names_the_client_not_the_prompt(self):
+        document = collapsed(self.root_guide)
+        self.assertIn("never in prompts", document)
+        self.assertIn("Never paste an API key into a prompt", document)
+        self.assertIn("revoke it before filing any report", document)
+
+    def test_config_examples_use_placeholders_not_a_vendor_command(self):
+        self.assertIn("<launcher for your chosen MCP image server>", self.root_guide)
+        self.assertIn("<ITS_CREDENTIAL_VARIABLE>", self.root_guide)
+
+    def test_bundled_guide_stays_vendor_neutral(self):
+        self.assertNotIn("fal.ai", self.bundle_guide)
+        self.assertNotIn("GPT-5", self.bundle_guide)
+
+
+class ReadmeContractTests(unittest.TestCase):
+    """README examples include the v2.2 artifacts and the audited link set."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.readme = read("README.md")
+
+    def test_artifact_listing_includes_v2_2_artifacts(self):
+        for artifact in (
+            "plan/character-identity-pack.json",
+            "panels/*/sfx-audit.json",
+            "qa/pages/page-001.json",
+            "exports/pdf-verification.json",
+            "logs/reference-selection.json",
+            "logs/repair-plan.json",
+        ):
+            self.assertIn(artifact, self.readme, artifact)
+
+    def test_artifact_listing_states_schema_and_evidence_limits(self):
+        readme = collapsed(self.readme)
+        self.assertIn("schema 2.1", readme)
+        self.assertIn("`pdf_verification` descriptor", readme)
+        self.assertIn("evidence with limits", readme)
+        self.assertIn("mechanics", readme)
+
+    def test_accessibility_limitations_are_stated_without_overclaiming(self):
+        section = self.readme.split("### Accessibility and localization limitations", 1)[
+            1
+        ].split("\n## ", 1)[0]
+        document = collapsed(section)
+        for phrase in (
+            "image-based",
+            "untagged",
+            "not PDF/UA",
+            "no alt text",
+            "no extractable text layer",
+            "English-only",
+        ):
+            self.assertIn(phrase, document, phrase)
+        # The limitation must not drift into an accessibility promise.
+        self.assertIn("cannot read the dialogue", document)
+
+    def test_links_the_legal_and_limitation_documents(self):
+        for link in (
+            "SUPPORT.md",
+            "PRIVACY.md",
+            "TERMS.md",
+            "SECURITY.md",
+            "docs/typography.md",
+            "docs/surfaces.md",
+            "docs/support-matrix.md",
+            "#accessibility-and-localization-limitations",
+        ):
+            self.assertIn(f"]({link})", self.readme, link)
+
+    def test_install_section_points_at_surfaces_and_matrix(self):
+        install = self.readme.split("## Install", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("docs/surfaces.md", install)
+        self.assertIn("docs/support-matrix.md", install)
+
+
+class OnboardingTests(unittest.TestCase):
+    """The happy path pins an explicit output root and names its surface."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.document = read("docs/onboarding.md")
+
+    def test_doctor_happy_path_passes_an_explicit_output_root(self):
+        doctor = self.document.split("## 2. Run `comic-sol doctor` now", 1)[1].split(
+            "\n## ", 1
+        )[0]
+        self.assertIn('--output-root "$HOME/Comic Sol"', doctor)
+        self.assertIn('--output-root "$HOME/Documents/Comic Sol"', doctor)
+        self.assertIn('doctor --output-root "$env:USERPROFILE\\Documents\\Comic Sol"', doctor)
+        self.assertNotRegex(doctor, r"comic_sol\.py doctor\n")
+
+    def test_names_its_surface_and_links_the_separation(self):
+        document = collapsed(self.document)
+        self.assertIn("one surface", document)
+        self.assertIn("docs/surfaces.md", self.document)
+        self.assertIn("docs/support-matrix.md", self.document)
+
+
+class SupportPrivacyTermsTests(unittest.TestCase):
+    """SUPPORT/PRIVACY/TERMS cover every surface and the private report route."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.support = read("SUPPORT.md")
+        cls.privacy = read("PRIVACY.md")
+        cls.terms = read("TERMS.md")
+
+    def test_support_names_version_install_mode_error_code_and_json_doctor(self):
+        document = collapsed(self.support)
+        for phrase in (
+            "comic-sol --version",
+            "Install mode",
+            "native portable archive",
+            "OCI image",
+            "CS-<NAMESPACE>-<NNN>",
+            "structured-errors.md",
+            "--json doctor",
+            "data.ready",
+        ):
+            self.assertIn(phrase, document, phrase)
+
+    def test_support_defines_a_private_route_for_sensitive_reports(self):
+        document = collapsed(self.support)
+        for phrase in (
+            "Private route for sensitive reports",
+            "private vulnerability reporting",
+            "Revoke exposed credentials",
+            "[REDACTED]",
+            "Never open a public issue first",
+        ):
+            self.assertIn(phrase, document, phrase)
+
+    def test_privacy_covers_every_surface_and_its_output_root(self):
+        document = collapsed(self.privacy)
+        for phrase in (
+            "Codex Skill",
+            "Codex Plugin",
+            "installed Python CLI",
+            "native portable archives",
+            "MCP server",
+            "OCI image",
+            "`--root`",
+            "`/data`",
+            "surfaces.md",
+        ):
+            self.assertIn(phrase, document, phrase)
+        self.assertIn("2026-", self.privacy)
+
+    def test_privacy_keeps_a_private_contact_route(self):
+        self.assertIn("SUPPORT.md", self.privacy)
+        self.assertIn("private route", collapsed(self.privacy))
+
+    def test_terms_cover_every_surface_and_stay_local_first(self):
+        document = collapsed(self.terms)
+        for phrase in (
+            "Codex Skill",
+            "Codex Plugin",
+            "installed Python CLI wheel",
+            "native portable archives",
+            "MCP server",
+            "OCI image",
+            "No surface has a Comic Sol account, hosted API, or remote storage",
+            "SUPPORT.md",
+            "SECURITY.md",
+        ):
+            self.assertIn(phrase, document, phrase)
+        self.assertIn("2026-", self.terms)
+
+    def test_no_fixed_python_minor_version_in_the_checked_documents(self):
+        fixed_minor = re.compile(r"(?i)\b(?:python3?\.\d+|py\s+-3\.\d+)\b")
+        for name, document in (
+            ("SUPPORT.md", self.support),
+            ("PRIVACY.md", self.privacy),
+            ("TERMS.md", self.terms),
+            ("provider guide", read("references/image-provider-setup.md")),
+        ):
+            self.assertFalse(fixed_minor.search(document), name)
+
+
+if __name__ == "__main__":
+    unittest.main()

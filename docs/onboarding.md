@@ -3,9 +3,12 @@
 This is the single supported happy path for a brand-new user. Follow it top to
 bottom and stop at the first step that fails.
 
-Everything advanced — release-archive installs, MCP server setup, non-Codex image
-providers, containers — is deliberately **not** on this page. Links at the bottom
-cover those once your first comic exists.
+This page covers **one surface**: the Codex Skill checkout with the development
+script. The other surfaces — the Codex Plugin bundle, the installed CLI wheel,
+native portable archives, the MCP server, and the OCI image — start differently
+and some use different output roots. They are deliberately **not** on this page;
+[`docs/surfaces.md`](surfaces.md) separates them one per section, and links at
+the bottom cover them once your first comic exists.
 
 ## 1. Install (shortest supported path)
 
@@ -54,16 +57,23 @@ in that one `comic-sol` folder. Nothing else is required to continue.
 Do this before writing any story. `doctor` is the authoritative readiness check,
 and it tells you exactly what is missing instead of failing later mid-comic.
 
-From the folder you just cloned:
+From the folder you just cloned, pass an **explicit output root** so the first
+run never depends on a default you have not chosen:
 
 ```bash
-"$PYTHON" scripts/comic_sol.py doctor
+"$PYTHON" scripts/comic_sol.py doctor --output-root "$HOME/Comic Sol"
+```
+
+macOS:
+
+```bash
+"$PYTHON" scripts/comic_sol.py doctor --output-root "$HOME/Documents/Comic Sol"
 ```
 
 Windows PowerShell:
 
 ```powershell
-& $PYTHON -3 scripts\comic_sol.py doctor
+& $PYTHON -3 scripts\comic_sol.py doctor --output-root "$env:USERPROFILE\Documents\Comic Sol"
 ```
 
 `doctor` prints a readiness summary plus one prefixed line per check. Read it by
@@ -113,7 +123,12 @@ about things it genuinely cannot infer.
 
 ### Where your comic appears
 
-Comic Sol creates one project directory per comic inside your output root:
+Comic Sol creates one project directory per comic inside your output root. When
+you do not pass `--output-root`, the default depends on the platform — and on
+the surface you are running (the MCP server requires an explicit root; the OCI
+image writes under `/data` inside the container; see
+[`docs/surfaces.md`](surfaces.md)). For the Skill, source, installed CLI, and
+native-archive surfaces the platform defaults are:
 
 | Platform | Default output root |
 |---|---|
@@ -163,6 +178,11 @@ For machine-readable diagnostics, add `--json` and read `data.ready` plus
 
 Once your first comic exists:
 
+- [`docs/surfaces.md`](surfaces.md) — how the Skill, plugin, source, installed
+  CLI, native archive, MCP, and OCI surfaces differ, and the default output
+  root each one uses.
+- [`docs/support-matrix.md`](support-matrix.md) — the published platform ×
+  install-mode × architecture × runtime support matrix.
 - [`docs/install.md`](install.md) — native portable archives, checksum
   verification, upgrade, rollback, uninstall, and containers.
 - [`references/image-provider-setup.md`](../references/image-provider-setup.md) —
