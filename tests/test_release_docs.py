@@ -502,8 +502,15 @@ class SupplyChainProvenanceContractTests(unittest.TestCase):
             "RepositoryRole",
             "actor ID `5`",
             "restrict creation, updates, and deletions",
+            "scripts/release_identity.py rulesets",
+            '--release-ref "refs/tags/vX"',
+            "validation.json",
         ):
             self.assertIn(phrase, collapsed)
+        self.assertIn('--rulesets-dir "$phase_dir/full"', self.runbook)
+        self.assertIn("rulesets/${ruleset_id}", self.runbook)
+        self.assertEqual(self.runbook.count("capture_and_validate_tag_rulesets before"), 1)
+        self.assertEqual(self.runbook.count("capture_and_validate_tag_rulesets after"), 1)
         # Deleting an immutable release is an escalation path guarded by the tag
         # ruleset, never a documented standard withdrawal command.
         self.assertNotIn("--method DELETE", self.runbook)

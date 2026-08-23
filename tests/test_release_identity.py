@@ -400,6 +400,10 @@ class TagRulesetPolicyTests(unittest.TestCase):
         self.assertTrue(github_ref_pattern_matches("refs/**/v*", "refs/v2.0.0"))
         self.assertFalse(github_ref_pattern_matches("refs/**", release_ref))
         self.assertTrue(github_ref_pattern_matches("refs/**", "refs/tags"))
+        self.assertTrue(github_ref_pattern_matches("refs/tags/**", release_ref))
+        self.assertFalse(github_ref_pattern_matches("refs/tags/**", "refs/tags/nested/v2.0.0"))
+        self.assertTrue(github_ref_pattern_matches("refs/tags/**/*", release_ref))
+        self.assertTrue(github_ref_pattern_matches("refs/tags/**/*", "refs/tags/nested/v2.0.0"))
 
     def test_unsupported_and_malformed_patterns_fail_closed(self):
         for pattern in ("tags/v*", "refs/tags/[v*", "refs/tags/v***", "refs/tags/"):

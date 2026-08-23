@@ -60,12 +60,36 @@ qualification failure discovered after publication, or a security report).
    exactly that actor. The signed
    annotated tag itself is never deleted or recreated, so its captured tag-object SHA,
    attestations, Sigstore identity, direct tag-object SHA and peeled target commit, and run evidence remain
-   verifiable against the same identity.
+   verifiable against the same identity. Run the policy validator from a fresh
+   evidence directory immediately before and after the separately reviewed
+   administrator action. Both invocations must exit zero; retain both evidence
+   trees with the incident and API audit record.
    ```bash
-   # Escalation precondition: the active v* ruleset must restrict creation,
-   # updates, and deletions and must enable required_signatures.
-   gh api "repos/wenn-id/comicsol/rulesets?includes_parents=true&per_page=100" \
-     --jq '.[] | select(.target == "tag" and .enforcement == "active") | .id'
+   set -euo pipefail
+   evidence_root="release-removal-rulesets-vX"
+   mkdir "$evidence_root"
+
+   capture_and_validate_tag_rulesets() {
+     local phase="$1"
+     local phase_dir="$evidence_root/$phase"
+     test ! -e "$phase_dir"
+     mkdir -p "$phase_dir/full"
+
+     gh api "repos/wenn-id/comicsol/rulesets?includes_parents=true&per_page=100" \
+       > "$phase_dir/index.json"
+     jq -r '.[] | select(.target == "tag" and .enforcement == "active") | .id' \
+       "$phase_dir/index.json" | while read -r ruleset_id; do
+         gh api "repos/wenn-id/comicsol/rulesets/${ruleset_id}" \
+           > "$phase_dir/full/${ruleset_id}.json"
+       done
+     python3 scripts/release_identity.py rulesets \
+       --rulesets-dir "$phase_dir/full" \
+       --release-ref "refs/tags/vX" | tee "$phase_dir/validation.json"
+   }
+
+   capture_and_validate_tag_rulesets before
+   # An administrator performs the separately reviewed release-entry removal.
+   capture_and_validate_tag_rulesets after
    ```
 5. **Mark the deployment state** if promotion had already happened: set the
    `release-production` deployment for that commit to `blocked`/`inactive`
