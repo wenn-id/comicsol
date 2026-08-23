@@ -390,7 +390,11 @@ def init_project(
             return project_dir
         finally:
             if staging_identity is not None:
-                cleanup_owned_directory(staging, staging_identity)
+                try:
+                    cleanup_owned_directory(staging, staging_identity)
+                except OSError:
+                    # Swallow cleanup failures to avoid masking exceptions from try block
+                    pass
 
 
 def _relative_event_path(value: object) -> str:

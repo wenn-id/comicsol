@@ -282,6 +282,36 @@ class InitializationFailureInjectionTests(unittest.TestCase):
         self._assert_valid_initialized_project(self.root / "atomic-initialization")
         self.assertEqual(b"leave me alone", self.unrelated.read_bytes())
 
+    def test_staging_write_failure_with_cleanup_failure_propagates_write_error(self):
+        real_write_bytes = comic_sol.atomic_write_bytes
+
+        def fail_after_source(path, payload):
+            real_write_bytes(path, payload)
+            if Path(path).name == "input.txt":
+                raise OSError("injected write failure")
+
+        with (
+            mock.patch.object(
+                comic_sol,
+                "atomic_write_bytes",
+                side_effect=fail_after_source,
+            ),
+            mock.patch.object(
+                comic_sol,
+                "cleanup_owned_directory",
+                side_effect=OSError("injected cleanup failure"),
+            ),
+        ):
+            with self.assertRaisesRegex(OSError, "injected write failure"):
+                init_project(
+                    self.root,
+                    "Atomic Initialization",
+                    self.source,
+                    self.request,
+                )
+
+        self._assert_no_partial_project()
+
 
 class LifecycleFailureInjectionTests(unittest.TestCase):
     def setUp(self):
