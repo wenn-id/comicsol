@@ -332,6 +332,17 @@ class ReleaseDocumentationTests(unittest.TestCase):
         self.assertIn("`pdf_verification` at `exports/pdf-verification.json`", workflow)
         self.assertIn("no Comic Sol account or demo credentials", public_docs)
 
+    def test_draft_release_notes_use_conditional_wording_for_artifacts(self):
+        """Draft release notes must use future/conditional wording, not present-tense claims.
+
+        The draft callout at the top of v2.0.0rc6 states "This tag does not exist yet"
+        and "Nothing here is a claim that a download exists." The artifact list must
+        use future wording consistent with that draft status, not imply artifacts are
+        already published.
+        """
+        self.assertIn("The prerelease will also include:", self.notes)
+        self.assertNotIn("The prerelease also includes:", self.notes)
+
 
 class MilestoneDeliveryRecordTests(unittest.TestCase):
     """Keep the milestone delivery record from silently omitting a delivered change.
