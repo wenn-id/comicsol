@@ -18,6 +18,7 @@ BUILD_ONLY_SCRIPTS = {
     "check_coverage.py",
     "clean_install_smoke.py",
     "installed_mcp_smoke.py",
+    "live_visual_evidence.py",
     "portable_release_smoke.py",
 }
 
