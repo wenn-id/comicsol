@@ -128,3 +128,42 @@ class CommandServiceContractTests(unittest.TestCase):
     def test_unsupported_command_fails_closed(self):
         with self.assertRaises(ValueError):
             self.service.execute("bogus", project_dir=Path("project"))
+
+    def test_record_attempt_missing_path_fails_before_engine_call(self):
+        with self.assertRaises(TypeError) as cm:
+            self.service.execute(
+                "record-attempt", project_dir=Path("project"), panel_id="p01-01", kind="initial"
+            )
+        self.assertIn("path or relative_path", str(cm.exception))
+        self.engine.record_generation_attempt.assert_not_called()
+
+    def test_promote_attempt_missing_path_fails_before_engine_call(self):
+        with self.assertRaises(TypeError) as cm:
+            self.service.execute("promote-attempt", project_dir=Path("project"), panel_id="p01-01")
+        self.assertIn("path or relative_path", str(cm.exception))
+        self.engine.promote_attempt.assert_not_called()
+
+    def test_record_attempt_resolves_relative_path(self):
+        result = self.service.execute(
+            "record-attempt",
+            project_dir=Path("project"),
+            panel_id="p01-01",
+            kind="initial",
+            relative_path=Path("attempt.png"),
+        )
+        self.assertEqual({"initial": 1}, result)
+        self.engine.record_generation_attempt.assert_called_once_with(
+            Path("project"), "p01-01", "initial", Path("attempt.png")
+        )
+
+    def test_promote_attempt_resolves_relative_path(self):
+        result = self.service.execute(
+            "promote-attempt",
+            project_dir=Path("project"),
+            panel_id="p01-01",
+            relative_path=Path("attempt.png"),
+        )
+        self.assertEqual(Path("panels/raw/p01-01.png"), result)
+        self.engine.promote_attempt.assert_called_once_with(
+            Path("project"), "p01-01", Path("attempt.png")
+        )

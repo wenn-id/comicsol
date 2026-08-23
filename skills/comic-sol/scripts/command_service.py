@@ -77,18 +77,17 @@ class CommandService:
         if command == "record-stage":
             return engine.record_stage(project_dir, self._required(kwargs, "stage"))
         if command == "record-attempt":
-            attempt_path = kwargs.get("path", kwargs.get("relative_path"))
             return engine.record_generation_attempt(
                 project_dir,
                 self._required(kwargs, "panel_id"),
                 self._required(kwargs, "kind"),
-                Path(str(attempt_path)),
+                self._attempt_path(kwargs),
             )
         if command == "promote-attempt":
             return engine.promote_attempt(
                 project_dir,
                 self._required(kwargs, "panel_id"),
-                Path(str(kwargs.get("path", kwargs.get("relative_path")))),
+                self._attempt_path(kwargs),
             )
         if command == "override-panel":
             return engine.record_override(
@@ -114,3 +113,13 @@ class CommandService:
         if value is None:
             raise TypeError(f"command requires {name}")
         return value
+
+    @staticmethod
+    def _attempt_path(arguments: dict[str, Any]) -> Path:
+        path = arguments.get("path")
+        if path:
+            return Path(str(path))
+        relative_path = arguments.get("relative_path")
+        if relative_path:
+            return Path(str(relative_path))
+        raise TypeError("command requires path or relative_path")
