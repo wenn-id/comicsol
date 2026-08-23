@@ -224,6 +224,251 @@ class DurableWriteTests(unittest.TestCase):
             self.assertEqual([destination], list(directory.iterdir()))
 
 
+class DirectoryPublicationTests(unittest.TestCase):
+    def test_atomically_moves_source_to_an_absent_destination(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "staging"
+            destination = root / "project"
+            source.mkdir()
+            (source / "complete.txt").write_bytes(b"complete")
+
+            project_io.publish_directory_noreplace(source, destination)
+
+            self.assertFalse(source.exists())
+            self.assertEqual(b"complete", (destination / "complete.txt").read_bytes())
+
+    def test_existing_destinations_are_never_replaced(self):
+        for populated in (False, True):
+            with self.subTest(populated=populated), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                source = root / "staging"
+                destination = root / "project"
+                source.mkdir()
+                destination.mkdir()
+                (source / "new.txt").write_bytes(b"new")
+                if populated:
+                    (destination / "original.txt").write_bytes(b"original")
+
+                with self.assertRaises(FileExistsError):
+                    project_io.publish_directory_noreplace(source, destination)
+
+                self.assertEqual(b"new", (source / "new.txt").read_bytes())
+                self.assertTrue(destination.is_dir())
+                if populated:
+                    self.assertEqual(
+                        b"original",
+                        (destination / "original.txt").read_bytes(),
+                    )
+                else:
+                    self.assertEqual([], list(destination.iterdir()))
+
+    def test_publish_failure_leaves_source_and_unrelated_entries_untouched(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "staging"
+            destination = root / "project"
+            unrelated = root / "unrelated.txt"
+            source.mkdir()
+            (source / "new.txt").write_bytes(b"new")
+            unrelated.write_bytes(b"unrelated")
+
+            with mock.patch.object(
+                project_io,
+                "_atomic_rename_noreplace",
+                side_effect=OSError("injected publication failure"),
+            ):
+                with self.assertRaisesRegex(OSError, "publication failure"):
+                    project_io.publish_directory_noreplace(source, destination)
+
+            self.assertEqual(b"new", (source / "new.txt").read_bytes())
+            self.assertFalse(destination.exists())
+            self.assertEqual(b"unrelated", unrelated.read_bytes())
+
+    def test_publication_restores_a_substituted_source_entry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "staging"
+            displaced_owned = root / "displaced-owned"
+            destination = root / "project"
+            source.mkdir()
+            (source / "complete.txt").write_bytes(b"complete")
+            metadata = source.stat(follow_symlinks=False)
+            expected_identity = (metadata.st_dev, metadata.st_ino)
+            real_rename = project_io._atomic_rename_noreplace
+            swapped = False
+
+            def substitute_before_publication(current_source, current_destination):
+                nonlocal swapped
+                if not swapped and Path(current_source) == source:
+                    swapped = True
+                    os.rename(source, displaced_owned)
+                    source.mkdir()
+                    (source / "unrelated.txt").write_bytes(b"unrelated")
+                return real_rename(current_source, current_destination)
+
+            with mock.patch.object(
+                project_io,
+                "_atomic_rename_noreplace",
+                side_effect=substitute_before_publication,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "identity changed during publication"):
+                    project_io.publish_directory_noreplace(
+                        source,
+                        destination,
+                        expected_identity=expected_identity,
+                    )
+
+            self.assertFalse(destination.exists())
+            self.assertEqual(b"unrelated", (source / "unrelated.txt").read_bytes())
+            self.assertEqual(b"complete", (displaced_owned / "complete.txt").read_bytes())
+
+    def test_fsync_directory_tree_flushes_children_before_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "staging"
+            nested = root / "references/characters"
+            nested.mkdir(parents=True)
+            flushed = []
+
+            with mock.patch.object(
+                project_io,
+                "fsync_directory",
+                side_effect=lambda path: flushed.append(Path(path)),
+            ):
+                project_io.fsync_directory_tree(root)
+
+            self.assertEqual(root, flushed[-1])
+            self.assertEqual({root, root / "references", nested}, set(flushed))
+
+    def test_cleanup_quarantines_owned_tree_before_deletion(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staging = root / ".comic-sol-init-owned.tmp"
+            staging.mkdir()
+            (staging / "partial.txt").write_bytes(b"partial")
+            metadata = staging.stat(follow_symlinks=False)
+
+            removed = project_io.cleanup_owned_directory(
+                staging,
+                (metadata.st_dev, metadata.st_ino),
+            )
+
+            self.assertTrue(removed)
+            self.assertFalse(staging.exists())
+            self.assertEqual([], list(root.iterdir()))
+
+    def test_cleanup_restores_a_substituted_unrelated_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staging = root / ".comic-sol-init-owned.tmp"
+            moved_owned = root / "moved-owned"
+            staging.mkdir()
+            (staging / "partial.txt").write_bytes(b"partial")
+            metadata = staging.stat(follow_symlinks=False)
+            real_rename = project_io._atomic_rename_noreplace
+            swapped = False
+
+            def substitute_before_quarantine(source, destination):
+                nonlocal swapped
+                if not swapped and Path(source) == staging:
+                    swapped = True
+                    os.rename(staging, moved_owned)
+                    staging.mkdir()
+                    (staging / "unrelated.txt").write_bytes(b"unrelated")
+                return real_rename(source, destination)
+
+            with mock.patch.object(
+                project_io,
+                "_atomic_rename_noreplace",
+                side_effect=substitute_before_quarantine,
+            ):
+                removed = project_io.cleanup_owned_directory(
+                    staging,
+                    (metadata.st_dev, metadata.st_ino),
+                )
+
+            self.assertFalse(removed)
+            self.assertEqual(b"unrelated", (staging / "unrelated.txt").read_bytes())
+            self.assertEqual(b"partial", (moved_owned / "partial.txt").read_bytes())
+            self.assertEqual([], list(root.glob(".comic-sol-cleanup-*.tmp")))
+
+    def test_windows_uses_rename_without_replace_semantics(self):
+        source = Path("staging")
+        destination = Path("project")
+        with (
+            mock.patch.object(project_io.os, "name", "nt"),
+            mock.patch.object(project_io.os, "rename") as rename,
+        ):
+            project_io._atomic_rename_noreplace(source, destination)
+        rename.assert_called_once_with(source, destination)
+
+    def test_darwin_uses_exclusive_native_rename(self):
+        import ctypes
+
+        native_rename = mock.Mock(return_value=0)
+        library = mock.Mock(renameatx_np=native_rename)
+        source = Path("staging")
+        destination = Path("project")
+        with (
+            mock.patch.object(project_io.sys, "platform", "darwin"),
+            mock.patch.object(ctypes, "CDLL", return_value=library),
+        ):
+            project_io._atomic_rename_noreplace(source, destination)
+
+        native_rename.assert_called_once_with(
+            -2,
+            os.fsencode(source),
+            -2,
+            os.fsencode(destination),
+            0x4,
+        )
+
+    def test_native_rename_errors_and_unsupported_posix_fail_closed(self):
+        import ctypes
+
+        native_rename = mock.Mock(return_value=-1)
+        library = mock.Mock(renameat2=native_rename)
+        with (
+            mock.patch.object(project_io.sys, "platform", "linux"),
+            mock.patch.object(ctypes, "CDLL", return_value=library),
+            mock.patch.object(ctypes, "get_errno", return_value=errno.EIO),
+        ):
+            with self.assertRaises(OSError) as raised:
+                project_io._atomic_rename_noreplace(Path("staging"), Path("project"))
+        self.assertEqual(errno.EIO, raised.exception.errno)
+
+        with (
+            mock.patch.object(project_io.sys, "platform", "freebsd"),
+            mock.patch.object(ctypes, "CDLL", return_value=mock.Mock()),
+        ):
+            with self.assertRaises(OSError) as unsupported:
+                project_io._atomic_rename_noreplace(Path("staging"), Path("project"))
+        self.assertEqual(errno.ENOTSUP, unsupported.exception.errno)
+
+    def test_publication_rejects_cross_parent_and_non_directory_sources(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_parent = root / "source-parent"
+            destination_parent = root / "destination-parent"
+            source_parent.mkdir()
+            destination_parent.mkdir()
+            source = source_parent / "staging"
+            source.mkdir()
+            with self.assertRaisesRegex(ValueError, "share one parent"):
+                project_io.publish_directory_noreplace(
+                    source,
+                    destination_parent / "project",
+                )
+
+            regular_file = source_parent / "staging-file"
+            regular_file.write_bytes(b"not a directory")
+            with self.assertRaisesRegex(ValueError, "must be a directory"):
+                project_io.publish_directory_noreplace(
+                    regular_file,
+                    source_parent / "project",
+                )
+
+
 class ProjectTransactionTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
