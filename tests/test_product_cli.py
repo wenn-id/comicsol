@@ -474,6 +474,53 @@ class FailClosedContractTests(unittest.TestCase):
         self.assertEqual("invalid-data", payload["error"]["category"])
         self.assertEqual("invalid-input", payload["error"]["legacy_category"])
 
+    def test_json_parse_error_redacts_absolute_paths_in_detail(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            request = root / "request.json"
+            request.write_text("{ malformed json", encoding="utf-8")
+            source = root / "story.txt"
+            source.write_text("A story.", encoding="utf-8")
+            output = root / "output"
+
+            class FakeEngine:
+                def validate_source_bytes(self, source, suffix):
+                    pass
+
+                def read_json(self, path):
+                    # Read the actual file to trigger JSON parse error with real path
+                    with open(path, "r", encoding="utf-8") as f:
+                        return json.load(f)
+
+            with mock.patch.object(cli, "_load_engine", return_value=FakeEngine()):
+                code, stdout, stderr = self.invoke(
+                    [
+                        "--json",
+                        "init",
+                        "--output-root",
+                        str(output),
+                        "--title",
+                        "Test Project",
+                        "--source",
+                        str(source),
+                        "--request-json",
+                        str(request),
+                    ]
+                )
+
+        self.assertEqual(2, code)
+        self.assertEqual("", stderr)
+        payload = json.loads(stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("init", payload["command"])
+        self.assertEqual("CS-PROJ-001", payload["error"]["code"])
+        self.assertEqual("invalid-data", payload["error"]["category"])
+        self.assertEqual("invalid-input", payload["error"]["legacy_category"])
+        # Verify the error detail is redacted and doesn't leak the absolute path
+        self.assertIn("detail", payload["error"])
+        self.assertNotIn(str(request), json.dumps(payload))
+        self.assertNotIn(str(root), json.dumps(payload))
+
 
 if __name__ == "__main__":
     unittest.main()

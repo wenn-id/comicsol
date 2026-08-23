@@ -255,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
     except (ValueError, TypeError, json.JSONDecodeError) as error:
-        payload = _failure(command, error, legacy_category="invalid-input")
+        payload = _failure(command, error, legacy_category="invalid-input", detail=safe_error_detail(error))
         if arguments.as_json:
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         else:
