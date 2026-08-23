@@ -42,6 +42,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ inputs.candidate_sha || github.sha }}
+          persist-credentials: false
           # The baseline revision is benchmarked from a worktree of this checkout.
           fetch-depth: 0
       - name: Verify exact candidate checkout

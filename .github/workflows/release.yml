@@ -19,11 +19,22 @@ jobs:
       tag: ${{ steps.identity.outputs.tag }}
       version: ${{ steps.identity.outputs.version }}
       sha: ${{ steps.identity.outputs.sha }}
+      tag_object_sha: ${{ steps.identity.outputs.tag_object_sha }}
+      main_sha: ${{ steps.identity.outputs.main_sha }}
+      matched_ruleset_ids: ${{ steps.rulesets.outputs.matched_ruleset_ids }}
+      approved_bypass_actors: ${{ steps.rulesets.outputs.approved_bypass_actors }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch protected main for ancestry verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main
       - name: Verify v2.0 stable release gate is present
         shell: bash
         run: |
@@ -31,6 +42,7 @@ jobs:
           test -f docs/releases/v2.0-stable-criteria.md
           grep -Fq "authoritative release gate" docs/releases/v2.0-stable-criteria.md
       - name: Verify active release-tag immutability rules
+        id: rulesets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -44,67 +56,44 @@ jobs:
                 gh api "repos/${GITHUB_REPOSITORY}/rulesets/${ruleset_id}" \
                   > "tag-rulesets/${ruleset_id}.json"
               done
-          python3 - <<'PY'
-          import fnmatch
-          import json
-          import os
-          from pathlib import Path
-
-          release_ref = f"refs/tags/{os.environ['RELEASE_TAG']}"
-          protected = []
-          for path in Path("tag-rulesets").glob("*.json"):
-              ruleset = json.loads(path.read_text(encoding="utf-8"))
-              ref_names = ruleset.get("conditions", {}).get("ref_name", {})
-              includes = ref_names.get("include", [])
-              excludes = ref_names.get("exclude", [])
-              included = "~ALL" in includes or any(
-                  fnmatch.fnmatchcase(release_ref, pattern) for pattern in includes
-              )
-              excluded = any(fnmatch.fnmatchcase(release_ref, pattern) for pattern in excludes)
-              rule_types = {rule.get("type") for rule in ruleset.get("rules", [])}
-              if included and not excluded and {"update", "deletion"} <= rule_types:
-                  protected.append(ruleset.get("id"))
-          if not protected:
-              raise RuntimeError(
-                  "an active tag ruleset matching refs/tags/v* must restrict updates and deletions"
-              )
-          PY
+          policy_json="$(python3 scripts/release_identity.py rulesets \
+            --rulesets-dir tag-rulesets \
+            --release-ref "refs/tags/${RELEASE_TAG}")"
+          {
+            echo "matched_ruleset_ids=$(printf '%s' "$policy_json" | jq -c .matched_ruleset_ids)"
+            echo "approved_bypass_actors=$(printf '%s' "$policy_json" | jq -c .approved_bypass_actors)"
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: '3.11.15'
-      - name: Install pinned release metadata tools
-        run: python -m pip install --require-hashes -r requirements/locks/release-linux-x86_64.txt
-      - name: Verify tag matches package version
+      - name: Capture and verify signed release identity
         id: identity
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           TRIGGER_REF: ${{ github.ref }}
           TRIGGER_SHA: ${{ github.sha }}
         run: |
-          set -eu
-          TAG="$RELEASE_TAG"
-          case "$TAG" in
-            v[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "invalid release tag: $TAG" >&2; exit 1 ;;
-          esac
-          test "$TRIGGER_REF" = "refs/tags/$TAG"
-          git show-ref --verify --quiet "refs/tags/$TAG"
-          SHA="$(git rev-parse "${TAG}^{commit}")"
-          test "$(git rev-parse "${TRIGGER_SHA}^{commit}")" = "$SHA"
-          test "$(git rev-parse HEAD)" = "$SHA"
-          VERSION="${TAG#v}"
-          NORMALIZED="$(RELEASE_VERSION="$VERSION" python -c 'import os; from packaging.version import Version; print(Version(os.environ["RELEASE_VERSION"]))')"
-          test "$VERSION" = "$NORMALIZED"
-          DETECTED="$(python -c 'from comic_sol_product import __version__; print(__version__)')"
-          if [ "$VERSION" != "$DETECTED" ]; then
-            echo "release tag $VERSION does not match package version $DETECTED" >&2
-            exit 1
-          fi
+          set -euo pipefail
+          tag_object_sha="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}")"
+          gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object_sha}" > tag-api.json
+          package_version="$(python3 -c 'from comic_sol_product import __version__; print(__version__)')"
+          identity_json="$(python3 scripts/release_identity.py prepare \
+            --repository . \
+            --tag "$RELEASE_TAG" \
+            --event-ref "$TRIGGER_REF" \
+            --event-sha "$TRIGGER_SHA" \
+            --checkout-sha "$(git rev-parse HEAD)" \
+            --package-version "$package_version" \
+            --main-ref refs/remotes/origin/main \
+            --tag-api-json tag-api.json)"
           {
-            echo "tag=$TAG"
-            echo "version=$VERSION"
-            echo "sha=$SHA"
+            echo "tag=$(printf '%s' "$identity_json" | jq -r .tag)"
+            echo "version=$(printf '%s' "$identity_json" | jq -r .version)"
+            echo "sha=$(printf '%s' "$identity_json" | jq -r .candidate_commit)"
+            echo "tag_object_sha=$(printf '%s' "$identity_json" | jq -r .tag_object_sha)"
+            echo "main_sha=$(printf '%s' "$identity_json" | jq -r .main_sha)"
           } >> "$GITHUB_OUTPUT"
       - name: Verify release notes exist
         shell: bash
@@ -179,6 +168,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: ${{ matrix.python }}
@@ -211,6 +201,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
@@ -258,6 +249,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: '3.11.15'
@@ -292,11 +284,16 @@ jobs:
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       CANDIDATE_SHA: ${{ needs.prepare.outputs.sha }}
+      TAG_OBJECT_SHA: ${{ needs.prepare.outputs.tag_object_sha }}
+      MAIN_SHA: ${{ needs.prepare.outputs.main_sha }}
+      MATCHED_RULESET_IDS: ${{ needs.prepare.outputs.matched_ruleset_ids }}
+      APPROVED_BYPASS_ACTORS: ${{ needs.prepare.outputs.approved_bypass_actors }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: '3.11.15'
@@ -412,6 +409,10 @@ jobs:
               "tag": os.environ["RELEASE_TAG"],
               "version": os.environ["RELEASE_VERSION"],
               "candidate_commit": os.environ["CANDIDATE_SHA"],
+              "tag_object_sha": os.environ["TAG_OBJECT_SHA"],
+              "protected_main_sha": os.environ["MAIN_SHA"],
+              "matched_ruleset_ids": json.loads(os.environ["MATCHED_RULESET_IDS"]),
+              "approved_bypass_actors": json.loads(os.environ["APPROVED_BYPASS_ACTORS"]),
               "workflow_run_url": os.environ["RUN_URL"],
               "actions_artifacts": actions_artifacts,
               "release_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/tag/{os.environ['RELEASE_TAG']}",
@@ -441,6 +442,10 @@ jobs:
             bundles/candidate-identity.json
             bundles/candidate-identity.json.sha256
           if-no-files-found: error
+      - name: Attest the candidate identity and release-policy evidence
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-checksums: bundles/candidate-identity.json.sha256
       - name: Attest every payload named by the signed manifest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
@@ -485,25 +490,32 @@ jobs:
           trap cleanup_failed_candidate EXIT
 
           NOTES="docs/releases/${RELEASE_TAG}.md"
-          remote_refs="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}")"
-          direct="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/${RELEASE_TAG}" '$2 == ref {print $1}')"
-          peeled="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/${RELEASE_TAG}^{}" '$2 == ref {print $1}')"
-          test "$(printf '%s\n' "$direct" | grep -c .)" -eq 1
-          test "$(printf '%s\n' "$peeled" | grep -c . || true)" -le 1
-          test "${peeled:-$direct}" = "$CANDIDATE_SHA"
+          git ls-remote --tags origin \
+            "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" \
+            > remote-refs.txt
+          python3 scripts/release_identity.py remote \
+            --refs-file remote-refs.txt \
+            --tag "$RELEASE_TAG" \
+            --tag-object-sha "$TAG_OBJECT_SHA" \
+            --candidate-commit "$CANDIDATE_SHA"
           created_release="$(mktemp)"
           draft_body="$(mktemp)"
           cat "$NOTES" > "$draft_body"
           printf '\n\n<!-- %s -->\n' "$owner_marker" >> "$draft_body"
           gh api "repos/${GITHUB_REPOSITORY}/releases" --method POST \
             -f tag_name="$RELEASE_TAG" \
-            -f target_commitish="$CANDIDATE_SHA" \
             -f name="Comic Sol ${RELEASE_VERSION} candidate" \
             --raw-field "body=$(cat "$draft_body")" \
             -F draft=true \
             -F prerelease=true \
             -f make_latest=false > "$created_release"
           release_id="$(jq -er '.id' "$created_release")"
+          python3 scripts/release_identity.py release \
+            --release-json "$created_release" \
+            --refs-file remote-refs.txt \
+            --tag "$RELEASE_TAG" \
+            --tag-object-sha "$TAG_OBJECT_SHA" \
+            --candidate-commit "$CANDIDATE_SHA"
 
           find bundles -type f ! -name SHA256SUMS -print0 \
             | xargs -0 gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
@@ -542,26 +554,45 @@ jobs:
               raise RuntimeError("draft candidate identity digest mismatch")
           PY
 
-          publication_refs="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}")"
-          publication_direct="$(printf '%s\n' "$publication_refs" | awk -v ref="refs/tags/${RELEASE_TAG}" '$2 == ref {print $1}')"
-          publication_peeled="$(printf '%s\n' "$publication_refs" | awk -v ref="refs/tags/${RELEASE_TAG}^{}" '$2 == ref {print $1}')"
-          test "$(printf '%s\n' "$publication_direct" | grep -c .)" -eq 1
-          test "$(printf '%s\n' "$publication_peeled" | grep -c . || true)" -le 1
-          test "${publication_peeled:-$publication_direct}" = "$CANDIDATE_SHA"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" > draft-release.json
+          test "$(jq -r .draft draft-release.json)" = true
+          git ls-remote --tags origin \
+            "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" \
+            > publication-refs.txt
+          python3 scripts/release_identity.py remote \
+            --refs-file publication-refs.txt \
+            --tag "$RELEASE_TAG" \
+            --tag-object-sha "$TAG_OBJECT_SHA" \
+            --candidate-commit "$CANDIDATE_SHA"
+          python3 scripts/release_identity.py release \
+            --release-json draft-release.json \
+            --refs-file publication-refs.txt \
+            --tag "$RELEASE_TAG" \
+            --tag-object-sha "$TAG_OBJECT_SHA" \
+            --candidate-commit "$CANDIDATE_SHA"
           published_release="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" --method PATCH \
             -F draft=false -F prerelease=true)"
+          printf '%s\n' "$published_release" > published-release.json
           test "$(printf '%s' "$published_release" | jq -r .draft)" = false
           test "$(printf '%s' "$published_release" | jq -r .prerelease)" = true
           if [ "$(printf '%s' "$published_release" | jq -r .immutable)" != true ]; then
             echo "repository release immutability is required before candidate publication" >&2
             exit 1
           fi
-          immutable_refs="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}")"
-          immutable_direct="$(printf '%s\n' "$immutable_refs" | awk -v ref="refs/tags/${RELEASE_TAG}" '$2 == ref {print $1}')"
-          immutable_peeled="$(printf '%s\n' "$immutable_refs" | awk -v ref="refs/tags/${RELEASE_TAG}^{}" '$2 == ref {print $1}')"
-          test "$(printf '%s\n' "$immutable_direct" | grep -c .)" -eq 1
-          test "$(printf '%s\n' "$immutable_peeled" | grep -c . || true)" -le 1
-          test "${immutable_peeled:-$immutable_direct}" = "$CANDIDATE_SHA"
+          git ls-remote --tags origin \
+            "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" \
+            > immutable-refs.txt
+          python3 scripts/release_identity.py remote \
+            --refs-file immutable-refs.txt \
+            --tag "$RELEASE_TAG" \
+            --tag-object-sha "$TAG_OBJECT_SHA" \
+            --candidate-commit "$CANDIDATE_SHA"
+          python3 scripts/release_identity.py release \
+            --release-json published-release.json \
+            --refs-file immutable-refs.txt \
+            --tag "$RELEASE_TAG" \
+            --tag-object-sha "$TAG_OBJECT_SHA" \
+            --candidate-commit "$CANDIDATE_SHA"
           trap - EXIT
 
   qualification:
@@ -574,6 +605,10 @@ jobs:
     with:
       tag: ${{ needs.prepare.outputs.tag }}
       candidate_sha: ${{ needs.prepare.outputs.sha }}
+      tag_object_sha: ${{ needs.prepare.outputs.tag_object_sha }}
+      main_sha: ${{ needs.prepare.outputs.main_sha }}
+      matched_ruleset_ids: ${{ needs.prepare.outputs.matched_ruleset_ids }}
+      approved_bypass_actors: ${{ needs.prepare.outputs.approved_bypass_actors }}
 
   promote:
     name: Revalidate bytes and promote release state
@@ -593,6 +628,10 @@ jobs:
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       CANDIDATE_SHA: ${{ needs.prepare.outputs.sha }}
+      TAG_OBJECT_SHA: ${{ needs.prepare.outputs.tag_object_sha }}
+      MAIN_SHA: ${{ needs.prepare.outputs.main_sha }}
+      MATCHED_RULESET_IDS: ${{ needs.prepare.outputs.matched_ruleset_ids }}
+      APPROVED_BYPASS_ACTORS: ${{ needs.prepare.outputs.approved_bypass_actors }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Fail closed unless the production Environment is protected
@@ -619,6 +658,7 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: candidate-identity
@@ -739,7 +779,16 @@ jobs:
           from pathlib import Path
           root = Path("published")
           identity = json.loads((root / "candidate-identity.json").read_text(encoding="utf-8"))
-          if identity["candidate_commit"] != os.environ["CANDIDATE_SHA"] or identity["tag"] != os.environ["RELEASE_TAG"]:
+          if (
+              identity["candidate_commit"] != os.environ["CANDIDATE_SHA"]
+              or identity["tag"] != os.environ["RELEASE_TAG"]
+              or identity["tag_object_sha"] != os.environ["TAG_OBJECT_SHA"]
+              or identity["protected_main_sha"] != os.environ["MAIN_SHA"]
+              or identity["matched_ruleset_ids"]
+              != json.loads(os.environ["MATCHED_RULESET_IDS"])
+              or identity["approved_bypass_actors"]
+              != json.loads(os.environ["APPROVED_BYPASS_ACTORS"])
+          ):
               raise RuntimeError("published candidate identity does not match prepared release")
           manifest = root / "SHA256SUMS"
           actual_manifest = hashlib.sha256(manifest.read_bytes()).hexdigest()
@@ -767,7 +816,22 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --certificate-identity-regexp '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$' \
             published/SHA256SUMS
+          git ls-remote --tags origin \
+            "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" \
+            > promotion-refs.txt
+          python3 scripts/release_identity.py remote \
+            --refs-file promotion-refs.txt \
+            --tag "$RELEASE_TAG" \
+            --tag-object-sha "$TAG_OBJECT_SHA" \
+            --candidate-commit "$CANDIDATE_SHA"
           release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")"
+          printf '%s\n' "$release_json" > promotion-release.json
+          python3 scripts/release_identity.py release \
+            --release-json promotion-release.json \
+            --refs-file promotion-refs.txt \
+            --tag "$RELEASE_TAG" \
+            --tag-object-sha "$TAG_OBJECT_SHA" \
+            --candidate-commit "$CANDIDATE_SHA"
           test "$(printf '%s' "$release_json" | jq -r .prerelease)" = true
           test "$(printf '%s' "$release_json" | jq -r .immutable)" = true
           test "$(printf '%s' "$release_json" | jq -r .tag_name)" = "$RELEASE_TAG"
@@ -827,19 +891,27 @@ jobs:
         run: |
           set -euo pipefail
           sha256sum -c release-evidence.sha256
+          git ls-remote --tags origin \
+            "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" \
+            > final-refs.txt
+          python3 scripts/release_identity.py remote \
+            --refs-file final-refs.txt \
+            --tag "$RELEASE_TAG" \
+            --tag-object-sha "$TAG_OBJECT_SHA" \
+            --candidate-commit "$CANDIDATE_SHA"
           release_json="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")"
+          printf '%s\n' "$release_json" > final-release.json
+          python3 scripts/release_identity.py release \
+            --release-json final-release.json \
+            --refs-file final-refs.txt \
+            --tag "$RELEASE_TAG" \
+            --tag-object-sha "$TAG_OBJECT_SHA" \
+            --candidate-commit "$CANDIDATE_SHA"
           release_id="$(printf '%s' "$release_json" | jq -r .id)"
           test "$(printf '%s' "$release_json" | jq -r .draft)" = false
           test "$(printf '%s' "$release_json" | jq -r .prerelease)" = true
           test "$(printf '%s' "$release_json" | jq -r .immutable)" = true
           test "$(printf '%s' "$release_json" | jq -r .tag_name)" = "$RELEASE_TAG"
-
-          remote_refs="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}")"
-          direct="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/${RELEASE_TAG}" '$2 == ref {print $1}')"
-          peeled="$(printf '%s\n' "$remote_refs" | awk -v ref="refs/tags/${RELEASE_TAG}^{}" '$2 == ref {print $1}')"
-          test "$(printf '%s\n' "$direct" | grep -c .)" -eq 1
-          test "$(printf '%s\n' "$peeled" | grep -c . || true)" -le 1
-          test "${peeled:-$direct}" = "$CANDIDATE_SHA"
 
           evidence_sha256="$(sha256sum release-evidence.json | cut -d' ' -f1)"
           {
@@ -863,6 +935,21 @@ jobs:
           # Immutability locks both the verified asset set and this tag between
           # the final checks and the allowed title/notes-only promotion marker.
           boundary_release="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}")"
+          printf '%s\n' "$boundary_release" > boundary-release.json
+          git ls-remote --tags origin \
+            "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" \
+            > boundary-refs.txt
+          python3 scripts/release_identity.py remote \
+            --refs-file boundary-refs.txt \
+            --tag "$RELEASE_TAG" \
+            --tag-object-sha "$TAG_OBJECT_SHA" \
+            --candidate-commit "$CANDIDATE_SHA"
+          python3 scripts/release_identity.py release \
+            --release-json boundary-release.json \
+            --refs-file boundary-refs.txt \
+            --tag "$RELEASE_TAG" \
+            --tag-object-sha "$TAG_OBJECT_SHA" \
+            --candidate-commit "$CANDIDATE_SHA"
           test "$(printf '%s' "$boundary_release" | jq -r .draft)" = false
           test "$(printf '%s' "$boundary_release" | jq -r .prerelease)" = true
           test "$(printf '%s' "$boundary_release" | jq -r .immutable)" = true

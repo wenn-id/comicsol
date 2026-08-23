@@ -5,6 +5,7 @@ import re
 import stat
 import sys
 import json
+import types
 from pathlib import Path
 from threading import RLock
 from typing import Any, Literal
@@ -22,6 +23,7 @@ except ModuleNotFoundError:
 
 # Import core business logic from scripts/
 from .core_primitives import PANEL_ID_PATTERN
+from .project_io import validate_source_bytes
 from comic_sol_product.errors import error_payload
 from .input_limits import (
     MAX_OVERRIDE_REASON_CHARS,
@@ -46,6 +48,8 @@ from .comic_sol import (
     promote_attempt,
     record_override,
     read_project_status,
+    finalize_project,
+    read_project_manifest,
     validate_request_settings,
     IDENTIFIER,
 )
@@ -54,6 +58,7 @@ from .letter_panels import letter_project
 from .compose_pages import compose_project
 from .export_pdf import guarded_export
 from .render_report import render_report
+from .command_service import CommandService
 
 # Root directory allowed for operations. All project IDs resolve relative to this.
 OUTPUT_ROOT: Path
@@ -70,7 +75,6 @@ _SYMLINK_SCAN_CACHE: OrderedDict[
 ] = OrderedDict()
 _SYMLINK_SCAN_CACHE_LOCK = RLock()
 
-_VALIDATION_STAGES = frozenset({"all", "plan", "storyboard", "panels", "final", "export-ready"})
 _PANEL_ID = PANEL_ID_PATTERN
 _ATTEMPT_KINDS = frozenset({"initial", "visual_retry", "transient_repeat"})
 _RELATIVE_PATH = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$")
@@ -389,12 +393,45 @@ def _resolve_project(project_id: str) -> Path:
 mcp = FastMCP("Comic Sol", instructions="Deterministic Comic Sol project tools")
 
 
+def _command_service() -> CommandService:
+    """Bind the shared command contract to this module's live engine symbols.
+
+    Referencing the imported functions keeps test monkeypatching effective
+    while every tool dispatches through one canonical service.
+    """
+    return CommandService(
+        engine=types.SimpleNamespace(
+            doctor_report=doctor_report,
+            init_project=init_project,
+            validate_source_bytes=validate_source_bytes,
+            read_project_status=read_project_status,
+            read_project_manifest=read_project_manifest,
+            transition=transition,
+            build_resume_plan=build_resume_plan,
+            resume_project=resume_project,
+            invalidate_from=invalidate_from,
+            record_stage=record_stage,
+            record_generation_attempt=record_generation_attempt,
+            promote_attempt=promote_attempt,
+            record_override=record_override,
+            finalize_project=finalize_project,
+        ),
+        validation=types.SimpleNamespace(
+            validate_project=validate_project,
+            ProjectValidationError=ProjectValidationError,
+        ),
+        lettering=types.SimpleNamespace(letter_project=letter_project),
+        composition=types.SimpleNamespace(compose_project=compose_project),
+        export=types.SimpleNamespace(guarded_export=guarded_export),
+        report=types.SimpleNamespace(render_report=render_report),
+    )
+
+
 @mcp.tool()
 def comic_doctor() -> dict[str, object]:
     """Check the local runtime environment (Python, Pillow, fonts, templates)."""
     try:
-        report = doctor_report(OUTPUT_ROOT)
-        return report
+        return _command_service().execute("doctor", output_root=OUTPUT_ROOT)
     except Exception as e:
         raise _tool_error(e) from None
 
@@ -409,8 +446,12 @@ def comic_init(title: str, source_text: str, request_settings: dict[str, Any]) -
         if not isinstance(request_settings, dict):
             raise TypeError("request_settings must be a JSON object")
         validate_request_settings(request_settings)
-        project_dir = init_project(
-            OUTPUT_ROOT, title, source_text.encode("utf-8"), request_settings
+        project_dir = _command_service().execute(
+            "init",
+            output_root=OUTPUT_ROOT,
+            title=title,
+            source=source_text.encode("utf-8"),
+            request=request_settings,
         )
         return str(project_dir.name)
     except Exception as e:
@@ -423,7 +464,7 @@ def comic_status(project_id: str) -> dict[str, Any]:
     _validate_project_id(project_id)
     project_dir = _resolve_project(project_id)
     try:
-        return read_project_status(project_dir)
+        return _command_service().execute("status", project_dir=project_dir)
     except Exception as e:
         raise _tool_error(e) from None
 
@@ -440,8 +481,9 @@ def comic_transition(project_id: str, target: str, warning: str | None = None) -
             raise _request_error(e) from None
     project_dir = _resolve_project(project_id)
     try:
-        manifest = transition(project_dir, target, warning)
-        return manifest
+        return _command_service().execute(
+            "transition", project_dir=project_dir, target=target, warning=warning
+        )
     except Exception as e:
         raise _tool_error(e) from None
 
@@ -458,7 +500,7 @@ def comic_validate(project_id: str, stage: str = "all") -> list[dict[str, str]]:
     _validate_stage(stage)
     project_dir = _resolve_project(project_id)
     try:
-        issues = validate_project(project_dir, stage)
+        issues = _command_service().execute("validate", project_dir=project_dir, stage=stage)
         return [_issue_payload(i) for i in issues]
     except ProjectValidationError as e:
         return [_issue_payload(i) for i in e.issues]
@@ -472,7 +514,7 @@ def comic_resume_plan(project_id: str) -> list[dict[str, str]]:
     _validate_project_id(project_id)
     project_dir = _resolve_project(project_id)
     try:
-        actions = build_resume_plan(project_dir)
+        actions = _command_service().execute("resume-plan", project_dir=project_dir)
         return [
             {"stage": a.stage, "action": a.action, "artifact": a.artifact, "reason": a.reason}
             for a in actions
@@ -487,7 +529,7 @@ def comic_resume(project_id: str) -> dict[str, Any]:
     _validate_project_id(project_id)
     project_dir = _resolve_project(project_id)
     try:
-        return resume_project(project_dir)
+        return _command_service().execute("resume", project_dir=project_dir)
     except Exception as e:
         raise _tool_error(e) from None
 
@@ -499,7 +541,7 @@ def comic_invalidate(project_id: str, stage: str) -> list[str]:
     _validate_resume_stage(stage)
     project_dir = _resolve_project(project_id)
     try:
-        return invalidate_from(project_dir, stage)
+        return _command_service().execute("invalidate", project_dir=project_dir, stage=stage)
     except Exception as e:
         raise _tool_error(e) from None
 
@@ -511,7 +553,7 @@ def comic_record_stage(project_id: str, stage: str) -> dict[str, Any]:
     _validate_resume_stage(stage)
     project_dir = _resolve_project(project_id)
     try:
-        return record_stage(project_dir, stage)
+        return _command_service().execute("record-stage", project_dir=project_dir, stage=stage)
     except Exception as e:
         raise _tool_error(e) from None
 
@@ -530,7 +572,13 @@ def comic_record_attempt(
     _validate_relative_path(relative_path)
     project_dir = _resolve_project(project_id)
     try:
-        return record_generation_attempt(project_dir, panel_id, kind, Path(relative_path))
+        return _command_service().execute(
+            "record-attempt",
+            project_dir=project_dir,
+            panel_id=panel_id,
+            kind=kind,
+            relative_path=Path(relative_path),
+        )
     except Exception as e:
         raise _tool_error(e) from None
 
@@ -543,7 +591,12 @@ def comic_promote_attempt(project_id: str, panel_id: str, relative_path: str) ->
     _validate_relative_path(relative_path)
     project_dir = _resolve_project(project_id)
     try:
-        dest = promote_attempt(project_dir, panel_id, Path(relative_path))
+        dest = _command_service().execute(
+            "promote-attempt",
+            project_dir=project_dir,
+            panel_id=panel_id,
+            relative_path=Path(relative_path),
+        )
         return str(dest.relative_to(project_dir).as_posix())
     except Exception as e:
         raise _tool_error(e) from None
@@ -564,7 +617,9 @@ def comic_override_panel(project_id: str, panel_id: str, reason: str) -> str:
         raise _request_error(e) from None
     project_dir = _resolve_project(project_id)
     try:
-        record_override(project_dir, panel_id, reason)
+        _command_service().execute(
+            "override-panel", project_dir=project_dir, panel_id=panel_id, reason=reason
+        )
         return f"{panel_id}: accepted with warnings"
     except Exception as e:
         raise _tool_error(e) from None
@@ -576,7 +631,7 @@ def comic_letter(project_id: str) -> list[str]:
     _validate_project_id(project_id)
     project_dir = _resolve_project(project_id)
     try:
-        outputs = letter_project(project_dir)
+        outputs = _command_service().execute("letter", project_dir=project_dir)
         return [str(p.relative_to(project_dir).as_posix()) for p in outputs]
     except Exception as e:
         raise _tool_error(e) from None
@@ -588,7 +643,7 @@ def comic_compose(project_id: str) -> list[str]:
     _validate_project_id(project_id)
     project_dir = _resolve_project(project_id)
     try:
-        outputs = compose_project(project_dir)
+        outputs = _command_service().execute("compose", project_dir=project_dir)
         return [str(p.relative_to(project_dir).as_posix()) for p in outputs]
     except Exception as e:
         raise _tool_error(e) from None
@@ -600,7 +655,7 @@ def comic_export(project_id: str) -> str:
     _validate_project_id(project_id)
     project_dir = _resolve_project(project_id)
     try:
-        dest = guarded_export(project_dir)
+        dest = _command_service().execute("export", project_dir=project_dir)
         return str(dest.relative_to(project_dir).as_posix())
     except Exception as e:
         raise _tool_error(e) from None
@@ -612,7 +667,7 @@ def comic_render_report(project_id: str) -> str:
     _validate_project_id(project_id)
     project_dir = _resolve_project(project_id)
     try:
-        dest = render_report(project_dir)
+        dest = _command_service().execute("render-report", project_dir=project_dir)
         return str(dest.relative_to(project_dir).as_posix())
     except Exception as e:
         raise _tool_error(e) from None
@@ -624,9 +679,7 @@ def comic_finalize(project_id: str) -> dict[str, Any]:
     _validate_project_id(project_id)
     project_dir = _resolve_project(project_id)
     try:
-        from .comic_sol import finalize_project
-
-        return finalize_project(project_dir)
+        return _command_service().execute("finalize", project_dir=project_dir)
     except Exception as e:
         raise _tool_error(e) from None
 

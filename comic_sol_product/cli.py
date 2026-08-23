@@ -47,6 +47,11 @@ def _load_engine_module(name: str) -> Any:
     return importlib.import_module(f"{_engine_package()}.{name}")
 
 
+def _load_command_service() -> Any:
+    """Load command service without adapter test injection."""
+    return importlib.import_module(f"{_engine_package()}.command_service")
+
+
 def _load_engine() -> Any:
     """Load the canonical engine from a checkout or its bundled wheel location."""
     return _load_engine_module("comic_sol")
@@ -155,28 +160,40 @@ def _run(
     progress: _ProgressReporter | None = None,
 ) -> Any:
     engine = _load_engine()
+    service = _load_command_service().CommandService(
+        engine=engine,
+        validation=_load_engine_module("validate_project"),
+        lettering=_load_engine_module("letter_panels"),
+        composition=_load_engine_module("compose_pages"),
+        export=_load_engine_module("export_pdf"),
+        report=_load_engine_module("render_report"),
+    )
     if arguments.command == "doctor":
-        return engine.doctor_report(arguments.output_root)
+        return service.execute("doctor", output_root=arguments.output_root)
     if arguments.command == "init":
         source = arguments.source.read_bytes()
         engine.validate_source_bytes(source, arguments.source.suffix)
         request = engine.read_json(arguments.request_json)
-        project = engine.init_project(arguments.output_root, arguments.title, source, request)
+        project = service.execute(
+            "init",
+            output_root=arguments.output_root,
+            title=arguments.title,
+            source=source,
+            request=request,
+            suffix=arguments.source.suffix,
+        )
         return {"project_id": project.name, "project_dir": project.name}
     if arguments.command == "status":
-        return engine.read_project_status(arguments.project_dir)
+        return service.execute("status", project_dir=arguments.project_dir)
     if arguments.command == "validate":
-        validation = _load_engine_module("validate_project")
-
-        try:
-            issues = validation.validate_project(arguments.project_dir, arguments.stage)
-        except validation.ProjectValidationError as error:
-            issues = error.issues
+        issues = service.execute(
+            "validate", project_dir=arguments.project_dir, stage=arguments.stage
+        )
         return [asdict(issue) for issue in issues]
     if arguments.command == "resume":
-        return engine.resume_project(arguments.project_dir, progress=progress)
+        return service.execute("resume", project_dir=arguments.project_dir, progress=progress)
     if arguments.command == "finalize":
-        return engine.finalize_project(arguments.project_dir, progress=progress)
+        return service.execute("finalize", project_dir=arguments.project_dir, progress=progress)
     if arguments.command in {"setup", "repair", "uninstall"}:
         from .setup import setup_clients, uninstall_clients
 

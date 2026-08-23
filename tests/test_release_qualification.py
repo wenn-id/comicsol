@@ -724,6 +724,7 @@ class ReleaseQualificationContractTests(unittest.TestCase):
         workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("attest-build-provenance", workflow)
         self.assertIn("subject-checksums: bundles/SHA256SUMS", workflow)
+        self.assertIn("subject-checksums: bundles/candidate-identity.json.sha256", workflow)
         self.assertNotIn("subject-path:", workflow)
 
     def test_release_qualification_workflow_uses_release_asset_not_checkout_build(self):
@@ -736,7 +737,8 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             "tag:",
             "candidate_sha:",
             "ref: ${{ inputs.candidate_sha }}",
-            'git rev-parse "${RELEASE_TAG}^{commit}"',
+            "scripts/release_identity.py remote",
+            '--tag-object-sha "$TAG_OBJECT_SHA"',
             "gh release download",
             "gh attestation verify",
             "*.whl",
@@ -822,7 +824,17 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
             "state": "candidate",
             "tag": "v9.9.9rc1",
             "version": "9.9.9rc1",
+            "tag_object_sha": "1" * 40,
             "candidate_commit": "a" * 40,
+            "protected_main_sha": "2" * 40,
+            "matched_ruleset_ids": [11, 22],
+            "approved_bypass_actors": [
+                {
+                    "actor_type": "RepositoryRole",
+                    "actor_id": 5,
+                    "bypass_mode": "always",
+                }
+            ],
             "checksum_manifest": {"name": "SHA256SUMS", "sha256": "b" * 64},
             "payloads": [
                 {"name": "comic-sol-9.9.9rc1-linux-x86_64.zip", "sha256": "c" * 64},
@@ -837,7 +849,22 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
             "decision": "RELEASE READY",
             "candidate": {
                 "tag": "v9.9.9rc1",
+                "tag_object_sha": "1" * 40,
                 "commit_sha": "a" * 40,
+                "protected_main_sha": "2" * 40,
+                "matched_ruleset_ids": [11, 22],
+                "approved_bypass_actors": [
+                    {
+                        "actor_type": "RepositoryRole",
+                        "actor_id": 5,
+                        "bypass_mode": "always",
+                    }
+                ],
+                "release_state": {
+                    "draft": False,
+                    "prerelease": True,
+                    "immutable": True,
+                },
                 "checksum_manifest_sha256": "b" * 64,
             },
             "summaries": {"linux": {"status": "passed", "exceptions": []}},
@@ -881,6 +908,23 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
         second = build_evidence(**arguments)
         self.assertEqual(first, second)
         self.assertEqual("promotion-ready", first["state"])
+        self.assertEqual("1" * 40, first["candidate"]["tag_object_sha"])
+        self.assertEqual("2" * 40, first["candidate"]["protected_main_sha"])
+        self.assertEqual([11, 22], first["candidate"]["matched_ruleset_ids"])
+        self.assertEqual(
+            [
+                {
+                    "actor_type": "RepositoryRole",
+                    "actor_id": 5,
+                    "bypass_mode": "always",
+                }
+            ],
+            first["candidate"]["approved_bypass_actors"],
+        )
+        self.assertEqual(
+            {"draft": False, "prerelease": True, "immutable": True},
+            first["candidate"]["release_state"],
+        )
         self.assertEqual("e" * 64, first["qualification"]["summary_sha256"])
         self.assertEqual("f" * 64, first["gates"]["benchmark"]["summary_sha256"])
         self.assertEqual(
@@ -918,6 +962,26 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
             build_evidence(**arguments)
 
         arguments = self._arguments()
+        arguments["qualification"]["candidate"]["tag_object_sha"] = "0" * 40
+        with self.assertRaisesRegex(RuntimeError, "another candidate"):
+            build_evidence(**arguments)
+
+        arguments = self._arguments()
+        arguments["qualification"]["candidate"]["protected_main_sha"] = "0" * 40
+        with self.assertRaisesRegex(RuntimeError, "another candidate"):
+            build_evidence(**arguments)
+
+        arguments = self._arguments()
+        arguments["qualification"]["candidate"]["release_state"]["immutable"] = False
+        with self.assertRaisesRegex(RuntimeError, "another candidate"):
+            build_evidence(**arguments)
+
+        arguments = self._arguments()
+        arguments["candidate_identity"]["approved_bypass_actors"][0]["actor_id"] = 4
+        with self.assertRaisesRegex(RuntimeError, "bypass authority"):
+            build_evidence(**arguments)
+
+        arguments = self._arguments()
         arguments["benchmark"]["candidate_sha"] = "0" * 40
         with self.assertRaisesRegex(RuntimeError, "another candidate"):
             build_evidence(**arguments)
@@ -938,16 +1002,154 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
         self.assertIn("group: release-${{ github.ref }}", trigger)
         self.assertIn("cancel-in-progress: false", trigger)
         self.assertIn("Verify active release-tag immutability rules", prepare)
-        self.assertIn('{"update", "deletion"} <= rule_types', prepare)
-        self.assertIn("refs/tags/{os.environ['RELEASE_TAG']}", prepare)
-        self.assertIn('test "$TRIGGER_REF" = "refs/tags/$TAG"', prepare)
-        self.assertIn('git rev-parse "${TRIGGER_SHA}^{commit}"', prepare)
-        self.assertIn('test "$(git rev-parse HEAD)" = "$SHA"', prepare)
+        self.assertIn("scripts/release_identity.py rulesets", prepare)
+        self.assertIn('--release-ref "refs/tags/${RELEASE_TAG}"', prepare)
+        self.assertNotIn("fnmatch", prepare)
+        self.assertIn(
+            "matched_ruleset_ids: ${{ steps.rulesets.outputs.matched_ruleset_ids }}", prepare
+        )
+        self.assertIn(
+            "approved_bypass_actors: ${{ steps.rulesets.outputs.approved_bypass_actors }}",
+            prepare,
+        )
+        self.assertIn("+refs/heads/main:refs/remotes/origin/main", prepare)
+        self.assertIn("scripts/release_identity.py prepare", prepare)
+        self.assertIn('--event-ref "$TRIGGER_REF"', prepare)
+        self.assertIn('--event-sha "$TRIGGER_SHA"', prepare)
+        self.assertIn("--main-ref refs/remotes/origin/main", prepare)
+        self.assertIn("/git/tags/${tag_object_sha}", prepare)
+        self.assertIn("tag_object_sha: ${{ steps.identity.outputs.tag_object_sha }}", prepare)
+        self.assertIn("main_sha: ${{ steps.identity.outputs.main_sha }}", prepare)
         self.assertIn(
             "candidate_ref: ${{ format('refs/tags/{0}', needs.prepare.outputs.tag) }}", release
         )
         self.assertIn("ref: ${{ inputs.candidate_ref || github.ref }}", codeql)
         self.assertIn("sha: ${{ inputs.candidate_sha || github.sha }}", codeql)
+
+    def test_release_identity_target_and_remote_boundaries_use_the_helper(self):
+        release = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        qualification = WORKFLOW.read_text(encoding="utf-8")
+        candidate = release.split("\n  candidate:\n", 1)[1].split("\n  qualification:\n", 1)[0]
+        promotion = release.split("\n  promote:\n", 1)[1]
+        self.assertEqual(3, candidate.count("scripts/release_identity.py remote"))
+        self.assertEqual(3, candidate.count("scripts/release_identity.py release"))
+        self.assertIn('--tag-object-sha "$TAG_OBJECT_SHA"', candidate)
+        self.assertIn('"tag_object_sha": os.environ["TAG_OBJECT_SHA"]', candidate)
+        self.assertIn('"protected_main_sha": os.environ["MAIN_SHA"]', candidate)
+        self.assertIn(
+            '"matched_ruleset_ids": json.loads(os.environ["MATCHED_RULESET_IDS"])', candidate
+        )
+        self.assertIn(
+            '"approved_bypass_actors": json.loads(os.environ["APPROVED_BYPASS_ACTORS"])',
+            candidate,
+        )
+        self.assertNotIn('-f target_commitish="$CANDIDATE_SHA"', candidate)
+        self.assertEqual(2, qualification.count("scripts/release_identity.py remote"))
+        self.assertEqual(2, qualification.count("scripts/release_identity.py release"))
+        self.assertIn('git merge-base --is-ancestor "$CANDIDATE_SHA"', qualification)
+        aggregate = qualification.split("\n  aggregate:\n", 1)[1]
+        self.assertIn("TAG_OBJECT_SHA: ${{ inputs.tag_object_sha }}", aggregate)
+        self.assertIn("MAIN_SHA: ${{ inputs.main_sha }}", aggregate)
+        self.assertEqual(3, promotion.count("scripts/release_identity.py remote"))
+        self.assertEqual(3, promotion.count("scripts/release_identity.py release"))
+        for section, expected_calls in (
+            (candidate, 3),
+            (qualification, 2),
+            (promotion, 3),
+        ):
+            calls = section.split("scripts/release_identity.py release \\\n")[1:]
+            self.assertEqual(expected_calls, len(calls))
+            for call in calls:
+                arguments = call.split('--candidate-commit "$CANDIDATE_SHA"', 1)[0]
+                self.assertIn("--release-json", arguments)
+                self.assertIn("--refs-file", arguments)
+                self.assertIn('--tag "$RELEASE_TAG"', arguments)
+                self.assertIn('--tag-object-sha "$TAG_OBJECT_SHA"', arguments)
+
+    def test_manual_qualification_cannot_emit_ready_for_a_mutable_release(self):
+        qualification = WORKFLOW.read_text(encoding="utf-8")
+        identity = qualification.split("\n  identity:\n", 1)[1].split("\n  native:\n", 1)[0]
+        aggregate = qualification.split("\n  aggregate:\n", 1)[1]
+        for section in (identity, aggregate):
+            self.assertIn("--require-immutable-prerelease", section)
+            self.assertIn(
+                "gh attestation verify qualification-identity/candidate-identity.json", section
+            )
+            self.assertIn(
+                "--signer-workflow wenn-id/comicsol/.github/workflows/release.yml", section
+            )
+        for state_check in (
+            'test "$(jq -r .draft release.json)" = false',
+            'test "$(jq -r .prerelease release.json)" = true',
+            'test "$(jq -r .immutable release.json)" = true',
+        ):
+            self.assertIn(state_check, identity)
+        self.assertIn("IDENTITY_RESULT: ${{ needs.identity.result }}", aggregate)
+        self.assertIn('test "$IDENTITY_RESULT" = success', aggregate)
+        self.assertIn("authenticated candidate identity", identity)
+        self.assertIn('json.loads(os.environ["MATCHED_RULESET_IDS"])', identity)
+        self.assertIn('json.loads(os.environ["APPROVED_BYPASS_ACTORS"])', identity)
+        self.assertLess(
+            aggregate.index('if identity.get("matched_ruleset_ids")'),
+            aggregate.index("scripts/release_qualification.py"),
+        )
+        self.assertLess(
+            aggregate.index('if identity.get("approved_bypass_actors")'),
+            aggregate.index("scripts/release_qualification.py"),
+        )
+        self.assertLess(
+            aggregate.index("--require-immutable-prerelease"),
+            aggregate.index("scripts/release_qualification.py"),
+        )
+        self.assertLess(
+            aggregate.index("--require-immutable-prerelease"),
+            aggregate.index("decision=RELEASE READY"),
+        )
+        self.assertIn('"release_state": release_state', aggregate)
+        self.assertIn("if: steps.aggregate.outcome == 'success'", aggregate)
+
+    def test_only_candidate_and_promote_receive_release_mutation_privileges(self):
+        release = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        job_names = (
+            "prepare",
+            "full-tests",
+            "codeql",
+            "benchmark",
+            "native",
+            "container",
+            "source",
+            "candidate",
+            "qualification",
+            "promote",
+        )
+        privileged = {}
+        for index, job_name in enumerate(job_names):
+            marker = f"\n  {job_name}:\n"
+            section = release.split(marker, 1)[1]
+            if index + 1 < len(job_names):
+                section = section.split(f"\n  {job_names[index + 1]}:\n", 1)[0]
+            privileged[job_name] = section
+        for job_name, section in privileged.items():
+            if job_name in {"candidate", "promote"}:
+                self.assertIn("contents: write", section, job_name)
+                self.assertIn("id-token: write", section, job_name)
+                self.assertIn("attestations: write", section, job_name)
+            else:
+                self.assertNotIn("contents: write", section, job_name)
+                self.assertNotIn("id-token: write", section, job_name)
+                self.assertNotIn("attestations: write", section, job_name)
+
+    def test_every_workflow_checkout_disables_persisted_credentials(self):
+        workflows = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+        tests_workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        self.assertIn("permissions:\n  contents: read", tests_workflow)
+        for path in workflows:
+            workflow = path.read_text(encoding="utf-8")
+            checkout_count = workflow.count("uses: actions/checkout@")
+            if checkout_count == 0:
+                continue
+            with self.subTest(workflow=path.name):
+                self.assertEqual(checkout_count, workflow.count("persist-credentials: false"))
 
     def test_candidate_publication_is_draft_verified_immutable_and_fail_closed(self):
         release = RELEASE_WORKFLOW.read_text(encoding="utf-8")
@@ -1024,13 +1226,15 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
         )[1]
         positions = [
             final_step.index("sha256sum -c release-evidence.sha256"),
-            final_step.index("releases/tags/${RELEASE_TAG}"),
             final_step.index("git ls-remote --tags origin"),
+            final_step.index("releases/tags/${RELEASE_TAG}"),
             final_step.index("promoted-release-notes.md"),
             final_step.index('boundary_release="$(gh api'),
+            final_step.rindex("git ls-remote --tags origin"),
             final_step.rindex("--method PATCH"),
         ]
         self.assertEqual(sorted(positions), positions)
+        self.assertEqual(2, final_step.count("git ls-remote --tags origin"))
         self.assertIn('"refs/tags/${RELEASE_TAG}^{}"', final_step)
         self.assertGreaterEqual(final_step.count(".immutable"), 2)
         self.assertIn("production approved", final_step)

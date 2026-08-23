@@ -29,6 +29,8 @@ from .character_quality import (
 from .core_primitives import PANEL_ID_PATTERN as CORE_PANEL_ID_PATTERN
 from .core_primitives import dialogue_attribution_conflicts, is_normalized_point
 from .project_io import contained_project_path, open_path_nofollow, read_bytes_nofollow
+from .layouts import layout_rects
+from .lifecycle_contracts import ALL_STATUSES, CATEGORY, LINEAR_STATUSES
 from .input_limits import (
     MAX_JSON_BYTES,
     MAX_OVERRIDE_REASON_CHARS,
@@ -60,6 +62,9 @@ from .schema import (
     SUPPORTED_PROJECT_SCHEMA_VERSIONS,
 )
 from .font_coverage import SHAPING_LINEAR, script_for_codepoint, shaping_policy
+from .layouts import MARGIN, PAGE_HEIGHT, PAGE_WIDTH
+from .core_primitives import canonical_artifact_bytes, rectangles_overlap
+from .project_io import sha256_file
 from .typography import (
     LETTERING_GEOMETRY_SCHEMA_VERSION,
     PREFLIGHT_CHECKS,
@@ -67,19 +72,6 @@ from .typography import (
     TYPOGRAPHY_CHECK_REVIEWER,
     TYPOGRAPHY_SCHEMA_VERSION,
     lettering_geometry_hash,
-)
-
-from .comic_sol import (
-    ALL_STATUSES,
-    CATEGORY,
-    LINEAR_STATUSES,
-    MARGIN,
-    PAGE_HEIGHT,
-    PAGE_WIDTH,
-    canonical_artifact_bytes,
-    layout_rects,
-    rectangles_overlap,
-    sha256_file,
 )
 
 
@@ -682,7 +674,9 @@ def _validate_text_item(
     content = item.get("content")
     word_count = 0
     if _nonempty_string(content, issues, path, f"{prefix}.content"):
-        assert isinstance(content, str)
+        if not isinstance(content, str):
+            _add(issues, path, f"{prefix}.content", "must be a non-empty string")
+            return 0
         word_count = len(content.split())
         limits = {"dialogue": 32, "caption": 45, "sfx": 3}
         if kind in limits and word_count > limits[kind]:
@@ -1988,7 +1982,9 @@ def _validate_raster(
     if not _relative_path(relative_path, local_issues, issue_path, field):
         issues.extend(local_issues)
         return None
-    assert isinstance(relative_path, str)
+    if not isinstance(relative_path, str):
+        _add(issues, issue_path, field, "must be a relative project path")
+        return None
     try:
         image_path = _contained_project_path(project_dir, relative_path)
     except ValueError:

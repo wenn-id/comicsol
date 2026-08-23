@@ -20,6 +20,7 @@ BUILD_ONLY_SCRIPTS = {
     "installed_mcp_smoke.py",
     "live_visual_evidence.py",
     "portable_release_smoke.py",
+    "release_identity.py",
 }
 
 
