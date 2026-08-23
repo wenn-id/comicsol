@@ -17,6 +17,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 from PIL import Image, UnidentifiedImageError
+from PIL.Image import DecompressionBombError
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -184,7 +185,7 @@ def _raster_artifact(root: Path, value: object, label: str) -> dict[str, Any]:
             image.verify()
         with Image.open(path) as image:
             width, height = image.size
-    except (OSError, UnidentifiedImageError) as error:
+    except (OSError, UnidentifiedImageError, DecompressionBombError) as error:
         raise EvidenceError(f"{label}.path must be a decodable PNG raster") from error
     if width < 64 or height < 64:
         raise EvidenceError(f"{label}.path must be at least 64x64 pixels")
