@@ -53,6 +53,17 @@ carries it.
 
 ### Changed
 
+- Added a fail-closed publication contract for v2.2 live visual evidence. The local-only
+  `scripts/live_visual_evidence.py` validator binds an exact candidate, sanitized
+  provider/model/reviewer provenance, hash-verified before/after renders, the complete 105-slot
+  character-consistency scorecard, retained attempts, defects, repairs, retries, accepted
+  warnings, all nine visual review categories, and explicit limitations. Promotion requires
+  reviewer approval, 105/105 coverage, an overall identity mean of at least 3.5/4, every
+  aggregate axis at least 3/4, and no individual score below 3. The repository does not contain
+  a real provider bundle, so `docs/releases/v2.2-live-visual-evidence.md` records the current
+  state as BLOCKED rather than converting deterministic green results into an artistic-quality
+  claim.
+
 - Recorded the versioning strategy for the pending candidate and re-cut it as `2.0.0rc6`.
   `v2.0`, `v2.1`, and `v2.2` remain **milestone names, not version tags**; the distribution
   version is `2.0.0rc6`, and `comic_sol_product/version.py`, the Compose image tag, package

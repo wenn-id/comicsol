@@ -132,6 +132,16 @@ Regenerate a baseline for a release with:
 python -m tests.consistency_benchmark baseline benchmarks/consistency/baseline-v<version>.json
 ```
 
+## Live promotion evidence
+
+The advisory scorecard above remains outside deterministic CI, but a release named for comic
+quality also needs a separate, reviewer-approved visual promotion decision. The fail-closed
+bundle contract, 105/105 coverage requirement, cross-axis thresholds, retained-attempt ledger,
+before/after publication rules, and current blocked status are documented in
+[`docs/releases/v2.2-live-visual-evidence.md`](releases/v2.2-live-visual-evidence.md).
+`python scripts/live_visual_evidence.py` validates that curated local bundle without calling a
+provider or persisting prompts or credentials.
+
 ## Relationship to the other benchmarks
 
 - [`docs/benchmark-corpus.md`](benchmark-corpus.md) answers "which comic shapes must the
