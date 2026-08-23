@@ -260,9 +260,13 @@ class InitializationFailureInjectionTests(unittest.TestCase):
 
     def test_post_publication_fsync_failure_leaves_one_complete_project(self):
         real_fsync_directory = project_io.fsync_directory
+        resolved_root = self.root.resolve(strict=True)
 
         def fail_after_publication(path):
-            if Path(path) == self.root and (self.root / "atomic-initialization").is_dir():
+            if (
+                Path(path).resolve(strict=True) == resolved_root
+                and (self.root / "atomic-initialization").is_dir()
+            ):
                 raise OSError("injected output-root fsync failure")
             return real_fsync_directory(path)
 
@@ -284,11 +288,13 @@ class InitializationFailureInjectionTests(unittest.TestCase):
 
     def test_staging_write_failure_with_cleanup_failure_propagates_write_error(self):
         real_write_bytes = comic_sol.atomic_write_bytes
+        write_error = OSError("injected write failure")
+        cleanup_error = OSError("injected cleanup failure")
 
         def fail_after_source(path, payload):
             real_write_bytes(path, payload)
             if Path(path).name == "input.txt":
-                raise OSError("injected write failure")
+                raise write_error
 
         with (
             mock.patch.object(
@@ -299,10 +305,10 @@ class InitializationFailureInjectionTests(unittest.TestCase):
             mock.patch.object(
                 comic_sol,
                 "cleanup_owned_directory",
-                side_effect=OSError("injected cleanup failure"),
-            ),
+                side_effect=cleanup_error,
+            ) as cleanup,
         ):
-            with self.assertRaisesRegex(OSError, "injected write failure"):
+            with self.assertRaises(OSError) as raised:
                 init_project(
                     self.root,
                     "Atomic Initialization",
@@ -310,7 +316,14 @@ class InitializationFailureInjectionTests(unittest.TestCase):
                     self.request,
                 )
 
-        self._assert_no_partial_project()
+        self.assertIs(write_error, raised.exception)
+        cleanup.assert_called_once()
+        self.assertFalse((self.root / "atomic-initialization").exists())
+        self.assertEqual(b"leave me alone", self.unrelated.read_bytes())
+        staging_entries = list(self.root.glob(".comic-sol-init-*.tmp"))
+        self.assertEqual(1, len(staging_entries))
+        self.assertTrue(staging_entries[0].is_dir())
+        shutil.rmtree(staging_entries[0])
 
 
 class LifecycleFailureInjectionTests(unittest.TestCase):

@@ -329,11 +329,16 @@ class DirectoryPublicationTests(unittest.TestCase):
             nested = root / "references/characters"
             nested.mkdir(parents=True)
             flushed = []
+            posix_os = mock.Mock(wraps=os)
+            posix_os.name = "posix"
 
-            with mock.patch.object(
-                project_io,
-                "fsync_directory",
-                side_effect=lambda path: flushed.append(Path(path)),
+            with (
+                mock.patch.object(project_io, "os", posix_os),
+                mock.patch.object(
+                    project_io,
+                    "fsync_directory",
+                    side_effect=lambda path: flushed.append(Path(path)),
+                ),
             ):
                 project_io.fsync_directory_tree(root)
 
@@ -409,7 +414,10 @@ class DirectoryPublicationTests(unittest.TestCase):
         library = mock.Mock(renameatx_np=native_rename)
         source = Path("staging")
         destination = Path("project")
+        posix_os = mock.Mock(wraps=os)
+        posix_os.name = "posix"
         with (
+            mock.patch.object(project_io, "os", posix_os),
             mock.patch.object(project_io.sys, "platform", "darwin"),
             mock.patch.object(ctypes, "CDLL", return_value=library),
         ):
@@ -428,7 +436,10 @@ class DirectoryPublicationTests(unittest.TestCase):
 
         native_rename = mock.Mock(return_value=-1)
         library = mock.Mock(renameat2=native_rename)
+        posix_os = mock.Mock(wraps=os)
+        posix_os.name = "posix"
         with (
+            mock.patch.object(project_io, "os", posix_os),
             mock.patch.object(project_io.sys, "platform", "linux"),
             mock.patch.object(ctypes, "CDLL", return_value=library),
             mock.patch.object(ctypes, "get_errno", return_value=errno.EIO),
@@ -438,6 +449,7 @@ class DirectoryPublicationTests(unittest.TestCase):
         self.assertEqual(errno.EIO, raised.exception.errno)
 
         with (
+            mock.patch.object(project_io, "os", posix_os),
             mock.patch.object(project_io.sys, "platform", "freebsd"),
             mock.patch.object(ctypes, "CDLL", return_value=mock.Mock()),
         ):
