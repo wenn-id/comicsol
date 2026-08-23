@@ -91,9 +91,7 @@ STAGE_COMPLETION_STATUS = {
     definition.name: definition.completion_status for definition in STAGE_REGISTRY
 }
 ARTIFACT_STAGE = {
-    artifact: definition.name
-    for definition in STAGE_REGISTRY
-    for artifact in definition.artifacts
+    artifact: definition.name for definition in STAGE_REGISTRY for artifact in definition.artifacts
 }
 
 _DEFINITIONS_BY_NAME = {definition.name: definition for definition in STAGE_REGISTRY}

@@ -86,9 +86,10 @@ class BenchmarkContractTests(unittest.TestCase):
 
     def test_contract_rejects_incomplete_and_inconsistent_cases(self):
         case = load_case(MINI_COMIC)
-        self.assertIn("case-missing-field", validate_case(
-            {key: value for key, value in case.items() if key != "seed"}
-        ))
+        self.assertIn(
+            "case-missing-field",
+            validate_case({key: value for key, value in case.items() if key != "seed"}),
+        )
         self.assertIn("case-unknown-field", validate_case({**case, "extra": 1}))
         self.assertIn("case-schema-version", validate_case({**case, "schema_version": "9.9"}))
         self.assertIn("case-kind", validate_case({**case, "kind": "something-else"}))
@@ -112,9 +113,7 @@ class BenchmarkContractTests(unittest.TestCase):
         (fixture / "source/input.txt").write_text("story\n", encoding="utf-8")
         self.assertIn(
             "case-fixture-incomplete",
-            validate_case(
-                {**load_case(MINI_COMIC), "fixture": "partial"}, fixture_root=self.root
-            ),
+            validate_case({**load_case(MINI_COMIC), "fixture": "partial"}, fixture_root=self.root),
         )
 
     def test_contract_requires_fixture_page_count_to_match(self):
@@ -147,9 +146,7 @@ class BenchmarkPrimitiveTests(unittest.TestCase):
     def test_live_retry_requires_revision_specific_raster(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            (root / "p01-01.png").write_bytes(
-                synthesize_panel_raster(1, "p01-01", 0, (512, 512))
-            )
+            (root / "p01-01.png").write_bytes(synthesize_panel_raster(1, "p01-01", 0, (512, 512)))
             case = {"evidence_mode": "live-visual"}
             with self.assertRaises(FileNotFoundError):
                 _attempt_payload(case, "p01-01", 1, (512, 512), attempt_root=root)
@@ -185,9 +182,7 @@ class BenchmarkPrimitiveTests(unittest.TestCase):
         first = subprocess.check_output([sys.executable, "-c", code], env=environment, text=True)
         second = subprocess.check_output([sys.executable, "-c", code], env=environment, text=True)
         self.assertEqual(first, second)
-        self.assertEqual(
-            first.strip(), hashlib.sha256(_reference_raster(1, "hero")).hexdigest()
-        )
+        self.assertEqual(first.strip(), hashlib.sha256(_reference_raster(1, "hero")).hexdigest())
 
     def test_metric_comparison_rejects_non_finite_and_boolean_values(self):
         for invalid in (True, float("nan"), float("inf"), -0.1):
@@ -224,9 +219,7 @@ class BenchmarkPrimitiveTests(unittest.TestCase):
             with self.subTest(rect=rect):
                 width, height = panel_raster_size(rect)
                 self.assertEqual(expected, (width, height))
-                self.assertAlmostEqual(
-                    rect["width"] / rect["height"], width / height, places=6
-                )
+                self.assertAlmostEqual(rect["width"] / rect["height"], width / height, places=6)
                 self.assertGreaterEqual(min(width, height), 512)
 
     def test_raster_size_rejects_an_invalid_rectangle(self):
@@ -239,11 +232,15 @@ class BenchmarkPrimitiveTests(unittest.TestCase):
         record = _minimal_result("case-one", PERFECT)
         record["metrics"]["panel_acceptance"]["numerator"] = 2
         record["metrics"]["panel_acceptance"]["value"] = 2.0
-        self.assertEqual("metric value exceeds ratio range: panel_acceptance", _validate_result_record(record))
+        self.assertEqual(
+            "metric value exceeds ratio range: panel_acceptance", _validate_result_record(record)
+        )
         record = _minimal_result("case-one", PERFECT)
         record["metrics"]["panel_acceptance"]["numerator"] = 1
         record["metrics"]["panel_acceptance"]["denominator"] = 2
-        self.assertEqual("metric value is inconsistent: panel_acceptance", _validate_result_record(record))
+        self.assertEqual(
+            "metric value is inconsistent: panel_acceptance", _validate_result_record(record)
+        )
 
     def test_tail_verdict_requires_an_aligned_contained_tail(self):
         # source_gap is the real distance left between the tip and the speaker
@@ -255,7 +252,8 @@ class BenchmarkPrimitiveTests(unittest.TestCase):
         }
         self.assertEqual("pass", tail_direction_result(tail, [0.5, 0.1], 1000, 1000))
         self.assertEqual(
-            "fail", tail_direction_result(tail, [0.02, 0.1], 1000, 1000),
+            "fail",
+            tail_direction_result(tail, [0.02, 0.1], 1000, 1000),
             "a tail pointing away from the speaker must fail",
         )
         self.assertEqual(
@@ -289,7 +287,9 @@ class BenchmarkDiffTests(unittest.TestCase):
         self.assertEqual("NO REGRESSION", result["decision"])
         self.assertEqual("passed", result["status"])
         self.assertEqual([], result["regressions"])
-        self.assertEqual("unchanged", result["cases"]["case-one"]["metrics"]["export_success"]["verdict"])
+        self.assertEqual(
+            "unchanged", result["cases"]["case-one"]["metrics"]["export_success"]["verdict"]
+        )
         self.assertTrue((self.root / "diff.md").is_file())
         self.assertIn("NO REGRESSION", (self.root / "diff.md").read_text(encoding="utf-8"))
 
@@ -327,14 +327,13 @@ class BenchmarkDiffTests(unittest.TestCase):
         self.assertIn("case-one/status", result["regressions"])
         self.assertEqual("failed", result["cases"]["case-one"]["status"])
         self.assertNotEqual(
-            result["baseline_revisions"], result["candidate_revisions"],
+            result["baseline_revisions"],
+            result["candidate_revisions"],
             "a two-revision diff must record both engine revisions",
         )
 
     def test_improvements_are_reported_without_blocking(self):
-        self._publish(
-            self.baseline, _minimal_result("case-one", {**PERFECT, "repair_rate": 0.5})
-        )
+        self._publish(self.baseline, _minimal_result("case-one", {**PERFECT, "repair_rate": 0.5}))
         self._publish(self.candidate, _minimal_result("case-one", PERFECT))
         result = diff_results(self.baseline, self.candidate, self.root / "diff.json")
         self.assertEqual("passed", result["status"])
@@ -434,12 +433,13 @@ class BenchmarkRunTests(unittest.TestCase):
     def test_deterministic_run_passes_the_whole_pipeline_contract(self):
         self.assertEqual("passed", self.first["status"])
         self.assertEqual([], self.first["observations"]["final_validation_issues"])
-        self.assertEqual(
-            "COMPLETE_WITH_WARNINGS", self.first["observations"]["terminal_status"]
-        )
+        self.assertEqual("COMPLETE_WITH_WARNINGS", self.first["observations"]["terminal_status"])
         for metric_id in (
-            "pipeline_success", "resume_success", "panel_acceptance",
-            "dialogue_correctness", "export_success",
+            "pipeline_success",
+            "resume_success",
+            "panel_acceptance",
+            "dialogue_correctness",
+            "export_success",
         ):
             with self.subTest(metric=metric_id):
                 self.assertEqual(1.0, self.first["metrics"][metric_id]["value"])
@@ -449,9 +449,7 @@ class BenchmarkRunTests(unittest.TestCase):
     def test_resume_drill_preserves_upstream_stages_and_refinalizes(self):
         resume = self.first["observations"]["resume"]
         self.assertEqual("composition", resume["stage"])
-        self.assertEqual(
-            ["planning", "storyboard", "generation", "lettering"], resume["preserved"]
-        )
+        self.assertEqual(["planning", "storyboard", "generation", "lettering"], resume["preserved"])
         self.assertEqual(["composition", "export"], resume["invalidated"])
         self.assertEqual("COMPLETE_WITH_WARNINGS", resume["refinalized_status"])
         self.assertTrue(resume["succeeded"])
@@ -484,17 +482,20 @@ class BenchmarkRunTests(unittest.TestCase):
         case_path = self.root / "cases/unusable.json"
         case_path.parent.mkdir(parents=True)
         case = load_case(MINI_COMIC)
-        case_path.write_text(
-            json.dumps({**case, "fixture": "does/not/exist"}), encoding="utf-8"
-        )
+        case_path.write_text(json.dumps({**case, "fixture": "does/not/exist"}), encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(
                 1,
-                main([
-                    "--case", str(case_path),
-                    "--output-root", str(self.root / "projects"),
-                    "--results", str(self.root / "results"),
-                ]),
+                main(
+                    [
+                        "--case",
+                        str(case_path),
+                        "--output-root",
+                        str(self.root / "projects"),
+                        "--results",
+                        str(self.root / "results"),
+                    ]
+                ),
             )
         record = json.loads(
             (self.root / "results/result-unusable.json").read_text(encoding="utf-8")
@@ -509,29 +510,37 @@ class BenchmarkRunTests(unittest.TestCase):
         (project / "plan").mkdir(parents=True)
         (project / "qa/pages").mkdir(parents=True)
         (project / "plan/storyboard.json").write_text(
-            json.dumps({
-                "pages": [{
-                    "number": 1,
-                    "panels": [{
-                        "id": "p01-01",
-                        "text": [{"id": "caption", "kind": "caption"}],
-                    }],
-                }]
-            }),
+            json.dumps(
+                {
+                    "pages": [
+                        {
+                            "number": 1,
+                            "panels": [
+                                {
+                                    "id": "p01-01",
+                                    "text": [{"id": "caption", "kind": "caption"}],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ),
             encoding="utf-8",
         )
         (project / "qa/pages/page-001.json").write_text(
-            json.dumps({
-                "checks": [
-                    {"id": check_id, "result": "fail"}
-                    for check_id in (
-                        "clipped-text",
-                        "text-overlap",
-                        "reading-order",
-                        "bubble-tail-direction",
-                    )
-                ]
-            }),
+            json.dumps(
+                {
+                    "checks": [
+                        {"id": check_id, "result": "fail"}
+                        for check_id in (
+                            "clipped-text",
+                            "text-overlap",
+                            "reading-order",
+                            "bubble-tail-direction",
+                        )
+                    ]
+                }
+            ),
             encoding="utf-8",
         )
         self.assertEqual((0, 0), _dialogue_counts(project, {"page_count": 1}))
@@ -542,15 +551,21 @@ class BenchmarkRunTests(unittest.TestCase):
         (project / "plan").mkdir(parents=True)
         (project / "qa/pages").mkdir(parents=True)
         (project / "plan/storyboard.json").write_text(
-            json.dumps({
-                "pages": [{
-                    "number": 1,
-                    "panels": [{
-                        "id": "p01-01",
-                        "text": [{"id": "d1", "kind": "dialogue"}],
-                    }],
-                }]
-            }),
+            json.dumps(
+                {
+                    "pages": [
+                        {
+                            "number": 1,
+                            "panels": [
+                                {
+                                    "id": "p01-01",
+                                    "text": [{"id": "d1", "kind": "dialogue"}],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ),
             encoding="utf-8",
         )
         (project / "qa/pages/page-001.json").write_text(
@@ -568,11 +583,13 @@ class BenchmarkRunTests(unittest.TestCase):
         # Warning-severity by design, and never counted; present so the fixture proves
         # the exclusion rather than merely omitting the check.
         checks.append({"id": "balloon-crowding", "result": "warning"})
-        checks.append({
-            "id": "bubble-tail-direction",
-            "result": "pass" if tail_region == "pass" else "fail",
-            "regions": [{"id": "d1", "result": tail_region}],
-        })
+        checks.append(
+            {
+                "id": "bubble-tail-direction",
+                "result": "pass" if tail_region == "pass" else "fail",
+                "regions": [{"id": "d1", "result": tail_region}],
+            }
+        )
         return checks
 
     def test_dialogue_metric_counts_the_widened_check_set_on_a_healthy_page(self):
@@ -603,11 +620,7 @@ class BenchmarkRunTests(unittest.TestCase):
         crowded = self._dialogue_page_project("crowded", self._page_checks())
         uncrowded = self._dialogue_page_project(
             "uncrowded",
-            [
-                check
-                for check in self._page_checks()
-                if check["id"] != "balloon-crowding"
-            ],
+            [check for check in self._page_checks() if check["id"] != "balloon-crowding"],
         )
         self.assertEqual(
             _dialogue_counts(uncrowded, {"page_count": 1}),
@@ -619,7 +632,8 @@ class BenchmarkRunTests(unittest.TestCase):
         first_path = write_result(self.first, self.root / "results-first")
         second_path = write_result(second, self.root / "results-second")
         self.assertEqual(
-            first_path.read_bytes(), second_path.read_bytes(),
+            first_path.read_bytes(),
+            second_path.read_bytes(),
             "repeated deterministic benchmark runs must produce identical records",
         )
         result = diff_results(
@@ -640,9 +654,7 @@ class BenchmarkRunTests(unittest.TestCase):
     def test_live_evidence_binds_to_the_promoted_repair_attempt(self):
         case = load_case(CASES_ROOT / "sunlight-courier.json")
         fixture = ROOT / case["fixture"]
-        storyboard = json.loads(
-            (fixture / "plan/storyboard.json").read_text(encoding="utf-8")
-        )
+        storyboard = json.loads((fixture / "plan/storyboard.json").read_text(encoding="utf-8"))
         panels = _storyboard_panels(storyboard)
         live_case = {**case, "evidence_mode": "live-visual"}
         from scripts.core_primitives import PANEL_CHECK_IDS
@@ -720,18 +732,21 @@ class BenchmarkCommandTests(unittest.TestCase):
         case_path = self.root / "cases/unusable.json"
         case_path.parent.mkdir(parents=True)
         case = load_case(MINI_COMIC)
-        case_path.write_text(
-            json.dumps({**case, "fixture": "does/not/exist"}), encoding="utf-8"
-        )
+        case_path.write_text(json.dumps({**case, "fixture": "does/not/exist"}), encoding="utf-8")
         stream = io.StringIO()
         with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(
                 1,
-                main([
-                    "--case", str(case_path),
-                    "--output-root", str(self.root / "projects"),
-                    "--results", str(self.root / "results"),
-                ]),
+                main(
+                    [
+                        "--case",
+                        str(case_path),
+                        "--output-root",
+                        str(self.root / "projects"),
+                        "--results",
+                        str(self.root / "results"),
+                    ]
+                ),
             )
         published = self.root / "results/result-unusable.json"
         self.assertTrue(published.is_file())
@@ -809,7 +824,8 @@ class BenchmarkIntegrationTests(unittest.TestCase):
         from scripts.sync_plugin_bundle import BUNDLED_SCRIPTS
 
         self.assertNotIn(
-            "benchmark.py", BUNDLED_SCRIPTS,
+            "benchmark.py",
+            BUNDLED_SCRIPTS,
             "the benchmark harness is a repository gate, not a bundled runtime script",
         )
         self.assertFalse((ROOT / "skills/comic-sol/scripts/benchmark.py").exists())

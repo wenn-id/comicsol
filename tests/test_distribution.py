@@ -40,10 +40,34 @@ class NativeDistributionContractTests(unittest.TestCase):
                 "type": "application",
                 "version": RELEASE_VERSION,
             },
-            {"bom-ref": "Pillow==12.3.0", "name": "Pillow", "purl": "pkg:pypi/pillow@12.3.0", "type": "library", "version": "12.3.0"},
-            {"bom-ref": "mcp==2.0.0", "name": "mcp", "purl": "pkg:pypi/mcp@2.0.0", "type": "library", "version": "2.0.0"},
-            {"bom-ref": "pyinstaller==6.15.0", "name": "pyinstaller", "purl": "pkg:pypi/pyinstaller@6.15.0", "type": "library", "version": "6.15.0"},
-            {"bom-ref": "pkg:generic/python@3.11.9", "name": "Python", "purl": "pkg:generic/python@3.11.9", "type": "framework", "version": "3.11.9"},
+            {
+                "bom-ref": "Pillow==12.3.0",
+                "name": "Pillow",
+                "purl": "pkg:pypi/pillow@12.3.0",
+                "type": "library",
+                "version": "12.3.0",
+            },
+            {
+                "bom-ref": "mcp==2.0.0",
+                "name": "mcp",
+                "purl": "pkg:pypi/mcp@2.0.0",
+                "type": "library",
+                "version": "2.0.0",
+            },
+            {
+                "bom-ref": "pyinstaller==6.15.0",
+                "name": "pyinstaller",
+                "purl": "pkg:pypi/pyinstaller@6.15.0",
+                "type": "library",
+                "version": "6.15.0",
+            },
+            {
+                "bom-ref": "pkg:generic/python@3.11.9",
+                "name": "Python",
+                "purl": "pkg:generic/python@3.11.9",
+                "type": "framework",
+                "version": "3.11.9",
+            },
         ]
         destination = release / "build-environment.sbom.json"
         destination.write_text(
@@ -87,9 +111,7 @@ class NativeDistributionContractTests(unittest.TestCase):
 
     def test_plugin_manifest_has_public_legal_urls(self):
         root = Path(__file__).resolve().parents[1]
-        manifest = json.loads(
-            (root / ".codex-plugin/plugin.json").read_text(encoding="utf-8")
-        )
+        manifest = json.loads((root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(
             "https://github.com/wenn-id/comicsol/blob/main/PRIVACY.md",
             manifest["interface"]["privacyPolicyURL"],
@@ -129,11 +151,18 @@ class NativeDistributionContractTests(unittest.TestCase):
             self.assertEqual("comic-sol", sbom_record["metadata"]["component"]["name"])
             self.assertEqual(RELEASE_VERSION, sbom_record["metadata"]["component"]["version"])
             self.assertEqual("application", sbom_record["metadata"]["component"]["type"])
-            self.assertEqual(f"pkg:pypi/comic-sol@{RELEASE_VERSION}", sbom_record["metadata"]["component"]["purl"])
+            self.assertEqual(
+                f"pkg:pypi/comic-sol@{RELEASE_VERSION}",
+                sbom_record["metadata"]["component"]["purl"],
+            )
             uuid.UUID(sbom_record["serialNumber"].removeprefix("urn:uuid:"))
             self.assertEqual(
                 first.name,
-                next(item["value"] for item in sbom_record["metadata"]["properties"] if item["name"] == "comic-sol:release:artifact"),
+                next(
+                    item["value"]
+                    for item in sbom_record["metadata"]["properties"]
+                    if item["name"] == "comic-sol:release:artifact"
+                ),
             )
             self.assertGreaterEqual(len(sbom_record["dependencies"]), 5)
             refs = [item["bom-ref"] for item in sbom_record["components"]]
@@ -151,9 +180,7 @@ class NativeDistributionContractTests(unittest.TestCase):
             artifact = release / artifact_name(self.identity, "zip")
             artifact.write_bytes(b"portable-runtime")
             environment = self._write_environment_sbom(release)
-            validate_sbom_schema(
-                write_sbom(release, self.identity, environment, artifact.name)
-            )
+            validate_sbom_schema(write_sbom(release, self.identity, environment, artifact.name))
 
     def test_verifier_rejects_missing_or_tampered_artifact(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -199,9 +226,7 @@ class NativeDistributionContractTests(unittest.TestCase):
             archive = create_portable_archive(runtime, root / "portable.zip")
             with zipfile.ZipFile(archive) as reader:
                 members = set(reader.namelist())
-                executable_mode = (
-                    reader.getinfo("comic-sol/comic-sol").external_attr >> 16
-                )
+                executable_mode = reader.getinfo("comic-sol/comic-sol").external_attr >> 16
             validate_runtime_members(members)
             if os.name != "nt":
                 self.assertEqual(0o755, executable_mode & 0o777)
@@ -231,7 +256,11 @@ class NativeDistributionContractTests(unittest.TestCase):
         workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
         self.assertIn("USER comic-sol", dockerfile)
-        self.assertIn("mcp==2.0.0", dockerfile + (root / "requirements/locks/runtime-linux-x86_64.txt").read_text(encoding="utf-8"))
+        self.assertIn(
+            "mcp==2.0.0",
+            dockerfile
+            + (root / "requirements/locks/runtime-linux-x86_64.txt").read_text(encoding="utf-8"),
+        )
         self.assertNotIn("mcp==1.28.1", dockerfile)
         self.assertIn("/data", dockerfile)
         self.assertIn("HEALTHCHECK", dockerfile)
@@ -249,12 +278,14 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("ref: ${{ github.ref }}", workflow)
         self.assertIn("ref: ${{ needs.prepare.outputs.sha }}", workflow)
         self.assertGreaterEqual(workflow.count("ref: ${{ needs.prepare.outputs.sha }}"), 5)
-        self.assertIn("needs: [prepare, full-tests, codeql, benchmark, native, container, source]", workflow)
+        self.assertIn(
+            "needs: [prepare, full-tests, codeql, benchmark, native, container, source]", workflow
+        )
         self.assertIn("uses: ./.github/workflows/tests.yml", workflow)
         self.assertIn("uses: ./.github/workflows/codeql.yml", workflow)
         self.assertIn("uses: ./.github/workflows/benchmark.yml", workflow)
         self.assertIn("uses: ./.github/workflows/release-qualification.yml", workflow)
-        self.assertIn("blocking_quality: true", workflow)
+        self.assertNotIn("blocking_quality", workflow)
         self.assertIn("name: release-production", workflow)
         self.assertNotIn("--clobber", workflow)
         self.assertNotIn("if: startsWith(github.ref, 'refs/tags/v')", workflow)
@@ -269,7 +300,11 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("scripts/build_portable.py", workflow)
         self.assertIn("build-environment.sbom.json", workflow)
         self.assertIn("--environment", workflow)
-        self.assertIn("cyclonedx-bom==7.3.1", workflow + (root / "requirements/locks/release-linux-x86_64.txt").read_text(encoding="utf-8"))
+        self.assertIn(
+            "cyclonedx-bom==7.3.1",
+            workflow
+            + (root / "requirements/locks/release-linux-x86_64.txt").read_text(encoding="utf-8"),
+        )
         self.assertIn("validate_sbom_schema", workflow)
         self.assertIn("scripts/portable_release_smoke.py", workflow)
         portable_smoke = (root / "scripts/portable_release_smoke.py").read_text(encoding="utf-8")
@@ -290,7 +325,11 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("sigstore/cosign-installer@", workflow)
         self.assertIn("SHA256SUMS.sigstore.json", workflow)
         self.assertIn("--bundle", workflow)
-        self.assertIn("mcp==2.0.0", workflow + (root / "requirements/locks/release-linux-x86_64.txt").read_text(encoding="utf-8"))
+        self.assertIn(
+            "mcp==2.0.0",
+            workflow
+            + (root / "requirements/locks/release-linux-x86_64.txt").read_text(encoding="utf-8"),
+        )
         for installer in (root / "installers/install.sh", root / "installers/install.ps1"):
             installer_text = installer.read_text(encoding="utf-8")
             self.assertIn("sigstore", installer_text.lower())
@@ -378,9 +417,9 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertNotIn("--architecture x86_64", workflow)
         self.assertIn('("macos", "arm64")', workflow)
 
-        qualification = (
-            root / ".github/workflows/release-qualification.yml"
-        ).read_text(encoding="utf-8")
+        qualification = (root / ".github/workflows/release-qualification.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertNotIn("macos-26-intel", qualification)
         self.assertIn("arch: arm64", qualification)
         self.assertIn('--architecture "$ARCH"', qualification)
@@ -409,7 +448,9 @@ class NativeDistributionContractTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         for platform in ("linux", "macos", "windows"):
             for kind in ("base", "runtime", "release"):
-                lock = (root / "requirements/locks" / f"{kind}-{platform}-x86_64.txt").read_text(encoding="utf-8")
+                lock = (root / "requirements/locks" / f"{kind}-{platform}-x86_64.txt").read_text(
+                    encoding="utf-8"
+                )
                 self.assertNotRegex(lock, r"(?m)^\s*--(?:index-url|extra-index-url|find-links)\b")
                 lines = lock.splitlines()
                 blocks = []
@@ -438,7 +479,13 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertFalse((root / "docs/superpowers").exists())
         self.assertFalse((root / ".superpowers/sdd").exists())
         quality = (root / "scripts/quality_records.py").read_text(encoding="utf-8")
-        for symbol in ("QualityCheck", "QualityBinding", "quality_record_hash", "read_quality_record", "migrate_quality_record"):
+        for symbol in (
+            "QualityCheck",
+            "QualityBinding",
+            "quality_record_hash",
+            "read_quality_record",
+            "migrate_quality_record",
+        ):
             self.assertNotIn(symbol, quality)
 
     def test_font_cmap_has_one_runtime_implementation(self):
@@ -450,7 +497,6 @@ class NativeDistributionContractTests(unittest.TestCase):
             text = (root / module).read_text(encoding="utf-8")
             self.assertNotIn("def _unicode_cmap_subtables", text)
             self.assertNotIn("def _cmap_glyph_id", text)
-
 
     def test_version_sources_and_quality_runtime_are_consistent(self):
         root = Path(__file__).resolve().parents[1]
@@ -468,8 +514,12 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("__version__", assembler)
         self.assertIn(f"comic-sol:{RELEASE_VERSION}", compose)
         for module in (
-            "normalize_panels.py", "typography.py", "layouts.py", "page_quality.py",
-            "pdf_quality.py", "quality_sample.py",
+            "normalize_panels.py",
+            "typography.py",
+            "layouts.py",
+            "page_quality.py",
+            "pdf_quality.py",
+            "quality_sample.py",
         ):
             self.assertIn(module, release_contract)
 

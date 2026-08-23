@@ -92,12 +92,14 @@ def _scored_template(score=4, unscored=()):
                 if (panel_id, character_id, dimension) in skipped:
                     continue
                 scores[dimension] = score
-    scorecard["review"].update({
-        "engine_version": "test",
-        "evidence_mode": "model-assisted",
-        "method": "synthetic scores for arithmetic coverage",
-        "reviewer": "test suite",
-    })
+    scorecard["review"].update(
+        {
+            "engine_version": "test",
+            "evidence_mode": "model-assisted",
+            "method": "synthetic scores for arithmetic coverage",
+            "reviewer": "test suite",
+        }
+    )
     return scorecard
 
 
@@ -457,19 +459,13 @@ class ConsistencyProjectTests(unittest.TestCase):
             prompt = self.project / f"prompts/panels/{panel_id}.txt"
             with self.subTest(panel=panel_id):
                 self.assertTrue(prompt.is_file(), prompt)
-                self.assertEqual(
-                    panel_prompt(panel_id), prompt.read_text(encoding="utf-8")
-                )
+                self.assertEqual(panel_prompt(panel_id), prompt.read_text(encoding="utf-8"))
 
     def test_sidecars_carry_the_metadata_and_an_unscored_scorecard(self):
         metadata = self.root / f"{SCENARIO}.benchmark.json"
         scorecard = self.root / f"{SCENARIO}.scorecard.json"
-        self.assertEqual(
-            consistency_metadata(), json.loads(metadata.read_text(encoding="utf-8"))
-        )
-        self.assertEqual(
-            scorecard_template(), json.loads(scorecard.read_text(encoding="utf-8"))
-        )
+        self.assertEqual(consistency_metadata(), json.loads(metadata.read_text(encoding="utf-8")))
+        self.assertEqual(scorecard_template(), json.loads(scorecard.read_text(encoding="utf-8")))
 
     def test_rerunning_the_benchmark_reuses_the_same_input_definition(self):
         with tempfile.TemporaryDirectory() as raw:

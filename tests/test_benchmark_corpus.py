@@ -98,9 +98,7 @@ class BenchmarkCorpusCoverageTests(unittest.TestCase):
                 for tag in metadata["stresses"]:
                     self.assertIn(":", tag, tag)
                 panels = _panels(scenario)
-                self.assertEqual(
-                    [panel["id"] for panel in panels], metadata["expected"]["panels"]
-                )
+                self.assertEqual([panel["id"] for panel in panels], metadata["expected"]["panels"])
                 self.assertEqual(len(panels), metadata["expected"]["panel_count"])
 
     def test_corpus_exercises_every_registered_layout(self):
@@ -173,9 +171,7 @@ class BenchmarkScenarioShapeTests(unittest.TestCase):
         for character in specification["characters"]["characters"]:
             palette = character["visual_fingerprint"]["palette"]
             with self.subTest(character=character["id"]):
-                self.assertTrue(
-                    any("black" in tone or "dim" in tone for tone in palette), palette
-                )
+                self.assertTrue(any("black" in tone or "dim" in tone for tone in palette), palette)
         for panel in _panels("night-low-light"):
             lighting = panel["lighting"].lower()
             named = [source for source in NIGHT_KEY_SOURCES if source in lighting]
@@ -235,8 +231,7 @@ class BenchmarkProjectValidationTests(unittest.TestCase):
                     self.fail(
                         f"{scenario} failed storyboard validation:\n"
                         + "\n".join(
-                            f"{issue.path}:{issue.field}: {issue.message}"
-                            for issue in error.issues
+                            f"{issue.path}:{issue.field}: {issue.message}" for issue in error.issues
                         )
                     )
 

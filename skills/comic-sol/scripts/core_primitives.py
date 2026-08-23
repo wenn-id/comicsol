@@ -6,7 +6,7 @@ import json
 import math
 import re
 from collections.abc import Mapping, Sequence
-from typing import TypeAlias
+from typing import TypeAlias, TypeGuard
 
 
 PANEL_ID_PATTERN = re.compile(r"^p[0-9]{2}-[0-9]{2}$")
@@ -99,9 +99,7 @@ def canonical_json_bytes(value: object) -> bytes:
 
 def canonical_artifact_bytes(value: object) -> bytes:
     """Serialize sorted, two-space UTF-8 JSON with one trailing newline."""
-    return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
-        "utf-8"
-    )
+    return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
 def _rectangle_values(rectangle: Rectangle) -> tuple[int, int, int, int]:
@@ -143,7 +141,7 @@ def rectangle_separation(first: Rectangle, second: Rectangle) -> float:
     return math.hypot(horizontal, vertical)
 
 
-def is_geometry_point(value: object) -> bool:
+def is_geometry_point(value: object) -> TypeGuard[Sequence[int | float]]:
     """Report whether a value is a finite two-dimensional geometry point."""
     return (
         isinstance(value, (list, tuple))
@@ -163,9 +161,7 @@ def is_normalized_point(value: object) -> bool:
     A `speaker_anchor` addresses a location inside its own panel, so a coordinate
     outside this range names a voice source that is not in the artwork at all.
     """
-    return is_geometry_point(value) and all(
-        0.0 <= float(item) <= 1.0 for item in value  # type: ignore[union-attr]
-    )
+    return is_geometry_point(value) and all(0.0 <= float(item) <= 1.0 for item in value)
 
 
 def dialogue_attribution_conflicts(
@@ -189,7 +185,7 @@ def dialogue_attribution_conflicts(
     ]
     conflicts: list[tuple[str, str, str]] = []
     for index, (first_id, first_speaker, first_anchor) in enumerate(usable):
-        for second_id, second_speaker, second_anchor in usable[index + 1:]:
+        for second_id, second_speaker, second_anchor in usable[index + 1 :]:
             distance = math.dist(first_anchor, second_anchor)
             if first_speaker != second_speaker:
                 if distance < DISTINCT_SPEAKER_ANCHOR_SEPARATION:
@@ -220,9 +216,7 @@ def balloon_separation_minimum(width: int, height: int) -> float:
     return max(BALLOON_SEPARATION_MINIMUM, shortest * BALLOON_SEPARATION_RATIO)
 
 
-def balloon_subject_clearance(
-    box: Rectangle, point: Point, *, ellipse: bool
-) -> float:
+def balloon_subject_clearance(box: Rectangle, point: Point, *, ellipse: bool) -> float:
     """Return the distance from a protected point to one balloon outline.
 
     Captions are drawn as their box and are measured exactly. Dialogue balloons
@@ -253,9 +247,7 @@ def balloon_subject_clearance(
     radius_y = max(0.5, height / 2)
     delta_x = point_x - center_x
     delta_y = point_y - center_y
-    normalized_distance = math.sqrt(
-        (delta_x / radius_x) ** 2 + (delta_y / radius_y) ** 2
-    )
+    normalized_distance = math.sqrt((delta_x / radius_x) ** 2 + (delta_y / radius_y) ** 2)
     if normalized_distance <= 1.0:
         return 0.0
     return math.hypot(delta_x, delta_y) * (1.0 - 1.0 / normalized_distance)
@@ -279,9 +271,7 @@ def balloon_outline_deviation(box: Rectangle, point: Point) -> float:
     radius_y = max(0.5, height / 2)
     delta_x = point_x - center_x
     delta_y = point_y - center_y
-    normalized_distance = math.sqrt(
-        (delta_x / radius_x) ** 2 + (delta_y / radius_y) ** 2
-    )
+    normalized_distance = math.sqrt((delta_x / radius_x) ** 2 + (delta_y / radius_y) ** 2)
     if normalized_distance == 0.0:
         # The point is the centre, whose nearest outline is one semi-axis away.
         return min(radius_x, radius_y)

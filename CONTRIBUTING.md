@@ -29,7 +29,19 @@ $PYTHON = "py"  # resolve Python 3.11+ first; use `py -3`
 
 ## Required validation
 
-Run checks through same `.venv` interpreter used for dependency installation. Before requesting merge, complete deterministic suite must pass:
+Run checks through same `.venv` interpreter used for dependency installation. Before requesting merge, the complete deterministic suite and the blocking quality policy must pass. The quality gate runs on Linux with the hash-locked toolchain:
+
+```bash
+.venv/bin/python -m pip install --require-hashes -r requirements/locks/quality-linux-x86_64.txt
+.venv/bin/python -m ruff check scripts comic_sol_product tests
+.venv/bin/python -m ruff format --check scripts comic_sol_product tests
+.venv/bin/python -m mypy
+.venv/bin/python -m coverage run -m unittest discover -s tests
+.venv/bin/python -m coverage json -o coverage.json
+.venv/bin/python scripts/check_coverage.py coverage.json
+```
+
+Coverage measures application modules under `scripts/` and `comic_sol_product/`, not tests. The independently enforced floors are **82% line coverage** and **72% branch coverage**; lowering either floor requires an explicit, reviewed policy change. Continue with the platform validation commands:
 
 ```bash
 # POSIX
@@ -87,7 +99,7 @@ bundle differences fail validation.
 - Do not commit credentials, provider payloads, generated projects, build outputs, or private source material.
 - Do not weaken validation thresholds merely to make a fixture pass.
 
-All Linux, macOS, and Windows CI checks must pass before merge. Releases are created only from reviewed commits already merged into `main`.
+All Linux, macOS, and Windows CI checks must pass before merge. Branch protection for `main` must require the stable `Quality gates` status in addition to the platform test and native-distribution statuses. Releases are created only from reviewed commits already merged into `main`; exact-candidate publication and promotion depend on the same blocking quality workflow.
 
 ## Reporting defects
 

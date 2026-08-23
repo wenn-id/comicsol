@@ -52,9 +52,7 @@ def build_evidence_record(
         raise EvidenceModeError("live-visual mode requires a retained attempt")
     if not provider or not model:
         raise EvidenceModeError("live-visual mode requires provider and model")
-    if not isinstance(attempt_sha256, str) or not SHA256_PATTERN.fullmatch(
-        attempt_sha256
-    ):
+    if not isinstance(attempt_sha256, str) or not SHA256_PATTERN.fullmatch(attempt_sha256):
         raise EvidenceModeError("live-visual mode requires retained attempt sha256")
     if not reviewer_method:
         raise EvidenceModeError("live-visual mode requires reviewer method")
@@ -78,9 +76,7 @@ def _parser() -> argparse.ArgumentParser:
         description="Record local-only Comic Sol quality evidence provenance"
     )
     parser.add_argument("project_dir", type=Path)
-    parser.add_argument(
-        "--mode", required=True, choices=("deterministic", "live-visual")
-    )
+    parser.add_argument("--mode", required=True, choices=("deterministic", "live-visual"))
     parser.add_argument("--retained-attempt")
     parser.add_argument("--provider")
     parser.add_argument("--model")
@@ -98,9 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         attempt_hash = None
         if arguments.mode == "live-visual":
             if not arguments.retained_attempt:
-                raise EvidenceModeError(
-                    "live-visual mode requires a retained attempt"
-                )
+                raise EvidenceModeError("live-visual mode requires a retained attempt")
             attempt = contained_project_path(
                 project_dir, arguments.retained_attempt, must_exist=True
             )
@@ -120,9 +114,9 @@ def main(argv: list[str] | None = None) -> int:
             reviewer_method=arguments.reviewer_method,
             limitations=arguments.limitation,
         )
-        payload = (
-            json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        ).encode("utf-8")
+        payload = (json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+            "utf-8"
+        )
         with ProjectTransaction(project_dir, "quality-evidence") as transaction:
             transaction.stage_bytes("qa/evidence.json", payload)
         return 0

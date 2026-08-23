@@ -53,6 +53,7 @@ from .comic_sol import (
     canonical_event_record,
     read_json,
 )
+
 # The manifest timestamp format is owned by the lifecycle module; reusing it keeps
 # `updated_at` identical to every other operation that touches `project.json`.
 from .comic_sol import _utc_now as _manifest_timestamp
@@ -123,9 +124,7 @@ def _read_audit(project_dir: Path, panel_id: str) -> dict[str, object]:
 
 def _archive_relative(panel_id: str, text_id: str, sequence: int, kind: str) -> str:
     """Return the archive path one preserved raster occupies."""
-    return (
-        f"panels/{panel_id}/sfx-audit/{text_id}.attempt-{sequence}.{kind}.png"
-    )
+    return f"panels/{panel_id}/sfx-audit/{text_id}.attempt-{sequence}.{kind}.png"
 
 
 def _free_sequence(project_dir: Path, panel_id: str, text_id: str) -> int:
@@ -168,9 +167,7 @@ def _locate(
                 if not isinstance(item, dict) or item.get("id") != text_id:
                     continue
                 if not is_sfx(item):
-                    raise ValueError(
-                        f"text item {text_id} is not SFX; only SFX has a render mode"
-                    )
+                    raise ValueError(f"text item {text_id} is not SFX; only SFX has a render mode")
                 mode = sfx_render_mode(item)
                 if mode != GENERATED_VISUAL:
                     raise ValueError(
@@ -200,14 +197,10 @@ def replace_generated_sfx(
     project_dir = Path(project_dir).resolve(strict=True)
 
     with ProjectTransaction(project_dir, "replace-generated-sfx") as transaction:
-        manifest_path = contained_project_path(
-            project_dir, "project.json", must_exist=True
-        )
+        manifest_path = contained_project_path(project_dir, "project.json", must_exist=True)
         manifest = read_project_manifest(manifest_path, normalize_legacy=False)
         if manifest.get("status") == "BLOCKED":
-            raise ValueError(
-                "cannot repair a BLOCKED project; resume it before replacing SFX"
-            )
+            raise ValueError("cannot repair a BLOCKED project; resume it before replacing SFX")
         storyboard = read_json(
             contained_project_path(project_dir, STORYBOARD_PATH, must_exist=True)
         )
@@ -237,12 +230,14 @@ def replace_generated_sfx(
             payload = read_contained_bytes(project_dir, source_relative)
             archive_relative = _archive_relative(panel_id, text_id, sequence, kind)
             transaction.stage_bytes(archive_relative, payload)
-            archived.append({
-                "kind": kind,
-                "path": archive_relative,
-                "sha256": hashlib.sha256(payload).hexdigest(),
-                "source_path": source_relative,
-            })
+            archived.append(
+                {
+                    "kind": kind,
+                    "path": archive_relative,
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "source_path": source_relative,
+                }
+            )
 
         # The plan edit itself, in place, so item order and every other authored
         # field survive untouched.
@@ -275,9 +270,7 @@ def replace_generated_sfx(
         }
         replacements.append(entry)
         record["replacements"] = replacements
-        transaction.stage_bytes(
-            _audit_relative(panel_id), canonical_artifact_bytes(record)
-        )
+        transaction.stage_bytes(_audit_relative(panel_id), canonical_artifact_bytes(record))
 
         # Re-bind the storyboard descriptor so the edit reaches consumers through
         # stage input keys instead of faulting the storyboard stage's own artifact.
@@ -310,9 +303,7 @@ def replace_generated_sfx(
             "artifact.regenerated",
             {"artifact_path": STORYBOARD_PATH, "reused": False},
         )
-        transaction.append_bytes(
-            "logs/events.jsonl", events, repair_torn_jsonl=True
-        )
+        transaction.append_bytes("logs/events.jsonl", events, repair_torn_jsonl=True)
 
     return {
         "archived": archived,

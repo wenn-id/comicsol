@@ -82,9 +82,7 @@ def normalization_geometry(
     if mode == "exact":
         if source_width * target_height != source_height * target_width:
             raise ValueError("exact normalization requires matching aspect ratios")
-        return NormalizationGeometry(
-            source_size, target_size, mode, None, target_size, (0, 0)
-        )
+        return NormalizationGeometry(source_size, target_size, mode, None, target_size, (0, 0))
 
     if mode == "fit":
         if source_width * target_height >= source_height * target_width:
@@ -98,8 +96,12 @@ def normalization_geometry(
             (target_height - resized_height) // 2,
         )
         return NormalizationGeometry(
-            source_size, target_size, mode, None,
-            (resized_width, resized_height), origin,
+            source_size,
+            target_size,
+            mode,
+            None,
+            (resized_width, resized_height),
+            origin,
         )
 
     if source_ratio > target_ratio:
@@ -110,9 +112,7 @@ def normalization_geometry(
         crop_height = (source_width * target_height) // target_width
         top = (source_height - crop_height) // 2
         crop_box = (0, top, source_width, top + crop_height)
-    return NormalizationGeometry(
-        source_size, target_size, mode, crop_box, target_size, (0, 0)
-    )
+    return NormalizationGeometry(source_size, target_size, mode, crop_box, target_size, (0, 0))
 
 
 def _sha256(payload: bytes) -> str:
@@ -142,9 +142,7 @@ def _prepare(project_dir: Path, spec: NormalizationSpec) -> _PreparedNormalizati
     if spec.mode not in MODES:
         raise ValueError(f"normalization mode must be one of {sorted(MODES)}")
 
-    source_path = contained_project_path(
-        project_dir, spec.source_relative, must_exist=True
-    )
+    source_path = contained_project_path(project_dir, spec.source_relative, must_exist=True)
     source_bytes = source_path.read_bytes()
     try:
         with warnings.catch_warnings():
@@ -172,9 +170,7 @@ def _prepare(project_dir: Path, spec: NormalizationSpec) -> _PreparedNormalizati
         raise ValueError("source image format must be PNG, JPEG, or WEBP")
     geometry = normalization_geometry(oriented.size, target_size, spec.mode)
     if geometry.crop_box is not None:
-        clean = oriented.crop(geometry.crop_box).resize(
-            target_size, Image.Resampling.LANCZOS
-        )
+        clean = oriented.crop(geometry.crop_box).resize(target_size, Image.Resampling.LANCZOS)
     elif spec.mode == "fit":
         resized = oriented.resize(geometry.resized_size, Image.Resampling.LANCZOS)
         clean = Image.new("RGB", target_size, "white")
@@ -193,9 +189,7 @@ def _prepare(project_dir: Path, spec: NormalizationSpec) -> _PreparedNormalizati
         },
         "implementation_version": IMPLEMENTATION_VERSION,
         "operation": {
-            "crop_box": (
-                list(geometry.crop_box) if geometry.crop_box is not None else None
-            ),
+            "crop_box": (list(geometry.crop_box) if geometry.crop_box is not None else None),
             "mode": spec.mode,
             "paste_origin": list(geometry.paste_origin),
             "resized_size": list(geometry.resized_size),
@@ -231,15 +225,9 @@ def normalize_panels(
     with ProjectTransaction(project_dir, "panel-normalization") as transaction:
         for item in prepared:
             panel_id = item.spec.panel_id
-            transaction.stage_bytes(
-                f"panels/{panel_id}/clean.png", item.clean_bytes
-            )
-            transaction.stage_bytes(
-                f"panels/{panel_id}/normalization.json", item.record_bytes
-            )
-    return tuple(
-        project_dir / f"panels/{item.spec.panel_id}/clean.png" for item in prepared
-    )
+            transaction.stage_bytes(f"panels/{panel_id}/clean.png", item.clean_bytes)
+            transaction.stage_bytes(f"panels/{panel_id}/normalization.json", item.record_bytes)
+    return tuple(project_dir / f"panels/{item.spec.panel_id}/clean.png" for item in prepared)
 
 
 def normalize_panel(

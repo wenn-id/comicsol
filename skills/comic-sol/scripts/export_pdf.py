@@ -53,9 +53,7 @@ def _validated_manifest(project_dir: Path) -> dict[str, object]:
     issues = validate_manifest(manifest)
     if issues:
         first = issues[0]
-        raise PdfExportError(
-            f"invalid project manifest at {first.field}: {first.message}"
-        )
+        raise PdfExportError(f"invalid project manifest at {first.field}: {first.message}")
     return manifest
 
 
@@ -122,17 +120,13 @@ def _load_pages(paths: list[Path]) -> list[Image.Image]:
     return pages
 
 
-def _required_page_qa_paths(
-    project_dir: Path, page_count: int
-) -> list[tuple[str, Path]]:
+def _required_page_qa_paths(project_dir: Path, page_count: int) -> list[tuple[str, Path]]:
     """Return the page-QA paths required for PDF export."""
     page_qa_paths: list[tuple[str, Path]] = []
     for page_number in range(1, page_count + 1):
         qa_relative = f"qa/pages/page-{page_number:03d}.json"
         try:
-            qa_path = contained_project_path(
-                project_dir, qa_relative, must_exist=True
-            )
+            qa_path = contained_project_path(project_dir, qa_relative, must_exist=True)
         except (OSError, ValueError) as error:
             raise PdfExportError(f"missing page QA record: {qa_relative}") from error
         if not qa_path.is_file():
@@ -200,9 +194,7 @@ def export_pdf(project_dir: Path, output_path: Path | None = None) -> Path:
         else:
             destination = Path(output_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        payload, _ = _render_verified_payload(
-            destination.parent, destination.name, pages
-        )
+        payload, _ = _render_verified_payload(destination.parent, destination.name, pages)
         durable_atomic_write(destination, payload)
         return destination
     except PdfExportError:
@@ -229,20 +221,17 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
         raise PdfExportError("manifest project_id is invalid")
     try:
         candidate = (
-            Path(output_path)
-            if output_path is not None
-            else Path("exports") / f"{project_id}.pdf"
+            Path(output_path) if output_path is not None else Path("exports") / f"{project_id}.pdf"
         )
         relative = (
             candidate.relative_to(project_dir).as_posix()
-            if candidate.is_absolute() else candidate.as_posix()
+            if candidate.is_absolute()
+            else candidate.as_posix()
         )
         destination = contained_project_path(project_dir, relative)
         pdf_relative = destination.relative_to(project_dir).as_posix()
     except ValueError as error:
-        raise PdfExportError(
-            "guarded export destination must remain inside the project"
-        ) from error
+        raise PdfExportError("guarded export destination must remain inside the project") from error
 
     settings = manifest.get("settings")
     page_count = settings.get("page_count") if isinstance(settings, dict) else None
@@ -254,9 +243,7 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
     pages = _load_pages(page_paths)
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        payload, metrics = _render_verified_payload(
-            destination.parent, destination.name, pages
-        )
+        payload, metrics = _render_verified_payload(destination.parent, destination.name, pages)
     finally:
         for page in pages:
             page.close()
@@ -264,13 +251,15 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
     pdf_sha256 = hashlib.sha256(payload).hexdigest()
     source_pages: list[dict[str, object]] = []
     for page_path, (qa_relative, qa_path) in zip(page_paths, page_qa_paths, strict=True):
-        source_pages.append({
-            "dimensions": [PAGE_WIDTH, PAGE_HEIGHT],
-            "page_qa_path": qa_relative,
-            "page_qa_sha256": sha256_file(qa_path),
-            "path": page_path.relative_to(project_dir).as_posix(),
-            "sha256": sha256_file(page_path),
-        })
+        source_pages.append(
+            {
+                "dimensions": [PAGE_WIDTH, PAGE_HEIGHT],
+                "page_qa_path": qa_relative,
+                "page_qa_sha256": sha256_file(qa_path),
+                "path": page_path.relative_to(project_dir).as_posix(),
+                "sha256": sha256_file(page_path),
+            }
+        )
     verification = {
         **metrics,
         "kind": "pdf-verification",
@@ -287,9 +276,7 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
 
     with ProjectTransaction(project_dir, "pdf-export") as transaction:
         transaction.stage_bytes(pdf_relative, payload)
-        transaction.stage_bytes(
-            "exports/pdf-verification.json", verification_payload
-        )
+        transaction.stage_bytes("exports/pdf-verification.json", verification_payload)
         locked_manifest = read_project_manifest(
             contained_project_path(project_dir, "project.json", must_exist=True)
         )
@@ -301,9 +288,7 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
             "sha256": hashlib.sha256(verification_payload).hexdigest(),
         }
         locked_manifest["artifacts"] = artifacts
-        transaction.stage_bytes(
-            "project.json", canonical_artifact_bytes(locked_manifest)
-        )
+        transaction.stage_bytes("project.json", canonical_artifact_bytes(locked_manifest))
     if output_path is not None and Path(output_path).is_absolute():
         return Path(output_path)
     return caller_project_dir / Path(pdf_relative)

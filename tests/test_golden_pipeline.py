@@ -42,9 +42,13 @@ class GoldenPipelineTests(unittest.TestCase):
             json.loads((FIXTURE / "source/request.json").read_text(encoding="utf-8")),
         )
         shutil.copy2(FIXTURE / "plan/story-plan.json", self.project / "plan/story-plan.json")
-        shutil.copy2(FIXTURE / "plan/character-bible.json", self.project / "plan/character-bible.json")
+        shutil.copy2(
+            FIXTURE / "plan/character-bible.json", self.project / "plan/character-bible.json"
+        )
         shutil.copy2(FIXTURE / "plan/storyboard.json", self.project / "plan/storyboard.json")
-        shutil.copy2(FIXTURE / "prompts/panels/p01-01.txt", self.project / "prompts/panels/p01-01.txt")
+        shutil.copy2(
+            FIXTURE / "prompts/panels/p01-01.txt", self.project / "prompts/panels/p01-01.txt"
+        )
         reference = self.project / "references/characters/mira.png"
         reference.parent.mkdir(parents=True, exist_ok=True)
         Image.new("RGB", (256, 256), (220, 180, 80)).save(reference)
@@ -60,23 +64,25 @@ class GoldenPipelineTests(unittest.TestCase):
                 "path": f"plan/{name}.json",
                 "sha256": sha256_file(path),
             }
-        manifest.update({
-            "project_id": "mini-comic-golden",
-            "title": "Mini Comic Golden",
-            "panels": ["p01-01"],
-            "artifacts": descriptors,
-            "settings": {
-                **manifest["settings"],
-                "page_count": 1,
-                "panel_count": 1,
-                "page_width": 1600,
-                "page_height": 2400,
-            },
-            "input": {
-                **manifest["input"],
-                "source_sha256": sha256_file(self.project / "source/input.txt"),
-            },
-        })
+        manifest.update(
+            {
+                "project_id": "mini-comic-golden",
+                "title": "Mini Comic Golden",
+                "panels": ["p01-01"],
+                "artifacts": descriptors,
+                "settings": {
+                    **manifest["settings"],
+                    "page_count": 1,
+                    "panel_count": 1,
+                    "page_width": 1600,
+                    "page_height": 2400,
+                },
+                "input": {
+                    **manifest["input"],
+                    "source_sha256": sha256_file(self.project / "source/input.txt"),
+                },
+            }
+        )
         atomic_write_json(self.project / "project.json", manifest)
         transition(self.project, "PLANNED")
         transition(self.project, "SCRIPTED")
@@ -91,32 +97,38 @@ class GoldenPipelineTests(unittest.TestCase):
             self.project, "p01-01", "panels/raw/p01-01.png", (736, 1136), "exact"
         )
         record = json.loads((ROOT / "templates/panel-record.json").read_text(encoding="utf-8"))
-        record.update({
-            "subject_id": "p01-01",
-            "decision": "accept",
-            "unresolved_warnings": [],
-            "review": {
-                "method": "golden-fixture",
-                "reviewer": "fixture-reviewer",
-                "reviewed_at": "2026-08-18T00:00:00Z",
-            },
-        })
-        record["bindings"].update({
-            "raw_sha256": sha256_file(raw),
-            "clean_sha256": sha256_file(clean),
-            "normalization_sha256": sha256_file(
-                self.project / "panels/p01-01/normalization.json"
-            ),
-        })
+        record.update(
+            {
+                "subject_id": "p01-01",
+                "decision": "accept",
+                "unresolved_warnings": [],
+                "review": {
+                    "method": "golden-fixture",
+                    "reviewer": "fixture-reviewer",
+                    "reviewed_at": "2026-08-18T00:00:00Z",
+                },
+            }
+        )
+        record["bindings"].update(
+            {
+                "raw_sha256": sha256_file(raw),
+                "clean_sha256": sha256_file(clean),
+                "normalization_sha256": sha256_file(
+                    self.project / "panels/p01-01/normalization.json"
+                ),
+            }
+        )
         for check in record["checks"]:
             check_id = check["id"]
-            check.update({
-                "result": "pass",
-                "evidence": f"Golden fixture review verified the {check_id} requirement for the current panel artifact.",
-                "method": "golden-fixture",
-                "reviewer": "fixture-reviewer",
-                "regions": [],
-            })
+            check.update(
+                {
+                    "result": "pass",
+                    "evidence": f"Golden fixture review verified the {check_id} requirement for the current panel artifact.",
+                    "method": "golden-fixture",
+                    "reviewer": "fixture-reviewer",
+                    "regions": [],
+                }
+            )
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
         transition(self.project, "PANELS_READY")
         transition(self.project, "QA_READY")
@@ -144,20 +156,25 @@ class GoldenPipelineTests(unittest.TestCase):
                 "reviewer": "fixture-reviewer",
                 "regions": (
                     bounded_tail_regions(self.project, 1)
-                    if check_id == "bubble-tail-direction" else [{"scope": "page"}]
+                    if check_id == "bubble-tail-direction"
+                    else [{"scope": "page"}]
                 ),
             }
             for check_id in (
-            "face-action-obstruction", "bubble-tail-direction",
-            "accidental-text-watermark",
-        )
+                "face-action-obstruction",
+                "bubble-tail-direction",
+                "accidental-text-watermark",
+            )
         ]
         write_page_quality_record(
             self.project,
             1,
             build_page_quality_record(
-                self.project, 1, checks,
-                reviewer="fixture-reviewer", reviewed_at="2026-08-18T00:00:00Z",
+                self.project,
+                1,
+                checks,
+                reviewer="fixture-reviewer",
+                reviewed_at="2026-08-18T00:00:00Z",
             ),
         )
 
@@ -197,7 +214,9 @@ class GoldenPipelineTests(unittest.TestCase):
         self.assertEqual(64, len(manifest["artifacts"]["pdf"]["sha256"]))
         self.assertEqual(
             manifest["artifacts"]["pdf_verification"]["sha256"],
-            hashlib.sha256((self.project / "exports/pdf-verification.json").read_bytes()).hexdigest(),
+            hashlib.sha256(
+                (self.project / "exports/pdf-verification.json").read_bytes()
+            ).hexdigest(),
         )
 
     def test_golden_pipeline_rejects_changed_page_after_export(self):
@@ -206,12 +225,10 @@ class GoldenPipelineTests(unittest.TestCase):
         page = self.project / "pages/page-001.png"
         Image.new("RGB", (1600, 2400), "magenta").save(page)
         from scripts.validate_project import ProjectValidationError, require_valid_project
+
         with self.assertRaises(ProjectValidationError) as context:
             require_valid_project(self.project, "final")
-        stale_fields = {
-            (issue.path, issue.field)
-            for issue in context.exception.issues
-        }
+        stale_fields = {(issue.path, issue.field) for issue in context.exception.issues}
         self.assertIn(
             ("exports/pdf-verification.json", "pdf-verification-stale"),
             stale_fields,
