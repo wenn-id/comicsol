@@ -607,6 +607,7 @@ def _temporary_archive(archive: Path) -> Iterator[Path]:
     descriptor, name = tempfile.mkstemp(prefix=f".{archive.name}.", dir=archive.parent)
     os.close(descriptor)
     temporary = Path(name)
+    os.chmod(temporary, 0o644)
     try:
         yield temporary
     finally:
