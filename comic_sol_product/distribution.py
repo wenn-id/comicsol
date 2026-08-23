@@ -57,12 +57,19 @@ def artifact_name(identity: ReleaseIdentity, extension: str) -> str:
     return f"{identity.stem}.{extension}"
 
 
-def _metadata_name(identity: ReleaseIdentity) -> str:
+def metadata_name(identity: ReleaseIdentity) -> str:
+    """Return the canonical metadata filename for a native release identity."""
     return f"{identity.stem}.metadata.json"
 
 
-def _sbom_name(identity: ReleaseIdentity) -> str:
+def sbom_name(identity: ReleaseIdentity) -> str:
+    """Return the canonical SBOM filename for a native release identity."""
     return f"{identity.stem}.sbom.json"
+
+
+def native_payload_names(identity: ReleaseIdentity) -> tuple[str, str, str]:
+    """Return the complete native archive, metadata, and SBOM filename contract."""
+    return artifact_name(identity, "zip"), metadata_name(identity), sbom_name(identity)
 
 
 def write_release_metadata(
@@ -72,7 +79,7 @@ def write_release_metadata(
     names = sorted({_safe_member(name) for name in artifacts})
     if not names:
         raise ValueError("release metadata requires at least one artifact")
-    destination = release_dir / _metadata_name(identity)
+    destination = release_dir / metadata_name(identity)
     destination.write_text(
         _canonical_json(
             {
@@ -177,7 +184,7 @@ def write_sbom(
     record["specVersion"] = "1.6"
     record["version"] = 1
     record["serialNumber"] = f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, identity.stem)}"
-    destination = release_dir / _sbom_name(identity)
+    destination = release_dir / sbom_name(identity)
     release_dir.mkdir(parents=True, exist_ok=True)
     destination.write_text(_canonical_json(record), encoding="utf-8", newline="\n")
     return destination
@@ -216,8 +223,8 @@ def write_checksums(release_dir: Path, artifacts: Iterable[Path]) -> Path:
 
 def verify_release_directory(release_dir: Path, identity: ReleaseIdentity) -> None:
     release_dir = release_dir.resolve(strict=True)
-    metadata_path = release_dir / _metadata_name(identity)
-    sbom_path = release_dir / _sbom_name(identity)
+    metadata_path = release_dir / metadata_name(identity)
+    sbom_path = release_dir / sbom_name(identity)
     checksums_path = release_dir / "SHA256SUMS"
     for required in (metadata_path, sbom_path, checksums_path):
         if not required.is_file():

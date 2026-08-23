@@ -4,7 +4,7 @@
 > `v2.0.0rc4`, the latest published prerelease, because those are the archives that exist.
 > They are updated to name `v2.0.0rc6` when that tag is published.
 
-Comic Sol `v2.0.0rc4` is a prerelease distributed as native portable archives for Linux, macOS, and Windows, plus a Python wheel/source archive and an OCI image definition. Native archives bundle Python 3.11, Pillow, MCP, fonts, templates, the Skill, and references; no system Python is required after extraction.
+Comic Sol `v2.0.0rc4` is a prerelease distributed as native portable archives for Linux, macOS, and Windows, plus a Python wheel/source archive and an OCI image definition. Its published macOS filename is historically mislabeled, as explained below. The current native archive matrix is Linux x86_64, macOS arm64, and Windows x86_64. WSL2 uses the Linux x86_64 archive; it has no separate native archive. Source installation supports Linux, macOS, Windows, and WSL2 on Python 3.11+. Intel macOS is source-install-only; it has no native archive. Native archives bundle Python 3.11, Pillow, MCP, fonts, templates, the Skill, and references; no system Python is required after extraction.
 
 > **First time installing Comic Sol?** Start with
 > [`docs/onboarding.md`](onboarding.md) instead. It is one short path from install
@@ -43,7 +43,8 @@ For macOS, use `comic-sol-2.0.0rc4-macos-x86_64.zip`. Despite that name, the arc
 arm64 binaries and will not run natively on an Intel Mac — it was built on an arm64 runner while
 the release still labelled every artifact `x86_64`. From `2.0.0rc6` onward the macOS archive is
 named `comic-sol-<version>-macos-arm64.zip` so the name matches its contents, and Apple silicon
-is the only macOS release target. The default installation root is `$HOME/.local/share/comic-sol`.
+is the only macOS native-archive target. Intel macOS remains supported through source
+installation on Python 3.11+, but it has no native archive. The default installation root is `$HOME/.local/share/comic-sol`.
 Override it with `--install-root PATH` or `COMIC_SOL_INSTALL_ROOT`.
 
 The POSIX installer requires `cosign`, `perl`, `sha256sum`, `unzip`, and standard POSIX utilities. Perl is used for race-free no-follow install-root traversal. The native binaries are not notarized, so macOS Gatekeeper may require an explicit local approval for this prerelease.

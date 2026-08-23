@@ -1,9 +1,19 @@
 import contextlib
+import json
 import re
 import unittest
 from pathlib import Path
 
 from comic_sol_product import __version__
+from comic_sol_product.distribution import ReleaseIdentity, native_payload_names
+from scripts.release_qualification import ARTIFACT_PLATFORMS, DEFAULT_REQUIRED_TARGETS
+from scripts.stage_registry import ARTIFACT_STAGE
+from scripts.validate_project import (
+    EXPORT_READY_ARTIFACT_PATHS,
+    MANIFEST_ARTIFACT_KEYS,
+    TERMINAL_ARTIFACT_KEYS,
+    TERMINAL_ARTIFACT_PATHS,
+)
 
 
 class ReleaseDocumentationTests(unittest.TestCase):
@@ -20,6 +30,31 @@ class ReleaseDocumentationTests(unittest.TestCase):
         cls.stable_criteria = (cls.root / "docs/releases/v2.0-stable-criteria.md").read_text(
             encoding="utf-8"
         )
+        cls.schemas = (cls.root / "references/schemas.md").read_text(encoding="utf-8")
+        cls.manifest_template = json.loads(
+            (cls.root / "templates/manifest.json").read_text(encoding="utf-8")
+        )
+
+    @classmethod
+    def _native_targets(cls):
+        """Derive platform/architecture pairs from the release workflow matrix."""
+        native = cls.release_workflow.split("\n  native:\n", 1)[1].split("\n  container:\n", 1)[0]
+        targets = {}
+        for chunk in native.split("- os:")[1:]:
+            fields = dict(
+                re.findall(
+                    r"^[ \t]*(platform|arch):[ \t]*'?([^'\n]+?)'?[ \t]*$",
+                    chunk,
+                    re.M,
+                )
+            )
+            if "platform" in fields and "arch" in fields:
+                targets[fields["platform"]] = fields["arch"]
+        return targets
+
+    @staticmethod
+    def _collapsed(text):
+        return " ".join(text.split())
 
     def test_release_workflow_resolves_tag_prefixed_notes_in_prepare(self):
         expected_notes = self.root / f"docs/releases/v{__version__}.md"
@@ -68,8 +103,6 @@ class ReleaseDocumentationTests(unittest.TestCase):
             "#117",
         ):
             self.assertIn(phrase, criteria)
-        for platform in ("Linux x86_64", "macOS arm64", "Windows x86_64", "WSL2"):
-            self.assertIn(platform, criteria)
         for command in (
             "doctor",
             "init",
@@ -87,6 +120,113 @@ class ReleaseDocumentationTests(unittest.TestCase):
             self.release_workflow,
         )
         self.assertIn("authoritative release gate", self.release_workflow)
+
+    def test_release_support_docs_follow_workflow_and_qualification_matrix(self):
+        native_targets = self._native_targets()
+        qualification_targets = {
+            platform: architecture
+            for platform, architecture in DEFAULT_REQUIRED_TARGETS
+            if platform != "wsl"
+        }
+        self.assertEqual(qualification_targets, native_targets)
+
+        display_names = {"linux": "Linux", "macos": "macOS", "windows": "Windows"}
+        documents = {
+            "README.md": self.readme,
+            "docs/install.md": self.install,
+            "CHANGELOG.md": self.changelog,
+            "stable criteria": self.stable_criteria,
+            "rc5 candidate notes": (self.root / "docs/releases/v2.0.0rc5.md").read_text(
+                encoding="utf-8"
+            ),
+            "current candidate notes": self.notes,
+        }
+        wsl_architecture = dict(DEFAULT_REQUIRED_TARGETS)["wsl"]
+        wsl_artifact_platform = ARTIFACT_PLATFORMS["wsl"]
+        wsl_contract = (
+            f"WSL2 uses the {display_names[wsl_artifact_platform]} "
+            f"{wsl_architecture} archive; it has no separate native archive."
+        )
+        source_contract = (
+            "Source installation supports Linux, macOS, Windows, and WSL2 on Python 3.11+."
+        )
+        intel_contract = "Intel macOS is source-install-only; it has no native archive."
+
+        for name, document in documents.items():
+            collapsed = self._collapsed(document)
+            with self.subTest(document=name):
+                for platform, architecture in native_targets.items():
+                    self.assertIn(f"{display_names[platform]} {architecture}", collapsed)
+                self.assertIn(wsl_contract, collapsed)
+                self.assertIn(source_contract, collapsed)
+                self.assertIn(intel_contract, collapsed)
+
+    def test_candidate_notes_name_exactly_every_matrix_payload(self):
+        native_targets = self._native_targets()
+        versions = ("2.0.0rc5", __version__)
+        for version in versions:
+            notes = (self.root / f"docs/releases/v{version}.md").read_text(encoding="utf-8")
+            documented = set(
+                re.findall(
+                    rf"`(comic-sol-{re.escape(version)}-[a-z0-9_-]+-[a-z0-9_-]+\."
+                    rf"(?:zip|metadata\.json|sbom\.json))`",
+                    notes,
+                )
+            )
+            expected = set()
+            for platform, architecture in native_targets.items():
+                identity = ReleaseIdentity(__version__, platform, architecture)
+                for name in native_payload_names(identity):
+                    expected.add(name.replace(__version__, version, 1))
+            self.assertEqual(expected, documented, version)
+
+    def test_schema_reference_follows_template_registry_and_validator(self):
+        artifact_section = self.schemas.split("### `artifacts`", 1)[1].split(
+            "### `stage_versions`", 1
+        )[0]
+        allowed = re.search(r"Allowed keys are (.+?)\. Each present", artifact_section, re.S)
+        self.assertIsNotNone(allowed)
+        documented_allowed = set(re.findall(r"`([a-z_]+)`", allowed.group(1)))
+        self.assertEqual(set(MANIFEST_ARTIFACT_KEYS), documented_allowed)
+
+        rows = re.findall(
+            r"(?m)^\| `([a-z_]+)` \| `([a-z]+)` \| `([^`]+)` "
+            r"\| `(export-ready|terminal)` \|$",
+            artifact_section,
+        )
+        documented = {
+            artifact: {"owner": owner, "path": path, "required": required}
+            for artifact, owner, path, required in rows
+        }
+        self.assertEqual(set(MANIFEST_ARTIFACT_KEYS), set(documented))
+        self.assertEqual(
+            ARTIFACT_STAGE,
+            {artifact: values["owner"] for artifact, values in documented.items()},
+        )
+
+        expected_paths = dict(TERMINAL_ARTIFACT_PATHS)
+        expected_paths["pdf"] = "exports/{project_id}.pdf"
+        self.assertEqual(
+            expected_paths,
+            {artifact: values["path"] for artifact, values in documented.items()},
+        )
+        expected_requirement = {
+            artifact: "export-ready" if artifact in EXPORT_READY_ARTIFACT_PATHS else "terminal"
+            for artifact in TERMINAL_ARTIFACT_KEYS
+        }
+        self.assertEqual(
+            expected_requirement,
+            {artifact: values["required"] for artifact, values in documented.items()},
+        )
+
+        versions_section = self.schemas.split("### `stage_versions`", 1)[1].split("\n## ", 1)[0]
+        documented_versions = dict(
+            re.findall(r"(?m)^\| `([a-z]+)` \| `([0-9]+)` \|$", versions_section)
+        )
+        self.assertEqual(self.manifest_template["stage_versions"], documented_versions)
+
+        bundled = (self.root / "skills/comic-sol/references/schemas.md").read_text(encoding="utf-8")
+        self.assertEqual(self.schemas, bundled)
 
     def test_release_gate_documents_orchestration_states_and_environment_limit(self):
         criteria = self.stable_criteria

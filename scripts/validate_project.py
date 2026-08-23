@@ -109,6 +109,32 @@ ANCHORS = {
 MAX_PAGES = 4
 MAX_PANELS = 12
 
+# Public validator contracts used by documentation regressions. Keep these as the
+# single source for accepted descriptors and canonical required paths.
+MANIFEST_ARTIFACT_KEYS = frozenset(
+    {
+        "story_plan",
+        "character_bible",
+        "storyboard",
+        "composition_cache",
+        "qa_report",
+        "pdf",
+        "pdf_verification",
+    }
+)
+EXPORT_READY_ARTIFACT_PATHS = {
+    "character_bible": "plan/character-bible.json",
+    "story_plan": "plan/story-plan.json",
+    "storyboard": "plan/storyboard.json",
+    "composition_cache": "cache/composition.json",
+}
+TERMINAL_ARTIFACT_PATHS = {
+    **EXPORT_READY_ARTIFACT_PATHS,
+    "qa_report": "qa/report.md",
+    "pdf_verification": "exports/pdf-verification.json",
+}
+TERMINAL_ARTIFACT_KEYS = frozenset({*TERMINAL_ARTIFACT_PATHS, "pdf"})
+
 
 @dataclass(frozen=True)
 class ValidationIssue:
@@ -421,15 +447,7 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
 
     artifacts = _object(
         root.get("artifacts"),
-        {
-            "story_plan",
-            "character_bible",
-            "storyboard",
-            "qa_report",
-            "pdf",
-            "pdf_verification",
-            "composition_cache",
-        },
+        set(MANIFEST_ARTIFACT_KEYS),
         set(),
         issues,
         path,
@@ -2670,14 +2688,9 @@ def _validate_required_artifacts(
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict):
         artifacts = {}
-    required = {
-        "character_bible",
-        "story_plan",
-        "storyboard",
-        "composition_cache",
-    }
+    required = set(EXPORT_READY_ARTIFACT_PATHS)
     if require_terminal:
-        required.update({"qa_report", "pdf", "pdf_verification"})
+        required = set(TERMINAL_ARTIFACT_KEYS)
     for name in sorted(required):
         if name not in artifacts:
             _add(
@@ -2687,19 +2700,9 @@ def _validate_required_artifacts(
                 "required artifact descriptor is missing",
             )
 
-    expected_paths = {
-        "character_bible": "plan/character-bible.json",
-        "story_plan": "plan/story-plan.json",
-        "storyboard": "plan/storyboard.json",
-        "composition_cache": "cache/composition.json",
-    }
+    expected_paths = dict(EXPORT_READY_ARTIFACT_PATHS)
     if require_terminal:
-        expected_paths.update(
-            {
-                "qa_report": "qa/report.md",
-                "pdf_verification": "exports/pdf-verification.json",
-            }
-        )
+        expected_paths = dict(TERMINAL_ARTIFACT_PATHS)
         project_id = manifest.get("project_id")
         if isinstance(project_id, str) and ID_PATTERN.fullmatch(project_id):
             expected_paths["pdf"] = f"exports/{project_id}.pdf"

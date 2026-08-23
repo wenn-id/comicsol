@@ -7,6 +7,16 @@ carries it.
 
 ### Fixed
 
+- Reconciled the release and project-schema documentation with implementation authorities.
+  The current native archive matrix is Linux x86_64, macOS arm64, and Windows x86_64.
+  WSL2 uses the Linux x86_64 archive; it has no separate native archive. Source installation
+  supports Linux, macOS, Windows, and WSL2 on Python 3.11+. Intel macOS is
+  source-install-only; it has no native archive. Candidate notes now enumerate every archive,
+  metadata, and SBOM filename. The schema reference now derives allowed descriptors,
+  canonical paths, ownership, terminal requirements, and stage versions from the validator,
+  stage registry, and manifest template, including export-owned `pdf_verification` at
+  `exports/pdf-verification.json` and lettering stage version `3`.
+
 - Restored the macOS and Windows legs of the native release build. All three legs pinned
   CPython `3.11.15`, but the 3.11 line is in security-only maintenance and
   `actions/python-versions` publishes no macOS or Windows binary past `3.11.9` — only Linux
@@ -30,8 +40,9 @@ carries it.
   runner. All 106 Mach-O binaries inside `comic-sol-2.0.0rc4-macos-x86_64.zip` are arm64, and
   its metadata, SBOM, and checksum entries all record `x86_64`. Anyone who took the archive at
   its word on an Intel Mac received a binary that cannot run natively. Apple silicon is now
-  the only macOS release target, and the name says so. `docs/install.md` records the
-  discrepancy for the archives already published.
+  the only macOS native-archive target, and the name says so. Intel macOS remains supported
+  through source installation on Python 3.11+. `docs/install.md` records the discrepancy for
+  the archives already published.
 
   The lock files are unchanged: they are per-platform but arch-agnostic, and
   `requirements/locks/release-macos-x86_64.txt` already carried the hash for

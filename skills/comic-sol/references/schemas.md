@@ -128,13 +128,36 @@ The manifest never stores credentials, tokens, environment values, provider requ
 
 ### `artifacts`
 
-Allowed keys are `story_plan`, `character_bible`, `storyboard`, `composition_cache`, `qa_report`, and `pdf`. Each present value is an object containing exactly `path` (relative path) and `sha256` (valid SHA-256). Entries are absent until their file has been produced and verified; empty descriptor values are invalid.
+Allowed keys are `story_plan`, `character_bible`, `storyboard`, `composition_cache`, `qa_report`, `pdf`, and `pdf_verification`. Each present value is an object containing exactly `path` (relative path) and `sha256` (valid SHA-256). Entries are absent until their file has been produced and verified; empty descriptor values are invalid.
 
-Three descriptors are written by the deterministic scripts, not the agent: `compose_pages.py` records `composition_cache`, `export_pdf.py` records `pdf`, and `render_report.py` records `qa_report`. Final validation requires `character_bible`, `story_plan`, `storyboard`, and `composition_cache`, plus `qa_report` and `pdf` at the terminal stages.
+The stage registry owns descriptor assignment, and the validator owns canonical paths and the point at which each descriptor becomes mandatory:
+
+| Artifact | Owner stage | Canonical path | First required at |
+|---|---|---|---|
+| `story_plan` | `planning` | `plan/story-plan.json` | `export-ready` |
+| `character_bible` | `planning` | `plan/character-bible.json` | `export-ready` |
+| `storyboard` | `storyboard` | `plan/storyboard.json` | `export-ready` |
+| `composition_cache` | `composition` | `cache/composition.json` | `export-ready` |
+| `qa_report` | `export` | `qa/report.md` | `terminal` |
+| `pdf` | `export` | `exports/{project_id}.pdf` | `terminal` |
+| `pdf_verification` | `export` | `exports/pdf-verification.json` | `terminal` |
+
+Deterministic scripts write the last four descriptors: `compose_pages.py` records `composition_cache`, `render_report.py` records `qa_report`, and `export_pdf.py` transactionally records both `pdf` and `pdf_verification`. The export stage owns `pdf_verification`; `exports/pdf-verification.json` binds the PDF hash, ordered source pages, page-QA hashes, dimensions, and page count. Final validation requires all seven descriptors, and `COMPLETE` or `COMPLETE_WITH_WARNINGS` cannot be entered without that final validation, so `pdf_verification` is a terminal-state requirement rather than optional provenance.
 
 ### `stage_versions`
 
-Contains exactly `planning`, `storyboard`, `generation`, `lettering`, `composition`, and `export`. Each value is a non-empty decimal version string. Schema version 1.0 templates use lettering stage version `"2"` and `"1"` for every other stage; the lettering bump invalidates cached output from the earlier renderer without changing the artifact schema version.
+Contains exactly the versions in the canonical manifest template:
+
+| Stage | Version |
+|---|---|
+| `planning` | `1` |
+| `storyboard` | `1` |
+| `generation` | `1` |
+| `lettering` | `3` |
+| `composition` | `1` |
+| `export` | `1` |
+
+Each value is a non-empty decimal version string. Lettering stage version `3` invalidates cached output from the earlier renderer without changing the artifact schema version.
 
 ## Character bible: `plan/character-bible.json`
 

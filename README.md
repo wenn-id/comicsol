@@ -75,10 +75,13 @@ $PYTHON = "py"  # use: py -3; resolve Python 3.11+ first
 & $PYTHON -3 -m pip install --require-hashes -r requirements/locks/base-windows-x86_64.txt
 ```
 
-Supported environments are Linux, macOS, Windows, and WSL with Python 3.11+ and
-Pillow 12.3.0. On WSL, follow the Linux instructions above; the PowerShell
-steps apply only when running Comic Sol directly on native Windows. The
-deterministic test suite does not need an image provider.
+Source installation supports Linux, macOS, Windows, and WSL2 on Python 3.11+.
+The pinned runtime dependency is Pillow 12.3.0. Intel macOS is source-install-only; it has no native archive.
+The native archive matrix is Linux x86_64, macOS arm64, and Windows x86_64.
+WSL2 uses the Linux x86_64 archive; it has no separate native archive. On WSL,
+follow the Linux instructions above; the PowerShell steps apply only when running
+Comic Sol directly on native Windows. The deterministic test suite does not need
+an image provider.
 
 Install the portable CLI from a checkout and verify the bundled deterministic
 engine, fonts, and templates:
@@ -116,10 +119,12 @@ category, exit status, redaction rule, and CLI/MCP parity behavior is documented
 
 ## Native Distribution (`v2.0.0rc4`)
 
-The `v2.0.0rc4` prerelease provides bundled portable archives for Linux, macOS,
-and Windows x86_64, plus transactional user-local installers and a non-root OCI
-image. Native archives include Python, Pillow, MCP, fonts, templates, the Skill,
-and references, so installed execution does not require a system Python.
+The published `v2.0.0rc4` prerelease provides bundled portable archives labelled
+for Linux x86_64, macOS x86_64, and Windows x86_64, plus transactional user-local
+installers and a non-root OCI image. The macOS archive was built for arm64 despite
+its historical x86_64 filename; the current native matrix corrects that name to
+macOS arm64. Native archives include Python, Pillow, MCP, fonts, templates, the
+Skill, and references, so installed execution does not require a system Python.
 
 Every native bundle includes `SHA256SUMS`, a Sigstore bundle for that manifest,
 deterministic metadata, and a CycloneDX SBOM. The RC artifacts use keyless
