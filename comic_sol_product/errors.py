@@ -8,7 +8,9 @@ import re
 from typing import Literal
 
 
-REQUIRED_NAMESPACES = frozenset({"IMG", "PROJ", "QA", "FONT", "MCP", "INSTALL", "EXPORT", "SEC"})
+REQUIRED_NAMESPACES = frozenset(
+    {"IMG", "PROJ", "QA", "FONT", "MCP", "INSTALL", "EXPORT", "SEC", "CLI"}
+)
 
 
 @dataclass(frozen=True)
@@ -20,6 +22,28 @@ class ErrorDefinition:
     message: str
     reason: str
     recovery: str
+
+
+class CliUsageError(Exception):
+    """Raised when argument parsing fails so the surfaces stay fail-closed.
+
+    Replacing argparse's ``SystemExit`` with this signal lets every surface emit
+    its canonical envelope for a parse failure instead of leaking usage text.
+    """
+
+    def __init__(self, message: str) -> None:
+        """Initialize with argparse's bounded, path-free diagnostic message."""
+        super().__init__(message)
+        self.message = message
+
+
+class ValidationFailureError(ValueError):
+    """Signal that a completed project inspection reported validation issues."""
+
+    def __init__(self, issue_count: int) -> None:
+        """Initialize with the number of reported validation issues."""
+        super().__init__(f"project validation reported {issue_count} issue(s)")
+        self.issue_count = issue_count
 
 
 @dataclass(frozen=True)
@@ -148,24 +172,43 @@ _DEFINITIONS = (
         "The final artifact could not be rendered or published.",
         "Resolve the reported project or output issue and retry export.",
     ),
+    ErrorDefinition(
+        "CS-CLI-001",
+        "invalid-request",
+        "The command line is invalid.",
+        "An argument did not satisfy the CLI usage contract.",
+        "Check the command usage with --help and retry.",
+    ),
 )
 
 ERROR_DEFINITIONS = {definition.code: definition for definition in _DEFINITIONS}
-_BY_CATEGORY = {definition.category: definition for definition in _DEFINITIONS}
 
+# Classifier lookup surfaces. An owning boundary is reached either through its
+# typed exception class name (the engine raises typed ValueError subclasses
+# that must not be re-imported here) or through its stable message prefix.
+_BOUNDARY_TYPE_NAMES = {
+    "PdfExportError": "CS-EXPORT-001",
+    "PdfQualityError": "CS-QA-001",
+    "PageQualityMigrationError": "CS-QA-001",
+    "ProjectValidationError": "CS-QA-001",
+    "ValidationFailureError": "CS-QA-001",
+    "TypographyPreflightError": "CS-FONT-001",
+    "CliUsageError": "CS-CLI-001",
+}
 
-def _safe_raw_message(error: Exception) -> str:
-    """Return a bounded diagnostic signal without exposing paths or secrets."""
-    message = str(error)
-    if not message:
-        return ""
-    for token in message.replace("=", " ").replace(":", " ").split():
-        candidate = token.strip("'\"(),;")
-        if PurePosixPath(candidate).is_absolute():
-            return "path"
-        if PureWindowsPath(candidate).is_absolute():
-            return "path"
-    return message.lower()[:240]
+_BOUNDARY_MESSAGE_PREFIXES = (
+    ("security-error: input exceeds", "CS-SEC-002"),
+    ("security-error", "CS-SEC-001"),
+    ("page_qa_required:", "CS-QA-001"),
+    ("panel is not a readable image", "CS-IMG-001"),
+    ("source is not a readable image", "CS-IMG-001"),
+    ("source image format must be", "CS-IMG-001"),
+    ("source image exceeds the decoded pixel limit", "CS-IMG-001"),
+    ("missing required lettered panel image", "CS-IMG-001"),
+    ("font policy", "CS-FONT-001"),
+    ("font script override", "CS-FONT-001"),
+    ("font is not a readable TrueType/OpenType file", "CS-FONT-001"),
+)
 
 
 def safe_error_detail(error: Exception) -> str:
@@ -187,6 +230,15 @@ def safe_error_detail(error: Exception) -> str:
             PurePosixPath(candidate).is_absolute() or PureWindowsPath(candidate).is_absolute()
         ):
             message = message.replace(candidate, "<path>")
+    if any(
+        separator in token.strip("'\"(),:;")
+        for token in message.split()
+        for separator in ("/", "\\")
+    ):
+        # A path containing spaces cannot be bounded token-wise, so a surviving
+        # path separator means segments may have escaped redaction; drop the
+        # raw text and keep only the exception type name.
+        return type(error).__name__
     return message
 
 
@@ -197,14 +249,24 @@ def classify_exception(
     surface: Literal["cli", "mcp"] = "cli",
     request: bool = False,
 ) -> ClassifiedError:
-    """Map an internal exception to one canonical public error definition."""
-    raw = _safe_raw_message(error)
-    if raw.startswith("security-error: input exceeds"):
-        definition = ERROR_DEFINITIONS["CS-SEC-002"]
-    elif raw.startswith("security-error"):
-        definition = ERROR_DEFINITIONS["CS-SEC-001"]
-    elif request or raw.startswith(
-        ("invalid project id", "unknown validation stage", "attempt path")
+    """Map an internal exception to one canonical public error definition.
+
+    Boundary prefixes are matched against the raw lowercased message (not a
+    redacted form) because owning boundaries append paths after their stable
+    prefix; classification itself never re-emits that text.
+    """
+    raw = str(error).lower()[:240]
+    boundary_code = _BOUNDARY_TYPE_NAMES.get(type(error).__name__)
+    if boundary_code is None:
+        for prefix, code in _BOUNDARY_MESSAGE_PREFIXES:
+            if raw.startswith(prefix):
+                boundary_code = code
+                break
+    if boundary_code is not None:
+        definition = ERROR_DEFINITIONS[boundary_code]
+    elif request or (
+        surface == "mcp"
+        and raw.startswith(("invalid project id", "unknown validation stage", "attempt path"))
     ):
         definition = ERROR_DEFINITIONS["CS-MCP-001"]
     elif isinstance(error, FileNotFoundError):
@@ -234,7 +296,7 @@ def classify_exception(
         definition = (
             ERROR_DEFINITIONS["CS-MCP-002"]
             if surface == "mcp"
-            else ERROR_DEFINITIONS["CS-PROJ-001"]
+            else ERROR_DEFINITIONS["CS-PROJ-005"]
         )
     return ClassifiedError(definition)
 
@@ -245,10 +307,16 @@ def error_payload(
     command: str | None = None,
     surface: Literal["cli", "mcp"] = "cli",
     request: bool = False,
+    detail: str | None = None,
 ) -> dict[str, str | None]:
-    """Serialize the stable machine-readable error fields."""
+    """Serialize the stable machine-readable error fields.
+
+    ``detail`` optionally carries a redacted diagnostic (for example from
+    ``safe_error_detail``) so machine consumers see the same bounded evidence
+    the human rendering shows.
+    """
     classified = classify_exception(error, command=command, surface=surface, request=request)
-    return {
+    payload: dict[str, str | None] = {
         "code": classified.code,
         "category": classified.category,
         "message": classified.message,
@@ -256,6 +324,9 @@ def error_payload(
         "recovery": classified.recovery,
         "command": command,
     }
+    if detail is not None:
+        payload["detail"] = detail
+    return payload
 
 
 def format_human_error(

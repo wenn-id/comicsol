@@ -105,7 +105,14 @@ Lifecycle commands report concise stage progress only on the human-readable surf
 `WORKING`, `BLOCKED`, `FAILED`, or `COMPLETE`, followed by the current stage and known
 completed/remaining counts. Progress is written to `stderr`, so scripts can consume
 `stdout` safely. With `--json`, `stdout` remains one parseable JSON envelope and both
-human progress and error details stay out of the machine stream.
+human progress and error details stay out of the machine stream. The contract is
+fail-closed: argument-parse failures emit a `CS-CLI-001` envelope instead of argparse
+text, unexpected internal failures emit a redacted `CS-PROJ-005` envelope instead of a
+traceback, and `validate` reports a project with issues as `ok: false` with exit
+status `2` while keeping the issue list in `data`. Exit statuses are `0` for success,
+`1` for operational failures, and `2` for usage or input rejection. Every public code,
+category, exit status, redaction rule, and CLI/MCP parity behavior is documented in
+[`docs/structured-errors.md`](docs/structured-errors.md).
 
 ## Native Distribution (`v2.0.0rc4`)
 

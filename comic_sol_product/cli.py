@@ -8,11 +8,28 @@ import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, NoReturn, TextIO
 
 from . import __version__
 from .config import default_output_root
-from .errors import error_payload, format_human_error, safe_error_detail
+from .errors import (
+    CliUsageError,
+    ValidationFailureError,
+    error_payload,
+    format_human_error,
+    safe_error_detail,
+)
+
+
+class _ArgumentParser(argparse.ArgumentParser):
+    """Parser that raises instead of exiting so every surface stays fail-closed.
+
+    ``--help`` and ``--version`` keep argparse's successful ``SystemExit``;
+    only argument errors are rerouted through ``CliUsageError``.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        raise CliUsageError(message)
 
 
 def _engine_package() -> str:
@@ -36,7 +53,7 @@ def _load_engine() -> Any:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="comic-sol")
+    parser = _ArgumentParser(prog="comic-sol")
     parser.add_argument("--version", action="version", version=f"comic-sol {__version__}")
     parser.add_argument("--json", action="store_true", dest="as_json")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -78,9 +95,13 @@ def _success(command: str, data: Any) -> dict[str, Any]:
 
 
 def _failure(
-    command: str, error: Exception, *, legacy_category: str | None = None
+    command: str | None,
+    error: Exception,
+    *,
+    legacy_category: str | None = None,
+    detail: str | None = None,
 ) -> dict[str, Any]:
-    payload = error_payload(error, command=command, surface="cli")
+    payload = error_payload(error, command=command, surface="cli", detail=detail)
     if legacy_category is not None:
         payload["legacy_category"] = legacy_category
     return {
@@ -176,7 +197,19 @@ def _run(
 
 
 def main(argv: list[str] | None = None) -> int:
-    arguments = build_parser().parse_args(argv)
+    raw_arguments = sys.argv[1:] if argv is None else list(argv)
+    try:
+        arguments = build_parser().parse_args(raw_arguments)
+    except CliUsageError as error:
+        # Parse failures never leak argparse usage text or SystemExit: JSON
+        # mode still receives exactly one envelope, human mode the canonical
+        # error block, and both keep diagnostics on their contract stream.
+        payload = _failure(None, error, detail=error.message)
+        if "--json" in raw_arguments:
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        else:
+            print(format_human_error(error), file=sys.stderr)
+        return 2
     command = arguments.command
     reporter = _ProgressReporter(
         as_json=arguments.as_json,
@@ -192,6 +225,19 @@ def main(argv: list[str] | None = None) -> int:
             arguments,
             progress=reporter if command in {"resume", "finalize"} else None,
         )
+        if command == "validate" and data:
+            # Validation is fail-closed: a completed inspection that reports
+            # issues is a failure result that still carries the issue list in
+            # data for parity with the MCP inspection tool.
+            failure = ValidationFailureError(len(data))
+            if arguments.as_json:
+                payload = _failure(command, failure)
+                payload["data"] = data
+                print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+            else:
+                print(json.dumps(data, ensure_ascii=False, sort_keys=True))
+                print(format_human_error(failure, command=command), file=sys.stderr)
+            return 2
         if arguments.as_json:
             print(json.dumps(_success(command, data), ensure_ascii=False, sort_keys=True))
         elif command == "doctor":
@@ -209,7 +255,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
     except (ValueError, TypeError, json.JSONDecodeError) as error:
-        payload = _failure(command, error, legacy_category="invalid-input")
+        payload = _failure(
+            command, error, legacy_category="invalid-input", detail=safe_error_detail(error)
+        )
         if arguments.as_json:
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         else:
@@ -237,6 +285,17 @@ def main(argv: list[str] | None = None) -> int:
                 reporter.failure(
                     blocked="blocked" in str(error).lower() or "capability" in str(error).lower()
                 )
+            print(format_human_error(error, command=command), file=sys.stderr)
+        return 1
+    except Exception as error:
+        # Unexpected failures fail closed: one envelope with a redacted
+        # diagnostic replaces the raw traceback on both surfaces.
+        payload = _failure(command, error, detail=safe_error_detail(error))
+        if arguments.as_json:
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        else:
+            if command in {"resume", "finalize"}:
+                reporter.failure()
             print(format_human_error(error, command=command), file=sys.stderr)
         return 1
 
