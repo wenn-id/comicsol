@@ -8,7 +8,7 @@ import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, NoReturn, TextIO
 
 from . import __version__
 from .config import default_output_root
@@ -28,7 +28,7 @@ class _ArgumentParser(argparse.ArgumentParser):
     only argument errors are rerouted through ``CliUsageError``.
     """
 
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         raise CliUsageError(message)
 
 
@@ -255,7 +255,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
     except (ValueError, TypeError, json.JSONDecodeError) as error:
-        payload = _failure(command, error, legacy_category="invalid-input", detail=safe_error_detail(error))
+        payload = _failure(
+            command, error, legacy_category="invalid-input", detail=safe_error_detail(error)
+        )
         if arguments.as_json:
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         else:
