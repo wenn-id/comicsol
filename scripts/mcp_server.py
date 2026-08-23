@@ -8,7 +8,7 @@ import json
 import types
 from pathlib import Path
 from threading import RLock
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -20,6 +20,8 @@ try:
 except ModuleNotFoundError:
     from mcp.server.mcpserver import MCPServer as FastMCP
     from mcp.server.mcpserver.exceptions import ToolError
+
+from pydantic import WithJsonSchema
 
 # Import core business logic from scripts/
 from .core_primitives import PANEL_ID_PATTERN
@@ -92,6 +94,31 @@ _REQUEST_ERROR_PREFIXES = (
     "override reason must be a non-empty string of at most 1000 characters",
     "narrative field must not contain secrets or credentials",
 )
+_IMAGE_CAPABILITY_INPUT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "status",
+        "name",
+        "supports_reference_images",
+        "supports_dimensions",
+    ],
+    "properties": {
+        "status": {"type": "string", "enum": ["available", "unavailable"]},
+        "name": {
+            "anyOf": [
+                {"type": "string", "const": "agent-image-generation"},
+                {"type": "null"},
+            ]
+        },
+        "supports_reference_images": {"type": "boolean"},
+        "supports_dimensions": {"type": "boolean"},
+    },
+}
+ImageCapabilityInput = Annotated[
+    object,
+    WithJsonSchema(_IMAGE_CAPABILITY_INPUT_SCHEMA),
+]
 
 
 def _reject(message: str) -> None:
@@ -428,10 +455,16 @@ def _command_service() -> CommandService:
 
 
 @mcp.tool()
-def comic_doctor() -> dict[str, object]:
-    """Check the local runtime environment (Python, Pillow, fonts, templates)."""
+def comic_doctor(
+    image_capability: ImageCapabilityInput | None = None,
+) -> dict[str, object]:
+    """Check the runtime and report a provider-neutral agent capability observation."""
     try:
-        return _command_service().execute("doctor", output_root=OUTPUT_ROOT)
+        return _command_service().execute(
+            "doctor",
+            output_root=OUTPUT_ROOT,
+            image_capability=image_capability,
+        )
     except Exception as e:
         raise _tool_error(e) from None
 

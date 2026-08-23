@@ -40,6 +40,24 @@ class CommandServiceContractTests(unittest.TestCase):
             report=self.report,
         )
 
+    def test_doctor_forwards_the_supplied_image_capability(self):
+        capability = {
+            "status": "available",
+            "name": "agent-image-generation",
+            "supports_reference_images": True,
+            "supports_dimensions": False,
+        }
+
+        self.assertEqual(
+            {"healthy": True},
+            self.service.execute(
+                "doctor",
+                output_root=Path("out"),
+                image_capability=capability,
+            ),
+        )
+        self.engine.doctor_report.assert_called_once_with(Path("out"), image_capability=capability)
+
     def test_lifecycle_commands_share_one_engine_dispatch(self):
         project = Path("project")
         self.assertEqual({"healthy": True}, self.service.execute("doctor", output_root=Path("out")))

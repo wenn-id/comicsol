@@ -12,6 +12,25 @@ from scripts import comic_sol
 
 
 class DoctorDiagnosticContractTests(unittest.TestCase):
+    NOT_CHECKED_CAPABILITY = {
+        "status": "not_checked",
+        "name": None,
+        "supports_reference_images": False,
+        "supports_dimensions": False,
+    }
+
+    @staticmethod
+    def _image_check(report: dict[str, object]) -> dict[str, object]:
+        checks = cast(list[dict[str, object]], report["checks"])
+        return next(check for check in checks if check["id"] == "image-capability")
+
+    @staticmethod
+    def _tree_snapshot(root: Path) -> dict[str, bytes | None]:
+        return {
+            path.relative_to(root).as_posix(): path.read_bytes() if path.is_file() else None
+            for path in sorted(root.rglob("*"))
+        }
+
     def test_doctor_report_is_machine_readable_and_actionable(self):
         with tempfile.TemporaryDirectory() as raw:
             report = comic_sol.doctor_report(Path(raw) / "output")
@@ -36,11 +55,191 @@ class DoctorDiagnosticContractTests(unittest.TestCase):
             <= ids
         )
         for check in report["checks"]:
-            self.assertEqual({"id", "status", "message", "remediation"}, set(check))
+            required = {"id", "status", "message", "remediation"}
+            self.assertTrue(required <= set(check))
+            self.assertTrue(set(check) <= required | {"details"})
             self.assertIn(check["status"], {"pass", "warn", "fail"})
             self.assertTrue(check["message"])
             self.assertTrue(check["remediation"])
         self.assertEqual(report["ready"], not any(c["status"] == "fail" for c in report["checks"]))
+
+    def test_doctor_reports_a_fully_capable_image_environment_as_healthy(self):
+        capability = {
+            "status": "available",
+            "name": "agent-image-generation",
+            "supports_reference_images": True,
+            "supports_dimensions": True,
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            report = comic_sol.doctor_report(Path(raw) / "output", image_capability=capability)
+
+        check = self._image_check(report)
+        self.assertEqual("pass", check["status"])
+        self.assertEqual(
+            {"readiness": "healthy", "capability": capability},
+            check["details"],
+        )
+        self.assertTrue(report["ready"])
+        self.assertTrue(report["healthy"])
+
+    def test_doctor_reports_usable_but_incomplete_image_features_as_partial(self):
+        for reference_support, dimension_support in ((False, True), (True, False), (False, False)):
+            capability = {
+                "status": "available",
+                "name": "agent-image-generation",
+                "supports_reference_images": reference_support,
+                "supports_dimensions": dimension_support,
+            }
+            with (
+                self.subTest(
+                    supports_reference_images=reference_support,
+                    supports_dimensions=dimension_support,
+                ),
+                tempfile.TemporaryDirectory() as raw,
+            ):
+                report = comic_sol.doctor_report(Path(raw) / "output", image_capability=capability)
+
+            check = self._image_check(report)
+            self.assertEqual("warn", check["status"])
+            self.assertEqual(
+                {"readiness": "partial", "capability": capability},
+                check["details"],
+            )
+            self.assertTrue(report["ready"])
+            self.assertTrue(report["healthy"])
+
+    def test_doctor_reports_an_explicitly_unavailable_image_capability_as_missing(self):
+        capability = {
+            "status": "unavailable",
+            "name": None,
+            "supports_reference_images": False,
+            "supports_dimensions": False,
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            report = comic_sol.doctor_report(Path(raw) / "output", image_capability=capability)
+
+        check = self._image_check(report)
+        self.assertEqual("warn", check["status"])
+        self.assertEqual(
+            {"readiness": "missing", "capability": capability},
+            check["details"],
+        )
+        self.assertIn("image-generation", cast(str, check["remediation"]).lower())
+        self.assertTrue(report["ready"])
+        self.assertTrue(report["healthy"])
+
+    def test_doctor_reports_an_unobserved_image_environment_as_unknown(self):
+        with tempfile.TemporaryDirectory() as raw:
+            report = comic_sol.doctor_report(Path(raw) / "output")
+
+        check = self._image_check(report)
+        self.assertEqual("warn", check["status"])
+        self.assertEqual(
+            {
+                "readiness": "unknown",
+                "capability": self.NOT_CHECKED_CAPABILITY,
+            },
+            check["details"],
+        )
+        self.assertTrue(report["ready"])
+        self.assertTrue(report["healthy"])
+
+    def test_malformed_or_secret_bearing_observations_fail_closed_without_project_writes(self):
+        malformed = "definitely-not-a-boolean"
+        secret = "super-secret-provider-token"
+        secret_name = "sk-ABCDEFGHIJKLMNOP"
+        scalar_secret = "scalar-secret-provider-token-XYZ123"
+        list_secret = "list-secret-provider-token-XYZ123"
+        observations = (
+            (
+                {
+                    "status": "available",
+                    "name": "agent-image-generation",
+                    "supports_reference_images": malformed,
+                    "supports_dimensions": True,
+                },
+                malformed,
+            ),
+            (
+                {
+                    "status": "available",
+                    "name": "agent-image-generation",
+                    "supports_reference_images": True,
+                    "supports_dimensions": True,
+                    "credential": secret,
+                },
+                secret,
+            ),
+            (
+                {
+                    "status": "available",
+                    "name": secret_name,
+                    "supports_reference_images": True,
+                    "supports_dimensions": True,
+                },
+                secret_name,
+            ),
+            (scalar_secret, scalar_secret),
+            ([list_secret], list_secret),
+        )
+        for observation, private_value in observations:
+            with self.subTest(observation=observation), tempfile.TemporaryDirectory() as raw:
+                output = Path(raw) / "output"
+                project = output / "existing-project"
+                (project / "logs").mkdir(parents=True)
+                (project / "project.json").write_bytes(b'{"status":"STORYBOARDED"}\n')
+                (project / "logs/events.jsonl").write_bytes(b'{"event":"preserved"}\n')
+                before = self._tree_snapshot(output)
+
+                report = comic_sol.doctor_report(output, image_capability=observation)
+
+                self.assertEqual(before, self._tree_snapshot(output))
+                check = self._image_check(report)
+                self.assertEqual("warn", check["status"])
+                self.assertEqual(
+                    {
+                        "readiness": "unknown",
+                        "capability": self.NOT_CHECKED_CAPABILITY,
+                    },
+                    check["details"],
+                )
+                self.assertIn("could not interpret", cast(str, check["message"]).lower())
+                self.assertNotIn(private_value, json.dumps(report, ensure_ascii=False))
+
+    def test_unexpected_detection_failure_is_sanitized_without_project_writes(self):
+        secret = "private-provider-response"
+        capability = {
+            "status": "available",
+            "name": "agent-image-generation",
+            "supports_reference_images": True,
+            "supports_dimensions": True,
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "output"
+            project = output / "existing-project"
+            project.mkdir(parents=True)
+            (project / "project.json").write_bytes(b'{"status":"STORYBOARDED"}\n')
+            before = self._tree_snapshot(output)
+
+            with mock.patch.object(
+                comic_sol,
+                "_image_capability_diagnostic",
+                side_effect=RuntimeError(secret),
+            ):
+                report = comic_sol.doctor_report(output, image_capability=capability)
+
+            self.assertEqual(before, self._tree_snapshot(output))
+            check = self._image_check(report)
+            self.assertEqual("warn", check["status"])
+            self.assertEqual(
+                {
+                    "readiness": "unknown",
+                    "capability": self.NOT_CHECKED_CAPABILITY,
+                },
+                check["details"],
+            )
+            self.assertIn("failed safely", cast(str, check["message"]).lower())
+            self.assertNotIn(secret, json.dumps(report, ensure_ascii=False))
 
     def test_doctor_reports_incomplete_template_install_as_not_ready(self):
         with tempfile.TemporaryDirectory() as raw:

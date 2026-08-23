@@ -135,6 +135,24 @@ class McpServerUnitTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
+    def test_doctor_forwards_image_capability_with_cli_parity(self):
+        capability = {
+            "status": "available",
+            "name": "agent-image-generation",
+            "supports_reference_images": True,
+            "supports_dimensions": False,
+        }
+        result = mcp_server.comic_doctor(image_capability=capability)
+
+        check = next(check for check in result["checks"] if check["id"] == "image-capability")
+        self.assertEqual("warn", check["status"])
+        self.assertEqual(
+            {"readiness": "partial", "capability": capability},
+            check["details"],
+        )
+        self.assertTrue(result["ready"])
+        self.assertTrue(result["healthy"])
+
     def test_root_must_be_absolute(self):
         with self.assertRaisesRegex(ValueError, "absolute"):
             mcp_server._configure_root(Path("relative-output"))
@@ -176,6 +194,25 @@ class McpServerUnitTests(unittest.TestCase):
     def test_exposes_exact_approved_tool_surface(self):
         tools = asyncio.run(mcp_server.mcp.list_tools())
         self.assertEqual(TOOL_NAMES, {tool.name for tool in tools})
+        doctor_tool = next(tool for tool in tools if tool.name == "comic_doctor")
+        schema = getattr(doctor_tool, "inputSchema", None)
+        if schema is None:
+            schema = doctor_tool.input_schema
+        capability_schema = next(
+            option
+            for option in schema["properties"]["image_capability"]["anyOf"]
+            if option.get("type") == "object"
+        )
+        self.assertFalse(capability_schema["additionalProperties"])
+        self.assertEqual(
+            {
+                "status",
+                "name",
+                "supports_reference_images",
+                "supports_dimensions",
+            },
+            set(capability_schema["properties"]),
+        )
 
     def test_status_routes_through_locked_recovery_without_changing_response(self):
         project = self.root / "project"
@@ -629,6 +666,53 @@ class InstalledMcpProtocolTests(unittest.IsolatedAsyncioTestCase):
                     health = await session.call_tool("comic_doctor", {})
                     self.assertFalse(result_is_error(health))
                     self.assertTrue(structured_content(health)["healthy"])
+                    capability = {
+                        "status": "available",
+                        "name": "agent-image-generation",
+                        "supports_reference_images": True,
+                        "supports_dimensions": False,
+                    }
+                    observed = await session.call_tool(
+                        "comic_doctor", {"image_capability": capability}
+                    )
+                    self.assertFalse(result_is_error(observed))
+                    observed_check = next(
+                        check
+                        for check in structured_content(observed)["checks"]
+                        if check["id"] == "image-capability"
+                    )
+                    self.assertEqual(
+                        {"readiness": "partial", "capability": capability},
+                        observed_check["details"],
+                    )
+                    malformed_inputs = (
+                        (
+                            {**capability, "credential": "super-secret-provider-token"},
+                            "super-secret-provider-token",
+                        ),
+                        (
+                            "scalar-secret-provider-token-XYZ123",
+                            "scalar-secret-provider-token-XYZ123",
+                        ),
+                        (
+                            ["list-secret-provider-token-XYZ123"],
+                            "list-secret-provider-token-XYZ123",
+                        ),
+                    )
+                    for malformed_input, secret in malformed_inputs:
+                        malformed = await session.call_tool(
+                            "comic_doctor", {"image_capability": malformed_input}
+                        )
+                        self.assertFalse(result_is_error(malformed))
+                        malformed_payload = structured_content(malformed)
+                        malformed_check = next(
+                            check
+                            for check in malformed_payload["checks"]
+                            if check["id"] == "image-capability"
+                        )
+                        self.assertEqual("unknown", malformed_check["details"]["readiness"])
+                        self.assertNotIn(secret, json.dumps(malformed_payload, ensure_ascii=False))
+                        self.assertNotIn(secret, repr(malformed.content))
                     created = await session.call_tool(
                         "comic_init",
                         {

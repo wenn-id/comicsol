@@ -7,6 +7,15 @@ carries it.
 
 ### Added
 
+- Added automatic, provider-neutral image-capability reporting to `doctor`. The
+  active agent inspects its exposed tools and supplies one sanitized observation;
+  source, installed CLI, and MCP doctor surfaces now distinguish healthy,
+  partially capable, missing, and unknown/detection-failed sessions while
+  preserving the legacy readiness fields and offline default. Capability names
+  and reference-image/dimension feature flags are reported, but no credential,
+  provider payload, project state, provider SDK, or automatic provider setup is
+  introduced.
+
 - Aligned the user-facing documentation contract from issue #213. New
   `docs/surfaces.md` separates the Skill checkout, Codex Plugin, source
   development, installed CLI wheel, native portable archive, MCP server, and OCI

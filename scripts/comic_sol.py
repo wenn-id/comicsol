@@ -1919,7 +1919,102 @@ def _stage_override(
     )
 
 
-def doctor_report(output_root: Path) -> dict[str, object]:
+_IMAGE_CAPABILITY_FIELDS = {
+    "status",
+    "name",
+    "supports_reference_images",
+    "supports_dimensions",
+}
+_IMAGE_CAPABILITY_NAME = "agent-image-generation"
+
+
+def _image_capability_diagnostic(
+    observation: object | None,
+) -> tuple[str, str, str, dict[str, object], str]:
+    """Render one provider-neutral observation supplied by the active agent."""
+    not_checked = {
+        "status": "not_checked",
+        "name": None,
+        "supports_reference_images": False,
+        "supports_dimensions": False,
+    }
+    if observation is None:
+        return (
+            "warn",
+            "Image-generation capability must be inspected in the agent session.",
+            "Enable an image-generation skill/tool, then resume the project when panels are needed.",
+            {"readiness": "unknown", "capability": not_checked},
+            "INFO image capability: inspect in agent session",
+        )
+
+    try:
+        if not isinstance(observation, dict) or set(observation) != _IMAGE_CAPABILITY_FIELDS:
+            raise ValueError("invalid capability observation fields")
+        status = observation["status"]
+        name = observation["name"]
+        supports_references = observation["supports_reference_images"]
+        supports_dimensions = observation["supports_dimensions"]
+        if status not in {"available", "unavailable"}:
+            raise ValueError("invalid capability status")
+        if not isinstance(supports_references, bool) or not isinstance(supports_dimensions, bool):
+            raise TypeError("capability feature flags must be boolean")
+        if status == "available":
+            if name != _IMAGE_CAPABILITY_NAME:
+                raise ValueError("invalid neutral capability name")
+        elif name is not None or supports_references or supports_dimensions:
+            raise ValueError("unavailable capability cannot claim a name or features")
+    except (KeyError, TypeError, ValueError):
+        return (
+            "warn",
+            "Image-capability detection could not interpret the agent observation.",
+            "Inspect the exposed tools again and rerun doctor without credentials or provider payloads.",
+            {"readiness": "unknown", "capability": not_checked},
+            "WARN image capability: detection failed; inspect exposed tools again",
+        )
+
+    capability = {
+        "status": status,
+        "name": name,
+        "supports_reference_images": supports_references,
+        "supports_dimensions": supports_dimensions,
+    }
+    if status == "unavailable":
+        return (
+            "warn",
+            "No usable image-generation capability is exposed in this agent session.",
+            "Enable an image-generation skill/tool that creates a local raster, then rerun doctor.",
+            {"readiness": "missing", "capability": capability},
+            "WARN image capability: no usable text-to-image tool returning a local raster",
+        )
+    if supports_references and supports_dimensions:
+        return (
+            "pass",
+            f"Image-generation capability {name} is ready for Comic Sol.",
+            "No action required.",
+            {"readiness": "healthy", "capability": capability},
+            f"PASS image capability: {name}; reference images and explicit dimensions supported",
+        )
+
+    missing = []
+    if not supports_references:
+        missing.append("reference images")
+    if not supports_dimensions:
+        missing.append("explicit dimensions")
+    limitations = " and ".join(missing)
+    return (
+        "warn",
+        f"Image-generation capability {name} is usable but lacks {limitations} support.",
+        "Continue in degraded mode or enable a capability with the missing feature support.",
+        {"readiness": "partial", "capability": capability},
+        f"WARN image capability: {name} is usable but lacks {limitations} support",
+    )
+
+
+def doctor_report(
+    output_root: Path,
+    *,
+    image_capability: object | None = None,
+) -> dict[str, object]:
     """Return authoritative, actionable diagnostics for agents and humans."""
     checks: list[dict[str, object]] = []
 
@@ -2149,11 +2244,34 @@ def doctor_report(output_root: Path) -> dict[str, object]:
             "MCP support is installed and its server APIs are importable.",
             "No action required.",
         )
+    try:
+        (
+            capability_status,
+            capability_message,
+            capability_remediation,
+            details,
+            human_message,
+        ) = _image_capability_diagnostic(image_capability)
+    except Exception:
+        capability_status = "warn"
+        capability_message = "Image-capability detection failed safely."
+        capability_remediation = "Inspect the exposed tools again and rerun doctor without credentials or provider payloads."
+        details = {
+            "readiness": "unknown",
+            "capability": {
+                "status": "not_checked",
+                "name": None,
+                "supports_reference_images": False,
+                "supports_dimensions": False,
+            },
+        }
+        human_message = "WARN image capability: detection failed; inspect exposed tools again"
     add_check(
         "image-capability",
-        "warn",
-        "Image-generation capability must be inspected in the agent session.",
-        "Enable an image-generation skill/tool, then resume the project when panels are needed.",
+        capability_status,
+        capability_message,
+        capability_remediation,
+        **details,
     )
 
     ready = not any(check["status"] == "fail" for check in checks)
@@ -2185,13 +2303,21 @@ def doctor_report(output_root: Path) -> dict[str, object]:
     messages.append(
         f"{'PASS' if output_check['status'] == 'pass' else 'FAIL'} {output_check['message']}"
     )
-    messages.append("INFO image capability: inspect in agent session")
+    messages.append(human_message)
     return {"ready": ready, "healthy": ready, "checks": checks, "messages": messages}
 
 
-def doctor(output_root: Path) -> tuple[bool, list[str]]:
+def doctor(
+    output_root: Path,
+    *,
+    image_capability: object | None = None,
+) -> tuple[bool, list[str]]:
     """Compatibility adapter for the original tuple-based doctor API."""
-    report = doctor_report(output_root)
+    report = (
+        doctor_report(output_root)
+        if image_capability is None
+        else doctor_report(output_root, image_capability=image_capability)
+    )
     return bool(report["ready"]), list(cast(list[str], report["messages"]))
 
 
@@ -2398,6 +2524,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     doctor_parser = subparsers.add_parser("doctor")
     doctor_parser.add_argument("--output-root", type=Path, default=Path("comic-sol-output"))
+    doctor_parser.add_argument("--image-capability-status", choices=("available", "unavailable"))
+    doctor_parser.add_argument("--image-capability-name")
+    doctor_parser.add_argument("--supports-reference-images", action="store_true")
+    doctor_parser.add_argument("--supports-dimensions", action="store_true")
 
     resume_parser = subparsers.add_parser("resume-plan")
     resume_parser.add_argument("project_dir", type=Path)
@@ -2474,7 +2604,23 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"{manifest['project_id']}: {manifest['status']}")
         elif arguments.command == "doctor":
-            healthy, messages = doctor(arguments.output_root)
+            image_capability = None
+            if (
+                arguments.image_capability_status is not None
+                or arguments.image_capability_name is not None
+                or arguments.supports_reference_images
+                or arguments.supports_dimensions
+            ):
+                image_capability = {
+                    "status": arguments.image_capability_status,
+                    "name": arguments.image_capability_name,
+                    "supports_reference_images": arguments.supports_reference_images,
+                    "supports_dimensions": arguments.supports_dimensions,
+                }
+            healthy, messages = doctor(
+                arguments.output_root,
+                image_capability=image_capability,
+            )
             print("\n".join(messages))
             return 0 if healthy else 1
         elif arguments.command == "resume-plan":

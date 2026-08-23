@@ -54,7 +54,91 @@ class ProductCliTests(unittest.TestCase):
         self.assertEqual("doctor", payload["command"])
         self.assertIsNone(payload["error"])
         self.assertTrue(payload["data"]["healthy"])
+        self.assertTrue(payload["data"]["ready"])
         self.assertIsInstance(payload["data"]["messages"], list)
+        image_check = next(
+            check for check in payload["data"]["checks"] if check["id"] == "image-capability"
+        )
+        self.assertEqual("unknown", image_check["details"]["readiness"])
+
+    def test_json_doctor_transports_supplied_image_capability(self):
+        cases = (
+            (
+                [
+                    "--image-capability-status",
+                    "available",
+                    "--image-capability-name",
+                    "agent-image-generation",
+                    "--supports-reference-images",
+                    "--supports-dimensions",
+                ],
+                "pass",
+                "healthy",
+                {
+                    "status": "available",
+                    "name": "agent-image-generation",
+                    "supports_reference_images": True,
+                    "supports_dimensions": True,
+                },
+            ),
+            (
+                [
+                    "--image-capability-status",
+                    "available",
+                    "--image-capability-name",
+                    "agent-image-generation",
+                ],
+                "warn",
+                "partial",
+                {
+                    "status": "available",
+                    "name": "agent-image-generation",
+                    "supports_reference_images": False,
+                    "supports_dimensions": False,
+                },
+            ),
+            (
+                ["--image-capability-status", "unavailable"],
+                "warn",
+                "missing",
+                {
+                    "status": "unavailable",
+                    "name": None,
+                    "supports_reference_images": False,
+                    "supports_dimensions": False,
+                },
+            ),
+        )
+        for flags, expected_status, expected_readiness, expected_capability in cases:
+            with self.subTest(readiness=expected_readiness), tempfile.TemporaryDirectory() as raw:
+                code, stdout, stderr = self.invoke(
+                    [
+                        "--json",
+                        "doctor",
+                        "--output-root",
+                        str(Path(raw) / "output"),
+                        *flags,
+                    ]
+                )
+
+            self.assertEqual(0, code)
+            self.assertEqual("", stderr)
+            payload = json.loads(stdout)
+            self.assertEqual({"ok", "command", "data", "error"}, set(payload))
+            self.assertTrue(payload["ok"])
+            self.assertTrue(payload["data"]["ready"])
+            self.assertTrue(payload["data"]["healthy"])
+            image_check = next(
+                check for check in payload["data"]["checks"] if check["id"] == "image-capability"
+            )
+            self.assertEqual(expected_status, image_check["status"])
+            self.assertEqual(
+                {
+                    "readiness": expected_readiness,
+                    "capability": expected_capability,
+                },
+                image_check["details"],
+            )
 
     def test_safe_message_redacts_absolute_paths_with_spaces(self):
         for path in (

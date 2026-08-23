@@ -42,7 +42,11 @@ class CommandService:
         project_dir = kwargs.get("project_dir")
 
         if command == "doctor":
-            return engine.doctor_report(self._required(kwargs, "output_root"))
+            output_root = self._required(kwargs, "output_root")
+            image_capability = kwargs.get("image_capability")
+            if image_capability is None:
+                return engine.doctor_report(output_root)
+            return engine.doctor_report(output_root, image_capability=image_capability)
         if command == "init":
             output_root = self._required(kwargs, "output_root")
             title = self._required(kwargs, "title")

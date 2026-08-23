@@ -114,7 +114,23 @@ we recommend installing [Superpowers](https://github.com/obra/superpowers)
 alongside Comic Sol. Superpowers is optional, installed separately, and is not
 required for Comic Sol to run.
 
-Machine-readable doctor output keeps the stable CLI envelope (`ok`, `command`, `data`, `error`). `data.ready` is the authoritative readiness boolean; the legacy `data.healthy` and `data.messages` fields remain available for existing consumers. `data.checks` contains stable check objects with `id`, `status` (`pass`, `warn`, or `fail`), `message`, and `remediation`. Runtime, Pillow, fonts, templates, references, and the selected output root fail closed when broken. MCP installation and image-generation capability are reported as actionable warnings when unavailable because they are optional for deterministic project editing.
+Machine-readable doctor output keeps the stable CLI envelope (`ok`, `command`,
+`data`, `error`). `data.ready` is the authoritative readiness boolean; the legacy
+`data.healthy` and `data.messages` fields remain available for existing consumers.
+`data.checks` contains stable check objects with `id`, `status` (`pass`, `warn`, or
+`fail`), `message`, and `remediation`. Runtime, Pillow, fonts, templates, references,
+and the selected output root fail closed when broken. MCP installation and a missing,
+partial, or unknown image-generation capability are actionable warnings because both
+remain optional for deterministic project editing.
+
+Before an agent-driven doctor call, the Comic Sol Skill inspects only the image-tool
+metadata exposed in that session. It supplies the fixed neutral name
+`agent-image-generation` with declared reference-image and dimension support, reports
+`unavailable` when the
+inspectable inventory has no usable tool, or supplies no capability flags when inspection
+is unavailable or fails. A fully capable observation passes; a partial, unavailable, or
+unknown observation warns without changing deterministic readiness. Detection invokes no
+provider, reads no credential, and installs or enables nothing.
 
 The CLI exposes `doctor`, `init`, `status`, `validate`, `resume`, `finalize`,
 `setup`, `repair`, and `uninstall`, plus the optional `mcp` launcher. Machine-readable
@@ -255,10 +271,12 @@ as exactly 17 `comic_*` tools.
 
 ## Image-provider boundary
 
-Image generation is agent-managed: the active Codex session selects and invokes
+Image generation is agent-managed: the active agent session selects and invokes
 its available image capability, then the deterministic CLI/MCP lifecycle validates,
 retains, normalizes, and records the resulting raster. Provider credentials, SDKs,
-and raw provider payloads remain outside Comic Sol.
+and raw provider payloads remain outside Comic Sol. Before generation, the Skill
+automatically inspects exposed tool metadata and passes a provider-neutral observation to
+`doctor`; the deterministic engine never discovers or calls a provider itself.
 
 ## Invoke
 
@@ -282,6 +300,14 @@ For deterministic diagnostics:
 # Installed equivalent:
 comic-sol --json doctor --output-root /tmp/comic-sol-doctor
 ```
+
+These direct calls omit agent capability flags. Human output says
+`INFO image capability: inspect in agent session`; JSON reports
+`details.readiness` as `unknown`. The Skill supplies
+`--image-capability-status available --image-capability-name agent-image-generation` and the declared `--supports-reference-images` and
+`--supports-dimensions` flags, or
+`--image-capability-status unavailable` when it can conclusively inspect an inventory
+with no usable text-to-image tool.
 
 ## Inspect the result
 
@@ -509,4 +535,3 @@ Development is review-first through pull requests into `main`. See
   fonts, and the accessibility/localization limitations of exported PDFs:
   [`docs/typography.md`](docs/typography.md) and
   [Accessibility and localization limitations](#accessibility-and-localization-limitations).
-

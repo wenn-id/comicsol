@@ -65,6 +65,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor")
     doctor.add_argument("--output-root", type=Path, default=default_output_root())
+    doctor.add_argument("--image-capability-status", choices=("available", "unavailable"))
+    doctor.add_argument("--image-capability-name")
+    doctor.add_argument("--supports-reference-images", action="store_true")
+    doctor.add_argument("--supports-dimensions", action="store_true")
 
     init = subparsers.add_parser("init")
     init.add_argument("--output-root", type=Path, default=default_output_root())
@@ -169,7 +173,24 @@ def _run(
         report=_load_engine_module("render_report"),
     )
     if arguments.command == "doctor":
-        return service.execute("doctor", output_root=arguments.output_root)
+        image_capability = None
+        if (
+            arguments.image_capability_status is not None
+            or arguments.image_capability_name is not None
+            or arguments.supports_reference_images
+            or arguments.supports_dimensions
+        ):
+            image_capability = {
+                "status": arguments.image_capability_status,
+                "name": arguments.image_capability_name,
+                "supports_reference_images": arguments.supports_reference_images,
+                "supports_dimensions": arguments.supports_dimensions,
+            }
+        return service.execute(
+            "doctor",
+            output_root=arguments.output_root,
+            image_capability=image_capability,
+        )
     if arguments.command == "init":
         source = arguments.source.read_bytes()
         engine.validate_source_bytes(source, arguments.source.suffix)

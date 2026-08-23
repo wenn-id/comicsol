@@ -5,10 +5,8 @@ description: Create, storyboard, render, resume, repair, and export finished ori
 
 # Comic Sol
 
-Turn one natural-language request into a local, editable comic project. Operate as an
-agent workflow: reason about story and images, use an exposed image-generation
-capability, and delegate deterministic validation, lettering, composition, export, and
-reporting to the bundled Python scripts.
+Turn one natural-language request into a local, editable comic project. Reason about
+story and images, then delegate deterministic work to the bundled Python scripts.
 
 ## Read progressively
 
@@ -16,8 +14,7 @@ reporting to the bundled Python scripts.
   state transitions, failures, resume, and completion.
 - Read [creative direction](references/creative-direction.md) before authoring plans,
   character fingerprints, storyboards, references, or image prompts.
-- Read [capability detection](references/capability-detection.md) immediately before
-  selecting or invoking an image-generation tool.
+- Read [capability detection](references/capability-detection.md) before the first `doctor` call and again only if the exposed tools change.
 - Read [visual QA](references/visual-qa.md) before accepting, retrying, overriding,
   composing, or exporting any generated panel.
 - Read [safety and IP](references/safety-ip.md) before sending prompts externally and
@@ -27,13 +24,14 @@ reporting to the bundled Python scripts.
 ## Core orchestration
 
 1. Detect resume/source-file/pasted-story/short-prompt mode in the normative order.
-2. Ask only a materially required question listed in the workflow reference; otherwise
-   apply defaults and continue without confirmation.
-3. Run the local doctor, initialize or inspect the project, then write and validate each
-   semantic artifact before advancing its status. Persist each completed stage with
-   `record-stage` so resume can reuse honest cache keys.
-4. Detect image capability from tools exposed in the current agent session. Do not ask
-   deterministic scripts to discover or call an image provider.
+2. Ask only a materially required workflow question; otherwise apply defaults.
+3. Inspect exposed tool metadata without invoking tools. Pass the best usable image tool as
+   `agent-image-generation` with its declared features to `doctor`; pass `unavailable` for
+   an inspectable inventory with no usable tool, and no flags if inspection is unavailable
+   or fails. Never infer features from a provider, model, or tool name.
+4. Run doctor, initialize or inspect the project, then validate and record every stage.
+   Capability warnings allow deterministic planning, but generation stops at `BLOCKED`
+   without a usable capability. Deterministic scripts never discover or call providers.
 5. Generate canonical references and panels into attempt paths. Require the image model to
    draw each exact `generated-visual` storyboard SFX and never a `deterministic-lettering`
    one, inspect every result visually, record all seven QA checks, and repair only failures
@@ -129,7 +127,7 @@ Do not read all references at once. Load only the files needed for the current s
 
 - Read [workflow](references/workflow.md) immediately after input detection.
 - Read [creative direction](references/creative-direction.md) before writing plans.
-- Read [capability detection](references/capability-detection.md) just before generating.
+- Read [capability detection](references/capability-detection.md) before the first `doctor` call and again only if exposed tools change.
 - Read [visual QA](references/visual-qa.md) just before inspecting panels.
 - Read [safety and IP](references/safety-ip.md) before external prompts and whenever
   people, minors, sensitive content, named styles, franchises, or refusals appear.
@@ -189,10 +187,12 @@ When installed as a package, use the stable `comic-sol` executable for `doctor`,
 `status`, `validate`, `resume`, `finalize`, and `mcp`. Source checkouts retain the
 script routes below for compatibility.
 
-Use resolved Python 3.11+ launcher. Substitute its command/path for `PYTHON` in examples below; quote shell arguments safely.
+Use a resolved Python 3.11+ launcher for `PYTHON` below. Build `IMAGE_CAPABILITY_FLAGS`
+exactly as specified in the capability reference; leave it empty only if inspection is
+unavailable or fails.
 
 ```text
-PYTHON scripts/comic_sol.py doctor --output-root OUTPUT_ROOT
+PYTHON scripts/comic_sol.py doctor --output-root OUTPUT_ROOT [IMAGE_CAPABILITY_FLAGS]
 PYTHON scripts/comic_sol.py init --output-root OUTPUT_ROOT --title TITLE --source SOURCE --request-json REQUEST_JSON
 PYTHON scripts/comic_sol.py status PROJECT_DIR --json
 PYTHON scripts/comic_sol.py transition PROJECT_DIR TARGET [--warning TEXT]

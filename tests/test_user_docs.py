@@ -237,12 +237,26 @@ class OnboardingTests(unittest.TestCase):
         self.assertIn('--output-root "$HOME/Documents/Comic Sol"', doctor)
         self.assertIn('doctor --output-root "$env:USERPROFILE\\Documents\\Comic Sol"', doctor)
         self.assertNotRegex(doctor, r"comic_sol\.py doctor\n")
+        self.assertIn("INFO image capability: inspect in agent session", doctor)
+        self.assertIn("`details.readiness` as `unknown`", doctor)
 
     def test_names_its_surface_and_links_the_separation(self):
         document = collapsed(self.document)
         self.assertIn("one surface", document)
         self.assertIn("docs/surfaces.md", self.document)
         self.assertIn("docs/support-matrix.md", self.document)
+
+    def test_explains_automatic_image_capability_results_without_provider_setup(self):
+        capability = self.document.split("## 3. Let the agent check image capability", 1)[1].split(
+            "\n## ", 1
+        )[0]
+        for result in ("PASS", "partial", "unavailable", "unknown"):
+            self.assertIn(result, capability)
+        self.assertIn("automatically inspects", capability)
+        self.assertIn("does not invoke", capability)
+        self.assertIn("install anything", capability)
+        self.assertIn("credentials", capability)
+        self.assertIn("agent-image-generation", capability)
 
 
 class SupportPrivacyTermsTests(unittest.TestCase):

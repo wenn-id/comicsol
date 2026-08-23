@@ -56,8 +56,10 @@ and its downstream stages for rerun instead of guessing.
 
 ### 1. Detect and initialize
 
-Run `comic_sol.py doctor`, then `comic_sol.py init` with exact source/request files. For
-resume, run `comic_sol.py status` and `comic_sol.py resume-plan`, then recover by status:
+Inspect capability metadata as described in the capability reference, run
+`comic_sol.py doctor` with that observation, then run `comic_sol.py init` with exact
+source/request files. For resume, run `comic_sol.py status` and `comic_sol.py resume-plan`,
+then recover by status:
 
 - A `BLOCKED` project recovers with `comic_sol.py resume PROJECT_DIR`. Only `resume`
   clears `blocked_from` and `blocked_reason`, and it invalidates the stale stages itself.
@@ -96,11 +98,12 @@ especially — and `generated-visual` when integration with the artwork matters 
 exactness. Transition through `SCRIPTED`, validate with
 `validate_project.py PROJECT_DIR --stage storyboard`, then transition to `STORYBOARDED`.
 
-### 4. Detect image capability
+### 4. Confirm and record image capability
 
-Follow the capability reference. Record neutral feature flags in `project.json`. If none
-is available, transition to `BLOCKED` with the exact preservation error. Do not create
-empty image files.
+Reuse the provider-neutral observation supplied to `doctor`, unless the active session's
+tool inventory changed; in that case inspect it again as described in the capability
+reference. Record the same neutral feature flags in `project.json`. If none is available,
+transition to `BLOCKED` with the exact preservation error. Do not create empty image files.
 
 Note the capability's documented maximum number of reference images per request. That
 count is the `--budget` value the reference plan spends in stage 5; the engine never

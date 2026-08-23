@@ -79,20 +79,23 @@ Windows PowerShell:
 & $PYTHON -3 scripts\comic_sol.py doctor --output-root "$env:USERPROFILE\Documents\Comic Sol"
 ```
 
-`doctor` prints a readiness summary plus one prefixed line per check. Read it by
-prefix, not by position:
+These direct commands intentionally carry no agent capability observation. Human output
+says `INFO image capability: inspect in agent session`; JSON reports
+`details.readiness` as `unknown`. `doctor` prints a readiness summary plus one prefixed
+line per check. Read it by prefix, not by position:
 
 - `READY`, with no `FAIL` line — the deterministic engine, fonts, templates,
-  references, and your output directory are all usable. Go to step 3.
+  references, and your output directory are all usable. Image readiness is stated
+  separately by the `image-capability` line. Go to step 3.
 - Any `FAIL` line — fix it using the table in step 5, then run `doctor` again.
 - A `WARN` or `INFO` line about MCP or image capability — expected on a fresh
-  install. MCP is optional, and image capability is checked in your agent session
-  rather than here; step 3 explains it.
+  direct install check. Both are optional for deterministic project editing; step 3
+  explains how an agent session supplies an image-capability observation.
 
 The exit code is the definitive signal: `doctor` exits `0` when ready and `1`
 when it is not, so you can rely on it in a script.
 
-## 3. Understand the one requirement `doctor` cannot check
+## 3. Let the agent check image capability
 
 **Comic Sol does not generate images itself, and it ships no provider
 credentials.** It plans the story, writes the prompts, letters the balloons,
@@ -100,18 +103,31 @@ composes the pages, and exports the PDF — all deterministically and offline. T
 actual drawing is done by an image-generation tool that your *agent session*
 exposes to it.
 
-In practice:
+When the Comic Sol Skill runs, the agent automatically inspects the metadata for tools
+exposed in that session. It does not invoke a tool just to test it, inspect provider
+configuration or credentials, install anything, or enable a third-party provider. It
+chooses one best usable tool that can create an image from text and return or write a
+local raster, then calls `doctor` with `--image-capability-status available`, the fixed
+`--image-capability-name agent-image-generation`, and only the `--supports-reference-images` and
+`--supports-dimensions` flags declared by the tool. If an inspectable inventory has no
+usable tool, it passes status `unavailable`; if inspection is unavailable or fails, it
+passes no capability flags rather than guessing.
 
-- **Using Codex?** Image generation is built in. You are already done; continue to
-  step 4.
-- **Using another agent?** You must give that session an image tool that can
-  create a picture from text and save it as a local file. Until then, Comic Sol
-  will plan your comic, stop with a clear message, mark the project `BLOCKED`, and
-  keep every file so you can resume later. It will never invent a placeholder
-  image. See [`references/image-provider-setup.md`](../references/image-provider-setup.md).
+Sessions differ even on the same agent host, so Comic Sol does not assume that Codex or
+any other platform exposes image generation. The resulting `image-capability` check is:
+
+| Result | Meaning |
+|---|---|
+| `PASS` | One usable capability was found and declares both reference-image and dimension support. |
+| `WARN` — partial | A usable capability was found, but one or both optional features are unsupported or undiscoverable. Comic Sol uses degraded mode. |
+| `WARN` — unavailable | The exposed inventory was inspected and no usable capability was found. Deterministic editing remains ready. |
+| `WARN`/`INFO` — unknown | Tool metadata could not be inspected or detection failed, so the agent supplied no observation rather than guessing. |
 
 An editing-only image tool is not enough — it must be able to create the first
-image from text alone.
+image from text alone. If no usable capability is available when panels are needed,
+Comic Sol keeps the plan and prompts, marks the project `BLOCKED`, and tells you how to
+resume; it never invents a placeholder. See
+[`references/image-provider-setup.md`](../references/image-provider-setup.md).
 
 ## 4. Make your first comic
 
@@ -171,7 +187,7 @@ Warnings are not failures:
 | Warned check | Why it is fine |
 |---|---|
 | `mcp` | The MCP server is optional. Skip it for your first comic; see [`README.md` → MCP Server](../README.md#mcp-server-optional) later. |
-| `image-capability` | Always a warning here by design — capability lives in the agent session. Step 3 covers it. |
+| `image-capability` | A partial, unavailable, or unknown image capability does not break deterministic editing. Step 3 explains why generation may still pause at `BLOCKED`. |
 
 For machine-readable diagnostics, add `--json` and read `data.ready` plus
 `data.checks[]`, where each entry carries a stable `id`, `status`, `message`, and
