@@ -31,9 +31,12 @@ from .project_io import (
     PROJECT_OPERATION_LOCK_TIMEOUT,
     ProjectLock,
     ProjectTransaction,
+    cleanup_owned_directory,
     contained_project_path,
     durable_atomic_write,
+    fsync_directory_tree,
     open_path_nofollow,
+    publish_directory_noreplace,
     read_bytes_nofollow,
     read_contained_bytes,
     read_json_nofollow,
@@ -236,19 +239,31 @@ def layout_rects(name: str) -> list[dict[str, int]]:
     ]
 
 
-def _allocate_project_directory(output_root: Path, base_slug: str) -> Path:
-    output_root.mkdir(parents=True, exist_ok=True)
-    suffix = 1
-    while True:
-        suffix_text = "" if suffix == 1 else f"-{suffix}"
-        candidate_slug = f"{base_slug[: 48 - len(suffix_text)].rstrip('-')}{suffix_text}"
-        candidate = output_root / candidate_slug
-        try:
-            candidate.mkdir()
-        except FileExistsError:
-            suffix += 1
-            continue
-        return candidate
+def _project_directory_candidate(output_root: Path, base_slug: str, suffix: int) -> Path:
+    suffix_text = "" if suffix == 1 else f"-{suffix}"
+    candidate_slug = f"{base_slug[: 48 - len(suffix_text)].rstrip('-')}{suffix_text}"
+    return output_root / candidate_slug
+
+
+def _path_entry_exists(path: Path) -> bool:
+    """Return whether any entry, including a broken symlink, occupies a path."""
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _create_project_tree(project_dir: Path) -> None:
+    """Create the complete empty project directory skeleton."""
+    for relative in PROJECT_DIRECTORIES:
+        (project_dir / relative).mkdir(parents=True, exist_ok=False)
+
+
+def _staging_directory_identity(staging: Path) -> tuple[int, int]:
+    """Capture the filesystem identity used to authorize staging cleanup."""
+    metadata = staging.lstat()
+    return metadata.st_dev, metadata.st_ino
 
 
 def validate_request_settings(request: dict[str, object]) -> dict[str, object]:
@@ -314,7 +329,7 @@ def init_project(
     source: bytes,
     request: dict[str, object],
 ) -> Path:
-    """Initialize an exclusive Comic Sol project without overwriting data."""
+    """Stage a complete project, then atomically publish an exclusive slug."""
     if not isinstance(source, bytes):
         raise TypeError("source must be bytes")
     if not isinstance(request, dict):
@@ -323,24 +338,63 @@ def init_project(
     validate_source_bytes(source)
     validated_request = validate_request_settings(request)
 
-    project_dir = _allocate_project_directory(Path(output_root), slugify(title))
-    for relative in PROJECT_DIRECTORIES:
-        (project_dir / relative).mkdir(parents=True, exist_ok=False)
+    output_root = Path(output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+    base_slug = slugify(title)
+    suffix = 1
+    while True:
+        project_dir = _project_directory_candidate(output_root, base_slug, suffix)
+        if _path_entry_exists(project_dir):
+            suffix += 1
+            continue
 
-    atomic_write_bytes(project_dir / "source/input.txt", source)
-    atomic_write_json(project_dir / "source/request.json", validated_request)
-    manifest = _manifest_from_template(project_dir.name, title.strip(), source, validated_request)
-    atomic_write_json(project_dir / "project.json", manifest)
-    append_event(
-        project_dir,
-        "project.created",
-        {
-            "project_id": project_dir.name,
-            "source_path": "source/input.txt",
-            "source_sha256": manifest["input"]["source_sha256"],
-        },
-    )
-    return project_dir
+        staging = Path(
+            tempfile.mkdtemp(
+                dir=output_root,
+                prefix=".comic-sol-init-",
+                suffix=".tmp",
+            )
+        )
+        staging_identity: tuple[int, int] | None = None
+        try:
+            staging_identity = _staging_directory_identity(staging)
+            _create_project_tree(staging)
+            atomic_write_bytes(staging / "source/input.txt", source)
+            atomic_write_json(staging / "source/request.json", validated_request)
+            manifest = _manifest_from_template(
+                project_dir.name,
+                title.strip(),
+                source,
+                validated_request,
+            )
+            atomic_write_json(staging / "project.json", manifest)
+            append_event(
+                staging,
+                "project.created",
+                {
+                    "project_id": project_dir.name,
+                    "source_path": "source/input.txt",
+                    "source_sha256": manifest["input"]["source_sha256"],
+                },
+            )
+            fsync_directory_tree(staging)
+            try:
+                publish_directory_noreplace(
+                    staging,
+                    project_dir,
+                    expected_identity=staging_identity,
+                )
+            except FileExistsError:
+                suffix += 1
+                continue
+            return project_dir
+        finally:
+            if staging_identity is not None:
+                try:
+                    cleanup_owned_directory(staging, staging_identity)
+                except OSError:
+                    # Swallow cleanup failures to avoid masking exceptions from try block
+                    pass
 
 
 def _relative_event_path(value: object) -> str:

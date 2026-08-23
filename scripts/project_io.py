@@ -7,6 +7,8 @@ import errno
 import json
 import os
 import re
+import secrets
+import shutil
 import stat
 import sys
 import tempfile
@@ -489,6 +491,166 @@ def fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _atomic_rename_noreplace(source: Path, destination: Path) -> None:
+    """Rename one directory entry without replacing an existing destination."""
+    if os.name == "nt":
+        # Windows MoveFile semantics, exposed by os.rename(), fail when the
+        # destination exists. os.replace() would violate the no-clobber contract.
+        os.rename(source, destination)
+        return
+
+    import ctypes
+
+    library = ctypes.CDLL(None, use_errno=True)
+    if sys.platform.startswith("linux"):
+        function = getattr(library, "renameat2", None)
+        flags = 0x1  # RENAME_NOREPLACE
+        at_fdcwd = -100
+    elif sys.platform == "darwin":
+        function = getattr(library, "renameatx_np", None)
+        flags = 0x4  # RENAME_EXCL
+        at_fdcwd = -2
+    else:
+        function = None
+        flags = 0
+        at_fdcwd = 0
+    if function is None:
+        raise OSError(errno.ENOTSUP, "atomic no-replace rename is unavailable")
+
+    function.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    function.restype = ctypes.c_int
+    result = function(
+        at_fdcwd,
+        os.fsencode(source),
+        at_fdcwd,
+        os.fsencode(destination),
+        flags,
+    )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
+        raise FileExistsError(
+            error_number,
+            os.strerror(error_number),
+            os.fspath(destination),
+        )
+    raise OSError(error_number, os.strerror(error_number), os.fspath(destination))
+
+
+def publish_directory_noreplace(
+    source: Path,
+    destination: Path,
+    *,
+    expected_identity: tuple[int, int] | None = None,
+) -> None:
+    """Atomically publish a sibling directory without clobbering any entry.
+
+    Both paths must share one resolved parent so publication cannot cross a
+    filesystem boundary. Linux and macOS use their native exclusive rename
+    operation; Windows ``os.rename`` already refuses an existing destination.
+    When supplied, ``expected_identity`` binds publication to the staging
+    directory allocated by the caller.
+    """
+    source = Path(source)
+    destination = Path(destination)
+    source_parent = source.parent.resolve(strict=True)
+    destination_parent = destination.parent.resolve(strict=True)
+    if source_parent != destination_parent:
+        raise ValueError("published directory paths must share one parent")
+    source_metadata = source.stat(follow_symlinks=False)
+    source_identity = (source_metadata.st_dev, source_metadata.st_ino)
+    if expected_identity is not None and source_identity != expected_identity:
+        raise RuntimeError("staged directory identity changed before publication")
+    if not stat.S_ISDIR(source_metadata.st_mode):
+        raise ValueError("published source must be a directory")
+    if getattr(source_metadata, "st_file_attributes", 0) & _REPARSE_POINT:
+        raise ValueError("published source must not be a reparse point")
+
+    _atomic_rename_noreplace(source, destination)
+    if expected_identity is not None:
+        published_metadata = destination.stat(follow_symlinks=False)
+        published_identity = (published_metadata.st_dev, published_metadata.st_ino)
+        if published_identity != expected_identity:
+            try:
+                _atomic_rename_noreplace(destination, source)
+            except OSError as error:
+                raise RuntimeError(
+                    "staged directory identity changed during publication and restoration failed"
+                ) from error
+            raise RuntimeError("staged directory identity changed during publication")
+    fsync_directory(destination_parent)
+
+
+def fsync_directory_tree(root: Path) -> None:
+    """Durably persist every directory entry in a staged tree on POSIX."""
+    if os.name == "nt":
+        return
+    root = Path(root)
+    directories = [root]
+    for current, names, _files in os.walk(root):
+        current_path = Path(current)
+        for name in names:
+            child = current_path / name
+            metadata = child.stat(follow_symlinks=False)
+            if stat.S_ISLNK(metadata.st_mode) or (
+                getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT
+            ):
+                raise ValueError("staged directory tree must not contain links")
+            directories.append(child)
+    for directory in reversed(directories):
+        fsync_directory(directory)
+
+
+def cleanup_owned_directory(path: Path, identity: tuple[int, int]) -> bool:
+    """Remove an owned directory through a random quarantine name.
+
+    The atomic quarantine step is validated against the allocation identity
+    before recursive deletion. If the source name was substituted, the moved
+    entry is restored rather than deleted.
+    """
+    path = Path(path)
+    try:
+        metadata = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    if (metadata.st_dev, metadata.st_ino) != identity:
+        return False
+    if not stat.S_ISDIR(metadata.st_mode) or (
+        getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT
+    ):
+        return False
+
+    parent = path.parent
+    for _attempt in range(16):
+        quarantine = parent / f".comic-sol-cleanup-{secrets.token_hex(16)}.tmp"
+        try:
+            _atomic_rename_noreplace(path, quarantine)
+        except FileExistsError:
+            continue
+        break
+    else:
+        raise FileExistsError(errno.EEXIST, "could not allocate cleanup quarantine")
+
+    moved = quarantine.stat(follow_symlinks=False)
+    if (moved.st_dev, moved.st_ino) != identity:
+        try:
+            _atomic_rename_noreplace(quarantine, path)
+        except FileExistsError as error:
+            raise RuntimeError("staging path changed during cleanup") from error
+        return False
+
+    shutil.rmtree(quarantine)
+    fsync_directory(parent)
+    return True
 
 
 def durable_atomic_write(path: Path, payload: bytes) -> None:

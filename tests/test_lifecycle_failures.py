@@ -8,8 +8,15 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts import project_io
-from scripts.comic_sol import atomic_write_json, read_json, sha256_file
+from scripts import comic_sol, project_io
+from scripts.comic_sol import (
+    PROJECT_DIRECTORIES,
+    atomic_write_json,
+    init_project,
+    read_json,
+    sha256_file,
+)
+from scripts.schema import read_project_manifest
 from scripts.compose_pages import compose_all_pages
 from scripts.export_pdf import guarded_export
 from scripts.letter_panels import letter_project
@@ -23,6 +30,300 @@ from tests.test_page_quality import reviewer_checks
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests/fixtures/valid-one-page"
+
+
+class InitializationFailureInjectionTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary_directory.name)
+        self.unrelated = self.root / "unrelated.txt"
+        self.unrelated.write_bytes(b"leave me alone")
+        self.request = {"mode": "short_prompt", "language": "en"}
+        self.source = b"A completely staged project.\n"
+
+    def tearDown(self):
+        self.temporary_directory.cleanup()
+
+    def _assert_no_partial_project(self, slug="atomic-initialization"):
+        self.assertFalse((self.root / slug).exists())
+        self.assertEqual([], list(self.root.glob(".comic-sol-*.tmp")))
+        self.assertEqual(b"leave me alone", self.unrelated.read_bytes())
+
+    def _assert_valid_initialized_project(self, project, slug="atomic-initialization"):
+        self.assertEqual(slug, project.name)
+        for relative in PROJECT_DIRECTORIES:
+            self.assertTrue((project / relative).is_dir(), relative)
+        self.assertEqual(self.source, (project / "source/input.txt").read_bytes())
+        self.assertEqual(self.request, read_json(project / "source/request.json"))
+        manifest = read_project_manifest(project / "project.json")
+        self.assertEqual(slug, manifest["project_id"])
+        self.assertEqual("Atomic Initialization", manifest["title"])
+        self.assertEqual("INIT", manifest["status"])
+        self.assertEqual(
+            hashlib.sha256(self.source).hexdigest(),
+            manifest["input"]["source_sha256"],
+        )
+        events = [
+            json.loads(line)
+            for line in (project / "logs/events.jsonl").read_text("utf-8").splitlines()
+        ]
+        self.assertEqual(1, len(events))
+        self.assertEqual("project.created", events[0]["event"])
+        self.assertEqual(slug, events[0]["details"]["project_id"])
+        self.assertEqual("source/input.txt", events[0]["details"]["source_path"])
+        self.assertEqual(manifest["input"]["source_sha256"], events[0]["details"]["source_sha256"])
+        self.assertEqual([], list((project / "logs/transactions").iterdir()))
+        self.assertEqual([], list(project.parent.glob(".comic-sol-*.tmp")))
+
+    def _retry_and_assert_base_slug(self):
+        project = init_project(
+            self.root,
+            "Atomic Initialization",
+            self.source,
+            self.request,
+        )
+        self._assert_valid_initialized_project(project)
+
+    def test_each_staging_boundary_failure_cleans_up_and_retry_reuses_slug(self):
+        real_create_tree = comic_sol._create_project_tree
+        real_write_bytes = comic_sol.atomic_write_bytes
+        real_write_json = comic_sol.atomic_write_json
+        real_append_event = comic_sol.append_event
+        real_fsync_tree = comic_sol.fsync_directory_tree
+
+        for boundary in ("allocation", "source", "request", "manifest", "event", "durability"):
+            with (
+                self.subTest(boundary=boundary),
+                tempfile.TemporaryDirectory(dir=self.root) as scenario,
+            ):
+                scenario_root = Path(scenario)
+                marker = scenario_root / "unrelated.txt"
+                marker.write_bytes(b"scenario marker")
+
+                if boundary == "allocation":
+
+                    def fail_after_allocation(project_dir):
+                        real_create_tree(project_dir)
+                        raise KeyboardInterrupt("injected after staging allocation")
+
+                    patcher = mock.patch.object(
+                        comic_sol,
+                        "_create_project_tree",
+                        side_effect=fail_after_allocation,
+                    )
+                    expected_error = KeyboardInterrupt
+                elif boundary == "source":
+
+                    def fail_after_source(path, payload):
+                        real_write_bytes(path, payload)
+                        if Path(path).name == "input.txt":
+                            raise OSError("injected after source write")
+
+                    patcher = mock.patch.object(
+                        comic_sol,
+                        "atomic_write_bytes",
+                        side_effect=fail_after_source,
+                    )
+                    expected_error = OSError
+                elif boundary in {"request", "manifest"}:
+                    expected_name = "request.json" if boundary == "request" else "project.json"
+
+                    def fail_after_json(path, value, *, expected=expected_name):
+                        real_write_json(path, value)
+                        if Path(path).name == expected:
+                            raise OSError(f"injected after {boundary} write")
+
+                    patcher = mock.patch.object(
+                        comic_sol,
+                        "atomic_write_json",
+                        side_effect=fail_after_json,
+                    )
+                    expected_error = OSError
+                elif boundary == "event":
+
+                    def fail_after_event(project_dir, event, details):
+                        real_append_event(project_dir, event, details)
+                        raise OSError("injected after event write")
+
+                    patcher = mock.patch.object(
+                        comic_sol,
+                        "append_event",
+                        side_effect=fail_after_event,
+                    )
+                    expected_error = OSError
+                else:
+
+                    def fail_after_durability_flush(project_dir):
+                        real_fsync_tree(project_dir)
+                        raise OSError("injected after staged tree fsync")
+
+                    patcher = mock.patch.object(
+                        comic_sol,
+                        "fsync_directory_tree",
+                        side_effect=fail_after_durability_flush,
+                    )
+                    expected_error = OSError
+
+                with patcher, self.assertRaises(expected_error):
+                    init_project(
+                        scenario_root,
+                        "Atomic Initialization",
+                        self.source,
+                        self.request,
+                    )
+
+                self.assertFalse((scenario_root / "atomic-initialization").exists())
+                self.assertEqual([], list(scenario_root.glob(".comic-sol-*.tmp")))
+                self.assertEqual(b"scenario marker", marker.read_bytes())
+                project = init_project(
+                    scenario_root,
+                    "Atomic Initialization",
+                    self.source,
+                    self.request,
+                )
+                self._assert_valid_initialized_project(project)
+
+    def test_publication_failure_cleans_only_staging_and_retry_reuses_slug(self):
+        with mock.patch.object(
+            comic_sol,
+            "publish_directory_noreplace",
+            side_effect=OSError("injected publication failure"),
+        ):
+            with self.assertRaisesRegex(OSError, "publication failure"):
+                init_project(
+                    self.root,
+                    "Atomic Initialization",
+                    self.source,
+                    self.request,
+                )
+
+        self._assert_no_partial_project()
+        self._retry_and_assert_base_slug()
+
+    def test_publication_race_preserves_winner_and_rebuilds_for_suffix(self):
+        real_publish = comic_sol.publish_directory_noreplace
+        calls = 0
+
+        def race_once(staging, destination, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                destination.mkdir()
+                (destination / "winner.txt").write_bytes(b"race winner")
+            return real_publish(staging, destination, **kwargs)
+
+        with mock.patch.object(
+            comic_sol,
+            "publish_directory_noreplace",
+            side_effect=race_once,
+        ):
+            project = init_project(
+                self.root,
+                "Atomic Initialization",
+                self.source,
+                self.request,
+            )
+
+        self.assertEqual(
+            b"race winner",
+            (self.root / "atomic-initialization/winner.txt").read_bytes(),
+        )
+        self._assert_valid_initialized_project(project, "atomic-initialization-2")
+
+    def test_preexisting_empty_directory_and_file_are_preserved(self):
+        for entry_kind in ("directory", "file"):
+            with (
+                self.subTest(entry_kind=entry_kind),
+                tempfile.TemporaryDirectory(dir=self.root) as scenario,
+            ):
+                scenario_root = Path(scenario)
+                occupied = scenario_root / "atomic-initialization"
+                if entry_kind == "directory":
+                    occupied.mkdir()
+                else:
+                    occupied.write_bytes(b"pre-existing file")
+
+                project = init_project(
+                    scenario_root,
+                    "Atomic Initialization",
+                    self.source,
+                    self.request,
+                )
+
+                self.assertEqual("atomic-initialization-2", project.name)
+                if entry_kind == "directory":
+                    self.assertTrue(occupied.is_dir())
+                    self.assertEqual([], list(occupied.iterdir()))
+                else:
+                    self.assertEqual(b"pre-existing file", occupied.read_bytes())
+                self._assert_valid_initialized_project(project, "atomic-initialization-2")
+
+    def test_post_publication_fsync_failure_leaves_one_complete_project(self):
+        real_fsync_directory = project_io.fsync_directory
+        resolved_root = self.root.resolve(strict=True)
+
+        def fail_after_publication(path):
+            if (
+                Path(path).resolve(strict=True) == resolved_root
+                and (self.root / "atomic-initialization").is_dir()
+            ):
+                raise OSError("injected output-root fsync failure")
+            return real_fsync_directory(path)
+
+        with mock.patch.object(
+            project_io,
+            "fsync_directory",
+            side_effect=fail_after_publication,
+        ):
+            with self.assertRaisesRegex(OSError, "output-root fsync failure"):
+                init_project(
+                    self.root,
+                    "Atomic Initialization",
+                    self.source,
+                    self.request,
+                )
+
+        self._assert_valid_initialized_project(self.root / "atomic-initialization")
+        self.assertEqual(b"leave me alone", self.unrelated.read_bytes())
+
+    def test_staging_write_failure_with_cleanup_failure_propagates_write_error(self):
+        real_write_bytes = comic_sol.atomic_write_bytes
+        write_error = OSError("injected write failure")
+        cleanup_error = OSError("injected cleanup failure")
+
+        def fail_after_source(path, payload):
+            real_write_bytes(path, payload)
+            if Path(path).name == "input.txt":
+                raise write_error
+
+        with (
+            mock.patch.object(
+                comic_sol,
+                "atomic_write_bytes",
+                side_effect=fail_after_source,
+            ),
+            mock.patch.object(
+                comic_sol,
+                "cleanup_owned_directory",
+                side_effect=cleanup_error,
+            ) as cleanup,
+        ):
+            with self.assertRaises(OSError) as raised:
+                init_project(
+                    self.root,
+                    "Atomic Initialization",
+                    self.source,
+                    self.request,
+                )
+
+        self.assertIs(write_error, raised.exception)
+        cleanup.assert_called_once()
+        self.assertFalse((self.root / "atomic-initialization").exists())
+        self.assertEqual(b"leave me alone", self.unrelated.read_bytes())
+        staging_entries = list(self.root.glob(".comic-sol-init-*.tmp"))
+        self.assertEqual(1, len(staging_entries))
+        self.assertTrue(staging_entries[0].is_dir())
+        shutil.rmtree(staging_entries[0])
 
 
 class LifecycleFailureInjectionTests(unittest.TestCase):
