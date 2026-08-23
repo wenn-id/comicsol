@@ -189,9 +189,9 @@ class ReadmeContractTests(unittest.TestCase):
         self.assertIn("mechanics", readme)
 
     def test_accessibility_limitations_are_stated_without_overclaiming(self):
-        section = self.readme.split("### Accessibility and localization limitations", 1)[
-            1
-        ].split("\n## ", 1)[0]
+        section = self.readme.split("### Accessibility and localization limitations", 1)[1].split(
+            "\n## ", 1
+        )[0]
         document = collapsed(section)
         for phrase in (
             "image-based",
@@ -232,9 +232,7 @@ class OnboardingTests(unittest.TestCase):
         cls.document = read("docs/onboarding.md")
 
     def test_doctor_happy_path_passes_an_explicit_output_root(self):
-        doctor = self.document.split("## 2. Run `comic-sol doctor` now", 1)[1].split(
-            "\n## ", 1
-        )[0]
+        doctor = self.document.split("## 2. Run `comic-sol doctor` now", 1)[1].split("\n## ", 1)[0]
         self.assertIn('--output-root "$HOME/Comic Sol"', doctor)
         self.assertIn('--output-root "$HOME/Documents/Comic Sol"', doctor)
         self.assertIn('doctor --output-root "$env:USERPROFILE\\Documents\\Comic Sol"', doctor)

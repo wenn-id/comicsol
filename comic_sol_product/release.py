@@ -104,9 +104,7 @@ def validate_wheel_metadata(metadata_text: str) -> None:
     if not requires_python.startswith(">=3.11"):
         problems.append(f"Requires-Python must require 3.11+: {requires_python!r}")
 
-    if not (message.get("Author") or "").strip() and not (
-        message.get("Maintainer") or ""
-    ).strip():
+    if not (message.get("Author") or "").strip() and not (message.get("Maintainer") or "").strip():
         problems.append("neither Author nor Maintainer is set")
 
     if not (message.get("Keywords") or "").strip():
@@ -141,9 +139,7 @@ def validate_wheel_metadata(metadata_text: str) -> None:
 def wheel_metadata_member(members: Iterable[str]) -> str:
     member_set = set(members)
     candidates = sorted(
-        name
-        for name in member_set
-        if name.endswith(".dist-info/METADATA") and name.count("/") == 1
+        name for name in member_set if name.endswith(".dist-info/METADATA") and name.count("/") == 1
     )
     if len(candidates) != 1:
         raise ValueError(

@@ -109,7 +109,10 @@ class WheelMetadataContractTests(unittest.TestCase):
     def test_missing_project_urls_are_named(self):
         broken = self.COMPLETE_METADATA.replace(
             "Project-URL: Homepage, https://github.com/wenn-id/comicsol\n", ""
-        ).replace("Project-URL: Security Policy, https://github.com/wenn-id/comicsol/blob/main/SECURITY.md\n", "")
+        ).replace(
+            "Project-URL: Security Policy, https://github.com/wenn-id/comicsol/blob/main/SECURITY.md\n",
+            "",
+        )
         with self.assertRaisesRegex(ValueError, "Homepage.*Security Policy"):
             validate_wheel_metadata(broken)
 
@@ -166,9 +169,7 @@ class WheelMetadataContractTests(unittest.TestCase):
         import tomllib
 
         pyproject = tomllib.loads(
-            (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
-                encoding="utf-8"
-            )
+            (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
         )
         project = pyproject["project"]
         self.assertEqual(["version"], project["dynamic"])
