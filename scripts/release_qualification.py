@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -115,9 +116,24 @@ def install_command(
     checksums: Path,
     signature: Path,
     install_root: Path,
+    release: str | None = None,
 ) -> list[str]:
-    """Return the exact installer argv for the platform, never a shell string."""
+    """Return exact installer argv for recommended or explicit mode."""
+    if (
+        release is not None
+        and re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?", release) is None
+    ):
+        raise ValueError(f"invalid pinned release tag: {release}")
     if platform_name in {"linux", "macos", "wsl"}:
+        if release is not None:
+            return [
+                "sh",
+                str(installer),
+                "--release",
+                release,
+                "--install-root",
+                str(install_root),
+            ]
         return [
             "sh",
             str(installer),
@@ -133,6 +149,17 @@ def install_command(
             str(install_root),
         ]
     if platform_name == "windows":
+        if release is not None:
+            return [
+                "pwsh",
+                "-NoProfile",
+                "-File",
+                str(installer),
+                "-Release",
+                release,
+                "-InstallRoot",
+                str(install_root),
+            ]
         return [
             "pwsh",
             "-NoProfile",
@@ -163,8 +190,9 @@ def install(
     install_root: Path,
     cwd: Path,
     env: dict[str, str],
+    release: str | None = None,
 ) -> None:
-    """Install using the platform's release installer, never a source checkout."""
+    """Install using recommended pinned mode or explicit published bytes."""
     run(
         install_command(
             platform_name=platform_name,
@@ -174,6 +202,7 @@ def install(
             checksums=checksums,
             signature=signature,
             install_root=install_root,
+            release=release,
         ),
         cwd=cwd,
         env=env,
@@ -666,6 +695,7 @@ def qualify(
         if os.name == "nt":
             env["USERPROFILE"] = str(home)
 
+        pinned_release = f"v{version}"
         install(
             platform_name=platform_name,
             installer=installer,
@@ -676,7 +706,9 @@ def qualify(
             install_root=install_root,
             cwd=root,
             env=env,
+            release=pinned_release,
         )
+        record["checks"].append("release-install")
         executable = executable_path(install_root)
         if not executable.is_file():
             raise RuntimeError(f"installed executable is missing: {executable}")
@@ -727,9 +759,9 @@ def qualify(
             )
         record["checks"].append("lifecycle")
 
-        # Qualify the upgrade path over the published bytes: installing the
-        # same signed archive over an existing runtime must keep every managed
-        # byte identical, and a forced mid-swap failure must restore it exactly.
+        # Qualify the recommended pinned upgrade path over the published
+        # release. The forced rollback below intentionally stays in explicit
+        # local-asset mode so failure injection remains deterministic.
         installed_state = snapshot_tree(install_root)
         install(
             platform_name=platform_name,
@@ -741,6 +773,7 @@ def qualify(
             install_root=install_root,
             cwd=root,
             env=env,
+            release=pinned_release,
         )
         if snapshot_tree(install_root) != installed_state:
             raise RuntimeError("reinstalling the published archive changed installed runtime bytes")

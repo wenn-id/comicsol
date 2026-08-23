@@ -504,6 +504,7 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             self.assertEqual("arm64", result["architecture"])
             self.assertEqual(_V, result["version"])
             self.assertNotEqual(f"comic-sol {_V}", result["version"])
+            self.assertIn("release-install", result["checks"])
             self.assertIn("upgrade-reinstall", result["checks"])
             self.assertIn("injected-rollback", result["checks"])
 
@@ -597,6 +598,23 @@ class ReleaseQualificationContractTests(unittest.TestCase):
         self.assertEqual("pwsh", windows[0])
         self.assertEqual(["-NoProfile", "-File"], windows[1:3])
         self.assertNotIn("bash -lc", " ".join(windows))
+        pinned_posix = install_command(platform_name="linux", release=f"v{_V}", **arguments)
+        self.assertEqual(
+            [
+                "sh",
+                str(arguments["installer"]),
+                "--release",
+                f"v{_V}",
+                "--install-root",
+                str(arguments["install_root"]),
+            ],
+            pinned_posix,
+        )
+        pinned_windows = install_command(platform_name="windows", release=f"v{_V}", **arguments)
+        self.assertEqual("-Release", pinned_windows[4])
+        self.assertEqual(f"v{_V}", pinned_windows[5])
+        with self.assertRaisesRegex(ValueError, "invalid pinned release tag"):
+            install_command(platform_name="linux", release="latest", **arguments)
         with self.assertRaisesRegex(ValueError, "unsupported qualification platform"):
             install_command(platform_name="plan9", **arguments)
 
@@ -800,9 +818,9 @@ class ReleaseQualificationContractTests(unittest.TestCase):
         docs = DOCS.read_text(encoding="utf-8")
         self.assertIn("release qualification", docs.lower())
         self.assertIn("WSL2", docs)
-        self.assertIn("intended release artifact", docs)
-        self.assertIn("comic-sol --version", docs)
-        self.assertIn("comic-sol doctor", docs)
+        self.assertIn("recommended pinned mode", docs)
+        self.assertIn("explicit local", docs)
+        self.assertIn("staged `doctor`", docs)
         self.assertIn("user projects", docs.lower())
 
 

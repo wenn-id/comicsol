@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
-# Install: sh install.sh --archive comic-sol.zip --sha256 <digest> --checksums SHA256SUMS --signature SHA256SUMS.sigstore.json
+# Recommended: sh install.sh --release vX.Y.Z
+# Manual:      sh install.sh --archive comic-sol.zip --sha256 <digest> --checksums SHA256SUMS --signature SHA256SUMS.sigstore.json
 set -eu
 
 INSTALL_ROOT="${COMIC_SOL_INSTALL_ROOT:-$HOME/.local/share/comic-sol}"
@@ -8,10 +9,12 @@ SHA256=""
 CHECKSUMS=""
 SIGNATURE=""
 URL=""
+RELEASE=""
+RELEASE_MODE=0
 UNINSTALL=0
 COSIGN_BIN="${COMIC_SOL_COSIGN:-cosign}"
 COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
-COSIGN_IDENTITY_REGEXP='^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?|heads/main)$'
+COSIGN_IDENTITY_REGEXP='^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$'
 INSTALL_LOCK_DIR=""
 LOCK_HELD=0
 SECURE_HANDOFF=0
@@ -23,6 +26,49 @@ INSTALL_MARKER_MAGIC="comic-sol-install-v1"
 
 marker_encode() {
   perl -e 'print unpack("H*", shift)' -- "$1"
+}
+
+archive_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest=$(sha256sum "$1" 2>/dev/null | cut -d ' ' -f 1 | tr '[:upper:]' '[:lower:]') || digest=""
+    if [ -n "$digest" ]; then
+      printf '%s\n' "$digest"
+      return 0
+    fi
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    digest=$(shasum -a 256 "$1" 2>/dev/null | cut -d ' ' -f 1 | tr '[:upper:]' '[:lower:]') || digest=""
+    if [ -n "$digest" ]; then
+      printf '%s\n' "$digest"
+      return 0
+    fi
+  fi
+  echo "sha256sum or shasum is required for archive verification" >&2
+  return 1
+}
+
+manifest_digest_for() {
+  awk -v name="$2" '
+    length($0) >= 67 && substr($0, 65, 2) == "  " && substr($0, 67) == name {
+      digest = substr($0, 1, 64)
+      if (digest ~ /^[0-9A-Fa-f]+$/) {
+        count += 1
+        selected = tolower(digest)
+      }
+    }
+    END {
+      if (count != 1) exit 1
+      print selected
+    }
+  ' "$1"
+}
+
+download_https() {
+  curl -fL --max-redirs 5 --proto '=https' --proto-redir '=https' --tlsv1.2 "$1" -o "$2"
+}
+
+shell_quote() {
+  perl -e "\$value = shift; \$value =~ s/'/'\"'\"'/g; print \"'\$value'\";" -- "$1"
 }
 
 secure_root_handoff() {
@@ -227,28 +273,58 @@ abort_install() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --archive) ARCHIVE=$2; shift 2 ;;
-    --sha256) SHA256=$2; shift 2 ;;
-    --checksums) CHECKSUMS=$2; shift 2 ;;
-    --signature) SIGNATURE=$2; shift 2 ;;
-    --url) URL=$2; shift 2 ;;
-    --install-root) INSTALL_ROOT=$2; shift 2 ;;
+    --archive|--sha256|--checksums|--signature|--url|--install-root|--release)
+      [ "$#" -ge 2 ] || { echo "Missing value for $1" >&2; exit 2; }
+      option=$1
+      value=$2
+      case "$option" in
+        --archive) ARCHIVE=$value ;;
+        --sha256) SHA256=$value ;;
+        --checksums) CHECKSUMS=$value ;;
+        --signature) SIGNATURE=$value ;;
+        --url) URL=$value ;;
+        --install-root) INSTALL_ROOT=$value ;;
+        --release) RELEASE=$value ;;
+      esac
+      shift 2
+      ;;
     --uninstall) UNINSTALL=1; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
+if [ "$UNINSTALL" -eq 1 ]; then
+  if [ -n "$RELEASE$ARCHIVE$SHA256$CHECKSUMS$SIGNATURE$URL" ]; then
+    echo "--uninstall cannot be combined with install arguments" >&2
+    exit 2
+  fi
+elif [ -n "$RELEASE" ]; then
+  RELEASE_MODE=1
+  case "$RELEASE" in
+    ''|*[!0-9vrc.]*)
+      echo "--release must be an exact vX.Y.Z or vX.Y.ZrcN tag" >&2
+      exit 2
+      ;;
+  esac
+  if ! printf '%s\n' "$RELEASE" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$'; then
+    echo "--release must be an exact vX.Y.Z or vX.Y.ZrcN tag" >&2
+    exit 2
+  fi
+  if [ -n "$ARCHIVE$SHA256$CHECKSUMS$SIGNATURE$URL" ]; then
+    echo "--release cannot be combined with manual archive arguments" >&2
+    exit 2
+  fi
+elif [ -z "$SHA256" ] || [ -z "$CHECKSUMS" ] || [ -z "$SIGNATURE" ]; then
+  echo "--sha256, --checksums, and --signature are required in manual mode" >&2
+  exit 2
+fi
+
 if [ "$SECURE_HANDOFF" -eq 1 ]; then
   INSTALL_ROOT="."
 else
-  if [ "$UNINSTALL" -eq 1 ]; then
-    if [ -z "$INSTALL_ROOT" ]; then
-      echo "refusing to uninstall: install root is not a directory" >&2
-      exit 1
-    fi
-  elif [ -z "$SHA256" ] || [ -z "$CHECKSUMS" ] || [ -z "$SIGNATURE" ]; then
-    echo "--sha256, --checksums, and --signature are required for a signed release" >&2
-    exit 2
+  if [ "$UNINSTALL" -eq 1 ] && [ -z "$INSTALL_ROOT" ]; then
+    echo "refusing to uninstall: install root is not a directory" >&2
+    exit 1
   fi
   reject_symlink_path "$INSTALL_ROOT"
   INSTALL_ROOT=$(canonical_install_root "$INSTALL_ROOT")
@@ -342,6 +418,7 @@ fi
 acquire_install_lock
 trap 'release_install_lock' EXIT INT TERM
 TMP=$(mktemp -d)
+chmod 700 "$TMP"
 INSTALL_STARTED=0
 COMMITTED=0
 PREVIOUS_VERSION=""
@@ -380,7 +457,43 @@ rollback() {
 trap 'cleanup_install' EXIT
 trap 'abort_install' INT TERM
 
-if [ -n "$URL" ]; then
+if ! command -v "$COSIGN_BIN" >/dev/null 2>&1; then
+  echo "cosign is required for signature verification; install it separately and retry" >&2
+  exit 1
+fi
+
+if [ "$RELEASE_MODE" -eq 1 ]; then
+  HOST_OS=$(uname -s)
+  HOST_ARCH=$(uname -m)
+  case "$HOST_OS:$HOST_ARCH" in
+    Linux:x86_64|Linux:amd64)
+      ASSET_PLATFORM=linux
+      ASSET_ARCH=x86_64
+      ;;
+    Darwin:arm64|Darwin:aarch64)
+      ASSET_PLATFORM=macos
+      ASSET_ARCH=arm64
+      case "$RELEASE" in
+        v2.0.0rc[1-4]) ASSET_ARCH=x86_64 ;;
+      esac
+      ;;
+    *)
+      echo "no Comic Sol native release for $HOST_OS $HOST_ARCH" >&2
+      exit 1
+      ;;
+  esac
+  RELEASE_VERSION=${RELEASE#v}
+  ARCHIVE_NAME="comic-sol-$RELEASE_VERSION-$ASSET_PLATFORM-$ASSET_ARCH.zip"
+  RELEASE_BASE="https://github.com/wenn-id/comicsol/releases/download/$RELEASE"
+  ARCHIVE="$TMP/$ARCHIVE_NAME"
+  CHECKSUMS="$TMP/SHA256SUMS"
+  SIGNATURE="$TMP/SHA256SUMS.sigstore.json"
+  download_https "$RELEASE_BASE/SHA256SUMS" "$CHECKSUMS"
+  download_https "$RELEASE_BASE/SHA256SUMS.sigstore.json" "$SIGNATURE"
+  download_https "$RELEASE_BASE/$ARCHIVE_NAME" "$ARCHIVE"
+  RELEASE_IDENTITY=$(printf '%s\n' "$RELEASE" | sed 's/[.]/\\./g')
+  COSIGN_IDENTITY_REGEXP="^https://github\\.com/wenn-id/comicsol/\\.github/workflows/release\\.yml@refs/tags/$RELEASE_IDENTITY\$"
+elif [ -n "$URL" ]; then
   URL_PATH=${URL%%\?*}
   URL_PATH=${URL_PATH%%\#*}
   ARCHIVE_NAME=$(basename -- "$URL_PATH")
@@ -391,15 +504,11 @@ if [ -n "$URL" ]; then
       ;;
   esac
   ARCHIVE="$TMP/$ARCHIVE_NAME"
-  curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 "$URL" -o "$ARCHIVE"
+  download_https "$URL" "$ARCHIVE"
 fi
 if [ -z "$ARCHIVE" ] || [ ! -f "$ARCHIVE" ]; then
-  echo "Provide --archive PATH or --url HTTPS_URL" >&2
+  echo "Provide --release TAG, --archive PATH, or --url HTTPS_URL" >&2
   exit 2
-fi
-if ! command -v "$COSIGN_BIN" >/dev/null 2>&1; then
-  echo "cosign is required for signature verification" >&2
-  exit 1
 fi
 if [ ! -f "$CHECKSUMS" ] || [ ! -f "$SIGNATURE" ]; then
   echo "checksum manifest and Sigstore bundle are required for signature verification" >&2
@@ -414,11 +523,15 @@ if ! "$COSIGN_BIN" verify-blob \
   exit 1
 fi
 
-ACTUAL=$(sha256sum "$ARCHIVE" | cut -d ' ' -f 1 | tr '[:upper:]' '[:lower:]')
-MANIFEST_DIGEST=$(awk -v name="$(basename -- "$ARCHIVE")" '$2 == name { print tolower($1); found = 1 } END { if (!found) exit 1 }' "$CHECKSUMS") || {
-  echo "signed checksum manifest has no entry for archive" >&2
+ARCHIVE_NAME=$(basename -- "$ARCHIVE")
+MANIFEST_DIGEST=$(manifest_digest_for "$CHECKSUMS" "$ARCHIVE_NAME") || {
+  echo "signed checksum manifest must contain exactly one strict entry for $ARCHIVE_NAME" >&2
   exit 1
 }
+if [ "$RELEASE_MODE" -eq 1 ]; then
+  SHA256=$MANIFEST_DIGEST
+fi
+ACTUAL=$(archive_sha256 "$ARCHIVE")
 EXPECTED=$(printf '%s' "$SHA256" | tr '[:upper:]' '[:lower:]')
 if [ "$ACTUAL" != "$MANIFEST_DIGEST" ] || [ "$ACTUAL" != "$EXPECTED" ]; then
   echo "SHA256 does not match signed checksum manifest" >&2
@@ -469,6 +582,10 @@ if ! printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$'; 
   echo "unable to determine a valid runtime version" >&2
   exit 1
 fi
+if [ "$RELEASE_MODE" -eq 1 ] && [ "$VERSION" != "$RELEASE_VERSION" ]; then
+  echo "downloaded runtime version does not match selected release $RELEASE" >&2
+  exit 1
+fi
 "$EXE" doctor --output-root "${COMIC_SOL_OUTPUT_ROOT:-$HOME/Comic Sol}"
 
 INSTALL_STARTED=1
@@ -503,5 +620,6 @@ for backup in "$STABLE_BACKUP" "$TARGET_BACKUP"; do
   fi
 done
 
-echo "Installed signed Comic Sol $VERSION at $INSTALL_ROOT"
-echo "Add $INSTALL_ROOT/bin to PATH. User projects are outside this directory."
+echo "Installed signed Comic Sol $VERSION at $INSTALL_ROOT_DISPLAY"
+DOCTOR_COMMAND=$(shell_quote "$INSTALL_ROOT_DISPLAY/bin/comic-sol")
+echo "$DOCTOR_COMMAND doctor"

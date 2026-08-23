@@ -118,7 +118,12 @@ class PublicInstallerContractTests(unittest.TestCase):
             "#!/bin/sh\n"
             'case "$1" in\n'
             f"  --version) printf 'comic-sol {version}\\n' ;;\n"
-            "  doctor) exit 0 ;;\n"
+            "  doctor)\n"
+            '    if [ -n "${COMIC_SOL_TEST_DOCTOR_MARKER:-}" ]; then\n'
+            '      printf staged > "$COMIC_SOL_TEST_DOCTOR_MARKER"\n'
+            "    fi\n"
+            "    exit 0\n"
+            "    ;;\n"
             "  *) exit 0 ;;\n"
             "esac\n"
         ).encode("utf-8")
@@ -167,10 +172,16 @@ class PublicInstallerContractTests(unittest.TestCase):
         executable = build_directory / "comic-sol.exe"
         source.write_text(
             "using System;\n"
+            "using System.IO;\n"
             "class Program {\n"
             "  static int Main(string[] args) {\n"
             '    if (args.Length > 0 && args[0] == "--version") {\n'
             f'      Console.WriteLine("comic-sol {version}");\n'
+            "      return 0;\n"
+            "    }\n"
+            '    if (args.Length > 0 && args[0] == "doctor") {\n'
+            '      string marker = Environment.GetEnvironmentVariable("COMIC_SOL_TEST_DOCTOR_MARKER");\n'
+            '      if (!String.IsNullOrEmpty(marker)) File.WriteAllText(marker, "staged");\n'
             "      return 0;\n"
             "    }\n"
             "    return 0;\n"
@@ -204,7 +215,7 @@ class PublicInstallerContractTests(unittest.TestCase):
         bundle_payload=_TEST_SIGSTORE_BUNDLE,
         expected_identity=(
             r"^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@"
-            r"refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?|heads/main)$"
+            r"refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$"
         ),
         expected_issuer="https://token.actions.githubusercontent.com",
     ):
@@ -282,6 +293,80 @@ class PublicInstallerContractTests(unittest.TestCase):
             env=environment,
         )
 
+    def run_powershell_release_install(self, archive, install_root, release, *, env=None):
+        """Run pinned Windows mode with deterministic release-download fixtures."""
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        self.assertIsNotNone(shell, "PowerShell is required for the Windows installer test")
+        version = release.removeprefix("v")
+        archive_name = f"comic-sol-{version}-windows-x86_64.zip"
+        fixture_root = archive.parent / "powershell-release-fixture"
+        fixture_root.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(archive, fixture_root / archive_name)
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        identity = (
+            r"^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@"
+            f"refs/tags/{re.escape(release)}$"
+        )
+        _checksums, _signature, cosign = self.write_powershell_signature_fixture(
+            fixture_root,
+            archive_name,
+            digest,
+            expected_identity=identity,
+        )
+        # Keep production URLs immutable. This test-only script copy replaces
+        # only the network transport so Windows CI can execute the remaining
+        # release-mode path against local deterministic payloads.
+        installer = (self.root / "installers/install.ps1").read_text(encoding="utf-8")
+        download_start = installer.index("function Invoke-BoundedHttpsDownload {")
+        download_end = installer.index("function Get-StrictManifestDigest {")
+        fake_download = (
+            "function Invoke-BoundedHttpsDownload {\n"
+            "    param([string]$Uri, [string]$Destination)\n"
+            "    $Parsed = [System.Uri]$Uri\n"
+            "    if (-not $Parsed.IsAbsoluteUri -or $Parsed.Scheme -ne 'https') {\n"
+            "        throw 'download URL must be absolute HTTPS'\n"
+            "    }\n"
+            "    Add-Content -LiteralPath $env:COMIC_SOL_TEST_URL_LOG -Value $Uri\n"
+            "    $Source = Join-Path $env:COMIC_SOL_TEST_RELEASE_FIXTURES "
+            "$Parsed.Segments[-1]\n"
+            "    Copy-Item -LiteralPath $Source -Destination $Destination\n"
+            "}\n"
+        )
+        test_installer = fixture_root / "install-release-test.ps1"
+        test_installer.write_text(
+            installer[:download_start] + fake_download + installer[download_end:],
+            encoding="utf-8",
+        )
+        url_log = fixture_root / "urls.txt"
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "COMIC_SOL_COSIGN": str(cosign),
+                "COMIC_SOL_TEST_RELEASE_FIXTURES": str(fixture_root),
+                "COMIC_SOL_TEST_URL_LOG": str(url_log),
+            }
+        )
+        if env:
+            environment.update(env)
+        result = subprocess.run(
+            [
+                shell,
+                "-NoProfile",
+                "-File",
+                str(test_installer),
+                "-Release",
+                release,
+                "-InstallRoot",
+                str(install_root),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+        urls = url_log.read_text(encoding="utf-8").splitlines() if url_log.exists() else []
+        return result, urls
+
     @staticmethod
     def snapshot_tree(root):
         fingerprint = {}
@@ -299,7 +384,7 @@ class PublicInstallerContractTests(unittest.TestCase):
         bundle_payload=_TEST_SIGSTORE_BUNDLE,
         expected_identity=(
             r"^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@"
-            r"refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?|heads/main)$"
+            r"refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$"
         ),
         expected_issuer="https://token.actions.githubusercontent.com",
         expected_bundle_payload=None,
@@ -397,6 +482,143 @@ class PublicInstallerContractTests(unittest.TestCase):
             check=False,
             env=environment,
         )
+
+    def run_posix_release_install(
+        self,
+        archive,
+        install_root,
+        release,
+        *,
+        host_os="Linux",
+        host_arch="x86_64",
+        manifest_lines=None,
+        force_shasum=False,
+        env=None,
+    ):
+        """Run pinned release mode against deterministic curl/cosign host shims."""
+        version = release.removeprefix("v")
+        asset_arch = host_arch
+        if host_os == "Linux" and host_arch in {"x86_64", "amd64"}:
+            platform, asset_arch = "linux", "x86_64"
+        elif host_os == "Darwin" and host_arch in {"arm64", "aarch64"}:
+            platform, asset_arch = "macos", "arm64"
+            if release in {f"v2.0.0rc{number}" for number in range(1, 5)}:
+                asset_arch = "x86_64"
+        else:
+            platform = "unsupported"
+        archive_name = f"comic-sol-{version}-{platform}-{asset_arch}.zip"
+        fixture_root = archive.parent / f"release-fixture-{host_os}-{host_arch}"
+        fixture_root.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(archive, fixture_root / archive_name)
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        checksums = fixture_root / "SHA256SUMS"
+        if manifest_lines is None:
+            manifest_lines = [f"{digest}  {archive_name}"]
+        checksums.write_text("\n".join(manifest_lines) + "\n", encoding="utf-8")
+        (fixture_root / "SHA256SUMS.sigstore.json").write_text(
+            _TEST_SIGSTORE_BUNDLE, encoding="utf-8"
+        )
+        shim = fixture_root / "shim"
+        shim.mkdir()
+        url_log = fixture_root / "urls.txt"
+        curl = shim / "curl"
+        curl.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "url=''\ndestination=''\n"
+            'while [ "$#" -gt 0 ]; do\n'
+            '  case "$1" in\n'
+            "    https://*) url=$1; shift ;;\n"
+            "    -o) destination=$2; shift 2 ;;\n"
+            "    *) shift ;;\n"
+            "  esac\n"
+            "done\n"
+            '[ -n "$url" ] && [ -n "$destination" ] || exit 92\n'
+            'printf \'%s\\n\' "$url" >> "$COMIC_SOL_TEST_URL_LOG"\n'
+            "name=${url##*/}\n"
+            'cp "$COMIC_SOL_TEST_RELEASE_FIXTURES/$name" "$destination"\n',
+            encoding="utf-8",
+        )
+        curl.chmod(0o755)
+        uname = shim / "uname"
+        uname.write_text(
+            "#!/bin/sh\n"
+            'case "${1-}" in\n'
+            '  -s) printf "%s\\n" "$COMIC_SOL_TEST_UNAME_S" ;;\n'
+            '  -m) printf "%s\\n" "$COMIC_SOL_TEST_UNAME_M" ;;\n'
+            "  *) exit 93 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        uname.chmod(0o755)
+        identity = (
+            r"^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@"
+            f"refs/tags/{re.escape(release)}$"
+        )
+        cosign = shim / "cosign"
+        cosign.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            'if [ "${1-}" != verify-blob ] || [ "${2-}" != --bundle ] ||\n'
+            '   [ "$(basename -- "${3-}")" != SHA256SUMS.sigstore.json ] ||\n'
+            '   [ "${4-}" != --certificate-identity-regexp ] ||\n'
+            f'   [ "${{5-}}" != {shlex.quote(identity)} ] ||\n'
+            '   [ "${6-}" != --certificate-oidc-issuer ] ||\n'
+            '   [ "${7-}" != https://token.actions.githubusercontent.com ] ||\n'
+            '   [ "$(basename -- "${8-}")" != SHA256SUMS ]; then\n'
+            "  exit 90\n"
+            "fi\n",
+            encoding="utf-8",
+        )
+        cosign.chmod(0o755)
+        environment = os.environ.copy()
+        if force_shasum:
+            real_shasum = shutil.which("shasum")
+            if real_shasum is None:
+                self.skipTest("shasum is required for the macOS checksum fallback test")
+            sha256sum = shim / "sha256sum"
+            sha256sum.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            sha256sum.chmod(0o755)
+            shasum = shim / "shasum"
+            shasum.write_text(
+                "#!/bin/sh\n"
+                'printf used > "$COMIC_SOL_TEST_SHASUM_MARKER"\n'
+                'exec "$COMIC_SOL_TEST_REAL_SHASUM" "$@"\n',
+                encoding="utf-8",
+            )
+            shasum.chmod(0o755)
+            environment["COMIC_SOL_TEST_REAL_SHASUM"] = real_shasum
+            environment["COMIC_SOL_TEST_SHASUM_MARKER"] = str(fixture_root / "shasum-used")
+        environment.update(
+            {
+                "PATH": f"{shim}{os.pathsep}{environment['PATH']}",
+                "COMIC_SOL_COSIGN": str(cosign),
+                "COMIC_SOL_TEST_RELEASE_FIXTURES": str(fixture_root),
+                "COMIC_SOL_TEST_URL_LOG": str(url_log),
+                "COMIC_SOL_TEST_UNAME_S": host_os,
+                "COMIC_SOL_TEST_UNAME_M": host_arch,
+            }
+        )
+        if env:
+            environment.update(env)
+        result = subprocess.run(
+            [
+                "sh",
+                str(self.root / "installers/install.sh"),
+                "--release",
+                release,
+                "--install-root",
+                str(install_root),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+        requested_urls = (
+            url_log.read_text(encoding="utf-8").splitlines() if url_log.exists() else []
+        )
+        return result, requested_urls, shim
 
     def start_installer_server(self, *, tls=False, payload=b""):
         server = _InstallerHTTPServer(("127.0.0.1", 0), _InstallerRequestHandler)
@@ -529,17 +751,223 @@ class PublicInstallerContractTests(unittest.TestCase):
         self.assertIn("command -v perl", self.posix)
 
     def test_installers_enforce_https_redirects_and_normalize_digests(self):
-        self.assertIn("curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2", self.posix)
+        self.assertIn(
+            "curl -fL --max-redirs 5 --proto '=https' --proto-redir '=https' --tlsv1.2",
+            self.posix,
+        )
         self.assertIn("tr '[:upper:]' '[:lower:]'", self.posix)
-        self.assertIn("MaximumRedirection 0", self.powershell)
-        self.assertNotIn("MaximumRedirection 1", self.powershell)
-        self.assertIn("Scheme", self.powershell)
-        self.assertIn("https", self.powershell.lower())
+        self.assertIn("AllowAutoRedirect = $false", self.powershell)
+        self.assertIn("$redirects -ge 5", self.powershell)
+        self.assertIn('Scheme -ne "https"', self.powershell)
+        self.assertIn("download redirect must remain HTTPS", self.powershell)
 
-    def test_installers_accept_tag_and_workflow_dispatch_sigstore_identities(self):
-        expected = "refs/(tags/v[0-9]+\\.[0-9]+\\.[0-9]+(rc[0-9]+)?|heads/main)"
+    def test_installers_accept_only_release_tag_sigstore_identities_in_manual_mode(self):
+        expected = "refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(rc[0-9]+)?"
         self.assertIn(expected, self.posix)
         self.assertIn(expected, self.powershell)
+        self.assertNotIn("heads/main", self.posix)
+        self.assertNotIn("heads/main", self.powershell)
+
+    def test_release_mode_has_strict_targets_urls_redirects_and_tag_identity(self):
+        self.assertIn("--release", self.posix)
+        self.assertIn("-Release", self.powershell)
+        self.assertIn("^v[0-9]+\\.[0-9]+\\.[0-9]+", self.posix)
+        self.assertIn("\\Av[0-9]+\\.[0-9]+\\.[0-9]+", self.powershell)
+        self.assertIn("(?:rc[0-9]+)?\\z", self.powershell)
+        self.assertIn("Linux:x86_64", self.posix)
+        self.assertIn("Darwin:arm64", self.posix)
+        self.assertIn("windows-x86_64.zip", self.powershell)
+        self.assertIn("https://github.com/wenn-id/comicsol/releases/download/", self.posix)
+        self.assertIn("https://github.com/wenn-id/comicsol/releases/download/", self.powershell)
+        self.assertIn("--max-redirs 5", self.posix)
+        self.assertIn("AllowAutoRedirect = $false", self.powershell)
+        self.assertIn("download redirect must remain HTTPS", self.powershell)
+        self.assertIn("refs/tags/$RELEASE_IDENTITY", self.posix)
+        self.assertIn("refs/tags/$EscapedRelease", self.powershell)
+
+    @posix_installer_test
+    def test_posix_release_rejects_invalid_tags_before_download(self):
+        for release in (
+            "latest",
+            "2.0.0",
+            "v2.0",
+            "v2.0.0/other",
+            "v2.0.0-rc1",
+            "v2.0.0\njunk",
+            "v2.0.0\rjunk",
+            "v2.0.0\tjunk",
+            "v2.0.0\n",
+        ):
+            with self.subTest(release=release), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                shim = root / "shim"
+                shim.mkdir()
+                request_marker = root / "curl-called"
+                curl = shim / "curl"
+                curl.write_text(
+                    f"#!/bin/sh\nprintf called > {shlex.quote(str(request_marker))}\nexit 99\n",
+                    encoding="utf-8",
+                )
+                curl.chmod(0o755)
+                result = subprocess.run(
+                    [
+                        "sh",
+                        str(self.root / "installers/install.sh"),
+                        "--release",
+                        release,
+                        "--install-root",
+                        str(root / "runtime"),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env={
+                        **os.environ,
+                        "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+                        "COMIC_SOL_COSIGN": "true",
+                    },
+                )
+                self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+                self.assertIn("exact vX.Y.Z", result.stderr)
+                self.assertFalse(request_marker.exists())
+
+    @unittest.skipUnless(os.name == "nt", "PowerShell installer tag-validation test")
+    def test_powershell_release_rejects_control_characters_before_download(self):
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        self.assertIsNotNone(shell)
+        for release in ("v2.0.0\njunk", "v2.0.0\rjunk", "v2.0.0\tjunk", "v2.0.0\n"):
+            with self.subTest(release=release), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                result = subprocess.run(
+                    [
+                        shell,
+                        "-NoProfile",
+                        "-File",
+                        str(self.root / "installers/install.ps1"),
+                        "-Release",
+                        release,
+                        "-InstallRoot",
+                        str(root / "runtime"),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertIn("exact vX.Y.Z", result.stderr)
+                self.assertFalse((root / "runtime" / ".comic-sol-install").exists())
+
+    @posix_installer_test
+    def test_posix_release_selects_assets_verifies_staged_runtime_and_prints_doctor(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            release = "v9.8.7rc1"
+            archive = self.write_runtime_archive(root, version=release[1:])
+            install_root = root / "install root with spaces"
+            doctor_marker = root / "staged-doctor"
+            result, urls, _shim = self.run_posix_release_install(
+                archive,
+                install_root,
+                release,
+                env={"COMIC_SOL_TEST_DOCTOR_MARKER": str(doctor_marker)},
+            )
+
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            base = f"https://github.com/wenn-id/comicsol/releases/download/{release}"
+            self.assertEqual(
+                [
+                    f"{base}/SHA256SUMS",
+                    f"{base}/SHA256SUMS.sigstore.json",
+                    f"{base}/comic-sol-{release[1:]}-linux-x86_64.zip",
+                ],
+                urls,
+            )
+            self.assertEqual("staged", doctor_marker.read_text(encoding="utf-8"))
+            self.assertEqual(release[1:], (install_root / "active-version").read_text().strip())
+            self.assertEqual(
+                f"'{install_root.resolve()}/bin/comic-sol' doctor",
+                result.stdout.splitlines()[-1],
+            )
+
+    @posix_installer_test
+    def test_posix_release_failure_preserves_active_install(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            install_root = root / "runtime"
+            old_archive = self.write_runtime_archive(root, version="2.0.0rc4", filename="old.zip")
+            installed = self.run_posix_archive_install(old_archive, install_root)
+            self.assertEqual(0, installed.returncode, installed.stdout + installed.stderr)
+            before = self.snapshot_tree(install_root)
+
+            release = "v2.0.0rc6"
+            new_archive = self.write_runtime_archive(root, version=release[1:], filename="new.zip")
+            archive_name = f"comic-sol-{release[1:]}-linux-x86_64.zip"
+            failed, _urls, _shim = self.run_posix_release_install(
+                new_archive,
+                install_root,
+                release,
+                manifest_lines=[f"{'0' * 64}  {archive_name}"],
+            )
+
+            self.assertNotEqual(0, failed.returncode, failed.stdout + failed.stderr)
+            self.assertIn("SHA256 does not match", failed.stderr)
+            self.assertEqual(before, self.snapshot_tree(install_root))
+
+    @posix_installer_test
+    def test_posix_release_requires_one_strict_manifest_record(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            release = "v2.0.0rc6"
+            archive = self.write_runtime_archive(root, version=release[1:])
+            archive_name = f"comic-sol-{release[1:]}-linux-x86_64.zip"
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            failed, _urls, _shim = self.run_posix_release_install(
+                archive,
+                root / "runtime",
+                release,
+                manifest_lines=[
+                    f"{digest}  {archive_name}",
+                    f"{digest}  {archive_name}",
+                ],
+            )
+            self.assertNotEqual(0, failed.returncode, failed.stdout + failed.stderr)
+            self.assertIn("exactly one strict entry", failed.stderr)
+            self.assertFalse((root / "runtime" / ".comic-sol-install").exists())
+
+    @posix_installer_test
+    def test_posix_macos_release_uses_arm64_asset_and_shasum_fallback(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            release = "v2.0.0rc6"
+            archive = self.write_runtime_archive(root, version=release[1:])
+            result, urls, shim = self.run_posix_release_install(
+                archive,
+                root / "runtime",
+                release,
+                host_os="Darwin",
+                host_arch="arm64",
+                force_shasum=True,
+            )
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertTrue((shim.parent / "shasum-used").is_file())
+            self.assertTrue(urls[-1].endswith(f"-{release[1:]}-macos-arm64.zip"))
+
+    @posix_installer_test
+    def test_posix_release_rejects_unsupported_target_before_download(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            release = "v2.0.0rc6"
+            archive = self.write_runtime_archive(root, version=release[1:])
+            result, urls, _shim = self.run_posix_release_install(
+                archive,
+                root / "runtime",
+                release,
+                host_os="Linux",
+                host_arch="arm64",
+            )
+            self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertIn("no Comic Sol native release", result.stderr)
+            self.assertEqual([], urls)
 
     @posix_installer_test
     def test_posix_sigstore_verifier_checks_bundle_and_claim_arguments(self):
@@ -1118,6 +1546,45 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertTrue(project_sentinel.is_file())
             self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
             self.assertEqual("[mcp_servers.other]\ncommand = 'keep'\n", config.read_text())
+
+    @unittest.skipUnless(os.name == "nt", "PowerShell installer release-mode test")
+    def test_powershell_release_selects_asset_verifies_stage_and_prints_doctor(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            release = "v9.8.7rc1"
+            archive = self.write_windows_runtime_archive(
+                root,
+                version=release.removeprefix("v"),
+                filename="source.zip",
+            )
+            install_root = root / "runtime with spaces"
+            doctor_marker = root / "doctor-ran"
+
+            result, urls = self.run_powershell_release_install(
+                archive,
+                install_root,
+                release,
+                env={"COMIC_SOL_TEST_DOCTOR_MARKER": str(doctor_marker)},
+            )
+
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            release_base = f"https://github.com/wenn-id/comicsol/releases/download/{release}"
+            self.assertEqual(
+                [
+                    f"{release_base}/SHA256SUMS",
+                    f"{release_base}/SHA256SUMS.sigstore.json",
+                    f"{release_base}/comic-sol-9.8.7rc1-windows-x86_64.zip",
+                ],
+                urls,
+            )
+            self.assertEqual("staged", doctor_marker.read_text(encoding="utf-8"))
+            self.assertEqual(
+                "9.8.7rc1",
+                (install_root / "active-version").read_text(encoding="utf-8-sig").strip(),
+            )
+            self.assertTrue((install_root / "bin" / "comic-sol.exe").is_file())
+            expected_doctor = f'& "{install_root.resolve()}\\bin\\comic-sol.exe" doctor'
+            self.assertEqual(expected_doctor, result.stdout.strip().splitlines()[-1])
 
     @unittest.skipUnless(os.name == "nt", "PowerShell installer lifecycle test")
     def test_powershell_lifecycle_is_idempotent_and_preserves_external_state(self):

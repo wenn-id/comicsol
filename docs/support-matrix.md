@@ -48,7 +48,7 @@ Notes on each mode:
   [`README.md` → MCP Server](../README.md#mcp-server-optional).
 - **OCI image** — a non-root `linux/amd64` image distributed as the attested
   release asset `comic-sol-<version>-linux-x86_64.container.tar`, not a
-  registry image. See [`docs/install.md` → OCI image](install.md#oci-image).
+  registry image. See [`docs/install-manual.md` → OCI image](install-manual.md#oci-image).
 
 ## Runtime extras
 

@@ -157,7 +157,7 @@ procedure — download the installer from the release (not a branch), verify the
 Sigstore bundle over `SHA256SUMS`, confirm the installer's digest appears in
 the signed manifest, optionally verify its build-provenance attestation with
 `gh attestation verify`, and only then run it — is documented for both
-`install.sh` and `install.ps1` in [`docs/install.md`](../install.md#verify-installer-bytes-before-first-execution).
+`install.sh` and `install.ps1` in [`docs/install-manual.md`](../install-manual.md#verify-installer-bytes-before-first-execution).
 
 ## Dependency-lock provenance
 

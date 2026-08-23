@@ -1,6 +1,8 @@
-# Install:   .\install.ps1 -Archive .\comic-sol.zip -SHA256 <digest> -Checksums .\SHA256SUMS -Signature .\SHA256SUMS.sigstore.json
-# Uninstall: .\install.ps1 -Uninstall
+# Recommended: .\install.ps1 -Release vX.Y.Z
+# Manual:      .\install.ps1 -Archive .\comic-sol.zip -SHA256 <digest> -Checksums .\SHA256SUMS -Signature .\SHA256SUMS.sigstore.json
+# Uninstall:   .\install.ps1 -Uninstall
 param(
+    [string]$Release,
     [string]$Archive,
     [string]$Url,
     [Parameter(Mandatory=$false)][string]$SHA256,
@@ -15,12 +17,74 @@ $InstallMarkerName = ".comic-sol-install"
 $InstallMarkerMagic = "comic-sol-install-v1"
 $CosignCommand = if ($env:COMIC_SOL_COSIGN) { $env:COMIC_SOL_COSIGN } else { "cosign" }
 $CosignOidcIssuer = "https://token.actions.githubusercontent.com"
-$CosignIdentityRegexp = '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?|heads/main)$'
+$CosignIdentityRegexp = '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$'
 function Encode-MarkerRoot {
     param([string]$Path)
     $normalized = $Path.Replace('\', '/')
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($normalized)
     return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+function Invoke-BoundedHttpsDownload {
+    param([string]$Uri, [string]$Destination)
+    $current = [System.Uri]$Uri
+    if (-not $current.IsAbsoluteUri -or $current.Scheme -ne "https") {
+        throw "download URL must be absolute HTTPS"
+    }
+    Add-Type -AssemblyName System.Net.Http
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $handler.AllowAutoRedirect = $false
+    $client = [System.Net.Http.HttpClient]::new($handler)
+    try {
+        for ($redirects = 0; ; $redirects++) {
+            $response = $client.GetAsync(
+                $current,
+                [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead
+            ).GetAwaiter().GetResult()
+            try {
+                $status = [int]$response.StatusCode
+                if ($status -ge 300 -and $status -lt 400) {
+                    if ($redirects -ge 5 -or -not $response.Headers.Location) {
+                        throw "download exceeded the HTTPS redirect limit"
+                    }
+                    $current = [System.Uri]::new($current, $response.Headers.Location)
+                    if (-not $current.IsAbsoluteUri -or $current.Scheme -ne "https") {
+                        throw "download redirect must remain HTTPS"
+                    }
+                    continue
+                }
+                $response.EnsureSuccessStatusCode() | Out-Null
+                $inputStream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+                $outputStream = [System.IO.File]::Open(
+                    $Destination,
+                    [System.IO.FileMode]::CreateNew,
+                    [System.IO.FileAccess]::Write,
+                    [System.IO.FileShare]::None
+                )
+                try { $inputStream.CopyTo($outputStream) }
+                finally { $outputStream.Dispose(); $inputStream.Dispose() }
+                return
+            } finally {
+                $response.Dispose()
+            }
+        }
+    } finally {
+        $client.Dispose()
+        $handler.Dispose()
+    }
+}
+function Get-StrictManifestDigest {
+    param([string]$Manifest, [string]$AssetName)
+    $records = @()
+    foreach ($Line in Get-Content -LiteralPath $Manifest) {
+        if ($Line -cmatch '^([0-9A-Fa-f]{64})  ([^/\\]+)$' -and $Matches[2] -ceq $AssetName) {
+            $records += $Matches[1].ToLowerInvariant()
+        }
+    }
+    if ($records.Count -ne 1) {
+        throw "signed checksum manifest must contain exactly one strict entry for $AssetName"
+    }
+    return $records[0]
 }
 function Acquire-InstallMutex {
     $name = "ComicSol-Install-" + (($InstallRoot.ToLowerInvariant()) -replace '[^A-Za-z0-9]', '_')
@@ -72,6 +136,24 @@ function Test-SensitiveInstallRoot {
         (Test-Path -LiteralPath (Join-Path $Path "project.json"))
 }
 
+$InstallArguments = @("Release", "Archive", "Url", "SHA256", "Checksums", "Signature") |
+    Where-Object { $PSBoundParameters.ContainsKey($_) }
+if ($Uninstall -and $InstallArguments.Count -gt 0) {
+    throw "-Uninstall cannot be combined with install arguments"
+}
+if ($Release) {
+    if ($Release -cnotmatch '\Av[0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?\z') {
+        throw "-Release must be an exact vX.Y.Z or vX.Y.ZrcN tag"
+    }
+    $ManualArguments = @("Archive", "Url", "SHA256", "Checksums", "Signature") |
+        Where-Object { $PSBoundParameters.ContainsKey($_) }
+    if ($ManualArguments.Count -gt 0) {
+        throw "-Release cannot be combined with manual archive arguments"
+    }
+} elseif (-not $Uninstall -and (-not $SHA256 -or -not $Checksums -or -not $Signature)) {
+    throw "-SHA256, -Checksums, and -Signature are required in manual mode"
+}
+
 if ($Uninstall) {
     if (-not (Test-Path -LiteralPath $InstallRoot)) {
         Write-Output "Comic Sol runtime is already removed. User projects were preserved."
@@ -120,13 +202,9 @@ if ($Uninstall) {
     }
     exit 0
 }
-if (-not $SHA256 -or -not $Checksums -or -not $Signature) { throw "-SHA256, -Checksums, and -Signature are required for a signed release" }
-if (-not (Get-Command $CosignCommand -ErrorAction SilentlyContinue)) { throw "cosign is required for signature verification" }
-if (-not (Test-Path -LiteralPath $Checksums -PathType Leaf) -or -not (Test-Path -LiteralPath $Signature -PathType Leaf)) {
-    throw "checksum manifest and Sigstore bundle are required for signature verification"
+if (-not (Get-Command $CosignCommand -ErrorAction SilentlyContinue)) {
+    throw "cosign is required for signature verification; install it separately and retry"
 }
-& $CosignCommand verify-blob --bundle $Signature --certificate-identity-regexp $CosignIdentityRegexp --certificate-oidc-issuer $CosignOidcIssuer $Checksums | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "signature verification failed" }
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 $InstallRoot = Resolve-CanonicalInstallRoot -Path $InstallRoot
 Acquire-InstallMutex
@@ -175,7 +253,28 @@ function Restore-Install {
 
 try {
     New-Item -ItemType Directory -Path $Temp | Out-Null
-    if ($Url) {
+    if ($Release) {
+        if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+            [System.Runtime.InteropServices.OSPlatform]::Windows
+        )) {
+            throw "the PowerShell installer supports native Windows only; use install.sh on Linux, macOS, or WSL2"
+        }
+        $HostArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+        if ($HostArchitecture -ne "X64") {
+            throw "no Comic Sol native release for Windows $HostArchitecture"
+        }
+        $ReleaseVersion = $Release.Substring(1)
+        $ArchiveName = "comic-sol-$ReleaseVersion-windows-x86_64.zip"
+        $ReleaseBase = "https://github.com/wenn-id/comicsol/releases/download/$Release"
+        $Archive = Join-Path $Temp $ArchiveName
+        $Checksums = Join-Path $Temp "SHA256SUMS"
+        $Signature = Join-Path $Temp "SHA256SUMS.sigstore.json"
+        Invoke-BoundedHttpsDownload -Uri "$ReleaseBase/SHA256SUMS" -Destination $Checksums
+        Invoke-BoundedHttpsDownload -Uri "$ReleaseBase/SHA256SUMS.sigstore.json" -Destination $Signature
+        Invoke-BoundedHttpsDownload -Uri "$ReleaseBase/$ArchiveName" -Destination $Archive
+        $EscapedRelease = [System.Text.RegularExpressions.Regex]::Escape($Release)
+        $CosignIdentityRegexp = "^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/$EscapedRelease`$"
+    } elseif ($Url) {
         $parsedUrl = [System.Uri]$Url
         if (-not $parsedUrl.IsAbsoluteUri -or $parsedUrl.Scheme -ne "https") {
             throw "-Url must be an absolute HTTPS URL"
@@ -186,20 +285,21 @@ try {
             throw "-Url must end with a safe release asset name"
         }
         $Archive = Join-Path $Temp $archiveName
-        Invoke-WebRequest -Uri $parsedUrl -OutFile $Archive -UseBasicParsing -MaximumRedirection 0
+        Invoke-BoundedHttpsDownload -Uri $parsedUrl.AbsoluteUri -Destination $Archive
     }
-    if (-not $Archive -or -not (Test-Path -LiteralPath $Archive)) { throw "Provide -Archive PATH or -Url HTTPS_URL" }
-    $Actual = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    if (-not $Archive -or -not (Test-Path -LiteralPath $Archive -PathType Leaf)) {
+        throw "Provide -Release TAG, -Archive PATH, or -Url HTTPS_URL"
+    }
+    if (-not (Test-Path -LiteralPath $Checksums -PathType Leaf) -or -not (Test-Path -LiteralPath $Signature -PathType Leaf)) {
+        throw "checksum manifest and Sigstore bundle are required for signature verification"
+    }
+    & $CosignCommand verify-blob --bundle $Signature --certificate-identity-regexp $CosignIdentityRegexp --certificate-oidc-issuer $CosignOidcIssuer $Checksums | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "signature verification failed" }
+
     $ArchiveName = [System.IO.Path]::GetFileName($Archive)
-    $ManifestDigest = $null
-    foreach ($Line in Get-Content -LiteralPath $Checksums) {
-        $Parts = $Line -split "  ", 2
-        if ($Parts.Count -eq 2 -and [System.IO.Path]::GetFileName($Parts[1]) -eq $ArchiveName) {
-            if ($ManifestDigest -and $ManifestDigest -ne $Parts[0].ToLowerInvariant()) { throw "signed checksum manifest has duplicate archive entries" }
-            $ManifestDigest = $Parts[0].ToLowerInvariant()
-        }
-    }
-    if (-not $ManifestDigest) { throw "signed checksum manifest has no entry for archive" }
+    $ManifestDigest = Get-StrictManifestDigest -Manifest $Checksums -AssetName $ArchiveName
+    if ($Release) { $SHA256 = $ManifestDigest }
+    $Actual = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($Actual -ne $ManifestDigest -or $Actual -ne $SHA256.ToLowerInvariant()) { throw "SHA256 does not match signed checksum manifest" }
     if (-not $Archive.EndsWith(".zip")) { throw "Unsupported archive; the PowerShell installer requires .zip" }
 
@@ -229,6 +329,9 @@ try {
     $VersionLine = $VersionLine.Trim()
     if ($LASTEXITCODE -ne 0 -or $VersionLine -notmatch '^comic-sol ([0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?)$') { throw "unable to determine a valid runtime version" }
     $Version = $Matches[1]
+    if ($Release -and $Version -cne $ReleaseVersion) {
+        throw "downloaded runtime version does not match selected release $Release"
+    }
     & $Exe doctor --output-root $(if ($env:COMIC_SOL_OUTPUT_ROOT) { $env:COMIC_SOL_OUTPUT_ROOT } else { "$HOME\Documents\Comic Sol" })
     if ($LASTEXITCODE -ne 0) { throw "doctor verification failed" }
 
@@ -266,7 +369,7 @@ try {
         }
     }
     Write-Output "Installed signed Comic Sol $Version at $InstallRoot"
-    Write-Output "User projects are outside this directory."
+    Write-Output ('& "{0}" doctor' -f (Join-Path $InstallRoot "bin\comic-sol.exe"))
 } catch {
     $originalError = $_
     try { Restore-Install }

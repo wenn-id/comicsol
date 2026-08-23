@@ -7,8 +7,11 @@ This page covers **one surface**: the Codex Skill checkout with the development
 script. The other surfaces — the Codex Plugin bundle, the installed CLI wheel,
 native portable archives, the MCP server, and the OCI image — start differently
 and some use different output roots. They are deliberately **not** on this page;
-[`docs/surfaces.md`](surfaces.md) separates them one per section, and links at
-the bottom cover them once your first comic exists.
+[`docs/surfaces.md`](surfaces.md) separates them one per section. If you want
+the native core CLI rather than the Skill, use the single exact-tag path in
+[`docs/install.md`](install.md); advanced CLI installation is in
+[`docs/install-manual.md`](install-manual.md). The links at the bottom cover the
+other surfaces once your first comic exists.
 
 ## 1. Install (shortest supported path)
 
