@@ -145,8 +145,16 @@ $TargetPublished = $false
 function Restore-Install {
     if (-not $InstallStarted -or $Committed) { return }
     if ($StableBackup -and (Test-Path -LiteralPath $StableBackup)) {
-        if (Test-Path -LiteralPath $StableRuntime) { Remove-Item -LiteralPath $StableRuntime -Recurse -Force }
-        Move-Item -LiteralPath $StableBackup -Destination $StableRuntime
+        $backupHasContent = @(Get-ChildItem -Force -LiteralPath $StableBackup | Select-Object -First 1).Count -gt 0
+        if (-not $backupHasContent) {
+            # A failed swap can leave an empty backup directory while the
+            # stable runtime itself was never replaced; remove the leftover
+            # instead of discarding the still-intact runtime.
+            Remove-Item -LiteralPath $StableBackup -Force
+        } else {
+            if (Test-Path -LiteralPath $StableRuntime) { Remove-Item -LiteralPath $StableRuntime -Recurse -Force }
+            [System.IO.Directory]::Move($StableBackup, $StableRuntime)
+        }
     } elseif ($StablePublished -and (Test-Path -LiteralPath $StableRuntime)) {
         Remove-Item -LiteralPath $StableRuntime -Recurse -Force
     }
@@ -239,7 +247,10 @@ try {
     Move-Item -LiteralPath "$Target.new" -Destination $Target
     $TargetPublished = $true
     Copy-Item -LiteralPath $Target -Destination (Join-Path $InstallRoot "bin.new") -Recurse
-    if (Test-Path -LiteralPath $StableRuntime) { Move-Item -LiteralPath $StableRuntime -Destination $StableBackup }
+    # Directory::Move is a single rename: unlike Move-Item it cannot fail
+    # halfway and leave an empty backup directory when the running executable
+    # holds a lock inside the stable runtime.
+    if (Test-Path -LiteralPath $StableRuntime) { [System.IO.Directory]::Move($StableRuntime, $StableBackup) }
     Move-Item -LiteralPath (Join-Path $InstallRoot "bin.new") -Destination $StableRuntime
     $StablePublished = $true
     Set-Content -NoNewline -LiteralPath (Join-Path $InstallRoot "active-version.new") -Value "$Version`n" -Encoding utf8

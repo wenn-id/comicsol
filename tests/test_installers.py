@@ -1,3 +1,4 @@
+import functools
 import hashlib
 import http.server
 import os
@@ -17,6 +18,25 @@ from typing import cast
 _TEST_SIGSTORE_BUNDLE = (
     '{"mediaType":"application/vnd.dev.sigstore.bundle+json","verification":"test-fixture"}\n'
 )
+
+# Declared host tools the POSIX installer suite executes. The suite skips with
+# an explicit message instead of failing opaquely when one is unavailable.
+POSIX_INSTALLER_TOOLS = ("sh", "perl", "sha256sum", "unzip", "curl", "mktemp", "mv")
+
+
+def posix_installer_test(test_method):
+    """Run a POSIX installer test only on POSIX hosts with all required tools."""
+
+    @functools.wraps(test_method)
+    def wrapper(self):
+        if os.name == "nt":
+            self.skipTest("POSIX installer test")
+        missing = sorted(name for name in POSIX_INSTALLER_TOOLS if shutil.which(name) is None)
+        if missing:
+            self.skipTest(f"missing required host tools: {', '.join(missing)}")
+        return test_method(self)
+
+    return wrapper
 
 
 class _InstallerHTTPServer(http.server.ThreadingHTTPServer):
@@ -110,6 +130,167 @@ class PublicInstallerContractTests(unittest.TestCase):
         return archive
 
     @staticmethod
+    def find_windows_csc():
+        candidates = [shutil.which("csc.exe")]
+        candidates += [
+            str(Path(root) / version / "csc.exe")
+            for root in (
+                Path(os.environ.get("WINDIR", r"C:\Windows")) / "Microsoft.NET" / "Framework64",
+                Path(os.environ.get("WINDIR", r"C:\Windows")) / "Microsoft.NET" / "Framework",
+            )
+            if root.is_dir()
+            for version in sorted(
+                (entry.name for entry in root.iterdir() if entry.is_dir()), reverse=True
+            )
+        ]
+        for candidate in candidates:
+            if candidate and Path(candidate).is_file():
+                return candidate
+        return None
+
+    @classmethod
+    def write_windows_runtime_archive(cls, root, version="2.0.0rc6", filename="comic-sol.zip"):
+        """Zip a real runnable comic-sol.exe stub built with the .NET csc tool.
+
+        The PowerShell installer executes the archive payload, so Windows
+        lifecycle tests need a native executable instead of a shell script.
+        """
+        csc = cls.find_windows_csc()
+        if csc is None:
+            raise unittest.SkipTest(
+                "the .NET Framework csc.exe compiler is required to build the "
+                "Windows runtime stub executable"
+            )
+        build_directory = root / f"stub-{version}"
+        build_directory.mkdir(parents=True, exist_ok=True)
+        source = build_directory / "stub.cs"
+        executable = build_directory / "comic-sol.exe"
+        source.write_text(
+            "using System;\n"
+            "class Program {\n"
+            "  static int Main(string[] args) {\n"
+            '    if (args.Length > 0 && args[0] == "--version") {\n'
+            f'      Console.WriteLine("comic-sol {version}");\n'
+            "      return 0;\n"
+            "    }\n"
+            "    return 0;\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        compiled = subprocess.run(
+            [csc, "-nologo", "-optimize+", f"-out:{executable}", str(source)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if compiled.returncode != 0 or not executable.is_file():
+            raise unittest.SkipTest(
+                f"csc could not compile the Windows runtime stub: {compiled.stderr}"
+            )
+        archive = root / filename
+        member = zipfile.ZipInfo("comic-sol/comic-sol.exe")
+        member.create_system = 0
+        with zipfile.ZipFile(archive, "w") as package:
+            package.writestr(member, executable.read_bytes())
+        return archive
+
+    @staticmethod
+    def write_powershell_signature_fixture(
+        root,
+        archive_name,
+        digest,
+        *,
+        bundle_payload=_TEST_SIGSTORE_BUNDLE,
+        expected_identity=(
+            r"^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@"
+            r"refs/(tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?|heads/main)$"
+        ),
+        expected_issuer="https://token.actions.githubusercontent.com",
+    ):
+        """Write SHA256SUMS plus a cosign.ps1 stub using only PowerShell builtins.
+
+        The stub is a PowerShell script, not a batch file, so cmd.exe never
+        re-parses the certificate identity regexp (its pipe and caret
+        characters are just data). It compares every supplied argument and
+        both payload digests, needing no external host tools at all.
+        """
+        checksums = root / "SHA256SUMS"
+        signature = root / "SHA256SUMS.sigstore.json"
+        checksums.write_text(f"{digest.lower()}  {archive_name}\n", encoding="utf-8")
+        signature.write_text(bundle_payload, encoding="utf-8")
+        fixture_directory = root / "cosign-fixture"
+        fixture_directory.mkdir(parents=True, exist_ok=True)
+        bundle_sha256 = hashlib.sha256(signature.read_bytes()).hexdigest().upper()
+        checksums_sha256 = hashlib.sha256(checksums.read_bytes()).hexdigest().upper()
+        cosign = fixture_directory / "cosign.ps1"
+        cosign.write_text(
+            "$ErrorActionPreference = 'Stop'\n"
+            "if ($args.Count -ne 8) { exit 90 }\n"
+            "if ($args[0] -ne 'verify-blob') { exit 90 }\n"
+            "if ($args[1] -ne '--bundle') { exit 90 }\n"
+            "if ($args[3] -ne '--certificate-identity-regexp') { exit 90 }\n"
+            "if ($args[5] -ne '--certificate-oidc-issuer') { exit 90 }\n"
+            f"if ($args[4] -cne '{expected_identity}') {{ exit 90 }}\n"
+            f"if ($args[6] -cne '{expected_issuer}') {{ exit 90 }}\n"
+            "if ((Get-FileHash -LiteralPath $args[2] -Algorithm SHA256).Hash "
+            f"-ne '{bundle_sha256}') {{ exit 90 }}\n"
+            "if ((Get-FileHash -LiteralPath $args[7] -Algorithm SHA256).Hash "
+            f"-ne '{checksums_sha256}') {{ exit 90 }}\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        return checksums, signature, cosign
+
+    def run_powershell_archive_install(
+        self,
+        archive,
+        install_root,
+        *,
+        env=None,
+    ):
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        self.assertIsNotNone(shell, "PowerShell is required for the Windows installer test")
+        environment = os.environ.copy()
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        checksums, signature, cosign = self.write_powershell_signature_fixture(
+            archive.parent, archive.name, digest
+        )
+        environment["COMIC_SOL_COSIGN"] = str(cosign)
+        if env:
+            environment.update(env)
+        return subprocess.run(
+            [
+                shell,
+                "-NoProfile",
+                "-File",
+                str(self.root / "installers/install.ps1"),
+                "-Archive",
+                str(archive),
+                "-SHA256",
+                digest,
+                "-Checksums",
+                str(checksums),
+                "-Signature",
+                str(signature),
+                "-InstallRoot",
+                str(install_root),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+
+    @staticmethod
+    def snapshot_tree(root):
+        fingerprint = {}
+        for path in sorted(Path(root).rglob("*")):
+            if path.is_file() and not path.is_symlink():
+                fingerprint[path.relative_to(root).as_posix()] = path.read_bytes()
+        return fingerprint
+
+    @staticmethod
     def write_signature_fixture(
         root,
         archive_name,
@@ -130,6 +311,8 @@ class PublicInstallerContractTests(unittest.TestCase):
         if expected_bundle_payload is None:
             expected_bundle_payload = bundle_payload
         cosign = root / "cosign"
+        # The fixture shell is hermetic: it depends only on perl (already a
+        # declared install.sh prerequisite) and never on diffutils cmp/diff.
         cosign.write_text(
             "#!/bin/sh\n"
             "set -eu\n"
@@ -151,7 +334,16 @@ class PublicInstallerContractTests(unittest.TestCase):
             f'   ! same_path "${{8-}}" {shlex.quote(str(checksums))}; then\n'
             "  exit 90\n"
             "fi\n"
-            f'printf %s {shlex.quote(expected_bundle_payload)} | cmp -s - "$3"\n',
+            f"printf %s {shlex.quote(expected_bundle_payload)} | "
+            "perl -e '\n"
+            "  binmode STDIN;\n"
+            "  local $/;\n"
+            "  my $expected = <STDIN>;\n"
+            '  open(my $handle, "<", $ARGV[0]) or exit 1;\n'
+            "  binmode $handle;\n"
+            "  my $actual = do { local $/; <$handle> };\n"
+            "  exit(defined $expected && defined $actual && $expected eq $actual ? 0 : 1);\n"
+            '\' "$3"\n',
             encoding="utf-8",
         )
         cosign.chmod(0o755)
@@ -321,6 +513,21 @@ class PublicInstallerContractTests(unittest.TestCase):
         self.assertIn("-Uninstall", self.powershell)
         self.assertIn("--uninstall", self.posix)
 
+    def test_posix_fixture_is_hermetic_without_diffutils(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            archive = self.write_runtime_archive(root)
+            _checksums, _signature, cosign = self.write_signature_fixture(
+                root, archive.name, "0" * 64
+            )
+            fixture = cosign.read_text(encoding="utf-8")
+        # The POSIX suite must not depend on external diffutils cmp/diff; perl
+        # is already a declared install.sh prerequisite.
+        self.assertNotIn("cmp ", fixture)
+        self.assertNotIn(" diff", fixture)
+        self.assertIn("perl", fixture)
+        self.assertIn("command -v perl", self.posix)
+
     def test_installers_enforce_https_redirects_and_normalize_digests(self):
         self.assertIn("curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2", self.posix)
         self.assertIn("tr '[:upper:]' '[:lower:]'", self.posix)
@@ -334,7 +541,7 @@ class PublicInstallerContractTests(unittest.TestCase):
         self.assertIn(expected, self.posix)
         self.assertIn(expected, self.powershell)
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_sigstore_verifier_checks_bundle_and_claim_arguments(self):
         scenarios = (
             {"bundle_payload": "{}\n", "expected_bundle_payload": _TEST_SIGSTORE_BUNDLE},
@@ -355,7 +562,7 @@ class PublicInstallerContractTests(unittest.TestCase):
                 self.assertIn("signature verification failed", result.stderr)
                 self.assertFalse((install_root / ".comic-sol-install").exists())
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_rejects_http_url_before_request(self):
         server, thread = self.start_installer_server()
         try:
@@ -370,7 +577,7 @@ class PublicInstallerContractTests(unittest.TestCase):
         finally:
             self.stop_installer_server(server, thread)
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_rejects_https_to_http_redirect(self):
         http_server, http_thread = self.start_installer_server()
         https_server = https_thread = None
@@ -399,7 +606,7 @@ class PublicInstallerContractTests(unittest.TestCase):
                 self.stop_installer_server(https_server, https_thread)
             self.stop_installer_server(http_server, http_thread)
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_accepts_uppercase_digest_for_real_archive_download(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -422,7 +629,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             finally:
                 self.stop_installer_server(server, thread)
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_url_preserves_release_asset_name_for_signed_manifest(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -444,7 +651,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             finally:
                 self.stop_installer_server(server, thread)
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_rejects_archive_when_signed_manifest_digest_differs(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -475,7 +682,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertNotEqual(0, result.returncode, result.stdout + result.stderr)
             self.assertIn("manifest", result.stderr.lower())
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_rejects_archive_when_member_listing_fails(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -532,7 +739,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertFalse((install_root / ".comic-sol-install").exists())
             self.assertFalse((install_root / "bin").exists())
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_rejects_symlinked_install_root(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -562,7 +769,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertFalse((target / ".comic-sol-install").exists())
             self.assertFalse((target / "bin").exists())
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_rejects_symlinked_install_ancestor(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -685,7 +892,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             ):
                 self.assertFalse((install_root / name).exists(), name)
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_relative_checksum_paths_survive_secure_handoff(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -724,7 +931,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertEqual(0, uninstall.returncode, uninstall.stdout + uninstall.stderr)
             self.assertFalse(install_root.exists())
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_relative_archive_persists_display_root_and_uninstalls_root(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -763,7 +970,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertEqual(0, uninstall.returncode, uninstall.stdout + uninstall.stderr)
             self.assertFalse(install_root.exists())
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer lifecycle test")
+    @posix_installer_test
     def test_posix_lifecycle_is_idempotent_and_preserves_external_state(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -818,7 +1025,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
             self.assertEqual("[mcp_servers.other]\ncommand = 'keep'\n", config.read_text())
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer lifecycle test")
+    @posix_installer_test
     def test_posix_upgrade_publishes_new_version_without_touching_external_state(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -857,7 +1064,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
             self.assertEqual("[mcp_servers.other]\ncommand = 'keep'\n", config.read_text())
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer lifecycle test")
+    @posix_installer_test
     def test_posix_upgrade_failure_restores_runtime_and_preserves_external_state(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -911,6 +1118,150 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertTrue(project_sentinel.is_file())
             self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
             self.assertEqual("[mcp_servers.other]\ncommand = 'keep'\n", config.read_text())
+
+    @unittest.skipUnless(os.name == "nt", "PowerShell installer lifecycle test")
+    def test_powershell_lifecycle_is_idempotent_and_preserves_external_state(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            install_root = root / "runtime"
+            project = root / "user-project"
+            project.mkdir()
+            project_sentinel = project / "do-not-delete.txt"
+            project_sentinel.write_text("user project", encoding="utf-8")
+            config = root / "home" / "client-config.json"
+            config.parent.mkdir(parents=True)
+            config.write_text('{"client":"preserved"}\n', encoding="utf-8")
+            archive = self.write_windows_runtime_archive(root, version="2.0.0rc4")
+            environment = {
+                "COMIC_SOL_OUTPUT_ROOT": str(project),
+                "HOME": str(root / "home"),
+                "USERPROFILE": str(root / "home"),
+            }
+
+            first = self.run_powershell_archive_install(archive, install_root, env=environment)
+            self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+            runtime_snapshot = self.snapshot_tree(install_root)
+            self.assertEqual(
+                "2.0.0rc4",
+                (install_root / "active-version").read_text(encoding="utf-8").strip(),
+            )
+            repeated = self.run_powershell_archive_install(archive, install_root, env=environment)
+            self.assertEqual(0, repeated.returncode, repeated.stdout + repeated.stderr)
+            self.assertEqual(runtime_snapshot, self.snapshot_tree(install_root))
+
+            uninstall = self.run_uninstall(install_root)
+            self.assertEqual(0, uninstall.returncode, uninstall.stdout + uninstall.stderr)
+            self.assertFalse(install_root.exists())
+            repeated_uninstall = self.run_uninstall(install_root)
+            self.assertEqual(
+                0,
+                repeated_uninstall.returncode,
+                repeated_uninstall.stdout + repeated_uninstall.stderr,
+            )
+            reinstall = self.run_powershell_archive_install(archive, install_root, env=environment)
+            self.assertEqual(0, reinstall.returncode, reinstall.stdout + reinstall.stderr)
+            self.assertEqual(
+                "2.0.0rc4",
+                (install_root / "active-version").read_text(encoding="utf-8").strip(),
+            )
+            self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
+            self.assertEqual('{"client":"preserved"}\n', config.read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(os.name == "nt", "PowerShell installer lifecycle test")
+    def test_powershell_upgrade_publishes_new_version_without_touching_external_state(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            install_root = root / "runtime"
+            project = root / "user-project"
+            project.mkdir()
+            project_sentinel = project / "do-not-delete.txt"
+            project_sentinel.write_text("user project", encoding="utf-8")
+            config = root / "home" / "client-config.json"
+            config.parent.mkdir(parents=True)
+            config.write_text('{"client":"preserved"}\n', encoding="utf-8")
+            old_archive = self.write_windows_runtime_archive(
+                root, version="2.0.0rc4", filename="old.zip"
+            )
+            new_archive = self.write_windows_runtime_archive(
+                root, version="2.0.0rc6", filename="new.zip"
+            )
+            environment = {
+                "COMIC_SOL_OUTPUT_ROOT": str(project),
+                "HOME": str(root / "home"),
+                "USERPROFILE": str(root / "home"),
+            }
+
+            first = self.run_powershell_archive_install(old_archive, install_root, env=environment)
+            self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+            old_bin = (install_root / "bin" / "comic-sol.exe").read_bytes()
+            upgraded = self.run_powershell_archive_install(
+                new_archive, install_root, env=environment
+            )
+            self.assertEqual(0, upgraded.returncode, upgraded.stdout + upgraded.stderr)
+            self.assertEqual(
+                "2.0.0rc6",
+                (install_root / "active-version").read_text(encoding="utf-8").strip(),
+            )
+            self.assertNotEqual(old_bin, (install_root / "bin" / "comic-sol.exe").read_bytes())
+            self.assertEqual(
+                old_bin,
+                (install_root / "versions" / "2.0.0rc4" / "comic-sol.exe").read_bytes(),
+            )
+            self.assertFalse((install_root / "versions" / ".2.0.0rc6.rollback").exists())
+            self.assertFalse((install_root / ".bin.rollback").exists())
+            self.assertTrue((install_root / "versions" / "2.0.0rc4").is_dir())
+            self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
+            self.assertEqual('{"client":"preserved"}\n', config.read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(os.name == "nt", "PowerShell installer lifecycle test")
+    def test_powershell_upgrade_failure_restores_runtime_byte_for_byte(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            install_root = root / "runtime"
+            project = root / "user-project"
+            project.mkdir()
+            project_sentinel = project / "do-not-delete.txt"
+            project_sentinel.write_text("user project", encoding="utf-8")
+            config = root / "home" / "client-config.json"
+            config.parent.mkdir(parents=True)
+            config.write_text('{"client":"preserved"}\n', encoding="utf-8")
+            old_archive = self.write_windows_runtime_archive(
+                root, version="2.0.0rc4", filename="old.zip"
+            )
+            new_archive = self.write_windows_runtime_archive(
+                root, version="2.0.0rc6", filename="new.zip"
+            )
+            environment = {
+                "COMIC_SOL_OUTPUT_ROOT": str(project),
+                "HOME": str(root / "home"),
+                "USERPROFILE": str(root / "home"),
+            }
+            installed = self.run_powershell_archive_install(
+                old_archive, install_root, env=environment
+            )
+            self.assertEqual(0, installed.returncode, installed.stdout + installed.stderr)
+            runtime_snapshot = self.snapshot_tree(install_root)
+
+            # Hold an open handle on the installed executable so the stable
+            # runtime swap fails mid-mutation and forces Restore-Install.
+            locked = open(install_root / "bin" / "comic-sol.exe", "rb")
+            try:
+                failed = self.run_powershell_archive_install(
+                    new_archive, install_root, env=environment
+                )
+            finally:
+                locked.close()
+
+            self.assertNotEqual(0, failed.returncode, failed.stdout + failed.stderr)
+            self.assertEqual(runtime_snapshot, self.snapshot_tree(install_root))
+            self.assertFalse((install_root / "bin.new").exists())
+            self.assertFalse((install_root / ".bin.rollback").exists())
+            self.assertFalse((install_root / "versions" / ".2.0.0rc6.rollback").exists())
+            self.assertFalse((install_root / "versions" / "2.0.0rc6").exists())
+            self.assertFalse((install_root / "active-version.new").exists())
+            self.assertFalse((install_root / ".comic-sol-install.new").exists())
+            self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
+            self.assertEqual('{"client":"preserved"}\n', config.read_text(encoding="utf-8"))
 
     def test_native_uninstall_refuses_sensitive_project_root(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -971,7 +1322,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertFalse(requested_root.exists())
             self.assertTrue((wrong_root / "foreign.txt").is_file())
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_installer_refuses_active_install_root_lock(self):
         with tempfile.TemporaryDirectory() as raw:
             install_root = Path(raw) / "locked-install"
@@ -996,7 +1347,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertIn("another Comic Sol installer is using this install root", result.stderr)
             self.assertTrue(lock.is_dir())
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_alias_rejects_symlinked_install_root_before_locking(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -1016,7 +1367,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertTrue((install_root / ".comic-sol-install").is_file())
             self.assertTrue(lock.is_dir())
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_cleanup_failure_does_not_roll_back_published_sentinel(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -1100,7 +1451,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertEqual("2.0.0rc6", marker_lines[1])
             self.assertIn("Could not remove rollback backup", result.stderr)
 
-    @unittest.skipUnless(os.name != "nt", "POSIX installer test")
+    @posix_installer_test
     def test_posix_newline_install_root_round_trips_marker_and_uninstall(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

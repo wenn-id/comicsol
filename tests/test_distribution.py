@@ -424,7 +424,10 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("arch: arm64", qualification)
         self.assertIn('--architecture "$ARCH"', qualification)
         self.assertIn("$architecture = $env:ARCH", qualification)
-        self.assertIn("--architecture '$architecture'", qualification)
+        # The WSL leg passes the architecture through a static dispatch script
+        # with direct argv handoff, never an interpolated bash -lc string.
+        self.assertNotIn("bash -lc", qualification)
+        self.assertIn('--architecture "$architecture"', qualification)
         self.assertNotIn("-x86_64.zip", qualification.replace("linux-x86_64.zip", ""))
 
     @staticmethod

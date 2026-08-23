@@ -18,9 +18,31 @@ jobs:
   test:
     strategy:
       fail-fast: false
+      # The full base and MCP suites must run on native macOS arm64 because
+      # the release artifacts are arm64: cryptography publishes no x86_64
+      # macOS wheel since 49.0.0, so the MCP extras are arm64-only there.
+      # Intel macOS keeps explicit, separate coverage in the test-macos-intel
+      # job below with the base extras only.
       matrix:
-        os: [ubuntu-latest, macos-26-intel, windows-latest]
-        extras: [base, mcp]
+        include:
+          - os: ubuntu-latest
+            lock: linux
+            extras: base
+          - os: ubuntu-latest
+            lock: linux
+            extras: mcp
+          - os: macos-latest
+            lock: macos
+            extras: base
+          - os: macos-latest
+            lock: macos
+            extras: mcp
+          - os: windows-latest
+            lock: windows
+            extras: base
+          - os: windows-latest
+            lock: windows
+            extras: mcp
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -33,10 +55,10 @@ jobs:
         python-version: "3.11"
     - name: Install base dependencies
       run: |
-        python -m pip install --require-hashes -r requirements/locks/base-${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'macos-26-intel' && 'macos' || 'windows' }}-x86_64.txt
+        python -m pip install --require-hashes -r requirements/locks/base-${{ matrix.lock }}-x86_64.txt
     - name: Install MCP extras (if MCP job)
       if: matrix.extras == 'mcp'
-      run: python -m pip install --require-hashes -r requirements/locks/runtime-${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'macos-26-intel' && 'macos' || 'windows' }}-x86_64.txt
+      run: python -m pip install --require-hashes -r requirements/locks/runtime-${{ matrix.lock }}-x86_64.txt
     - name: Audit dependency manifests for known vulnerabilities
       shell: bash
       run: |
@@ -48,7 +70,7 @@ jobs:
           audit_python="${audit_root}/bin/python"
         fi
         "${audit_python}" -m pip install --require-hashes -r requirements/locks/audit-python311.txt
-        "${audit_python}" -m pip_audit -r requirements/locks/runtime-${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'macos-26-intel' && 'macos' || 'windows' }}-x86_64.txt
+        "${audit_python}" -m pip_audit -r requirements/locks/runtime-${{ matrix.lock }}-x86_64.txt
     - name: Verify isolated test discovery
       run: python -m unittest tests.test_isolated_discovery -v
     - name: Test with unittest
@@ -61,7 +83,7 @@ jobs:
       run: python scripts/comic_sol.py doctor --output-root ${{ runner.temp }}/comic-sol-doctor
     - name: Build installable package
       run: |
-        python -m pip install --require-hashes -r requirements/locks/release-${{ matrix.os == 'ubuntu-latest' && 'linux' || matrix.os == 'macos-26-intel' && 'macos' || 'windows' }}-x86_64.txt
+        python -m pip install --require-hashes -r requirements/locks/release-${{ matrix.lock }}-x86_64.txt
         python -m build --no-isolation
     - name: Validate wheel and source distribution contents
       if: runner.os != 'Windows'
@@ -82,6 +104,41 @@ jobs:
         else
           python scripts/clean_install_smoke.py --wheel dist/*.whl
         fi
+
+  # Intel macOS is not a release target: cryptography publishes no x86_64
+  # macOS wheel since 49.0.0, so the MCP extras, the release build lock, and
+  # the frozen runtime artifacts are arm64-only. This leg keeps Intel source
+  # support explicit and separately tested with the base extras instead of
+  # letting it silently ride the arm64 release matrix.
+  test-macos-intel:
+    name: Test macOS Intel base (explicit non-release leg)
+    runs-on: macos-26-intel
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        ref: ${{ inputs.candidate_sha || github.sha }}
+    - name: Set up Python 3.11
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      with:
+        python-version: "3.11"
+    - name: Install base dependencies
+      run: |
+        python -m pip install --require-hashes -r requirements/locks/base-macos-x86_64.txt
+    - name: Audit base dependency manifest for known vulnerabilities
+      shell: bash
+      run: |
+        audit_root="${RUNNER_TEMP}/comic-sol-audit"
+        python -m venv "${audit_root}"
+        "${audit_root}/bin/python" -m pip install --require-hashes -r requirements/locks/audit-python311.txt
+        "${audit_root}/bin/python" -m pip_audit -r requirements/locks/base-macos-x86_64.txt
+    - name: Verify isolated test discovery
+      run: python -m unittest tests.test_isolated_discovery -v
+    - name: Test with unittest
+      env:
+        COMIC_SOL_REQUIRE_SYMLINK_TESTS: "1"
+      run: python -m unittest discover -s tests -v
+    - name: Run doctor
+      run: python scripts/comic_sol.py doctor --output-root ${{ runner.temp }}/comic-sol-doctor
 
   quality:
     name: Quality gates

@@ -6,12 +6,13 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -105,6 +106,52 @@ def json_command(
     return record
 
 
+def install_command(
+    *,
+    platform_name: str,
+    installer: Path,
+    archive: Path,
+    digest: str,
+    checksums: Path,
+    signature: Path,
+    install_root: Path,
+) -> list[str]:
+    """Return the exact installer argv for the platform, never a shell string."""
+    if platform_name in {"linux", "macos", "wsl"}:
+        return [
+            "sh",
+            str(installer),
+            "--archive",
+            str(archive),
+            "--sha256",
+            digest,
+            "--checksums",
+            str(checksums),
+            "--signature",
+            str(signature),
+            "--install-root",
+            str(install_root),
+        ]
+    if platform_name == "windows":
+        return [
+            "pwsh",
+            "-NoProfile",
+            "-File",
+            str(installer),
+            "-Archive",
+            str(archive),
+            "-SHA256",
+            digest,
+            "-Checksums",
+            str(checksums),
+            "-Signature",
+            str(signature),
+            "-InstallRoot",
+            str(install_root),
+        ]
+    raise ValueError(f"unsupported qualification platform: {platform_name}")
+
+
 def install(
     *,
     platform_name: str,
@@ -118,49 +165,19 @@ def install(
     env: dict[str, str],
 ) -> None:
     """Install using the platform's release installer, never a source checkout."""
-    if platform_name in {"linux", "macos", "wsl"}:
-        run(
-            [
-                "sh",
-                str(installer),
-                "--archive",
-                str(archive),
-                "--sha256",
-                digest,
-                "--checksums",
-                str(checksums),
-                "--signature",
-                str(signature),
-                "--install-root",
-                str(install_root),
-            ],
-            cwd=cwd,
-            env=env,
-        )
-        return
-    if platform_name == "windows":
-        run(
-            [
-                "pwsh",
-                "-NoProfile",
-                "-File",
-                str(installer),
-                "-Archive",
-                str(archive),
-                "-SHA256",
-                digest,
-                "-Checksums",
-                str(checksums),
-                "-Signature",
-                str(signature),
-                "-InstallRoot",
-                str(install_root),
-            ],
-            cwd=cwd,
-            env=env,
-        )
-        return
-    raise ValueError(f"unsupported qualification platform: {platform_name}")
+    run(
+        install_command(
+            platform_name=platform_name,
+            installer=installer,
+            archive=archive,
+            digest=digest,
+            checksums=checksums,
+            signature=signature,
+            install_root=install_root,
+        ),
+        cwd=cwd,
+        env=env,
+    )
 
 
 def uninstall(
@@ -194,6 +211,113 @@ def uninstall(
         )
     else:
         raise ValueError(f"unsupported qualification platform: {platform_name}")
+
+
+def snapshot_tree(root: Path) -> dict[str, tuple[int, str]]:
+    """Return a byte-for-byte fingerprint of every file under root."""
+    fingerprint: dict[str, tuple[int, str]] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and not path.is_symlink():
+            payload = path.read_bytes()
+            fingerprint[path.relative_to(root).as_posix()] = (
+                len(payload),
+                hashlib.sha256(payload).hexdigest(),
+            )
+    return fingerprint
+
+
+def _posix_swap_failure_environment(env: dict[str, str], shim_root: Path) -> dict[str, str]:
+    """Build an environment whose mv fails exactly at the stable-runtime swap."""
+    real_mv = shutil.which("mv")
+    if real_mv is None:
+        raise RuntimeError("mv is required to inject a POSIX installer swap failure")
+    shim_root.mkdir(parents=True, exist_ok=True)
+    mv_shim = shim_root / "mv"
+    mv_shim.write_text(
+        "#!/bin/sh\n"
+        "previous=''\nlast=''\n"
+        'for argument in "$@"; do previous="$last"; last="$argument"; done\n'
+        'if [ "$(basename -- "$previous")" = bin.new ] && '
+        '[ "$(basename -- "$last")" = bin ]; then exit 91; fi\n'
+        'exec "$REAL_MV" "$@"\n',
+        encoding="utf-8",
+    )
+    mv_shim.chmod(0o755)
+    failure_env = dict(env)
+    failure_env["PATH"] = f"{shim_root}{os.pathsep}{env.get('PATH', os.environ.get('PATH', ''))}"
+    failure_env["REAL_MV"] = real_mv
+    return failure_env
+
+
+def exercise_injected_rollback(
+    *,
+    platform_name: str,
+    installer: Path,
+    archive: Path,
+    digest: str,
+    checksums: Path,
+    signature: Path,
+    install_root: Path,
+    cwd: Path,
+    env: dict[str, str],
+) -> None:
+    """Fail the second install mid-swap and require a byte-for-byte rollback.
+
+    The same published archive is installed over the existing runtime with the
+    stable-runtime swap forced to fail after mutation has started. The installer
+    must exit non-zero and restore every managed byte, leaving no staging or
+    backup paths behind.
+    """
+    before = snapshot_tree(install_root)
+    failure_env = env
+    locked_runtime: IO[bytes] | None = None
+    if platform_name == "windows":
+        executable = install_root / "bin" / "comic-sol.exe"
+        if not executable.is_file():
+            raise RuntimeError(f"installed executable is missing: {executable}")
+        locked_runtime = open(executable, "rb")
+    else:
+        failure_env = _posix_swap_failure_environment(env, cwd / "swap-failure-shim")
+    try:
+        command = install_command(
+            platform_name=platform_name,
+            installer=installer,
+            archive=archive,
+            digest=digest,
+            checksums=checksums,
+            signature=signature,
+            install_root=install_root,
+        )
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            env=failure_env,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    finally:
+        if locked_runtime is not None:
+            locked_runtime.close()
+    if completed.returncode == 0:
+        raise RuntimeError("injected installer failure was not reported as a failure")
+    if snapshot_tree(install_root) != before:
+        raise RuntimeError("injected installer failure did not restore the runtime byte-for-byte")
+    active_version = install_root / "active-version"
+    staging_names = [
+        "bin.new",
+        ".bin.rollback",
+        ".comic-sol-install.new",
+        "active-version.new",
+    ]
+    if active_version.is_file():
+        version = active_version.read_text(encoding="utf-8").strip()
+        staging_names.append(f"versions/.{version}.rollback")
+        staging_names.append(f"versions/{version}.new")
+    for name in staging_names:
+        if (install_root / name).exists():
+            raise RuntimeError(f"injected installer failure left a staging path behind: {name}")
 
 
 def aggregate_summaries(
@@ -602,6 +726,38 @@ def qualify(
                 f"installed fixture validation reported issues: {validation['data']!r}"
             )
         record["checks"].append("lifecycle")
+
+        # Qualify the upgrade path over the published bytes: installing the
+        # same signed archive over an existing runtime must keep every managed
+        # byte identical, and a forced mid-swap failure must restore it exactly.
+        installed_state = snapshot_tree(install_root)
+        install(
+            platform_name=platform_name,
+            installer=installer,
+            archive=archive,
+            digest=digest,
+            checksums=checksums,
+            signature=signature,
+            install_root=install_root,
+            cwd=root,
+            env=env,
+        )
+        if snapshot_tree(install_root) != installed_state:
+            raise RuntimeError("reinstalling the published archive changed installed runtime bytes")
+        record["checks"].append("upgrade-reinstall")
+
+        exercise_injected_rollback(
+            platform_name=platform_name,
+            installer=installer,
+            archive=archive,
+            digest=digest,
+            checksums=checksums,
+            signature=signature,
+            install_root=install_root,
+            cwd=root,
+            env=env,
+        )
+        record["checks"].append("injected-rollback")
 
         user_file = install_root / "user-owned.txt"
         user_file.write_text("do not delete\n", encoding="utf-8")

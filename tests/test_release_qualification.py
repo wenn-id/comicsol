@@ -1,8 +1,11 @@
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import unittest
+import zipfile
 from pathlib import Path
 import tempfile
 from unittest import mock
@@ -12,8 +15,12 @@ from comic_sol_product import __version__ as _V
 from scripts.release_evidence import build_evidence
 from scripts.release_evidence import write_evidence
 from scripts.release_qualification import aggregate_summaries
+from scripts.release_qualification import exercise_injected_rollback
 from scripts.release_qualification import executable_path
+from scripts.release_qualification import install
+from scripts.release_qualification import install_command
 from scripts.release_qualification import qualify
+from scripts.release_qualification import snapshot_tree
 from scripts.release_qualification import validate_published_metadata
 from scripts.release_qualification import verify_payload_checksums
 
@@ -162,6 +169,22 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             self.assertEqual("RELEASE BLOCKED", blocked["decision"])
             self.assertEqual("failed", blocked["status"])
             self.assertIn("windows", blocked["failed_platforms"])
+
+            # A platform exception (for example an unavailable WSL2 runner) is
+            # recorded as blocked/exception; it must never count as a pass.
+            recovered = json.loads((root / "summary-windows.json").read_text(encoding="utf-8"))
+            recovered["status"] = "passed"
+            (root / "summary-windows.json").write_text(
+                json.dumps(recovered) + "\n", encoding="utf-8"
+            )
+            exception = json.loads((root / "summary-wsl.json").read_text(encoding="utf-8"))
+            exception["status"] = "exception"
+            exception["exceptions"] = ["WSL2 not available on this runner"]
+            (root / "summary-wsl.json").write_text(json.dumps(exception) + "\n", encoding="utf-8")
+            blocked = aggregate_summaries(root, output, required_targets=required_targets)
+            self.assertEqual("RELEASE BLOCKED", blocked["decision"])
+            self.assertIn("wsl", blocked["failed_platforms"])
+            self.assertEqual("exception", blocked["summaries"]["wsl"]["status"])
 
     def test_verify_payload_checksums_covers_every_published_payload(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -379,7 +402,7 @@ class ReleaseQualificationContractTests(unittest.TestCase):
 
             def fake_install(**kwargs):
                 binary = executable_path(kwargs["install_root"])
-                binary.parent.mkdir(parents=True)
+                binary.parent.mkdir(parents=True, exist_ok=True)
                 binary.write_text("fake executable\n", encoding="utf-8")
 
             def fake_json_command(_executable, arguments, **_kwargs):
@@ -410,6 +433,7 @@ class ReleaseQualificationContractTests(unittest.TestCase):
                     side_effect=fake_json_command,
                 ),
                 mock.patch("scripts.release_qualification.uninstall", side_effect=fake_uninstall),
+                mock.patch("scripts.release_qualification.exercise_injected_rollback"),
             ):
                 result = qualify(
                     platform_name="macos",
@@ -428,6 +452,8 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             self.assertEqual("arm64", result["architecture"])
             self.assertEqual(_V, result["version"])
             self.assertNotEqual(f"comic-sol {_V}", result["version"])
+            self.assertIn("upgrade-reinstall", result["checks"])
+            self.assertIn("injected-rollback", result["checks"])
 
     def test_qualify_rejects_wrong_executable_version_with_correct_metadata(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -487,6 +513,123 @@ class ReleaseQualificationContractTests(unittest.TestCase):
         )
         self.assertEqual(2, result.returncode)
         self.assertIn("--architecture", result.stderr)
+
+    def test_install_command_builds_direct_argv_per_platform(self):
+        arguments = {
+            "installer": Path("installers/install.sh"),
+            "archive": Path("runtime.zip"),
+            "digest": "0" * 64,
+            "checksums": Path("SHA256SUMS"),
+            "signature": Path("SHA256SUMS.sigstore.json"),
+            "install_root": Path("install root with spaces"),
+        }
+        posix = install_command(platform_name="linux", **arguments)
+        self.assertEqual(
+            [
+                "sh",
+                str(Path("installers/install.sh")),
+                "--archive",
+                str(Path("runtime.zip")),
+                "--sha256",
+                "0" * 64,
+                "--checksums",
+                str(Path("SHA256SUMS")),
+                "--signature",
+                str(Path("SHA256SUMS.sigstore.json")),
+                "--install-root",
+                str(Path("install root with spaces")),
+            ],
+            posix,
+        )
+        windows = install_command(platform_name="windows", **arguments)
+        self.assertEqual("pwsh", windows[0])
+        self.assertEqual(["-NoProfile", "-File"], windows[1:3])
+        self.assertNotIn("bash -lc", " ".join(windows))
+        with self.assertRaisesRegex(ValueError, "unsupported qualification platform"):
+            install_command(platform_name="plan9", **arguments)
+
+    def test_snapshot_tree_fingerprints_every_file_byte_for_byte(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "a").write_bytes(b"one")
+            (root / "nested").mkdir()
+            (root / "nested" / "b").write_bytes(b"two")
+            fingerprint = snapshot_tree(root)
+            self.assertEqual(
+                {
+                    "a": (3, hashlib.sha256(b"one").hexdigest()),
+                    "nested/b": (3, hashlib.sha256(b"two").hexdigest()),
+                },
+                fingerprint,
+            )
+            # Same size, different content: still a different fingerprint.
+            (root / "nested" / "b").write_bytes(b"tow")
+            self.assertNotEqual(fingerprint, snapshot_tree(root))
+
+    @unittest.skipUnless(os.name != "nt", "POSIX installer qualification test")
+    def test_exercise_injected_rollback_restores_runtime_byte_for_byte(self):
+        missing = sorted(
+            name
+            for name in ("sh", "perl", "sha256sum", "unzip", "mv", "mktemp")
+            if shutil.which(name) is None
+        )
+        if missing:
+            self.skipTest(f"missing required host tools: {', '.join(missing)}")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            archive = root / "runtime.zip"
+            executable = (
+                "#!/bin/sh\n"
+                'case "$1" in\n'
+                f"  --version) printf 'comic-sol {_V}\\n' ;;\n"
+                "  *) exit 0 ;;\n"
+                "esac\n"
+            ).encode("utf-8")
+            member = zipfile.ZipInfo("comic-sol/comic-sol")
+            member.create_system = 3
+            member.external_attr = 0o100755 << 16
+            with zipfile.ZipFile(archive, "w") as package:
+                package.writestr(member, executable)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            checksums = root / "SHA256SUMS"
+            signature = root / "SHA256SUMS.sigstore.json"
+            checksums.write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
+            signature.write_text('{"verification":"test-fixture"}\n', encoding="utf-8")
+            cosign = root / "cosign"
+            cosign.write_text(
+                "#!/bin/sh\n"
+                "set -eu\n"
+                'if [ "${1-}" != verify-blob ] || [ "${2-}" != --bundle ] || '
+                '[ "${4-}" != --certificate-identity-regexp ] || '
+                '[ "${6-}" != --certificate-oidc-issuer ]; then exit 90; fi\n'
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            cosign.chmod(0o755)
+            home = root / "home"
+            home.mkdir()
+            env = dict(os.environ)
+            env["COMIC_SOL_COSIGN"] = str(cosign)
+            env["HOME"] = str(home)
+            arguments = {
+                "installer": ROOT / "installers/install.sh",
+                "archive": archive,
+                "digest": digest,
+                "checksums": checksums,
+                "signature": signature,
+            }
+
+            install(
+                install_root=root / "runtime", cwd=root, env=env, platform_name="linux", **arguments
+            )
+            snapshot = snapshot_tree(root / "runtime")
+            self.assertTrue((root / "runtime" / "versions" / _V / "comic-sol").is_file())
+
+            exercise_injected_rollback(
+                install_root=root / "runtime", cwd=root, env=env, platform_name="linux", **arguments
+            )
+
+            self.assertEqual(snapshot, snapshot_tree(root / "runtime"))
 
     def test_release_qualification_workflow_runs_source_p0_gates_and_aggregates(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -559,8 +702,28 @@ class ReleaseQualificationContractTests(unittest.TestCase):
         self.assertNotIn("python -m build", workflow)
         self.assertIn("actions/checkout", workflow)
         self.assertIn('--architecture "$ARCH"', workflow)
-        self.assertIn("--architecture '$architecture'", workflow)
         self.assertIn("ARCH: x86_64", workflow)
+
+    def test_wsl_qualification_uses_a_static_script_with_argv_and_env_handoff(self):
+        """WSL qualification must never interpolate values into a bash command.
+
+        The dispatch script is static, every dynamic value crosses the WSL
+        boundary as one direct argv element via `wsl.exe --exec`, and cosign
+        crosses through the WSLENV environment handoff. The release tag is
+        full-matched before anything is dispatched into WSL.
+        """
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertNotIn("bash -lc", workflow)
+        self.assertIn("refusing WSL qualification: release tag", workflow)
+        self.assertIn("-notmatch '^v[0-9]+\\.[0-9]+\\.[0-9]+(rc[0-9]+)?$'", workflow)
+        self.assertIn("wsl-qualify.sh", workflow)
+        self.assertIn("& wsl.exe --exec bash", workflow)
+        self.assertIn('$env:WSLENV = "COMIC_SOL_COSIGN/up"', workflow)
+        self.assertIn("$dispatchScript = @'", workflow)
+        self.assertIn('exec python3 "$harness"', workflow)
+        self.assertIn('--summary "$qualification_root/summary-wsl.json"', workflow)
+        # The static script re-validates its own argv before executing.
+        self.assertIn("unsafe version argument", workflow)
 
     def test_workflow_records_platform_specific_exceptions_in_summary(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")

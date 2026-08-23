@@ -74,10 +74,11 @@ The release qualification workflow validates the *intended release artifact*: th
 
 - `comic-sol --version` and `comic-sol doctor` from the installed runtime;
 - `init`, `status`, and `validate` on an offline fixture project;
+- reinstalling the same published archive over the installed runtime, plus a forced mid-swap installer failure that must restore every managed byte before uninstall;
 - checksum verification, installer install, uninstall, and preservation of the fixture project, user projects, unrelated files, and client configuration;
 - one separate summary artifact for Linux, macOS, Windows, and WSL2.
 
-WSL2 uses the Linux x86_64 release archive and `install.sh`; it is a separate qualification from native Windows PowerShell. If WSL2 is unavailable on the runner, the workflow records an explicit `exception` summary instead of silently treating the target as passed. To reproduce WSL qualification locally, run the Linux commands above inside WSL2 and retain the generated platform summary.
+WSL2 uses the Linux x86_64 release archive and `install.sh`; it is a separate qualification from native Windows PowerShell. Every supplied release tag is full-matched against the strict `vX.Y.Z[rcN]` pattern before anything is dispatched into WSL, and the WSL leg runs a static dispatch script whose arguments cross the boundary as direct argv plus the `WSLENV` environment handoff — no value is ever interpolated into a bash command string. If WSL2 is unavailable on the runner, the workflow records an explicit `exception` summary instead of silently treating the target as passed. To reproduce WSL qualification locally, run the Linux commands above inside WSL2 and retain the generated platform summary.
 
 ## Structured doctor diagnostics
 

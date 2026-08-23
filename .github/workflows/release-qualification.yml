@@ -212,6 +212,10 @@ jobs:
           ARCH: x86_64
         run: |
           $ErrorActionPreference = "Stop"
+          # Full-match every supplied release tag before anything is dispatched into WSL.
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$') {
+            throw "refusing WSL qualification: release tag is not an exact vX.Y.Z[rcN] tag: $env:RELEASE_TAG"
+          }
           $wslStatus = & wsl.exe --status 2>&1
           if ($LASTEXITCODE -ne 0) {
             $reason = "WSL2 not available on this runner: $($wslStatus -join ' ')"
@@ -231,13 +235,44 @@ jobs:
           $version = $env:RELEASE_TAG.Substring(1)
           $architecture = $env:ARCH
           $qualificationRoot = $wslRoot
-          $archive = "$qualificationRoot/comic-sol-$version-linux-$architecture.zip"
-          $metadata = "$qualificationRoot/comic-sol-$version-linux-$architecture.metadata.json"
-          $sbom = "$qualificationRoot/comic-sol-$version-linux-$architecture.sbom.json"
-          $script = (& wsl.exe wslpath -a (Resolve-Path scripts/release_qualification.py).Path).Trim()
-          $cosignPath = (Get-Command cosign.exe).Source
-          $wslCosignPath = (& wsl.exe wslpath -a $cosignPath).Trim()
-          & wsl.exe -- bash -lc "COMIC_SOL_COSIGN='$wslCosignPath' python3 '$script' --archive '$archive' --installer '$qualificationRoot/install.sh' --sha256 '$qualificationRoot/SHA256SUMS' --signature '$qualificationRoot/SHA256SUMS.sigstore.json' --version '$version' --metadata '$metadata' --sbom '$sbom' --platform wsl --architecture '$architecture' --summary '$qualificationRoot/summary-wsl.json'"
+          $harnessPath = (Resolve-Path scripts/release_qualification.py).Path
+          # The dispatch script below is static: no dynamic value is ever
+          # interpolated into a bash command string. Every argument crosses the
+          # WSL boundary as one direct argv element, and cosign crosses through
+          # the WSLENV environment handoff with automatic path translation.
+          $dispatchScript = @'
+          #!/bin/sh
+          set -eu
+          version="$1"
+          architecture="$2"
+          qualification_root="$3"
+          harness="$4"
+          case "$version" in
+            ''|*[!0-9A-Za-z.+_-]*)
+              echo "refusing WSL qualification: unsafe version argument: $version" >&2
+              exit 2
+              ;;
+          esac
+          exec python3 "$harness" \
+            --archive "$qualification_root/comic-sol-$version-linux-$architecture.zip" \
+            --installer "$qualification_root/install.sh" \
+            --sha256 "$qualification_root/SHA256SUMS" \
+            --signature "$qualification_root/SHA256SUMS.sigstore.json" \
+            --version "$version" \
+            --metadata "$qualification_root/comic-sol-$version-linux-$architecture.metadata.json" \
+            --sbom "$qualification_root/comic-sol-$version-linux-$architecture.sbom.json" \
+            --platform wsl \
+            --architecture "$architecture" \
+            --summary "$qualification_root/summary-wsl.json"
+          '@
+          $dispatch = Join-Path $root "wsl-qualify.sh"
+          $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+          [System.IO.File]::WriteAllText($dispatch, $dispatchScript.Replace("`r`n", "`n"), $utf8NoBom)
+          $wslDispatch = (& wsl.exe wslpath -a $dispatch).Trim()
+          $wslHarness = (& wsl.exe wslpath -a $harnessPath).Trim()
+          $env:WSLENV = "COMIC_SOL_COSIGN/up"
+          $env:COMIC_SOL_COSIGN = (Get-Command cosign.exe).Source
+          & wsl.exe --exec bash "$wslDispatch" "$version" "$architecture" "$qualificationRoot" "$wslHarness"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload WSL qualification summary
         if: always()
