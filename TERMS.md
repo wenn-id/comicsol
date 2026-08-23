@@ -1,16 +1,20 @@
 # Comic Sol Terms of Use
 
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-23
 
-Comic Sol is an open-source, local-first Codex plugin and skill bundle
-published by Alwan Juliawan (`wenn-id`). The source is available under the MIT
-License in this repository.
+Comic Sol is an open-source, local-first product published by Alwan Juliawan
+(`wenn-id`). It is distributed as several surfaces — a Codex Skill and Codex
+Plugin bundle, a source checkout, an installed Python CLI wheel, native
+portable archives and installers, an optional `stdio` MCP server, and an OCI
+image — and these terms apply to every surface. The source is available under
+the MIT License in this repository; bundled fonts carry their own licenses (see
+[`assets/README.md`](assets/README.md)).
 
 ## Use
 
 You may install, run, modify, and redistribute the software as allowed by the
 MIT License. Comic Sol creates editable plans, prompts, images, pages, PDFs,
-and QA artifacts using the capabilities available in the user's Codex session.
+and QA artifacts using the capabilities available in the user's agent session.
 
 You are responsible for:
 
@@ -28,9 +32,12 @@ free from similarity to other work.
 
 ## No hosted service
 
-The plugin has no Comic Sol account, hosted API, or remote storage. Codex,
-OpenAI, image providers, MCP servers, and other connected services are separate
-products with their own terms, privacy policies, limits, and charges.
+No surface has a Comic Sol account, hosted API, or remote storage. Agent hosts,
+image providers, MCP clients and servers, container runtimes, and other
+connected services are separate products with their own terms, privacy
+policies, limits, and charges. If you deploy the OCI image or any other
+surface to shared infrastructure, you are responsible for that deployment and
+its policies.
 
 ## Disclaimer
 
@@ -44,8 +51,10 @@ cause harm, unlawful conduct, or loss of data.
 
 For support, open an issue at
 [github.com/wenn-id/comicsol/issues](https://github.com/wenn-id/comicsol/issues).
+Sensitive reports follow the private route in [`SUPPORT.md`](SUPPORT.md);
+security reports follow [`SECURITY.md`](SECURITY.md).
 
 ## Changes
 
-These terms may change when the plugin architecture or distribution model
-changes. The date above identifies the current version of this document.
+These terms may change when the surfaces or distribution model change. The
+date above identifies the current version of this document.

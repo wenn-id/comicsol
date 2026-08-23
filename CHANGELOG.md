@@ -5,6 +5,50 @@
 `docs/releases/milestone-delivery.md` records what each milestone delivered and which tag
 carries it.
 
+### Added
+
+- Aligned the user-facing documentation contract from issue #213. New
+  `docs/surfaces.md` separates the Skill checkout, Codex Plugin, source
+  development, installed CLI wheel, native portable archive, MCP server, and OCI
+  image workflows, and states each surface's default project output root —
+  including that the MCP server has none (explicit `--root` only) and the OCI
+  image writes under `/data`. New `docs/support-matrix.md` publishes the
+  platform × install-mode × architecture × runtime matrix, including the WSL2,
+  Intel-macOS, MCP-extra, and OCI rows. `docs/onboarding.md` now names its
+  surface, pins an explicit `--output-root` in the happy path, and links both
+  documents. `references/image-provider-setup.md` was rewritten to be
+  capability-based, credential-safe, and vendor-neutral: vendor pointers are
+  isolated in a dated, explicitly non-normative appendix, and no setup step
+  puts an API key in a prompt or names a recommended vendor.
+
+- Expanded `SUPPORT.md`, `PRIVACY.md`, and `TERMS.md` from plugin-only documents
+  to cover every surface (Skill, plugin, source, installed CLI, native archive,
+  MCP, OCI). SUPPORT now asks for version, install mode, platform/runtime, the
+  structured `CS-<NAMESPACE>-<NNN>` error code, and `--json doctor` output, and
+  defines a private route for sensitive reports (security follows `SECURITY.md`;
+  privacy reports that cannot be sanitized use the same private channel).
+  PRIVACY names where each surface writes and TERMS states the local-first
+  boundary per surface.
+
+- Added the accessibility and localization limitations to the README: exported
+  PDFs are image-based, untagged, not PDF/UA, and carry no alt text; the
+  CLI/Skill surface is English-only; typography refuses shaping-dependent
+  scripts. The README artifact listing now includes the v2.2 artifacts
+  (`plan/character-identity-pack.json`, `logs/reference-selection.json`,
+  `logs/repair-plan.json`, `qa/pages/page-NNN.json` page-QA 2.1 records,
+  `panels/*/sfx-audit.json`) and states the evidence limits of QA artifacts, and
+  the README links SUPPORT, PRIVACY, TERMS, typography, accessibility,
+  surfaces, and the support matrix. `tests/test_user_docs.py` pins these
+  contracts.
+
+- Added project URLs, classifiers, keywords, and maintainer metadata to
+  `pyproject.toml`, and a wheel-METADATA acceptance contract:
+  `comic_sol_product.release` now validates the built wheel's METADATA (project
+  URLs, classifier families, keywords, maintainer, `Requires-Python >=3.11`,
+  SPDX `License-Expression`, and rejection of deprecated `License ::`
+  classifiers) alongside the existing member checks, with offline tests in
+  `tests/test_clean_install.py`.
+
 ### Security
 
 - Completed the supply-chain provenance gap from issue #211. The complete release subject
