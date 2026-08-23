@@ -263,5 +263,198 @@ class ProductCliTests(unittest.TestCase):
         self.assertIn('"status": "INIT"', stdout)
 
 
+class FailClosedContractTests(unittest.TestCase):
+    """The CLI must emit one canonical envelope for every failure path."""
+
+    def invoke(self, argv: list[str]) -> tuple[int, str, str]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = cli.main(argv)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_json_parse_error_emits_exactly_one_envelope(self):
+        for argv in (["--json", "validate"], ["validate", "--json"], ["--json"]):
+            with self.subTest(argv=argv):
+                code, stdout, stderr = self.invoke(argv)
+
+                self.assertEqual(2, code)
+                self.assertEqual("", stderr)
+                self.assertEqual(1, len(stdout.splitlines()))
+                payload = json.loads(stdout)
+                self.assertEqual({"ok", "command", "data", "error"}, set(payload))
+                self.assertFalse(payload["ok"])
+                self.assertIsNone(payload["command"])
+                self.assertIsNone(payload["data"])
+                self.assertEqual("CS-CLI-001", payload["error"]["code"])
+                self.assertEqual("invalid-request", payload["error"]["category"])
+                self.assertTrue(payload["error"]["recovery"])
+                self.assertTrue(payload["error"]["detail"])
+
+    def test_human_parse_error_stays_on_stderr(self):
+        code, stdout, stderr = self.invoke(["validate"])
+
+        self.assertEqual(2, code)
+        self.assertEqual("", stdout)
+        self.assertIn("ERROR CS-CLI-001 [invalid-request]", stderr)
+        self.assertIn("Recovery:", stderr)
+
+    def test_version_and_help_remain_successful_exits(self):
+        for argv in (["--version"], ["--help"]):
+            with self.subTest(argv=argv):
+                stdout = io.StringIO()
+                with self.assertRaises(SystemExit) as exit_context, redirect_stdout(stdout):
+                    cli.main(argv)
+                self.assertEqual(0, exit_context.exception.code)
+                self.assertTrue(stdout.getvalue())
+
+    def test_json_unexpected_exception_fails_closed_with_redacted_detail(self):
+        secret = r"C:\Users\acer\Comic Sol\private"
+        with mock.patch.object(cli, "_load_engine", side_effect=KeyError(f"lost {secret}")):
+            code, stdout, stderr = self.invoke(["--json", "status", "/tmp/project"])
+
+        self.assertEqual(1, code)
+        self.assertEqual("", stderr)
+        payload = json.loads(stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("status", payload["command"])
+        self.assertEqual("CS-PROJ-005", payload["error"]["code"])
+        self.assertEqual("internal-error", payload["error"]["category"])
+        # A space-containing path cannot be bounded token-wise, so the whole
+        # detail collapses to the exception type name instead of leaking it.
+        self.assertEqual("KeyError", payload["error"]["detail"])
+        self.assertNotIn("private", json.dumps(payload))
+        self.assertNotIn("acer", json.dumps(payload))
+
+    def test_json_unexpected_exception_redacts_quoted_paths_in_detail(self):
+        secret = "/var/Comic Sol/private"
+        with mock.patch.object(
+            cli, "_load_engine", side_effect=KeyError(f"cannot stat '{secret}'")
+        ):
+            code, stdout, stderr = self.invoke(["--json", "status", "/tmp/project"])
+
+        self.assertEqual(1, code)
+        payload = json.loads(stdout)
+        self.assertEqual("CS-PROJ-005", payload["error"]["code"])
+        self.assertIn("<path>", payload["error"]["detail"])
+        self.assertNotIn("private", json.dumps(payload))
+
+    def test_human_unexpected_exception_fails_closed_without_traceback(self):
+        with mock.patch.object(cli, "_load_engine", side_effect=AttributeError("boom")):
+            code, stdout, stderr = self.invoke(["status", "/tmp/project"])
+
+        self.assertEqual(1, code)
+        self.assertEqual("", stdout)
+        self.assertIn("ERROR CS-PROJ-005 [internal-error]", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_json_validate_reports_issues_as_failure_with_data_intact(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "project"
+            project.mkdir()
+            (project / "project.json").write_text("{ malformed", encoding="utf-8")
+
+            code, stdout, stderr = self.invoke(["--json", "validate", str(project)])
+
+        self.assertEqual(2, code)
+        self.assertEqual("", stderr)
+        payload = json.loads(stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("validate", payload["command"])
+        self.assertEqual("CS-QA-001", payload["error"]["code"])
+        self.assertEqual("quality-error", payload["error"]["category"])
+        self.assertIsInstance(payload["data"], list)
+        self.assertTrue(payload["data"])
+        self.assertTrue(
+            all({"path", "field", "message"} <= set(issue) for issue in payload["data"])
+        )
+
+    def test_human_validate_prints_issues_on_stdout_and_error_on_stderr(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "project"
+            project.mkdir()
+            (project / "project.json").write_text("{ malformed", encoding="utf-8")
+
+            code, stdout, stderr = self.invoke(["validate", str(project)])
+
+        self.assertEqual(2, code)
+        issues = json.loads(stdout)
+        self.assertTrue(issues)
+        self.assertIn("ERROR CS-QA-001 [quality-error]", stderr)
+
+    def test_json_validate_without_issues_remains_a_success_envelope(self):
+        class FakeValidation:
+            class ProjectValidationError(ValueError):
+                def __init__(self, issues):
+                    self.issues = tuple(issues)
+
+            @staticmethod
+            def validate_project(project_dir, stage):
+                return []
+
+        with (
+            mock.patch.object(cli, "_load_engine"),
+            mock.patch.object(cli, "_load_engine_module", return_value=FakeValidation),
+        ):
+            code, stdout, stderr = self.invoke(["--json", "validate", "/tmp/project"])
+
+        self.assertEqual(0, code)
+        self.assertEqual("", stderr)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual([], payload["data"])
+        self.assertIsNone(payload["error"])
+
+    def test_engine_validation_error_uses_the_same_fail_closed_envelope(self):
+        from dataclasses import dataclass
+
+        @dataclass
+        class _Issue:
+            path: str
+            field: str
+            message: str
+
+        class FakeValidation:
+            class ProjectValidationError(ValueError):
+                def __init__(self, issues):
+                    self.issues = tuple(issues)
+
+            @staticmethod
+            def validate_project(project_dir, stage):
+                raise FakeValidation.ProjectValidationError(
+                    [_Issue("project.json", "status", "unknown manifest status")]
+                )
+
+        with (
+            mock.patch.object(cli, "_load_engine"),
+            mock.patch.object(cli, "_load_engine_module", return_value=FakeValidation),
+        ):
+            code, stdout, stderr = self.invoke(["--json", "validate", "/tmp/project"])
+
+        self.assertEqual(2, code)
+        payload = json.loads(stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("CS-QA-001", payload["error"]["code"])
+        self.assertEqual(
+            [{"path": "project.json", "field": "status", "message": "unknown manifest status"}],
+            payload["data"],
+        )
+
+    def test_json_unknown_stage_is_invalid_data_not_an_mcp_request_error(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "project"
+            project.mkdir()
+
+            code, stdout, stderr = self.invoke(
+                ["--json", "validate", str(project), "--stage", "bogus"]
+            )
+
+        self.assertEqual(2, code)
+        payload = json.loads(stdout)
+        self.assertEqual("CS-PROJ-001", payload["error"]["code"])
+        self.assertEqual("invalid-data", payload["error"]["category"])
+        self.assertEqual("invalid-input", payload["error"]["legacy_category"])
+
+
 if __name__ == "__main__":
     unittest.main()
