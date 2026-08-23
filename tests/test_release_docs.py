@@ -22,6 +22,7 @@ class ReleaseDocumentationTests(unittest.TestCase):
         cls.root = Path(__file__).resolve().parents[1]
         cls.readme = (cls.root / "README.md").read_text(encoding="utf-8")
         cls.install = (cls.root / "docs/install.md").read_text(encoding="utf-8")
+        cls.install_manual = (cls.root / "docs/install-manual.md").read_text(encoding="utf-8")
         cls.changelog = (cls.root / "CHANGELOG.md").read_text(encoding="utf-8")
         cls.notes = (cls.root / f"docs/releases/v{__version__}.md").read_text(encoding="utf-8")
         cls.release_workflow = (cls.root / ".github/workflows/release.yml").read_text(
@@ -77,7 +78,7 @@ class ReleaseDocumentationTests(unittest.TestCase):
         self.assertIn(f"v{__version__}", self.readme)
         self.assertIn("SHA256SUMS", self.readme)
         self.assertIn("sigstore", self.readme.lower())
-        self.assertIn("docker compose", self.install)
+        self.assertIn("docker compose", self.install_manual)
 
     def test_v2_stable_criteria_is_authoritative_and_complete(self):
         criteria = self.stable_criteria
@@ -278,32 +279,48 @@ class ReleaseDocumentationTests(unittest.TestCase):
         ):
             self.assertIn(phrase, criteria)
 
-    def test_install_guide_covers_every_supported_lifecycle(self):
+    def test_install_guide_covers_recommended_and_manual_lifecycles(self):
         for phrase in (
-            "installers/install.sh",
-            "installers/install.ps1",
-            "--sha256",
-            "-SHA256",
+            "--release v2.0.0rc6",
+            "-Release v2.0.0rc6",
             "--uninstall",
             "-Uninstall",
             "active-version",
             "rollback",
-            "comic-sol --version",
-            "comic-sol doctor",
             "SHA256SUMS",
             "SHA256SUMS.sigstore.json",
+            "cosign",
+            "absolute `doctor` command",
+        ):
+            self.assertIn(phrase, self.install)
+        for phrase in (
+            "install.sh",
+            "install.ps1",
+            "--sha256",
+            "-SHA256",
             "-Checksums",
             "-Signature",
             "--checksums",
             "--signature",
+            "comic-sol doctor",
             "CycloneDX",
-            "sigstore",
         ):
-            self.assertIn(phrase, self.install)
+            self.assertIn(phrase, self.install_manual)
+        self.assertEqual(3, self.install.count("sh ./install.sh --release v2.0.0rc6"))
+        self.assertEqual(1, self.install.count(".\\install.ps1 -Release v2.0.0rc6"))
+        self.assertIn(
+            '--certificate-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/tags/${RELEASE}"',
+            self.install_manual,
+        )
+        self.assertIn("not published yet", self._collapsed(self.install))
+        self.assertIn(
+            "cannot bind that identity to one caller-selected exact tag",
+            self._collapsed(self.install_manual),
+        )
         self.assertIn("$HOME/.local/share/comic-sol", self.install)
         self.assertIn("$HOME\\AppData\\Local\\ComicSol", self.install)
-        self.assertIn("projects are preserved", self.install.lower())
-        self.assertNotIn("curl | sh", self.install.lower())
+        self.assertIn("User projects", self.install)
+        self.assertNotIn("curl | sh", (self.install + self.install_manual).lower())
 
     def test_release_notes_and_changelog_identify_rc_limitations(self):
         for document in (self.changelog, self.notes):
@@ -383,6 +400,7 @@ class SupplyChainProvenanceContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.root = Path(__file__).resolve().parents[1]
         cls.install = (cls.root / "docs/install.md").read_text(encoding="utf-8")
+        cls.install_manual = (cls.root / "docs/install-manual.md").read_text(encoding="utf-8")
         cls.trust_chain = (cls.root / "docs/releases/release-trust-chain.md").read_text(
             encoding="utf-8"
         )
@@ -459,9 +477,11 @@ class SupplyChainProvenanceContractTests(unittest.TestCase):
         self.assertIn("no `ghcr.io` image", install_collapsed)
 
     def test_install_guide_documents_pre_execution_installer_verification(self):
-        section = self.install.split("## Verify installer bytes before first execution", 1)[
-            1
-        ].split("\n## ", 1)[0]
+        section = " ".join(
+            self.install_manual.split("## Verify installer bytes before first execution", 1)[1]
+            .split("\n## ", 1)[0]
+            .split()
+        )
         for phrase in (
             "bootstrap gap",
             "cosign verify-blob",
@@ -478,7 +498,7 @@ class SupplyChainProvenanceContractTests(unittest.TestCase):
         self.assertIn("gh attestation verify ./install.sh", section)
         self.assertIn(".\\install.ps1", section)
         # The manual cosign example must stay executable: no doubled backslashes.
-        self.assertNotIn("\\\\", self.install)
+        self.assertNotIn("\\\\", section)
 
     def test_rollback_runbook_preserves_immutable_evidence(self):
         collapsed = " ".join(self.runbook.split())

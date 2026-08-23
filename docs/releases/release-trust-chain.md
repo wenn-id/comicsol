@@ -7,7 +7,7 @@ release and the chain of trust that binds them to one immutable tag, commit,
 workflow run, and set of bytes. It is the reference for
 [`v2.0-stable-criteria.md`](v2.0-stable-criteria.md) section 5; where the two
 disagree, the criteria win and this file must be fixed. The installer-facing
-verification commands live in [`docs/install.md`](../install.md).
+verification commands live in [`docs/install-manual.md`](../install-manual.md#verify-installer-bytes-before-first-execution).
 
 ## Release subject set
 
@@ -123,7 +123,7 @@ Verification walks the chain in this order, and every step is fail-closed:
    `release-evidence.{json,md}` digests under the release workflow identity.
 
 An external verifier can reproduce steps 4–6 with public data alone: the
-`cosign verify-blob` command in [`docs/install.md`](../install.md), the
+`cosign verify-blob` command in [`docs/install-manual.md`](../install-manual.md#verify-installer-bytes-before-first-execution), the
 `SHA256SUMS` digest lines, and `gh attestation verify <asset> --repo
 wenn-id/comicsol --signer-workflow wenn-id/comicsol/.github/workflows/release.yml`.
 
@@ -163,7 +163,7 @@ procedure — download the installer from the release (not a branch), verify the
 Sigstore bundle over `SHA256SUMS`, confirm the installer's digest appears in
 the signed manifest, optionally verify its build-provenance attestation with
 `gh attestation verify`, and only then run it — is documented for both
-`install.sh` and `install.ps1` in [`docs/install.md`](../install.md#verify-installer-bytes-before-first-execution).
+`install.sh` and `install.ps1` in [`docs/install-manual.md`](../install-manual.md#verify-installer-bytes-before-first-execution).
 
 ## Dependency-lock provenance
 

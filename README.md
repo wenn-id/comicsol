@@ -24,7 +24,22 @@ requests, documentation, and releases happen here.
 
 ## Install
 
-Requirements are Python 3.11+ and `Pillow==12.3.0`. Resolve one Python 3.11+ launcher per device, store it as `PYTHON`, then use `"$PYTHON"` consistently for each run. Image creation additionally
+### Native core CLI (recommended)
+
+For the bundled core CLI, use the exact-tag installer path in
+[`docs/install.md`](docs/install.md). The guide is prepared for the unpublished
+`v2.0.0rc6` candidate and becomes executable when that tag's assets appear on
+the Releases page. It automatically selects the supported native asset, verifies
+the tag-bound Sigstore manifest and archive digest, runs staged `doctor`, and
+prints one absolute doctor command to run next. Advanced local-archive, source,
+wheel, and OCI procedures live separately in
+[`docs/install-manual.md`](docs/install-manual.md).
+
+### Codex Skill checkout
+
+The Skill surface requires Python 3.11+ and `Pillow==12.3.0`. Resolve one Python
+3.11+ launcher per device, store it as `PYTHON`, then use `"$PYTHON"`
+consistently for each run. Image creation additionally
 requires an image-generation capability exposed to the active agent session; Comic
 Sol never embeds provider credentials. Comic Sol requires no Comic Sol account or
 demo credentials, although a Codex session and the selected image provider may
@@ -88,15 +103,9 @@ checkout, installed CLI wheel, native portable archive, MCP server, and OCI
 image — each with its own start command and default output root;
 [`docs/surfaces.md`](docs/surfaces.md) separates them, and
 [`docs/support-matrix.md`](docs/support-matrix.md) publishes the full
-platform × install-mode × architecture × runtime matrix.
-
-Install the portable CLI from a checkout and verify the bundled deterministic
-engine, fonts, and templates:
-
-```bash
-"$PYTHON" -m pip install .
-comic-sol --json doctor
-```
+platform × install-mode × architecture × runtime matrix. Source and wheel
+installation are advanced core-CLI paths documented in
+[`docs/install-manual.md`](docs/install-manual.md#source-and-wheel-installation).
 
 ### Recommended companion: Superpowers
 
@@ -136,8 +145,11 @@ Skill, and references, so installed execution does not require a system Python.
 Every native bundle includes `SHA256SUMS`, a Sigstore bundle for that manifest,
 deterministic metadata, and a CycloneDX SBOM. The RC artifacts use keyless
 Sigstore verification (not Authenticode-signed or Apple-notarized); verify the
-manifest signature and archive digest before execution. Exact install, upgrade, rollback,
-uninstall, and security instructions are in [`docs/install.md`](docs/install.md). The authoritative
+manifest signature and archive digest before execution. The recommended path,
+upgrade, rollback, and uninstall instructions are in
+[`docs/install.md`](docs/install.md); bootstrap verification and advanced
+installation procedures are in
+[`docs/install-manual.md`](docs/install-manual.md). The authoritative
 stable-release checklist is [`docs/releases/v2.0-stable-criteria.md`](docs/releases/v2.0-stable-criteria.md),
 the complete release subject set and trust chain — including the OCI distribution
 decision — is [`docs/releases/release-trust-chain.md`](docs/releases/release-trust-chain.md), and the
@@ -152,8 +164,8 @@ The `2.0.0rc*` prereleases shipped the v2.0 product line, not the v2.0 milestone
 afterwards.
 
 Container and Compose deployment commands are documented in
-[`docs/install.md`](docs/install.md); they are optional and are not required for
-the normal local CLI workflow.
+[`docs/install-manual.md`](docs/install-manual.md#oci-image); they are optional
+and are not required for the normal local CLI workflow.
 
 Native uninstall removes only the runtime. User projects and separately managed
 MCP client configurations remain preserved.

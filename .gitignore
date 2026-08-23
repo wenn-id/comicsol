@@ -5,6 +5,7 @@ __pycache__/
 .Python
 build/
 dist/
+native/
 .native-dist/
 *.egg-info/
 
@@ -30,6 +31,7 @@ comic-sol-output/
 
 # Coverage reports from the local quality baseline
 .coverage
+coverage.json
 coverage.xml
 coverage-html/
 

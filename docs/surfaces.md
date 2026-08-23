@@ -114,7 +114,7 @@ persists outside that volume.
   `comic-sol doctor --output-root /data/...`; or `docker compose up`.
 - **Default output root:** `/data` inside the container; map it to a host volume
   to keep projects.
-- **Details:** [`docs/install.md` → OCI image](install.md#oci-image).
+- **Details:** [`docs/install-manual.md` → OCI image](install-manual.md#oci-image).
 
 ## Surface summary
 

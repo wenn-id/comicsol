@@ -58,7 +58,9 @@ Notes on each mode:
   default seccomp profile are supported; the image is not published for other
   architectures and there is no registry image. See
   [`docs/install.md` → OCI image](install.md#oci-image) for the verification
-  commands and the hardening audit each release runs.
+  commands and the hardening audit each release runs, and
+  [`docs/install-manual.md` → OCI image](install-manual.md#oci-image) for the
+  manual and advanced installation overview.
 
 ## Runtime extras
 
