@@ -30,6 +30,9 @@ class PluginBundleTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
+    def test_handoff_contract_module_is_a_managed_bundle_path(self):
+        self.assertIn(Path("scripts/handoff.py"), sync_plugin_bundle.synchronized_paths())
+
     def test_starter_assets_are_managed_bundle_paths(self):
         synchronized = set(sync_plugin_bundle.synchronized_paths())
         for starter in sync_plugin_bundle.STARTER_IDS:

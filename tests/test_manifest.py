@@ -144,11 +144,12 @@ class ManifestTests(unittest.TestCase):
         manifest_path = project / "project.json"
         before = manifest_path.read_bytes()
         real_fsync = project_io.fsync_directory
+        project_identity = project.resolve()
         failed = False
 
         def fail_after_manifest_publish(path):
             nonlocal failed
-            if Path(path) == project and not failed:
+            if Path(path).resolve() == project_identity and not failed:
                 failed = True
                 raise OSError("injected migration publication failure")
             return real_fsync(path)

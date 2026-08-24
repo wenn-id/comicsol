@@ -1,9 +1,13 @@
 import hashlib
 import json
 import tempfile
+import threading
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from unittest import mock
+
+import scripts.handoff as handoff
 
 from scripts.core_primitives import canonical_artifact_bytes, canonical_json_bytes
 from scripts.handoff import (
@@ -23,6 +27,7 @@ from scripts.handoff import (
     validate_generation_receipt,
     validate_handoff_manifest,
 )
+from scripts.project_io import ProjectLock
 
 
 PROMPT_SHA256 = "a" * 64
@@ -244,6 +249,33 @@ class GenerationContractTests(unittest.TestCase):
         self.assertNotEqual(first["job_id"], second["job_id"])
         self.assertNotEqual(second["job_id"], reversed_references["job_id"])
 
+    def test_job_references_are_canonical_local_character_or_scene_pngs(self):
+        for path in (
+            "project.json",
+            "prompts/panels/p01-01.txt",
+            "references/characters/mira.txt",
+        ):
+            with self.subTest(path=path):
+                job = valid_job()
+                job["references"][0]["path"] = path
+                self.assert_invalid(validate_generation_job, job, "references[0].path")
+
+        scene_job = build_generation_job(
+            subject_kind="panel",
+            subject_id="p01-01",
+            prompt_path="prompts/panels/p01-01.txt",
+            prompt_sha256=PROMPT_SHA256,
+            references=[{"path": "references/scenes/hall.png", "sha256": REFERENCE_SHA256}],
+            requested_dimensions={"width": 736, "height": 1136},
+            requested_aspect_ratio="46:71",
+            attempt_kind="initial",
+            retry_limit=2,
+            batch_id="panels-001",
+            target_path="panels/attempts/p01-01/initial-001.png",
+        )
+        self.assertEqual([], validate_generation_job(valid_job()))
+        self.assertEqual([], validate_generation_job(scene_job))
+
     def test_contracts_reject_unsafe_paths_secrets_and_raw_payload_fields(self):
         job = valid_job()
         job["prompt_path"] = "../private/prompt.txt"
@@ -257,7 +289,9 @@ class GenerationContractTests(unittest.TestCase):
             ("provider", "token=super-secret-value"),
             ("model", "/home/creator/private/model.safetensors"),
             ("provider", "https://creator:hunter2@example.invalid"),
+            ("provider", "https:api.example.com/v1"),
             ("model", "file:///home/creator/private/model.safetensors"),
+            ("model", "file:private-data"),
             ("provider", "https://[malformed"),
         ):
             with self.subTest(field=field, value=value):
@@ -443,6 +477,92 @@ class LockedScopeTests(unittest.TestCase):
                 prompt_paths=["prompts/panels/p01-01.txt", "prompts/panels/p01-02.txt"],
                 reference_paths=["references/characters/mira.png"],
             )
+
+    def test_locked_scope_holds_project_lock_through_discovery_and_comparison(self):
+        expected = locked_scope_sha256(
+            self.project,
+            prompt_paths=["prompts/panels/p01-01.txt", "prompts/panels/p01-02.txt"],
+            reference_paths=["references/characters/mira.png"],
+        )
+        discovery_entered = threading.Event()
+        release_discovery = threading.Event()
+        comparison_entered = threading.Event()
+        release_comparison = threading.Event()
+        contender_started = threading.Event()
+        contender_acquired = threading.Event()
+        verification_errors = []
+        real_complete_scope_paths = handoff._complete_scope_paths
+        real_compare_digest = handoff.hmac.compare_digest
+
+        def paused_complete_scope_paths(*args, **kwargs):
+            discovery_entered.set()
+            if not release_discovery.wait(5):
+                raise TimeoutError("test did not release locked-scope discovery")
+            return real_complete_scope_paths(*args, **kwargs)
+
+        def paused_compare_digest(*args, **kwargs):
+            comparison_entered.set()
+            if not release_comparison.wait(5):
+                raise TimeoutError("test did not release locked-scope comparison")
+            return real_compare_digest(*args, **kwargs)
+
+        def verify_scope():
+            try:
+                assert_locked_scope(
+                    self.project,
+                    expected,
+                    prompt_paths=[
+                        "prompts/panels/p01-01.txt",
+                        "prompts/panels/p01-02.txt",
+                    ],
+                    reference_paths=["references/characters/mira.png"],
+                )
+            except BaseException as error:
+                verification_errors.append(error)
+
+        def contend_for_project():
+            contender_started.set()
+            with ProjectLock(self.project):
+                contender_acquired.set()
+
+        verifier = threading.Thread(target=verify_scope)
+        contender = threading.Thread(target=contend_for_project)
+        blocked_during_discovery = False
+        blocked_during_comparison = False
+        discovery_observed = False
+        comparison_observed = False
+        with (
+            mock.patch.object(
+                handoff, "_complete_scope_paths", side_effect=paused_complete_scope_paths
+            ),
+            mock.patch.object(handoff.hmac, "compare_digest", side_effect=paused_compare_digest),
+        ):
+            verifier.start()
+            try:
+                discovery_observed = discovery_entered.wait(5)
+                if discovery_observed:
+                    contender.start()
+                    self.assertTrue(contender_started.wait(5))
+                    blocked_during_discovery = not contender_acquired.wait(0.25)
+                    release_discovery.set()
+                    comparison_observed = comparison_entered.wait(5)
+                    if comparison_observed:
+                        blocked_during_comparison = not contender_acquired.wait(0.25)
+            finally:
+                release_discovery.set()
+                release_comparison.set()
+                verifier.join(5)
+                if contender.ident is not None:
+                    contender.join(5)
+
+        self.assertTrue(discovery_observed)
+        self.assertTrue(comparison_observed)
+        self.assertFalse(verifier.is_alive())
+        self.assertFalse(contender.is_alive())
+        self.assertEqual([], verification_errors)
+        self.assertTrue(blocked_during_discovery)
+        self.assertTrue(blocked_during_comparison)
+        self.assertTrue(contender_acquired.is_set())
 
     def test_scope_hash_rejects_omitted_authoritative_inputs(self):
         with self.assertRaisesRegex(HandoffContractError, "all generation prompts"):

@@ -56,6 +56,7 @@ BUNDLED_SCRIPTS = (
     "export_pdf.py",
     "font_cmap.py",
     "font_coverage.py",
+    "handoff.py",
     "input_limits.py",
     "layouts.py",
     "lifecycle_contracts.py",
