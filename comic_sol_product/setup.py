@@ -398,6 +398,19 @@ def _backup_path(path: Path) -> Path:
     return path.with_name(f"{path.name}.bak-{stamp}")
 
 
+def _fsync_directory(descriptor: int) -> None:
+    try:
+        os.fsync(descriptor)
+    except OSError as error:
+        if sys.platform == "darwin" and error.errno in {
+            errno.EINVAL,
+            errno.ENOTSUP,
+            errno.EOPNOTSUPP,
+        }:
+            return
+        raise
+
+
 def _write_backup(path: Path, data: bytes, *, directory: _ConfigDirectory | None = None) -> None:
     """Create one private backup without following a pre-existing path."""
     if directory is None:
@@ -428,7 +441,7 @@ def _write_backup(path: Path, data: bytes, *, directory: _ConfigDirectory | None
             else os.open(path.parent, os.O_RDONLY)
         )
         try:
-            os.fsync(directory_descriptor)
+            _fsync_directory(directory_descriptor)
         finally:
             os.close(directory_descriptor)
 
@@ -568,7 +581,7 @@ def _atomic_write(
                 else os.open(path.parent, os.O_RDONLY)
             )
             try:
-                os.fsync(directory_descriptor)
+                _fsync_directory(directory_descriptor)
             finally:
                 os.close(directory_descriptor)
     finally:

@@ -363,6 +363,31 @@ class ClientSetupTests(unittest.TestCase):
 
         self.assertEqual(b"candidate", config.read_bytes())
 
+    def test_darwin_publish_tolerates_unsupported_directory_fsync(self):
+        config = self.home / "config.json"
+        original = b"original"
+        config.write_bytes(original)
+        snapshot = client_setup._read_snapshot(config)
+        real_fsync = os.fsync
+
+        def fail_directory_fsync(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                raise OSError(errno.ENOTSUP, "directory fsync unavailable")
+            real_fsync(descriptor)
+
+        with (
+            mock.patch.object(client_setup.sys, "platform", "darwin"),
+            mock.patch.object(
+                client_setup,
+                "_rename_exchange",
+                side_effect=OSError(errno.ENOTSUP, "exchange unavailable"),
+            ),
+            mock.patch.object(client_setup.os, "fsync", side_effect=fail_directory_fsync),
+        ):
+            client_setup._atomic_write(config, b"candidate", expected=snapshot)
+
+        self.assertEqual(b"candidate", config.read_bytes())
+
     def test_adapter_detect_failure_is_per_client(self):
         class DetectFailure:
             name = "detect-failure"
