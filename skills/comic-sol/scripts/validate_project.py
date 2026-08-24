@@ -58,6 +58,7 @@ from .sfx_verification import (
 )
 from .schema import (
     CURRENT_PROJECT_SCHEMA_VERSION,
+    LEGACY_PROJECT_SCHEMA_VERSION,
     MIN_READER_PROJECT_SCHEMA_VERSION,
     SUPPORTED_PROJECT_SCHEMA_VERSIONS,
 )
@@ -323,7 +324,7 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
     """Validate the project manifest structure and references."""
     path = "project.json"
     issues: list[ValidationIssue] = []
-    required_fields = {
+    base_required_fields = {
         "project_id",
         "title",
         "created_at",
@@ -337,11 +338,17 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         "panels",
         "warnings",
     }
+    declared_version = data.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
+    is_legacy = declared_version == LEGACY_PROJECT_SCHEMA_VERSION
+    required_fields = set(base_required_fields)
     fields = required_fields | {"schema_version", "blocked_from", "blocked_reason"}
+    if not is_legacy:
+        required_fields.add("handoff")
+        fields.add("handoff")
     root = _object(data, fields, required_fields, issues, path, "")
     if root is None:
         return _sorted(issues)
-    schema_version = root.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
+    schema_version = root.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
     if (
         not isinstance(schema_version, str)
         or schema_version not in SUPPORTED_PROJECT_SCHEMA_VERSIONS
@@ -356,6 +363,49 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
                 f"{CURRENT_PROJECT_SCHEMA_VERSION}"
             ),
         )
+    if not is_legacy:
+        handoff_fields = {"contract_version", "locked_scope_sha256", "manifest_path"}
+        handoff = _object(
+            root.get("handoff"),
+            handoff_fields,
+            handoff_fields,
+            issues,
+            path,
+            "handoff",
+        )
+        if handoff is not None:
+            if handoff.get("contract_version") != "1.0":
+                _add(issues, path, "handoff.contract_version", "must equal 1.0")
+            _sha256(
+                handoff.get("locked_scope_sha256"),
+                issues,
+                path,
+                "handoff.locked_scope_sha256",
+                nullable=True,
+            )
+            _relative_path(
+                handoff.get("manifest_path"),
+                issues,
+                path,
+                "handoff.manifest_path",
+                nullable=True,
+            )
+            locked_scope = handoff.get("locked_scope_sha256")
+            manifest_path = handoff.get("manifest_path")
+            if (locked_scope is None) != (manifest_path is None):
+                _add(
+                    issues,
+                    path,
+                    "handoff",
+                    "locked_scope_sha256 and manifest_path must both be null or both populated",
+                )
+            if manifest_path is not None and manifest_path != "handoff/manifest.json":
+                _add(
+                    issues,
+                    path,
+                    "handoff.manifest_path",
+                    "must equal handoff/manifest.json when populated",
+                )
     _identifier(root.get("project_id"), issues, path, "project_id")
     _narrative_field(root.get("title"), issues, path, "title", max_chars=MAX_TITLE_CHARS)
     _timestamp(root.get("created_at"), issues, path, "created_at")

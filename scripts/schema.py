@@ -9,16 +9,40 @@ import re
 from .core_primitives import canonical_artifact_bytes
 from .project_io import ProjectTransaction, read_json_nofollow
 
-CURRENT_PROJECT_SCHEMA_VERSION = "1.0"
-MIN_READER_PROJECT_SCHEMA_VERSION = "1.0"
-SUPPORTED_PROJECT_SCHEMA_VERSIONS = frozenset({CURRENT_PROJECT_SCHEMA_VERSION})
+CURRENT_PROJECT_SCHEMA_VERSION = "1.1"
+LEGACY_PROJECT_SCHEMA_VERSION = "1.0"
+MIN_READER_PROJECT_SCHEMA_VERSION = LEGACY_PROJECT_SCHEMA_VERSION
+SUPPORTED_PROJECT_SCHEMA_VERSIONS = frozenset(
+    {LEGACY_PROJECT_SCHEMA_VERSION, CURRENT_PROJECT_SCHEMA_VERSION}
+)
 
 Manifest = dict[str, object]
 Migration = Callable[[Manifest], Manifest]
+
+
+def _migrate_1_0_to_1_1(manifest: Manifest) -> Manifest:
+    """Add only the version-1.1 handoff root to a copied 1.0 manifest."""
+    source_version = manifest.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
+    if source_version != LEGACY_PROJECT_SCHEMA_VERSION:
+        raise ValueError("project migration source must be schema 1.0")
+    if "handoff" in manifest:
+        raise ValueError("project schema 1.0 must not contain a handoff object")
+    migrated = dict(manifest)
+    migrated["handoff"] = {
+        "contract_version": "1.0",
+        "locked_scope_sha256": None,
+        "manifest_path": None,
+    }
+    migrated["schema_version"] = CURRENT_PROJECT_SCHEMA_VERSION
+    return migrated
+
+
 # Migrations are deliberately explicit and keyed by source version. A future
 # schema change must add a hook here, update the version constants, and add a
 # fixture/test before it can be accepted.
-PROJECT_MIGRATIONS: dict[tuple[str, str], Migration] = {}
+PROJECT_MIGRATIONS: dict[tuple[str, str], Migration] = {
+    (LEGACY_PROJECT_SCHEMA_VERSION, CURRENT_PROJECT_SCHEMA_VERSION): _migrate_1_0_to_1_1,
+}
 _VERSION_PATTERN = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 
 
@@ -118,9 +142,9 @@ def read_project_manifest(
     # Pre-schema manifests are the legacy 1.0 representation. Normalize only
     # in memory so every downstream validator/consumer sees one contract.
     had_schema_version = "schema_version" in manifest
-    version = manifest.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
+    version = manifest.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
     ensure_supported_project_schema(version)
-    manifest.setdefault("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
+    manifest.setdefault("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
     if not normalize_legacy and not had_schema_version:
         manifest.pop("schema_version", None)
     return manifest
@@ -129,10 +153,10 @@ def read_project_manifest(
 def migrate_project_manifest(project_dir: Path) -> Manifest:
     """Run a registered migration transactionally, or fail without mutation.
 
-    A manifest already at ``CURRENT_PROJECT_SCHEMA_VERSION`` — including a
-    pre-schema manifest, which is the legacy representation of that version — is
-    normalized in memory and returned without opening a transaction, so reading
-    one never leaves a lock file or journal directory behind.
+    A manifest already at ``CURRENT_PROJECT_SCHEMA_VERSION`` is returned without
+    opening a transaction. A pre-schema manifest is the legacy 1.0
+    representation: reads normalize it in memory, while this explicit mutating
+    operation routes it through the registered migration.
 
     Otherwise a migration receives an in-memory manifest and must return a
     complete manifest for ``CURRENT_PROJECT_SCHEMA_VERSION``. The project file is
@@ -142,7 +166,7 @@ def migrate_project_manifest(project_dir: Path) -> Manifest:
     project_dir = Path(project_dir)
     manifest_path = (project_dir / "project.json").absolute()
     current = _read_manifest(manifest_path)
-    current_version = current.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
+    current_version = current.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
     if current_version == CURRENT_PROJECT_SCHEMA_VERSION:
         current.setdefault("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
         return current
@@ -150,7 +174,7 @@ def migrate_project_manifest(project_dir: Path) -> Manifest:
         # The check above is advisory and unlocked. The manifest on disk now,
         # under the lock, is the only one that may be migrated and republished.
         manifest = _read_manifest(manifest_path)
-        source_version = manifest.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
+        source_version = manifest.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
         if source_version == CURRENT_PROJECT_SCHEMA_VERSION:
             manifest.setdefault("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
             return manifest

@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -32,11 +33,12 @@ from scripts.schema import (  # noqa: E402
     CURRENT_PROJECT_SCHEMA_VERSION,
     MIN_READER_PROJECT_SCHEMA_VERSION,
     PROJECT_MIGRATIONS,
+    SUPPORTED_PROJECT_SCHEMA_VERSIONS,
     UnsupportedSchemaVersionError,
     migrate_project_manifest,
     read_project_manifest,
 )
-from scripts import comic_sol, letter_panels  # noqa: E402
+from scripts import comic_sol, letter_panels, project_io  # noqa: E402
 
 
 class ManifestTests(unittest.TestCase):
@@ -47,10 +49,18 @@ class ManifestTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
-    def test_template_uses_lettering_cache_version_three_only(self):
+    def test_template_uses_project_schema_1_1_and_preserves_stage_versions(self):
         manifest = read_json(ROOT / "templates/manifest.json")
 
-        self.assertEqual("1.0", manifest["schema_version"])
+        self.assertEqual("1.1", manifest["schema_version"])
+        self.assertEqual(
+            {
+                "contract_version": "1.0",
+                "locked_scope_sha256": None,
+                "manifest_path": None,
+            },
+            manifest["handoff"],
+        )
         self.assertEqual(
             {
                 "composition": "1",
@@ -64,8 +74,9 @@ class ManifestTests(unittest.TestCase):
         )
 
     def test_project_schema_contract_is_explicit_and_readable(self):
-        self.assertEqual("1.0", CURRENT_PROJECT_SCHEMA_VERSION)
+        self.assertEqual("1.1", CURRENT_PROJECT_SCHEMA_VERSION)
         self.assertEqual("1.0", MIN_READER_PROJECT_SCHEMA_VERSION)
+        self.assertEqual({"1.0", "1.1"}, set(SUPPORTED_PROJECT_SCHEMA_VERSIONS))
         project = init_project(
             self.root,
             "Schema Contract",
@@ -73,15 +84,23 @@ class ManifestTests(unittest.TestCase):
             {"mode": "short_prompt", "language": "en"},
         )
         manifest = read_project_manifest(project / "project.json")
-        self.assertEqual("1.0", manifest["schema_version"])
+        self.assertEqual("1.1", manifest["schema_version"])
+        self.assertEqual(
+            {
+                "contract_version": "1.0",
+                "locked_scope_sha256": None,
+                "manifest_path": None,
+            },
+            manifest["handoff"],
+        )
+
+    def _copy_schema_1_0_fixture(self, name="legacy-project"):
+        project = self.root / name
+        shutil.copytree(ROOT / "tests/fixtures/project-schema-1.0", project)
+        return project
 
     def test_legacy_manifest_without_schema_version_is_normalized_without_write(self):
-        project = init_project(
-            self.root,
-            "Legacy Schema",
-            b"Schema contract source",
-            {"mode": "short_prompt", "language": "en"},
-        )
+        project = self._copy_schema_1_0_fixture()
         manifest_path = project / "project.json"
         manifest = read_json(manifest_path)
         manifest.pop("schema_version")
@@ -89,10 +108,60 @@ class ManifestTests(unittest.TestCase):
         before = manifest_path.read_bytes()
 
         read_manifest = read_project_manifest(manifest_path)
-        self.assertEqual(CURRENT_PROJECT_SCHEMA_VERSION, read_manifest["schema_version"])
+
+        self.assertEqual("1.0", read_manifest["schema_version"])
+        self.assertNotIn("handoff", read_manifest)
         self.assertEqual(before, manifest_path.read_bytes())
+        self.assertFalse((project / ".comic-sol.lock").exists())
+        self.assertFalse((project / "logs").exists())
+
+    def test_explicit_migration_from_fixture_changes_only_schema_and_handoff(self):
+        project = self._copy_schema_1_0_fixture("migration-success")
+        manifest_path = project / "project.json"
+        original = read_json(manifest_path)
+
         migrated = migrate_project_manifest(project)
-        self.assertEqual(CURRENT_PROJECT_SCHEMA_VERSION, migrated["schema_version"])
+        published = read_json(manifest_path)
+
+        self.assertEqual(migrated, published)
+        self.assertEqual("1.1", migrated["schema_version"])
+        self.assertEqual(
+            {
+                "contract_version": "1.0",
+                "locked_scope_sha256": None,
+                "manifest_path": None,
+            },
+            migrated["handoff"],
+        )
+        unchanged = dict(migrated)
+        unchanged.pop("handoff")
+        unchanged["schema_version"] = "1.0"
+        self.assertEqual(original, unchanged)
+        self.assertEqual(canonical_json_bytes(published), canonical_json_bytes(migrated))
+
+    def test_injected_publication_failure_rolls_back_legacy_fixture_bytes(self):
+        project = self._copy_schema_1_0_fixture("migration-rollback")
+        manifest_path = project / "project.json"
+        before = manifest_path.read_bytes()
+        real_fsync = project_io.fsync_directory
+        failed = False
+
+        def fail_after_manifest_publish(path):
+            nonlocal failed
+            if Path(path) == project and not failed:
+                failed = True
+                raise OSError("injected migration publication failure")
+            return real_fsync(path)
+
+        with mock.patch.object(
+            project_io, "fsync_directory", side_effect=fail_after_manifest_publish
+        ):
+            with self.assertRaisesRegex(OSError, "injected migration publication failure"):
+                migrate_project_manifest(project)
+
+        self.assertTrue(failed)
+        self.assertEqual(before, manifest_path.read_bytes())
+        ProjectTransaction.recover(project)
         self.assertEqual(before, manifest_path.read_bytes())
 
     def test_migrating_a_current_manifest_neither_publishes_nor_journals(self):

@@ -241,7 +241,12 @@ class TemplateContractTests(unittest.TestCase):
             raw = (ROOT / "templates" / name).read_bytes()
             self.assertTrue(raw.endswith(b"\n"), name)
             data = json.loads(raw)
-            expected_schema = "2.0" if name == "panel-record.json" else "1.0"
+            if name == "panel-record.json":
+                expected_schema = "2.0"
+            elif name == "manifest.json":
+                expected_schema = "1.1"
+            else:
+                expected_schema = "1.0"
             self.assertEqual(expected_schema, data["schema_version"])
             expected = (
                 json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -371,9 +376,44 @@ class StrictSchemaValidationTests(unittest.TestCase):
 
         legacy = valid_manifest()
         legacy.pop("schema_version")
+        legacy.pop("handoff", None)
         self.assertEqual([], validate_manifest(legacy))
 
+        explicit_legacy = deepcopy(legacy)
+        explicit_legacy["schema_version"] = "1.0"
+        self.assertEqual([], validate_manifest(explicit_legacy))
+
+        populated = valid_manifest()
+        populated["handoff"] = {
+            "contract_version": "1.0",
+            "locked_scope_sha256": "a" * 64,
+            "manifest_path": "handoff/manifest.json",
+        }
+        self.assertEqual([], validate_manifest(populated))
+
         cases = []
+        data = valid_manifest()
+        data.pop("handoff")
+        cases.append((data, "handoff"))
+        data = valid_manifest()
+        data["handoff"]["unexpected"] = True
+        cases.append((data, "handoff.unexpected"))
+        data = valid_manifest()
+        data["handoff"]["contract_version"] = "1.1"
+        cases.append((data, "handoff.contract_version"))
+        data = valid_manifest()
+        data["handoff"]["locked_scope_sha256"] = "ABC"
+        cases.append((data, "handoff.locked_scope_sha256"))
+        data = valid_manifest()
+        data["handoff"]["locked_scope_sha256"] = "a" * 64
+        cases.append((data, "handoff"))
+        data = valid_manifest()
+        data["handoff"]["manifest_path"] = "handoff/manifest.json"
+        cases.append((data, "handoff"))
+        for unsafe_path in ("../handoff/manifest.json", "/tmp/manifest.json", "C:/manifest.json"):
+            data = valid_manifest()
+            data["handoff"]["manifest_path"] = unsafe_path
+            cases.append((data, "handoff.manifest_path"))
         data = valid_manifest()
         data["surprise"] = True
         cases.append((data, "surprise"))

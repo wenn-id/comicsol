@@ -9,11 +9,11 @@ before allowing a transition.
 
 ## Project-schema compatibility and migration policy
 
-The current project manifest schema is `1.0`. The minimum reader and writer version is
-`1.0`; the current reader accepts only explicitly supported versions from
-`SUPPORTED_PROJECT_SCHEMA_VERSIONS` in `scripts/schema.py`.
+The current project manifest schema is `1.1`. The minimum readable version is
+`1.0`; writers emit `1.1`, and the current reader accepts only explicitly supported
+versions from `SUPPORTED_PROJECT_SCHEMA_VERSIONS` in `scripts/schema.py`.
 
-- Writers emit the current `1.0` manifest and update tests when the version changes.
+- Writers emit the current `1.1` manifest and update tests when the version changes.
 - Readers reject unsupported or future versions with `UnsupportedSchemaVersionError`; they
   never guess, downgrade, or rewrite a project.
 - A migration is allowed only through an explicit `(source_version, target_version)` hook
@@ -24,13 +24,15 @@ The current project manifest schema is `1.0`. The minimum reader and writer vers
   remain byte-for-byte unchanged.
 - A manifest that needs no migration is returned without opening that transaction, so
   `migrate_project_manifest()` creates no `.comic-sol.lock` and no `logs/transactions/<id>/`
-  directory for a no-op. A manifest with no `schema_version` is the legacy representation of
-  the current version: it is normalized in memory only and the file on disk is untouched.
+  directory for a no-op. A manifest with no `schema_version` is the legacy `1.0`
+  representation: it is normalized to `1.0` in memory only and the file on disk is
+  untouched. Reading never invokes migration.
 - That unlocked version check is advisory. The manifest is re-read and its version
   re-checked inside the transaction, so a writer that migrates the project between the two
   reads can at worst cause an unnecessary transaction, never an incorrect publish.
-- This release has no older manifest representation registered for automatic migration;
-  an older artifact is rejected until a reviewed migration is added.
+- The registered `PROJECT_MIGRATIONS[("1.0", "1.1")]` route copies the legacy
+  object, adds the default `handoff` object, changes `schema_version` to `1.1`, and
+  changes nothing else. Only an explicit mutating handoff operation may invoke it.
 
 The project manifest version is independent from artifact-level versions such as panel QA
 `2.0`, page QA `2.1`, and stage cache versions. Those artifacts retain their own validators.
@@ -66,7 +68,8 @@ The manifest is created from `templates/manifest.json` and is the authoritative 
 
 | Field | Type | Required | Rules |
 |---|---|---:|---|
-| `schema_version` | string | yes | Exactly `"1.0"` |
+| `schema_version` | string | yes | Exactly `"1.1"` for current writers; `"1.0"` remains readable |
+| `handoff` | object | yes in 1.1 | Exact portable-handoff binding; absent in 1.0 |
 | `project_id` | string | yes | Valid ID; also the base output/PDF name |
 | `title` | string | yes | Non-empty after initialization; at most 200 characters, without secrets or PII |
 | `created_at` | timestamp | yes | Set once at initialization |
@@ -81,6 +84,13 @@ The manifest is created from `templates/manifest.json` and is the authoritative 
 | `warnings` | array[string] | yes | Unresolved project-level warning messages; each at most 500 characters and free of secrets or PII |
 | `blocked_from` | enum \| null | yes | Linear status held when blocked; `null` otherwise |
 | `blocked_reason` | string \| null | yes | Stable sanitized category when blocked; `null` otherwise |
+
+### `handoff`
+
+Schema `1.1` requires exactly `contract_version`, `locked_scope_sha256`, and
+`manifest_path`. `contract_version` is `"1.0"`. New and freshly migrated projects set
+the latter two fields to `null`; once prepared, they are a lowercase SHA-256 and exactly
+`handoff/manifest.json`. Schema `1.0` manifests do not contain this object.
 
 ### Manifest statuses
 
@@ -97,7 +107,7 @@ While `status` is `BLOCKED`, `blocked_from` and `blocked_reason` are both set; i
 | Field | Type | Rules |
 |---|---|---|
 | `mode` | enum | `short_prompt`, `pasted_story`, `source_file`, or `resume` |
-| `source_path` | relative path | Exactly `source/input.txt` in version 1.0 |
+| `source_path` | relative path | Exactly `source/input.txt` in project manifest versions 1.0 and 1.1 |
 | `source_sha256` | SHA-256 or null | Null only in the untouched template; required after initialization |
 | `request_path` | relative path | Exactly `source/request.json` |
 | `language` | string | Non-empty BCP-47-like language tag chosen from the input |
@@ -163,6 +173,69 @@ Contains exactly the versions in the canonical manifest template:
 
 Each value is a non-empty decimal version string. Lettering stage version `3` invalidates cached output from the earlier renderer without changing the artifact schema version.
 
+## Portable handoff contracts
+
+The provider-neutral contracts in `scripts/handoff.py` all use schema `1.0`. They
+contain project-relative paths, hashes, bounded declarations, and sanitized categories
+only. Unknown fields, absolute or traversing paths, credential-shaped values, and raw
+provider payloads are invalid.
+
+### Batch map: `generation/batches.json`
+
+The root contains exactly `schema_version` and `batches`. Each ordered batch contains
+exactly `batch_id`, `kind` (`reference` or `panel`), and a non-empty unique `job_ids`
+array. A job belongs to at most one batch.
+
+### Generation job: `generation/jobs/<job-id>.json`
+
+A job contains exactly `schema_version`, `job_id`, `subject_kind`, `subject_id`,
+`prompt_path`, `prompt_sha256`, ordered `references` (`path` and `sha256`), nullable
+`requested_dimensions` (`width` and `height`), nullable `requested_aspect_ratio`,
+`attempt_kind`, `retry_limit`, `batch_id`, and `target_path`. Subject kind is `reference`
+or `panel`; panel IDs use `pNN-NN`. Attempt kind is `initial`, `visual_retry`, or
+`transient_repeat`, and retry limit is 0–2. Panel targets are restricted to
+`panels/attempts/<panel-id>/<attempt-kind>-<sequence>.<png|jpg|webp>`; reference
+targets use the equivalent `references/attempts/<reference-id>/` namespace. A job
+cannot name project metadata or another subject's attempt path.
+
+`job_id` is the full lowercase SHA-256 of compact canonical JSON containing contract
+version `1.0` and all job fields above except `schema_version` and `job_id`. Reference
+array order is significant. The job artifact digest is the SHA-256 of its canonical
+on-disk JSON bytes.
+
+### Generation receipt: `generation/receipts/<attempt-id>.json`
+
+A receipt contains exactly `schema_version`, `attempt_id`, source `job_id` and
+`job_sha256`, accepted local `raster_path` and `raster_sha256`, `executor_kind`,
+`executor_id`, nullable sanitized `provider` and `model`, `capabilities_used`, `outcome`,
+and sanitized `category`. Executor kind is `native-tool` or `external-tool`.
+`capabilities_used` contains exactly the booleans `reference_images`, `dimensions`, and
+`localized_edit`. A receipt never contains credentials, endpoint URLs, private absolute
+paths, or raw responses; outcome categories follow the stable bounded category grammar.
+
+### Handoff manifest: `handoff/manifest.json`
+
+The root contains exactly `schema_version`, `project_schema_version`, `project_id`,
+`stage`, `locked_scope_sha256`, `batches`, `jobs`, and `required_artifacts`.
+`project_schema_version` is `1.1`; `batches` binds `generation/batches.json` by hash;
+each job binds its canonical path and hash and reports `missing`, `ready`, `completed`,
+`failed`, or `stale`; required artifacts are path/hash pairs.
+
+The locked-scope digest covers canonical content for `plan/story-plan.json`,
+`plan/character-bible.json`, `plan/storyboard.json`, every generation prompt,
+`logs/reference-selection.json`, `generation/batches.json`, and every selected local
+reference asset. The supplied prompt and reference path sets must exactly match the regular
+`.txt` files in both generation-prompt directories and the selected paths in the reference
+selection plan; an omitted or extra path fails closed. JSON is compact-canonicalized before
+content hashing. File records are sorted by project-relative path, serialized with the
+contract version, and hashed, so filesystem and caller ordering cannot change the digest.
+
+Executor declarations contain exactly a stable `capability_id`, `executor_kind`,
+`text_to_image`, `local_raster`, and the three support flags above. Declarations that do
+not affirm text-to-image and local-raster output are incompatible. Compatible executors
+rank native before external, then by reference support, dimensions support, localized-edit
+support, and finally `capability_id`; provider or model names never influence ranking.
+
 ## Character bible: `plan/character-bible.json`
 
 Top-level fields are `schema_version` and `characters`. `characters` is an array of unique character objects. It may be empty in the initial template. Every speaking or recurring character must be present before `STORYBOARDED`; one-off background figures need no record.
@@ -198,8 +271,8 @@ in `scripts/character_identity.py` is its compatibility gate. Top-level fields a
 The pack is derived from `plan/character-bible.json` rather than authored from scratch.
 `character_identity.py PROJECT_DIR --derive` publishes it atomically through the project
 transaction, and re-running it on an unchanged project rewrites byte-identical content. It
-is not a manifest `artifacts` descriptor, so `project.json` keeps schema version `1.0`; the
-pack is validated by its own gate instead.
+is not a manifest `artifacts` descriptor and does not change the independent
+identity-pack schema version; the pack is validated by its own gate instead.
 
 ### Character entry
 
@@ -255,8 +328,8 @@ and `panels`, one entry per storyboard panel in page and reading order.
 `plan/character-identity-pack.json` and `plan/storyboard.json` and publishes it atomically
 through the project transaction. It refuses to publish while the identity pack gate reports
 an issue, and re-running it on an unchanged project rewrites byte-identical content. The
-plan is provenance rather than a manifest `artifacts` descriptor, so `project.json` keeps
-schema version `1.0`.
+plan is provenance rather than a manifest `artifacts` descriptor and does not change
+its independent schema version.
 
 ### Panel entry
 

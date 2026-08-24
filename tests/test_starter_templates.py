@@ -83,7 +83,15 @@ class StarterTemplateTests(unittest.TestCase):
                     )
                     manifest = read_json(project / "project.json")
 
-                    self.assertEqual("1.0", manifest["schema_version"])
+                    self.assertEqual("1.1", manifest["schema_version"])
+                    self.assertEqual(
+                        {
+                            "contract_version": "1.0",
+                            "locked_scope_sha256": None,
+                            "manifest_path": None,
+                        },
+                        manifest["handoff"],
+                    )
                     self.assertEqual("STORYBOARDED", manifest["status"])
                     self.assertEqual(bundle.page_count, manifest["settings"]["page_count"])
                     self.assertEqual(len(bundle.panel_ids), manifest["settings"]["panel_count"])

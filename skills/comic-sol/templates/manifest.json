@@ -10,6 +10,11 @@
     "supports_reference_images": false
   },
   "created_at": "1970-01-01T00:00:00Z",
+  "handoff": {
+    "contract_version": "1.0",
+    "locked_scope_sha256": null,
+    "manifest_path": null
+  },
   "input": {
     "language": "en",
     "mode": "short_prompt",
@@ -19,7 +24,7 @@
   },
   "panels": [],
   "project_id": "comic-sol-project",
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "settings": {
     "max_panel_retries": 2,
     "page_count": 2,
