@@ -61,6 +61,7 @@ from .compose_pages import compose_project
 from .export_pdf import guarded_export
 from .render_report import render_report
 from .command_service import CommandService
+from .starter_templates import STARTER_IDS
 
 # Root directory allowed for operations. All project IDs resolve relative to this.
 OUTPUT_ROOT: Path
@@ -91,6 +92,9 @@ _REQUEST_ERROR_PREFIXES = (
     "request language must be a non-empty language tag",
     "request title must be a non-empty string of at most 200 characters",
     "page count must be an integer from 1 to 4",
+    "starter must be one of",
+    "starter cannot be combined with explicit source, request, or page count",
+    "blank init requires source_text and request_settings",
     "transition warning must be a non-empty string of at most 500 characters",
     "override reason must be a non-empty string of at most 1000 characters",
     "narrative field must not contain secrets or credentials",
@@ -119,6 +123,24 @@ _IMAGE_CAPABILITY_INPUT_SCHEMA = {
 ImageCapabilityInput = Annotated[
     object,
     WithJsonSchema(_IMAGE_CAPABILITY_INPUT_SCHEMA),
+]
+_STARTER_INPUT_SCHEMA = {
+    "anyOf": [
+        {"type": "string", "enum": list(STARTER_IDS)},
+        {"type": "null"},
+    ]
+}
+StarterInput = Annotated[str | None, WithJsonSchema(_STARTER_INPUT_SCHEMA)]
+PageCountInput = Annotated[
+    Any,
+    WithJsonSchema(
+        {
+            "anyOf": [
+                {"type": "integer", "minimum": 1, "maximum": 4},
+                {"type": "null"},
+            ]
+        }
+    ),
 ]
 
 
@@ -473,35 +495,51 @@ def comic_doctor(
 @mcp.tool()
 def comic_init(
     title: str,
-    source_text: str,
-    request_settings: dict[str, Any],
-    page_count: Annotated[
-        Any,
-        WithJsonSchema({"type": "integer", "minimum": 1, "maximum": 4}),
-    ] = 2,
+    source_text: str | None = None,
+    request_settings: dict[str, Any] | None = None,
+    page_count: PageCountInput = None,
+    starter: StarterInput = None,
 ) -> str:
-    """Initialize a new isolated 1-4 page project folder."""
+    """Initialize a blank project or one fixed provider-neutral v1 starter."""
     try:
         validate_narrative(title, message=TITLE_LIMIT_MESSAGE, max_chars=MAX_TITLE_CHARS)
-        if not isinstance(source_text, str) or len(source_text.encode("utf-8")) > 200 * 1024:
-            raise ValueError("source must be at most 200 KiB as UTF-8 bytes")
-        if not isinstance(request_settings, dict):
-            raise TypeError("request_settings must be a JSON object")
-        validate_request_settings(request_settings)
-        if (
-            isinstance(page_count, bool)
-            or not isinstance(page_count, int)
-            or not 1 <= page_count <= 4
-        ):
-            raise ValueError("page count must be an integer from 1 to 4")
-        project_dir = _command_service().execute(
-            "init",
-            output_root=OUTPUT_ROOT,
-            title=title,
-            source=source_text.encode("utf-8"),
-            request=request_settings,
-            page_count=page_count,
-        )
+        if starter is not None:
+            if not isinstance(starter, str) or starter not in STARTER_IDS:
+                raise ValueError("starter must be one of " + ", ".join(STARTER_IDS))
+            if source_text is not None or request_settings is not None or page_count is not None:
+                raise ValueError(
+                    "starter cannot be combined with explicit source, request, or page count"
+                )
+            project_dir = _command_service().execute(
+                "init",
+                output_root=OUTPUT_ROOT,
+                title=title,
+                starter=starter,
+            )
+        else:
+            if source_text is None or request_settings is None:
+                raise ValueError("blank init requires source_text and request_settings")
+            if not isinstance(source_text, str) or len(source_text.encode("utf-8")) > 200 * 1024:
+                raise ValueError("source must be at most 200 KiB as UTF-8 bytes")
+            if not isinstance(request_settings, dict):
+                raise TypeError("request_settings must be a JSON object")
+            validate_request_settings(request_settings)
+            if page_count is None:
+                page_count = 2
+            if (
+                isinstance(page_count, bool)
+                or not isinstance(page_count, int)
+                or not 1 <= page_count <= 4
+            ):
+                raise ValueError("page count must be an integer from 1 to 4")
+            project_dir = _command_service().execute(
+                "init",
+                output_root=OUTPUT_ROOT,
+                title=title,
+                source=source_text.encode("utf-8"),
+                request=request_settings,
+                page_count=page_count,
+            )
         return str(project_dir.name)
     except Exception as e:
         raise _request_error(e) from None

@@ -47,7 +47,7 @@ class ProductCliTests(unittest.TestCase):
                 mock.patch.object(cli, "default_output_root", return_value=output),
                 mock.patch(
                     "builtins.input",
-                    side_effect=["", "", "", "A courier carries the last light.", ""],
+                    side_effect=["", "", "", "", "A courier carries the last light.", ""],
                 ),
             ):
                 code, stdout, stderr = self.invoke(["init", "--interactive"])
@@ -61,6 +61,7 @@ class ProductCliTests(unittest.TestCase):
         self.assertEqual("comic-sol-project", stdout.strip())
         self.assertIn("Comic Sol guided project initializer", stderr)
         self.assertIn("Project name", stderr)
+        self.assertIn("Starter", stderr)
         self.assertIn("Page count", stderr)
         self.assertIn("Story source", stderr)
         self.assertIn("Output location", stderr)
@@ -87,6 +88,7 @@ class ProductCliTests(unittest.TestCase):
                 "builtins.input",
                 side_effect=[
                     "Schema Parity",
+                    "",
                     "4",
                     "file",
                     str(source),
@@ -134,12 +136,61 @@ class ProductCliTests(unittest.TestCase):
             )
             self.assertEqual(4, automated_manifest["settings"]["page_count"])
 
+    def test_guided_init_can_select_a_starter_without_story_prompts(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory) / "projects"
+            with mock.patch(
+                "builtins.input",
+                side_effect=["Guided Starter", "minimal-one-page", str(output)],
+            ):
+                code, stdout, stderr = self.invoke(["init", "--interactive"])
+
+            project = output / stdout.strip()
+            manifest = json.loads((project / "project.json").read_text("utf-8"))
+
+        self.assertEqual(0, code)
+        self.assertEqual("STORYBOARDED", manifest["status"])
+        self.assertEqual(1, manifest["settings"]["page_count"])
+        self.assertIn("Starter", stderr)
+        self.assertNotIn("Story source", stderr)
+        self.assertNotIn("Page count", stderr)
+
+    def test_noninteractive_starter_rejects_explicit_blank_inputs(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "story.md"
+            source.write_text("conflict", encoding="utf-8")
+            for flag in (
+                ["--source", str(source)],
+                ["--request-json", str(root / "request.json")],
+                ["--page-count", "1"],
+            ):
+                with self.subTest(flag=flag):
+                    output = root / ("output-" + flag[0].removeprefix("--"))
+                    code, stdout, stderr = self.invoke(
+                        [
+                            "--json",
+                            "init",
+                            "--output-root",
+                            str(output),
+                            "--title",
+                            "Conflict",
+                            "--starter",
+                            "minimal-one-page",
+                            *flag,
+                        ]
+                    )
+                    self.assertEqual(2, code)
+                    self.assertEqual("", stderr)
+                    self.assertFalse(json.loads(stdout)["ok"])
+                    self.assertFalse(output.exists())
+
     def test_guided_init_reprompts_invalid_page_scope_without_creating_files(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             output = Path(temporary_directory) / "projects"
             with (
                 mock.patch.object(cli, "default_output_root", return_value=output),
-                mock.patch("builtins.input", side_effect=["Project", "0", "5", EOFError()]),
+                mock.patch("builtins.input", side_effect=["Project", "", "0", "5", EOFError()]),
             ):
                 code, stdout, stderr = self.invoke(["init", "--interactive"])
 

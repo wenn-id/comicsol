@@ -213,6 +213,19 @@ class McpServerUnitTests(unittest.TestCase):
             },
             set(capability_schema["properties"]),
         )
+        init_tool = next(tool for tool in tools if tool.name == "comic_init")
+        init_schema = getattr(init_tool, "inputSchema", None)
+        if init_schema is None:
+            init_schema = init_tool.input_schema
+        starter_schema = next(
+            option
+            for option in init_schema["properties"]["starter"]["anyOf"]
+            if option.get("type") == "string"
+        )
+        self.assertEqual(
+            {"minimal-one-page", "dialogue-two-page", "action-focused"},
+            set(starter_schema["enum"]),
+        )
 
     def test_status_routes_through_locked_recovery_without_changing_response(self):
         project = self.root / "project"
@@ -244,6 +257,38 @@ class McpServerUnitTests(unittest.TestCase):
         )
         manifest = read_json(self.root / project_id / "project.json")
         self.assertEqual(3, manifest["settings"]["page_count"])
+
+    def test_init_accepts_each_starter_without_changing_tool_surface(self):
+        for starter, page_count in (
+            ("minimal-one-page", 1),
+            ("dialogue-two-page", 2),
+            ("action-focused", 2),
+        ):
+            with self.subTest(starter=starter):
+                project_id = mcp_server.comic_init(
+                    f"MCP {starter}",
+                    starter=starter,
+                )
+                manifest = read_json(self.root / project_id / "project.json")
+                self.assertEqual("STORYBOARDED", manifest["status"])
+                self.assertEqual(page_count, manifest["settings"]["page_count"])
+
+    def test_init_rejects_starter_conflicts_before_project_allocation(self):
+        conflicts = (
+            {"source_text": "explicit"},
+            {"request_settings": {"language": "en", "mode": "short_prompt"}},
+            {"page_count": 1},
+        )
+        for conflict in conflicts:
+            with self.subTest(conflict=conflict):
+                before = list(self.root.iterdir())
+                with self.assertRaisesRegex(ToolError, "cannot be combined"):
+                    mcp_server.comic_init(
+                        "Conflict",
+                        starter="minimal-one-page",
+                        **conflict,
+                    )
+                self.assertEqual(before, list(self.root.iterdir()))
 
     def test_init_rejects_invalid_page_scope_before_project_allocation(self):
         before = list(self.root.iterdir())

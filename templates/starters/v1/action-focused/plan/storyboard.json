@@ -1,0 +1,249 @@
+{
+  "pages": [
+    {
+      "layout": "hero-top-two-bottom",
+      "number": 1,
+      "panels": [
+        {
+          "action": "Tavi pedals onto the skybridge as red cables whip in the crosswind.",
+          "beat": "The run begins at full speed.",
+          "characters": [
+            "tavi"
+          ],
+          "composition": "strong diagonal roadway leading from Tavi toward the far tower",
+          "continuity": [
+            "tavi:yellow storm cape",
+            "tavi:blue medicine capsule case",
+            "storm-bridge:red suspension cables above a rain-slick glass roadway"
+          ],
+          "expression": "focused urgency",
+          "id": "p01-01",
+          "lighting": "cold storm light with red warning reflections",
+          "negative": [
+            "generated dialogue",
+            "generated captions",
+            "watermark"
+          ],
+          "order": 1,
+          "rect": {
+            "height": 1176,
+            "width": 1472,
+            "x": 64,
+            "y": 64
+          },
+          "scene_id": "storm-bridge",
+          "shot": "extreme wide tracking shot",
+          "text": [
+            {
+              "anchor": "top-left",
+              "content": "Three minutes.",
+              "id": "p01-01-t01",
+              "kind": "caption",
+              "priority": 1,
+              "speaker": null
+            }
+          ]
+        },
+        {
+          "action": "A gust throws the rear wheel sideways while Tavi counters into the slide.",
+          "beat": "The storm attacks Tavi's balance.",
+          "characters": [
+            "tavi"
+          ],
+          "composition": "low wheel-level angle with rain streaks crossing the motion",
+          "continuity": [
+            "tavi:yellow storm cape",
+            "storm-bridge:red suspension cables above a rain-slick glass roadway"
+          ],
+          "expression": "jaw set in concentration",
+          "id": "p01-02",
+          "lighting": "sharp white lightning edge light",
+          "negative": [
+            "generated dialogue",
+            "generated captions",
+            "watermark"
+          ],
+          "order": 2,
+          "rect": {
+            "height": 1064,
+            "width": 720,
+            "x": 64,
+            "y": 1272
+          },
+          "scene_id": "storm-bridge",
+          "shot": "low-angle action close-up",
+          "text": [
+            {
+              "anchor": "bottom-left",
+              "content": "SKRRR",
+              "id": "p01-02-t01",
+              "kind": "sfx",
+              "priority": 1,
+              "render_mode": "generated-visual",
+              "speaker": null
+            }
+          ]
+        },
+        {
+          "action": "The bridge seam separates ahead as Tavi rises off the saddle.",
+          "beat": "The route becomes a jump.",
+          "characters": [
+            "tavi"
+          ],
+          "composition": "tight forward view with the widening seam dominating foreground",
+          "continuity": [
+            "tavi:blue medicine capsule case",
+            "storm-bridge:red suspension cables above a rain-slick glass roadway"
+          ],
+          "expression": "calm calculation",
+          "id": "p01-03",
+          "lighting": "red alarm strips reflecting on wet glass",
+          "negative": [
+            "generated text beyond authored SFX",
+            "speech bubbles",
+            "watermark"
+          ],
+          "order": 3,
+          "rect": {
+            "height": 1064,
+            "width": 720,
+            "x": 816,
+            "y": 1272
+          },
+          "scene_id": "storm-bridge",
+          "shot": "rider point-of-view shot",
+          "text": [
+            {
+              "anchor": "top-right",
+              "content": "CLANK",
+              "id": "p01-03-t01",
+              "kind": "sfx",
+              "priority": 1,
+              "render_mode": "generated-visual",
+              "speaker": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "layout": "two-top-hero-bottom",
+      "number": 2,
+      "panels": [
+        {
+          "action": "Tavi compresses low over the bicycle before the seam.",
+          "beat": "One controlled breath before commitment.",
+          "characters": [
+            "tavi"
+          ],
+          "composition": "compressed side profile with cape and cables streaming backward",
+          "continuity": [
+            "tavi:yellow storm cape",
+            "tavi:blue medicine capsule case",
+            "storm-bridge:red suspension cables above a rain-slick glass roadway"
+          ],
+          "expression": "steady resolve",
+          "id": "p02-01",
+          "lighting": "cool ambient storm light",
+          "negative": [
+            "generated dialogue",
+            "generated captions",
+            "watermark"
+          ],
+          "order": 1,
+          "rect": {
+            "height": 1064,
+            "width": 720,
+            "x": 64,
+            "y": 64
+          },
+          "scene_id": "storm-bridge",
+          "shot": "tight side-profile action shot",
+          "text": []
+        },
+        {
+          "action": "The bicycle launches over the open seam with both wheels airborne.",
+          "beat": "Tavi commits to the jump.",
+          "characters": [
+            "tavi"
+          ],
+          "composition": "silhouette suspended against the city void with clear landing line",
+          "continuity": [
+            "tavi:yellow storm cape",
+            "tavi:blue medicine capsule case",
+            "storm-bridge:red suspension cables above a rain-slick glass roadway"
+          ],
+          "expression": "fierce concentration",
+          "id": "p02-02",
+          "lighting": "lightning backlight around rider and bicycle",
+          "negative": [
+            "generated text beyond authored SFX",
+            "speech bubbles",
+            "watermark"
+          ],
+          "order": 2,
+          "rect": {
+            "height": 1064,
+            "width": 720,
+            "x": 816,
+            "y": 64
+          },
+          "scene_id": "storm-bridge",
+          "shot": "wide freeze-frame action shot",
+          "text": [
+            {
+              "anchor": "bottom-right",
+              "content": "WHOOSH",
+              "id": "p02-02-t01",
+              "kind": "sfx",
+              "priority": 1,
+              "render_mode": "generated-visual",
+              "speaker": null
+            }
+          ]
+        },
+        {
+          "action": "Tavi lands through the clinic gate and offers the dry blue capsule case to waiting hands.",
+          "beat": "Momentum resolves into a successful delivery.",
+          "characters": [
+            "tavi"
+          ],
+          "composition": "heroic low angle with bicycle foreground and bright clinic doors beyond",
+          "continuity": [
+            "tavi:yellow storm cape",
+            "tavi:blue medicine capsule case",
+            "clinic-gate:white clinic doors beyond the closing bridge gate"
+          ],
+          "expression": "breathless relief",
+          "id": "p02-03",
+          "lighting": "clean white clinic light cutting through blue rain",
+          "negative": [
+            "generated text",
+            "generated speech bubbles",
+            "watermark"
+          ],
+          "order": 3,
+          "rect": {
+            "height": 1176,
+            "width": 1472,
+            "x": 64,
+            "y": 1160
+          },
+          "scene_id": "clinic-gate",
+          "shot": "low-angle hero landing shot",
+          "text": [
+            {
+              "anchor": "top-left",
+              "content": "Delivery complete.",
+              "id": "p02-03-t01",
+              "kind": "caption",
+              "priority": 1,
+              "speaker": null
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "schema_version": "1.0"
+}

@@ -7,6 +7,17 @@ carries it.
 
 ### Added
 
+- Added three fixed, provider-neutral v1 starter bundles: `minimal-one-page`,
+  `dialogue-two-page`, and `action-focused`. Starter selection is available through
+  the installed CLI (including guided init), source CLI, `CommandService`, and the
+  existing `comic_init` MCP tool without changing the 17-tool surface. Each bundle
+  uses the standard source, request, story-plan, character-bible, storyboard, manifest,
+  artifact-descriptor, and stage-cache contracts; initialization publishes a normal
+  `STORYBOARDED` project atomically with no raster or QA evidence. Conflicting explicit
+  source/request/page-count inputs fail instead of being ignored. Doctor, package and
+  portable inventories, plugin synchronization, tests, and
+  [`references/starter-templates.md`](references/starter-templates.md) cover the new assets.
+
 - Added automatic, provider-neutral image-capability reporting to `doctor`. The
   active agent inspects its exposed tools and supplies one sanitized observation;
   source, installed CLI, and MCP doctor surfaces now distinguish healthy,

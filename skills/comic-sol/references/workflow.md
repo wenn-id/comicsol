@@ -69,7 +69,13 @@ then recover by status:
 - A non-blocked project with a stale stage uses `comic_sol.py invalidate PROJECT_DIR
   STAGE` from the earliest stale stage only.
 
-Initialization creates the generated directory boundary and `INIT` manifest.
+Initialization creates the generated directory boundary and `INIT` manifest. Alternatively,
+choose one fixed v1 starter with `--starter minimal-one-page`,
+`--starter dialogue-two-page`, or `--starter action-focused`; do not also pass source,
+request, or page-count flags. A starter runs the same standard validators and atomic
+publication path, records planning and storyboard artifacts, and begins at
+`STORYBOARDED`. It supplies no references, rasters, or QA evidence, so continue at stage
+4 and satisfy every later gate normally. See [starter templates](starter-templates.md).
 
 ### 2. Plan story and characters
 

@@ -30,6 +30,17 @@ class PluginBundleTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
+    def test_starter_assets_are_managed_bundle_paths(self):
+        synchronized = set(sync_plugin_bundle.synchronized_paths())
+        for starter in sync_plugin_bundle.STARTER_IDS:
+            for relative in sync_plugin_bundle.STARTER_FILES:
+                self.assertIn(
+                    Path("templates/starters/v1") / starter / relative,
+                    synchronized,
+                )
+        self.assertIn(Path("references/starter-templates.md"), synchronized)
+        self.assertIn(Path("scripts/starter_templates.py"), synchronized)
+
     def test_check_detects_a_deleted_bundled_script(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

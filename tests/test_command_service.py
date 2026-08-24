@@ -256,3 +256,47 @@ class CommandServiceContractTests(unittest.TestCase):
         self.engine.promote_attempt.assert_called_once_with(
             Path("project"), "p01-01", Path("attempt.png")
         )
+
+
+class StarterCommandServiceContractTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = types.SimpleNamespace(
+            init_project=Mock(return_value=Path("starter-demo")),
+            validate_source_bytes=Mock(),
+        )
+        self.service = CommandService(engine=self.engine)
+
+    def test_init_forwards_starter_without_blank_inputs(self):
+        self.assertEqual(
+            Path("starter-demo"),
+            self.service.execute(
+                "init",
+                output_root=Path("out"),
+                title="Demo",
+                starter="minimal-one-page",
+            ),
+        )
+        self.engine.validate_source_bytes.assert_not_called()
+        self.engine.init_project.assert_called_once_with(
+            Path("out"), "Demo", starter="minimal-one-page"
+        )
+
+    def test_init_rejects_each_starter_conflict_before_engine_call(self):
+        conflicts = (
+            {"source": b"story"},
+            {"request": {}},
+            {"page_count": 1},
+        )
+        for conflict in conflicts:
+            with (
+                self.subTest(conflict=conflict),
+                self.assertRaisesRegex(ValueError, "cannot be combined"),
+            ):
+                self.service.execute(
+                    "init",
+                    output_root=Path("out"),
+                    title="Demo",
+                    starter="minimal-one-page",
+                    **conflict,
+                )
+        self.engine.init_project.assert_not_called()

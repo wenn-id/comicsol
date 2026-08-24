@@ -1,0 +1,50 @@
+{
+  "pages": [
+    {
+      "layout": "full-page",
+      "number": 1,
+      "panels": [
+        {
+          "action": "Ilya cups both red-gloved hands around a bright green shoot as dawn reaches the rooftop.",
+          "beat": "A small act of protection turns the rooftop into a place of hope.",
+          "characters": [
+            "ilya"
+          ],
+          "composition": "Ilya and the shoot on the lower-right third with open dawn sky above",
+          "continuity": [
+            "ilya:red gardening gloves",
+            "rooftop-dawn:weathered concrete planters under a pale dawn sky"
+          ],
+          "expression": "quiet wonder",
+          "id": "p01-01",
+          "lighting": "soft gold dawn rim light",
+          "negative": [
+            "generated text",
+            "speech bubbles",
+            "watermark"
+          ],
+          "order": 1,
+          "rect": {
+            "height": 2272,
+            "width": 1472,
+            "x": 64,
+            "y": 64
+          },
+          "scene_id": "rooftop-dawn",
+          "shot": "wide environmental portrait",
+          "text": [
+            {
+              "anchor": "top-left",
+              "content": "One leaf is enough to begin.",
+              "id": "p01-01-t01",
+              "kind": "caption",
+              "priority": 1,
+              "speaker": null
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "schema_version": "1.0"
+}

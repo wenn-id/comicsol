@@ -1,5 +1,6 @@
 import io
 import json
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -47,6 +48,7 @@ class DoctorDiagnosticContractTests(unittest.TestCase):
                 "pillow",
                 "fonts",
                 "templates",
+                "starter-templates",
                 "references",
                 "output-root",
                 "mcp",
@@ -240,6 +242,20 @@ class DoctorDiagnosticContractTests(unittest.TestCase):
             )
             self.assertIn("failed safely", cast(str, check["message"]).lower())
             self.assertNotIn(secret, json.dumps(report, ensure_ascii=False))
+
+    def test_doctor_reports_missing_starter_bundle_as_not_ready(self):
+        with tempfile.TemporaryDirectory() as raw:
+            templates = Path(raw) / "templates"
+            shutil.copytree(comic_sol.TEMPLATES, templates)
+            missing = templates / "starters/v1/action-focused/plan/storyboard.json"
+            missing.unlink()
+            with mock.patch.object(comic_sol, "TEMPLATES", templates):
+                report = comic_sol.doctor_report(Path(raw) / "output")
+
+        check = next(check for check in report["checks"] if check["id"] == "starter-templates")
+        self.assertEqual("fail", check["status"])
+        self.assertIn("action-focused", cast(str, check["message"]))
+        self.assertFalse(report["ready"])
 
     def test_doctor_reports_incomplete_template_install_as_not_ready(self):
         with tempfile.TemporaryDirectory() as raw:

@@ -5,8 +5,7 @@ description: Create, storyboard, render, resume, repair, and export finished ori
 
 # Comic Sol
 
-Turn one natural-language request into a local, editable comic project. Reason about
-story and images, then delegate deterministic work to the bundled Python scripts.
+Turn one natural-language request into a local, editable comic project. Reason about story and images, then delegate deterministic work to the bundled Python scripts.
 
 ## Read progressively
 
@@ -75,9 +74,10 @@ Do not write `setup_batch_*.py`, `build_plans.py`, or equivalent helpers. The en
 
 ```text
 PYTHON scripts/comic_sol.py init --output-root OUTPUT_ROOT --title TITLE --source SOURCE --request-json REQUEST_JSON --page-count PAGE_COUNT
+PYTHON scripts/comic_sol.py init --output-root OUTPUT_ROOT --title TITLE --starter minimal-one-page|dialogue-two-page|action-focused
 ```
 
-AI agents and CI always use this fully specified non-interactive command; the installed CLI's optional `--interactive` wizard is for human terminal sessions.
+AI agents and CI always use a fully specified non-interactive command; the installed CLI's optional `--interactive` wizard is for human terminal sessions. For provider-neutral storyboard starting points and their no-raster/no-QA boundary, see [starter templates](references/starter-templates.md).
 
 For setup, edit only the semantic artifacts the engine expects (`plan/*.json`) through `transition` stages. Page QA later requires agent-authored
 `qa/pages/page-{NNN}.json` records. Hand-written scaffolding is the single largest

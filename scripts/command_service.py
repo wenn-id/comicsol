@@ -50,10 +50,29 @@ class CommandService:
         if command == "init":
             output_root = self._required(kwargs, "output_root")
             title = self._required(kwargs, "title")
+            starter = kwargs.get("starter")
+            image_capability = kwargs.get("image_capability")
+            if starter is not None:
+                conflicting = [
+                    name
+                    for name in ("source", "request", "page_count")
+                    if name in kwargs and kwargs[name] is not None
+                ]
+                if conflicting:
+                    raise ValueError(
+                        "starter cannot be combined with explicit source, request, or page count"
+                    )
+                if image_capability is None:
+                    return engine.init_project(output_root, title, starter=starter)
+                return engine.init_project(
+                    output_root,
+                    title,
+                    starter=starter,
+                    image_capability=image_capability,
+                )
             source = self._required(kwargs, "source")
             request = self._required(kwargs, "request")
             engine.validate_source_bytes(source, kwargs.get("suffix"))
-            image_capability = kwargs.get("image_capability")
             has_page_count = "page_count" in kwargs
             page_count = kwargs.get("page_count", 2)
             if image_capability is None:

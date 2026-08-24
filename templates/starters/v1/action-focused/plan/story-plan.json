@@ -1,0 +1,39 @@
+{
+  "beginning": "Tavi enters the skybridge as a storm alarm begins.",
+  "climax": "Tavi jumps the widening bridge seam with the medicine capsule secured.",
+  "ending": "The capsule reaches the clinic as the bridge locks behind Tavi.",
+  "logline": "A bicycle courier outruns a retracting skybridge to deliver urgent medicine.",
+  "rating": "teen",
+  "scenes": [
+    {
+      "characters": [
+        "tavi"
+      ],
+      "continuity_anchor": "red suspension cables above a rain-slick glass roadway",
+      "id": "storm-bridge",
+      "location": "a high pedestrian skybridge",
+      "purpose": "build speed and escalating environmental danger",
+      "time": "stormy afternoon"
+    },
+    {
+      "characters": [
+        "tavi"
+      ],
+      "continuity_anchor": "white clinic doors beyond the closing bridge gate",
+      "id": "clinic-gate",
+      "location": "the clinic entrance at the far bridge tower",
+      "purpose": "land the jump and complete the delivery",
+      "time": "stormy afternoon"
+    }
+  ],
+  "schema_version": "1.0",
+  "setting": "A vertical city linked by retractable glass skybridges.",
+  "theme": "Courage is motion guided by purpose.",
+  "title": "Crosswind Run",
+  "tone": [
+    "kinetic",
+    "urgent",
+    "optimistic"
+  ],
+  "turn": "The bridge begins retracting before Tavi reaches the center seam."
+}

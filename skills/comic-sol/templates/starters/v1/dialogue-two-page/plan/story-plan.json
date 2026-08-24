@@ -1,0 +1,41 @@
+{
+  "beginning": "Mara and Sol recognize each other across an empty platform.",
+  "climax": "Sol admits that silence felt safer than asking Mara to stay.",
+  "ending": "They board the last train side by side.",
+  "logline": "Two estranged friends use one delayed train to finally say what separated them.",
+  "rating": "teen",
+  "scenes": [
+    {
+      "characters": [
+        "mara",
+        "sol"
+      ],
+      "continuity_anchor": "blue platform bench beneath a flickering amber timetable",
+      "id": "quiet-platform",
+      "location": "an almost empty elevated train platform",
+      "purpose": "turn an awkward reunion into an honest conversation",
+      "time": "late night"
+    },
+    {
+      "characters": [
+        "mara",
+        "sol"
+      ],
+      "continuity_anchor": "open silver train doors beside the blue platform bench",
+      "id": "last-train",
+      "location": "the arriving last train",
+      "purpose": "resolve whether the friends leave together",
+      "time": "late night"
+    }
+  ],
+  "schema_version": "1.0",
+  "setting": "A rain-glossed elevated station after the city has gone quiet.",
+  "theme": "Honesty can reopen a path that pride closed.",
+  "title": "Between Trains",
+  "tone": [
+    "intimate",
+    "bittersweet",
+    "hopeful"
+  ],
+  "turn": "The delay announcement gives them ten more minutes together."
+}

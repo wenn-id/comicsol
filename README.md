@@ -138,17 +138,32 @@ responses use one stable envelope containing `ok`, `command`, `data`, and `error
 
 ### Guided project initialization
 
-The installed CLI can guide a new user through project name, 1–4 page scope,
-story prompt or local `.txt`/`.md` source, and output location:
+The installed CLI can guide a new user through project name, an optional bundled
+starter, 1–4 page scope and story input for blank projects, and output location:
 
 ```bash
 comic-sol init --interactive
 ```
 
-The defaults are `Comic Sol Project`, 2 pages, an English short prompt, and the
-platform-native output root. The wizard validates every answer before it creates
+The defaults are `Comic Sol Project`, a blank project, 2 pages, an English short
+prompt, and the platform-native output root. The wizard validates every answer before it creates
 the output root or project. It is explicit and human-only: `--interactive` cannot
 be combined with `--json` or init data flags.
+
+Three explicitly versioned, provider-neutral v1 starters are available:
+`minimal-one-page`, `dialogue-two-page`, and `action-focused`. A starter produces a
+normal `STORYBOARDED` project with standard plan/storyboard artifacts and no raster
+or QA evidence:
+
+```bash
+comic-sol --json init --output-root /absolute/projects \
+  --title "Bridge Run Draft" --starter action-focused
+```
+
+Starter selection supplies source, request settings, and page count as one coherent
+bundle, so combining it with `--source`, `--request-json`, or `--page-count` is
+rejected. See [starter templates](references/starter-templates.md) for intended use,
+format details, provider neutrality, and the QA boundary.
 
 Automation, CI, and AI agents use the equivalent non-interactive path, which
 never prompts. `--request-json` remains available when a caller needs to override

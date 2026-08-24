@@ -23,6 +23,22 @@ REQUIRED_RUNTIME_SUFFIXES = frozenset(
         "comic-sol/_internal/comic_sol_product/templates/manifest.json",
         "comic-sol/_internal/comic_sol_product/skill/SKILL.md",
         "comic-sol/_internal/comic_sol_product/skill/references/workflow.md",
+        "comic-sol/_internal/comic_sol_product/skill/references/starter-templates.md",
+    }
+    | {
+        f"comic-sol/_internal/comic_sol_product/templates/starters/v1/{starter_id}/{relative}"
+        for starter_id in (
+            "minimal-one-page",
+            "dialogue-two-page",
+            "action-focused",
+        )
+        for relative in (
+            "source/input.txt",
+            "source/request.json",
+            "plan/story-plan.json",
+            "plan/character-bible.json",
+            "plan/storyboard.json",
+        )
     }
 )
 

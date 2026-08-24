@@ -1,0 +1,41 @@
+{
+  "characters": [
+    {
+      "age_band": "adult",
+      "id": "ilya",
+      "motivation": "keep the rooftop garden alive",
+      "name": "Ilya",
+      "personality": [
+        "patient",
+        "observant"
+      ],
+      "pronouns": "they/them",
+      "reference_path": "references/characters/ilya.png",
+      "role": "rooftop gardener",
+      "speech": "few warm words",
+      "visual_fingerprint": {
+        "avoid": [
+          "logos",
+          "generated text"
+        ],
+        "face": "long face with soft dark eyes",
+        "hair": "short wind-tossed curls",
+        "invariants": [
+          "patched green overshirt",
+          "red gardening gloves"
+        ],
+        "palette": [
+          "sage green",
+          "warm gray",
+          "brick red"
+        ],
+        "signature_props": [
+          "small metal watering can"
+        ],
+        "silhouette": "slender figure with rolled sleeves",
+        "wardrobe": "patched green overshirt and charcoal trousers"
+      }
+    }
+  ],
+  "schema_version": "1.0"
+}

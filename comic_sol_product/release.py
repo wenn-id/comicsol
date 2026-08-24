@@ -10,6 +10,20 @@ from pathlib import Path
 from typing import Iterable
 
 
+_PACKAGED_STARTER_IDS = (
+    "minimal-one-page",
+    "dialogue-two-page",
+    "action-focused",
+)
+_PACKAGED_STARTER_FILES = (
+    "source/input.txt",
+    "source/request.json",
+    "plan/story-plan.json",
+    "plan/character-bible.json",
+    "plan/storyboard.json",
+)
+
+
 REQUIRED_WHEEL_MEMBERS = frozenset(
     {
         "comic_sol_product/engine/comic_sol.py",
@@ -20,12 +34,19 @@ REQUIRED_WHEEL_MEMBERS = frozenset(
         "comic_sol_product/engine/page_quality.py",
         "comic_sol_product/engine/pdf_quality.py",
         "comic_sol_product/engine/quality_sample.py",
+        "comic_sol_product/engine/starter_templates.py",
         "comic_sol_product/assets/fonts/ComicNeue-Regular.ttf",
         "comic_sol_product/assets/fonts/ComicNeue-Bold.ttf",
         "comic_sol_product/templates/manifest.json",
         "comic_sol_product/skill/SKILL.md",
         "comic_sol_product/skill/references/workflow.md",
         "comic_sol_product/skill/references/visual-qa.md",
+        "comic_sol_product/skill/references/starter-templates.md",
+    }
+    | {
+        f"comic_sol_product/templates/starters/v1/{starter_id}/{relative}"
+        for starter_id in _PACKAGED_STARTER_IDS
+        for relative in _PACKAGED_STARTER_FILES
     }
 )
 
@@ -33,10 +54,17 @@ REQUIRED_SDIST_SUFFIXES = frozenset(
     {
         "/SKILL.md",
         "/scripts/comic_sol.py",
+        "/scripts/starter_templates.py",
         "/assets/fonts/ComicNeue-Regular.ttf",
         "/templates/manifest.json",
         "/references/workflow.md",
+        "/references/starter-templates.md",
         "/comic_sol_product/cli.py",
+    }
+    | {
+        f"/templates/starters/v1/{starter_id}/{relative}"
+        for starter_id in _PACKAGED_STARTER_IDS
+        for relative in _PACKAGED_STARTER_FILES
     }
 )
 

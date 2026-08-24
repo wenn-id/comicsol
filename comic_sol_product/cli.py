@@ -20,6 +20,12 @@ from .errors import (
     safe_error_detail,
 )
 
+STARTER_IDS = (
+    "minimal-one-page",
+    "dialogue-two-page",
+    "action-focused",
+)
+
 
 class _ArgumentParser(argparse.ArgumentParser):
     """Parser that raises instead of exiting so every surface stays fail-closed.
@@ -83,6 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--title", help="project title")
     init.add_argument("--source", type=Path, help="UTF-8 .txt or .md story source")
     init.add_argument("--request-json", type=Path, help="optional request settings JSON")
+    init.add_argument(
+        "--starter",
+        choices=STARTER_IDS,
+        help="initialize from a bundled v1 storyboard starter",
+    )
     init.add_argument(
         "--page-count",
         type=int,
@@ -290,17 +301,28 @@ def _validate_init_arguments(arguments: argparse.Namespace) -> None:
                     arguments.source,
                     arguments.request_json,
                     arguments.page_count,
+                    arguments.starter,
                 )
             )
             or has_capability_flags
         ):
             raise CliUsageError("--interactive cannot be combined with init data arguments")
         return
-    missing = [
-        name
-        for name, value in (("--title", arguments.title), ("--source", arguments.source))
-        if value is None
-    ]
+    if arguments.starter is not None:
+        if any(
+            value is not None
+            for value in (arguments.source, arguments.request_json, arguments.page_count)
+        ):
+            raise CliUsageError(
+                "--starter cannot be combined with --source, --request-json, or --page-count"
+            )
+        missing = ["--title"] if arguments.title is None else []
+    else:
+        missing = [
+            name
+            for name, value in (("--title", arguments.title), ("--source", arguments.source))
+            if value is None
+        ]
     if missing:
         raise CliUsageError("the following arguments are required: " + ", ".join(missing))
 
@@ -333,6 +355,18 @@ def _prompt_page_count() -> int:
         print("Page count must be an integer from 1 to 4.", file=sys.stderr)
 
 
+def _prompt_starter() -> str | None:
+    choices = STARTER_IDS
+    label = "Starter (blank/" + "/".join(choices) + ")"
+    while True:
+        value = _prompt_value(label, "blank").lower()
+        if value in {"blank", "none"}:
+            return None
+        if value in choices:
+            return value
+        print("Starter must be blank or one of: " + ", ".join(choices) + ".", file=sys.stderr)
+
+
 def _read_source(engine: Any, source_path: Path) -> tuple[bytes, str]:
     """Read one bounded source file through the engine trust boundary."""
     project_io = _load_engine_module("project_io")
@@ -347,7 +381,15 @@ def _read_source(engine: Any, source_path: Path) -> tuple[bytes, str]:
 
 def _guided_init(
     engine: Any,
-) -> tuple[Path, str, bytes, str | None, dict[str, object], int]:
+) -> tuple[
+    Path,
+    str,
+    bytes | None,
+    str | None,
+    dict[str, object] | None,
+    int | None,
+    str | None,
+]:
     """Collect and validate the small set of choices needed for initialization."""
     print("Comic Sol guided project initializer", file=sys.stderr)
     while True:
@@ -363,34 +405,39 @@ def _guided_init(
             continue
         break
 
-    page_count = _prompt_page_count()
-    while True:
-        source_kind = _prompt_value("Story source (prompt/file)", "prompt").lower()
-        if source_kind in {"prompt", "p", "file", "f"}:
-            break
-        print("Story source must be prompt or file.", file=sys.stderr)
+    starter = _prompt_starter()
+    source: bytes | None = None
+    suffix: str | None = None
+    request: dict[str, object] | None = None
+    page_count: int | None = None
+    if starter is None:
+        page_count = _prompt_page_count()
+        while True:
+            source_kind = _prompt_value("Story source (prompt/file)", "prompt").lower()
+            if source_kind in {"prompt", "p", "file", "f"}:
+                break
+            print("Story source must be prompt or file.", file=sys.stderr)
 
-    if source_kind in {"prompt", "p"}:
-        while True:
-            source = _prompt_value("Story prompt").encode("utf-8")
-            try:
-                engine.validate_source_bytes(source)
-            except ValueError as error:
-                print(f"Invalid story prompt: {_safe_message(error)}", file=sys.stderr)
-                continue
-            break
-        suffix = None
-        request: dict[str, object] = {"language": "en", "mode": "short_prompt"}
-    else:
-        while True:
-            source_path = Path(_prompt_value("Story file (.txt or .md)"))
-            try:
-                source, suffix = _read_source(engine, source_path)
-            except (OSError, ValueError) as error:
-                print(f"Invalid story file: {_safe_message(error)}", file=sys.stderr)
-                continue
-            break
-        request = {"language": "en", "mode": "source_file"}
+        if source_kind in {"prompt", "p"}:
+            while True:
+                source = _prompt_value("Story prompt").encode("utf-8")
+                try:
+                    engine.validate_source_bytes(source)
+                except ValueError as error:
+                    print(f"Invalid story prompt: {_safe_message(error)}", file=sys.stderr)
+                    continue
+                break
+            request = {"language": "en", "mode": "short_prompt"}
+        else:
+            while True:
+                source_path = Path(_prompt_value("Story file (.txt or .md)"))
+                try:
+                    source, suffix = _read_source(engine, source_path)
+                except (OSError, ValueError) as error:
+                    print(f"Invalid story file: {_safe_message(error)}", file=sys.stderr)
+                    continue
+                break
+            request = {"language": "en", "mode": "source_file"}
 
     while True:
         output_root = Path(
@@ -403,8 +450,9 @@ def _guided_init(
             print(f"Invalid output location: {_safe_message(error)}", file=sys.stderr)
             continue
         break
-    engine.validate_request_settings(request)
-    return output_root, title, source, suffix, request, page_count
+    if request is not None:
+        engine.validate_request_settings(request)
+    return output_root, title, source, suffix, request, page_count, starter
 
 
 class _ProgressReporter:
@@ -474,18 +522,24 @@ def _run(
         )
     if arguments.command == "init":
         if arguments.interactive:
-            output_root, title, source, suffix, request, page_count = _guided_init(engine)
+            output_root, title, source, suffix, request, page_count, starter = _guided_init(engine)
             image_capability = None
         else:
             output_root = arguments.output_root or default_output_root()
             title = arguments.title
-            source, suffix = _read_source(engine, arguments.source)
-            request = (
-                engine.read_json(arguments.request_json)
-                if arguments.request_json is not None
-                else {"language": "en", "mode": "source_file"}
-            )
-            page_count = arguments.page_count or 2
+            starter = arguments.starter
+            source = None
+            suffix = None
+            request = None
+            page_count = None
+            if starter is None:
+                source, suffix = _read_source(engine, arguments.source)
+                request = (
+                    engine.read_json(arguments.request_json)
+                    if arguments.request_json is not None
+                    else {"language": "en", "mode": "source_file"}
+                )
+                page_count = arguments.page_count or 2
             image_capability = None
             if (
                 arguments.image_capability_status is not None
@@ -499,16 +553,23 @@ def _run(
                     "supports_reference_images": arguments.supports_reference_images,
                     "supports_dimensions": arguments.supports_dimensions,
                 }
-        project = service.execute(
-            "init",
-            output_root=output_root,
-            title=title,
-            source=source,
-            request=request,
-            suffix=suffix,
-            page_count=page_count,
-            image_capability=image_capability,
-        )
+        init_arguments: dict[str, Any] = {
+            "output_root": output_root,
+            "title": title,
+            "image_capability": image_capability,
+        }
+        if starter is not None:
+            init_arguments["starter"] = starter
+        else:
+            init_arguments.update(
+                {
+                    "source": source,
+                    "request": request,
+                    "suffix": suffix,
+                    "page_count": page_count,
+                }
+            )
+        project = service.execute("init", **init_arguments)
         return {"project_id": project.name, "project_dir": project.name}
     if arguments.command == "status":
         return service.execute("status", project_dir=arguments.project_dir)

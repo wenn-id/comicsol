@@ -12,6 +12,7 @@ SYNCHRONIZED_REFERENCES = (
     "creative-direction.md",
     "safety-ip.md",
     "schemas.md",
+    "starter-templates.md",
     "visual-qa.md",
     "workflow.md",
 )
@@ -24,6 +25,18 @@ BUNDLED_TEMPLATES = (
     "qa-report.md.tmpl",
     "story-plan.json",
     "storyboard.json",
+)
+STARTER_IDS = (
+    "minimal-one-page",
+    "dialogue-two-page",
+    "action-focused",
+)
+STARTER_FILES = (
+    "source/input.txt",
+    "source/request.json",
+    "plan/story-plan.json",
+    "plan/character-bible.json",
+    "plan/storyboard.json",
 )
 BUNDLED_FONTS = (
     "ComicNeue-Bold.ttf",
@@ -61,6 +74,7 @@ BUNDLED_SCRIPTS = (
     "sfx_repair.py",
     "sfx_verification.py",
     "stage_registry.py",
+    "starter_templates.py",
     "typography.py",
     "validate_project.py",
 )
@@ -72,6 +86,11 @@ def synchronized_paths() -> list[Path]:
         Path("SKILL.md"),
         *(Path("references") / name for name in SYNCHRONIZED_REFERENCES),
         *(Path("templates") / name for name in BUNDLED_TEMPLATES),
+        *(
+            Path("templates/starters/v1") / starter_id / relative
+            for starter_id in STARTER_IDS
+            for relative in STARTER_FILES
+        ),
         *(Path("assets/fonts") / name for name in BUNDLED_FONTS),
         *(Path("scripts") / name for name in BUNDLED_SCRIPTS),
     ]

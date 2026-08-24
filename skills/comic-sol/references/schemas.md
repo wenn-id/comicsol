@@ -34,6 +34,10 @@ The current project manifest schema is `1.0`. The minimum reader and writer vers
 
 The project manifest version is independent from artifact-level versions such as panel QA
 `2.0`, page QA `2.1`, and stage cache versions. Those artifacts retain their own validators.
+The `v1` in `templates/starters/v1/` is likewise a product-owned starter-bundle version,
+not a project or artifact schema version. Starter initialization writes only the standard
+source/request/story-plan/character-bible/storyboard shapes and normal artifact descriptors;
+it adds no field to `project.json`. See [starter templates](starter-templates.md).
 
 An artifact-level version that has its own migrations follows the same rules through its own
 registry. The page QA record registers `PAGE_QA_MIGRATIONS` in `scripts/page_quality.py`,

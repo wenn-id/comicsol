@@ -68,6 +68,12 @@ from .stage_registry import (
     STAGE_INVALIDATION_STATUS,
     get_stage,
 )
+from .starter_templates import (
+    STARTER_IDS,
+    StarterProject,
+    inventory_starters,
+    load_starter,
+)
 from .core_primitives import (
     PANEL_ID_PATTERN,
     canonical_artifact_bytes,
@@ -337,16 +343,68 @@ def _manifest_from_template(
     return manifest
 
 
+def _write_starter_artifacts(staging: Path, starter: StarterProject) -> None:
+    """Materialize standard starter artifacts inside the unpublished init tree."""
+    atomic_write_json(staging / "plan/story-plan.json", starter.story_plan)
+    atomic_write_json(staging / "plan/character-bible.json", starter.character_bible)
+    atomic_write_json(staging / "plan/storyboard.json", starter.storyboard)
+
+
+def _apply_starter_manifest(
+    manifest: dict[str, object],
+    staging: Path,
+    starter: StarterProject,
+) -> None:
+    """Record normal plan/storyboard descriptors without changing project schema."""
+    settings = manifest.get("settings")
+    if not isinstance(settings, dict):
+        raise ValueError("manifest template settings must be an object")
+    settings["page_count"] = starter.page_count
+    settings["panel_count"] = len(starter.panel_ids)
+    manifest["panels"] = list(starter.panel_ids)
+    manifest["artifacts"] = {
+        name: {"path": relative, "sha256": sha256_file(staging / relative)}
+        for name, relative in (
+            ("story_plan", "plan/story-plan.json"),
+            ("character_bible", "plan/character-bible.json"),
+            ("storyboard", "plan/storyboard.json"),
+        )
+    }
+
+
 def init_project(
     output_root: Path,
     title: str,
-    source: bytes,
-    request: dict[str, object],
+    source: bytes | None = None,
+    request: dict[str, object] | None = None,
     *,
     image_capability: object | None = None,
-    page_count: int = 2,
+    page_count: int | None = None,
+    starter: str | None = None,
 ) -> Path:
-    """Stage a complete project, then atomically publish an exclusive slug."""
+    """Stage a complete blank or starter project, then publish it exclusively."""
+    selected_starter: StarterProject | None = None
+    if starter is not None:
+        if source is not None or request is not None or page_count is not None:
+            raise ValueError(
+                "starter cannot be combined with explicit source, request, or page count"
+            )
+        selected_starter = load_starter(
+            TEMPLATES,
+            starter,
+            request_validator=validate_request_settings,
+        )
+        source = selected_starter.source
+        request = selected_starter.request
+        page_count = selected_starter.page_count
+    else:
+        if source is None:
+            raise TypeError("source must be bytes")
+        if request is None:
+            raise TypeError("request must be a JSON object")
+        if page_count is None:
+            page_count = 2
+
     if not isinstance(source, bytes):
         raise TypeError("source must be bytes")
     if not isinstance(request, dict):
@@ -380,6 +438,8 @@ def init_project(
             _create_project_tree(staging)
             atomic_write_bytes(staging / "source/input.txt", source)
             atomic_write_json(staging / "source/request.json", validated_request)
+            if selected_starter is not None:
+                _write_starter_artifacts(staging, selected_starter)
             manifest = _manifest_from_template(
                 project_dir.name,
                 title.strip(),
@@ -388,6 +448,8 @@ def init_project(
                 image_capability=image_capability,
                 page_count=page_count,
             )
+            if selected_starter is not None:
+                _apply_starter_manifest(manifest, staging, selected_starter)
             atomic_write_json(staging / "project.json", manifest)
             append_event(
                 staging,
@@ -398,6 +460,15 @@ def init_project(
                     "source_sha256": manifest["input"]["source_sha256"],
                 },
             )
+            if selected_starter is not None:
+                from .validate_project import require_valid_project
+
+                require_valid_project(staging, "storyboard")
+                record_stage(staging, "planning")
+                transition(staging, "PLANNED")
+                transition(staging, "SCRIPTED")
+                record_stage(staging, "storyboard")
+                transition(staging, "STORYBOARDED")
             fsync_directory_tree(staging)
             try:
                 publish_directory_noreplace(
@@ -2356,12 +2427,35 @@ def doctor_report(
     else:
         add_check("templates", "pass", "Bundled templates available.", "No action required.")
 
+    available_starters, invalid_starters = inventory_starters(
+        TEMPLATES,
+        request_validator=validate_request_settings,
+    )
+    if invalid_starters:
+        add_check(
+            "starter-templates",
+            "fail",
+            "Starter templates missing or invalid: " + ", ".join(invalid_starters),
+            "Reinstall Comic Sol so its versioned starter bundles are restored.",
+            available=available_starters,
+            invalid=invalid_starters,
+        )
+    else:
+        add_check(
+            "starter-templates",
+            "pass",
+            f"{len(available_starters)} versioned starter templates available.",
+            "No action required.",
+            available=available_starters,
+            version="v1",
+        )
+
     reference_root = ROOT / "references"
     if not reference_root.is_dir():
         reference_root = ROOT / "skill" / "references"
     missing_references = [
         name
-        for name in ("workflow.md", "schemas.md", "visual-qa.md")
+        for name in ("workflow.md", "schemas.md", "starter-templates.md", "visual-qa.md")
         if not (reference_root / name).is_file()
     ]
     if missing_references:
@@ -2478,6 +2572,12 @@ def doctor_report(
         "PASS templates available"
         if templates_check["status"] == "pass"
         else f"FAIL {templates_check['message']}"
+    )
+    starters_check = next(check for check in checks if check["id"] == "starter-templates")
+    messages.append(
+        "PASS starter templates available"
+        if starters_check["status"] == "pass"
+        else f"FAIL {starters_check['message']}"
     )
     references_check = next(check for check in checks if check["id"] == "references")
     messages.append(
@@ -2696,9 +2796,10 @@ def _build_parser() -> argparse.ArgumentParser:
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--output-root", required=True, type=Path)
     init_parser.add_argument("--title", required=True)
-    init_parser.add_argument("--source", required=True, type=Path)
-    init_parser.add_argument("--request-json", required=True, type=Path)
-    init_parser.add_argument("--page-count", type=int, choices=range(1, 5), default=2)
+    init_parser.add_argument("--source", type=Path)
+    init_parser.add_argument("--request-json", type=Path)
+    init_parser.add_argument("--page-count", type=int, choices=range(1, 5))
+    init_parser.add_argument("--starter", choices=STARTER_IDS)
 
     transition_parser = subparsers.add_parser("transition")
     transition_parser.add_argument("project_dir", type=Path)
@@ -2766,16 +2867,33 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     try:
         if arguments.command == "init":
-            source = arguments.source.read_bytes()
-            project = service.execute(
-                "init",
-                output_root=arguments.output_root,
-                title=arguments.title,
-                source=source,
-                request=read_json(arguments.request_json),
-                suffix=arguments.source.suffix,
-                page_count=arguments.page_count,
-            )
+            if arguments.starter is not None:
+                if any(
+                    value is not None
+                    for value in (arguments.source, arguments.request_json, arguments.page_count)
+                ):
+                    raise ValueError(
+                        "--starter cannot be combined with --source, --request-json, or --page-count"
+                    )
+                project = service.execute(
+                    "init",
+                    output_root=arguments.output_root,
+                    title=arguments.title,
+                    starter=arguments.starter,
+                )
+            else:
+                if arguments.source is None or arguments.request_json is None:
+                    raise ValueError("blank init requires --source and --request-json")
+                source = arguments.source.read_bytes()
+                project = service.execute(
+                    "init",
+                    output_root=arguments.output_root,
+                    title=arguments.title,
+                    source=source,
+                    request=read_json(arguments.request_json),
+                    suffix=arguments.source.suffix,
+                    page_count=arguments.page_count or 2,
+                )
             print(project.resolve())
         elif arguments.command == "transition":
             manifest = service.execute(

@@ -1,0 +1,77 @@
+{
+  "characters": [
+    {
+      "age_band": "young-adult",
+      "id": "mara",
+      "motivation": "learn whether the friendship can be repaired",
+      "name": "Mara",
+      "personality": [
+        "direct",
+        "guarded"
+      ],
+      "pronouns": "she/her",
+      "reference_path": "references/characters/mara.png",
+      "role": "former bandmate",
+      "speech": "precise questions with dry humor",
+      "visual_fingerprint": {
+        "avoid": [
+          "logos",
+          "generated text"
+        ],
+        "face": "angular face with a small eyebrow scar",
+        "hair": "dark undercut swept left",
+        "invariants": [
+          "mustard scarf",
+          "square silver earrings"
+        ],
+        "palette": [
+          "mustard",
+          "navy",
+          "silver"
+        ],
+        "signature_props": [
+          "black guitar case"
+        ],
+        "silhouette": "upright stance with a long scarf",
+        "wardrobe": "navy raincoat and mustard scarf"
+      }
+    },
+    {
+      "age_band": "young-adult",
+      "id": "sol",
+      "motivation": "apologize without losing the chance to reconnect",
+      "name": "Sol",
+      "personality": [
+        "thoughtful",
+        "self-conscious"
+      ],
+      "pronouns": "he/him",
+      "reference_path": "references/characters/sol.png",
+      "role": "former bandmate",
+      "speech": "gentle fragments that become candid",
+      "visual_fingerprint": {
+        "avoid": [
+          "logos",
+          "generated text"
+        ],
+        "face": "round face with heavy brows",
+        "hair": "close-cropped wavy hair",
+        "invariants": [
+          "teal knit cap",
+          "orange watch strap"
+        ],
+        "palette": [
+          "teal",
+          "rust orange",
+          "charcoal"
+        ],
+        "signature_props": [
+          "folded paper ticket"
+        ],
+        "silhouette": "broad shoulders and tucked posture",
+        "wardrobe": "charcoal coat and teal knit cap"
+      }
+    }
+  ],
+  "schema_version": "1.0"
+}

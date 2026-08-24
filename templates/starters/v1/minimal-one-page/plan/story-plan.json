@@ -1,0 +1,38 @@
+{
+  "beginning": "Ilya discovers a green shoot on the rooftop.",
+  "climax": "Ilya shields the shoot from a hard morning wind.",
+  "ending": "The sheltered shoot opens its first leaf.",
+  "logline": "A rooftop gardener protects a fragile sign of renewal.",
+  "rating": "teen",
+  "scenes": [
+    {
+      "characters": [
+        "ilya"
+      ],
+      "continuity_anchor": "weathered concrete planters under a pale dawn sky",
+      "id": "rooftop-dawn",
+      "location": "an apartment rooftop garden",
+      "purpose": "reveal the unexpected shoot",
+      "time": "dawn"
+    },
+    {
+      "characters": [
+        "ilya"
+      ],
+      "continuity_anchor": "weathered concrete planters under a pale dawn sky",
+      "id": "rooftop-wind",
+      "location": "the same apartment rooftop garden",
+      "purpose": "show Ilya choosing to protect new life",
+      "time": "early morning"
+    }
+  ],
+  "schema_version": "1.0",
+  "setting": "A sparse rooftop garden above a waking city.",
+  "theme": "Small acts of care make room for hope.",
+  "title": "First Leaf",
+  "tone": [
+    "quiet",
+    "hopeful"
+  ],
+  "turn": "A sharp wind bends the fragile stem."
+}

@@ -1,0 +1,41 @@
+{
+  "characters": [
+    {
+      "age_band": "young-adult",
+      "id": "tavi",
+      "motivation": "deliver the medicine capsule before the clinic gate closes",
+      "name": "Tavi",
+      "personality": [
+        "decisive",
+        "inventive"
+      ],
+      "pronouns": "she/they",
+      "reference_path": "references/characters/tavi.png",
+      "role": "bicycle courier",
+      "speech": "brief tactical observations",
+      "visual_fingerprint": {
+        "avoid": [
+          "logos",
+          "generated text"
+        ],
+        "face": "heart-shaped face with a small nose bandage",
+        "hair": "tight dark braids gathered high",
+        "invariants": [
+          "yellow storm cape",
+          "blue medicine capsule case"
+        ],
+        "palette": [
+          "storm blue",
+          "signal yellow",
+          "coral red"
+        ],
+        "signature_props": [
+          "compact white cargo bicycle"
+        ],
+        "silhouette": "forward-leaning rider beneath a triangular cape",
+        "wardrobe": "yellow storm cape over a fitted blue riding suit"
+      }
+    }
+  ],
+  "schema_version": "1.0"
+}

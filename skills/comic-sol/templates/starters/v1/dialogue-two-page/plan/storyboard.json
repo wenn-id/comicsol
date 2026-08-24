@@ -1,0 +1,227 @@
+{
+  "pages": [
+    {
+      "layout": "two-horizontal",
+      "number": 1,
+      "panels": [
+        {
+          "action": "Mara stops beside the bench while Sol looks up from a folded ticket.",
+          "beat": "Recognition breaks the long silence.",
+          "characters": [
+            "mara",
+            "sol"
+          ],
+          "composition": "Mara stands left and Sol sits right with open space between them",
+          "continuity": [
+            "mara:mustard scarf",
+            "sol:teal knit cap",
+            "quiet-platform:blue platform bench beneath a flickering amber timetable"
+          ],
+          "expression": "Mara wary, Sol startled",
+          "id": "p01-01",
+          "lighting": "cool rain light with an amber overhead pool",
+          "negative": [
+            "generated text",
+            "generated speech bubbles",
+            "watermark"
+          ],
+          "order": 1,
+          "rect": {
+            "height": 1120,
+            "width": 1472,
+            "x": 64,
+            "y": 64
+          },
+          "scene_id": "quiet-platform",
+          "shot": "balanced two-shot",
+          "text": [
+            {
+              "anchor": "top-left",
+              "content": "You still take the last train?",
+              "id": "p01-01-t01",
+              "kind": "dialogue",
+              "priority": 1,
+              "speaker": "mara",
+              "speaker_anchor": [
+                0.24,
+                0.44
+              ],
+              "voice_source": "human"
+            }
+          ]
+        },
+        {
+          "action": "They sit at opposite ends of the bench and finally face each other.",
+          "beat": "Polite distance gives way to the real question.",
+          "characters": [
+            "mara",
+            "sol"
+          ],
+          "composition": "profile two-shot with the empty bench center holding visual tension",
+          "continuity": [
+            "mara:square silver earrings",
+            "sol:orange watch strap",
+            "quiet-platform:blue platform bench beneath a flickering amber timetable"
+          ],
+          "expression": "both carefully composed",
+          "id": "p01-02",
+          "lighting": "flickering amber edge light against blue night",
+          "negative": [
+            "generated text",
+            "generated speech bubbles",
+            "watermark"
+          ],
+          "order": 2,
+          "rect": {
+            "height": 1120,
+            "width": 1472,
+            "x": 64,
+            "y": 1216
+          },
+          "scene_id": "quiet-platform",
+          "shot": "medium profile two-shot",
+          "text": [
+            {
+              "anchor": "top-left",
+              "content": "I thought you wanted me gone.",
+              "id": "p01-02-t01",
+              "kind": "dialogue",
+              "priority": 1,
+              "speaker": "mara",
+              "speaker_anchor": [
+                0.22,
+                0.52
+              ],
+              "voice_source": "human"
+            },
+            {
+              "anchor": "top-right",
+              "content": "I wanted you to ask me to stay.",
+              "id": "p01-02-t02",
+              "kind": "dialogue",
+              "priority": 2,
+              "speaker": "sol",
+              "speaker_anchor": [
+                0.78,
+                0.52
+              ],
+              "voice_source": "human"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "layout": "two-horizontal",
+      "number": 2,
+      "panels": [
+        {
+          "action": "The train arrives as Sol offers Mara the folded ticket.",
+          "beat": "An apology becomes an invitation.",
+          "characters": [
+            "mara",
+            "sol"
+          ],
+          "composition": "their hands and the ticket centered between open train doors",
+          "continuity": [
+            "mara:mustard scarf",
+            "sol:orange watch strap",
+            "last-train:open silver train doors beside the blue platform bench"
+          ],
+          "expression": "Sol vulnerable, Mara surprised",
+          "id": "p02-01",
+          "lighting": "warm train light spilling onto cool platform rain",
+          "negative": [
+            "generated text",
+            "generated speech bubbles",
+            "watermark"
+          ],
+          "order": 1,
+          "rect": {
+            "height": 1120,
+            "width": 1472,
+            "x": 64,
+            "y": 64
+          },
+          "scene_id": "last-train",
+          "shot": "close two-shot on hands and faces",
+          "text": [
+            {
+              "anchor": "top-right",
+              "content": "I was afraid silence was easier.",
+              "id": "p02-01-t01",
+              "kind": "dialogue",
+              "priority": 1,
+              "speaker": "sol",
+              "speaker_anchor": [
+                0.72,
+                0.38
+              ],
+              "voice_source": "human"
+            }
+          ]
+        },
+        {
+          "action": "Mara takes the ticket and they step through the doors together.",
+          "beat": "They choose the same direction again.",
+          "characters": [
+            "mara",
+            "sol"
+          ],
+          "composition": "rear three-quarter two-shot moving toward the bright carriage",
+          "continuity": [
+            "mara:mustard scarf",
+            "sol:teal knit cap",
+            "last-train:open silver train doors beside the blue platform bench"
+          ],
+          "expression": "small relieved smiles",
+          "id": "p02-02",
+          "lighting": "soft warm carriage light",
+          "negative": [
+            "generated text",
+            "generated speech bubbles",
+            "watermark"
+          ],
+          "order": 2,
+          "rect": {
+            "height": 1120,
+            "width": 1472,
+            "x": 64,
+            "y": 1216
+          },
+          "scene_id": "last-train",
+          "shot": "medium rear tracking shot",
+          "text": [
+            {
+              "anchor": "top-left",
+              "content": "Then start with hello.",
+              "id": "p02-02-t01",
+              "kind": "dialogue",
+              "priority": 1,
+              "speaker": "mara",
+              "speaker_anchor": [
+                0.32,
+                0.4
+              ],
+              "voice_source": "human"
+            },
+            {
+              "anchor": "top-right",
+              "content": "Hello, Mara.",
+              "id": "p02-02-t02",
+              "kind": "dialogue",
+              "priority": 2,
+              "speaker": "sol",
+              "speaker_anchor": [
+                0.68,
+                0.4
+              ],
+              "voice_source": "human"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "schema_version": "1.0"
+}

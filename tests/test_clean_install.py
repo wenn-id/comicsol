@@ -33,6 +33,12 @@ class DistributionContractTests(unittest.TestCase):
             "comic_sol_product/assets/fonts/ComicNeue-Regular.ttf", REQUIRED_WHEEL_MEMBERS
         )
         self.assertIn("comic_sol_product/templates/manifest.json", REQUIRED_WHEEL_MEMBERS)
+        for starter in ("minimal-one-page", "dialogue-two-page", "action-focused"):
+            self.assertIn(
+                f"comic_sol_product/templates/starters/v1/{starter}/plan/storyboard.json",
+                REQUIRED_WHEEL_MEMBERS,
+            )
+        self.assertIn("comic_sol_product/engine/starter_templates.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/skill/SKILL.md", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/skill/references/workflow.md", REQUIRED_WHEEL_MEMBERS)
 
