@@ -65,7 +65,7 @@ def _open_lock_descriptor(path: Path) -> int:
             ("index_low", wintypes.DWORD),
         ]
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     kernel32.CreateFileW.restype = wintypes.HANDLE
     handle = kernel32.CreateFileW(
         str(path),
@@ -79,8 +79,8 @@ def _open_lock_descriptor(path: Path) -> int:
     invalid = ctypes.c_void_p(-1).value
     handle_value = getattr(handle, "value", handle)
     if handle_value == invalid:
-        error_number = ctypes.get_last_error()
-        raise OSError(error_number, ctypes.FormatError(error_number))
+        error_number = ctypes.get_last_error()  # type: ignore[attr-defined]
+        raise OSError(error_number, ctypes.FormatError(error_number))  # type: ignore[attr-defined]
     try:
         kernel32.GetFileInformationByHandle.argtypes = [
             wintypes.HANDLE,
@@ -89,11 +89,11 @@ def _open_lock_descriptor(path: Path) -> int:
         kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
         information = _FileInformation()
         if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(information)):
-            error_number = ctypes.get_last_error()
-            raise OSError(error_number, ctypes.FormatError(error_number))
+            error_number = ctypes.get_last_error()  # type: ignore[attr-defined]
+            raise OSError(error_number, ctypes.FormatError(error_number))  # type: ignore[attr-defined]
         if information.attributes & _REPARSE_POINT:
             raise OSError("client config lock must not be a symlink or reparse point")
-        return msvcrt.open_osfhandle(handle_value, os.O_RDWR)
+        return msvcrt.open_osfhandle(handle_value, os.O_RDWR)  # type: ignore[attr-defined]
     except BaseException:
         kernel32.CloseHandle(handle)
         raise
@@ -150,7 +150,7 @@ class _ConfigDirectory:
         import ctypes
         from ctypes import wintypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
         kernel32.CreateFileW.restype = wintypes.HANDLE
         current = Path(self.path.anchor)
         for part in self.path.parts[1:]:
@@ -167,9 +167,9 @@ class _ConfigDirectory:
             invalid = ctypes.c_void_p(-1).value
             value = getattr(handle, "value", handle)
             if value == invalid:
-                error_number = ctypes.get_last_error()
+                error_number = ctypes.get_last_error()  # type: ignore[attr-defined]
                 self.close()
-                raise OSError(error_number, ctypes.FormatError(error_number))
+                raise OSError(error_number, ctypes.FormatError(error_number))  # type: ignore[attr-defined]
             self._windows_handles.append(value)
             try:
                 attributes = getattr(current.lstat(), "st_file_attributes", 0)
@@ -222,7 +222,7 @@ class _ConfigDirectory:
         if self._windows_handles:
             import ctypes
 
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
             for handle in reversed(self._windows_handles):
                 kernel32.CloseHandle(handle)
             self._windows_handles.clear()
@@ -311,7 +311,11 @@ class _ConfigLock:
         while True:
             self._handle.seek(0)
             try:
-                msvcrt.locking(self._handle.fileno(), msvcrt.LK_NBLCK, 1)
+                msvcrt.locking(  # type: ignore[attr-defined]
+                    self._handle.fileno(),
+                    msvcrt.LK_NBLCK,  # type: ignore[attr-defined]
+                    1,  # type: ignore[attr-defined]
+                )
                 return
             except OSError as error:
                 if time.monotonic() >= deadline:
@@ -327,7 +331,11 @@ class _ConfigLock:
 
                 self._handle.seek(0)
                 try:
-                    msvcrt.locking(self._handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    msvcrt.locking(  # type: ignore[attr-defined]
+                        self._handle.fileno(),
+                        msvcrt.LK_UNLCK,  # type: ignore[attr-defined]
+                        1,  # type: ignore[attr-defined]
+                    )
                 except OSError:
                     pass
             else:
@@ -634,7 +642,7 @@ def _publish_expected(
         import ctypes
 
         backup = temporary.with_name(f"{temporary.name}.old")
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
         replace_file = kernel32.ReplaceFileW
         replace_file.argtypes = [
             ctypes.c_wchar_p,
@@ -646,8 +654,8 @@ def _publish_expected(
         ]
         replace_file.restype = ctypes.c_int
         if not replace_file(str(path), str(temporary), str(backup), 0, None, None):
-            error_number = ctypes.get_last_error()
-            raise OSError(error_number, ctypes.FormatError(error_number))
+            error_number = ctypes.get_last_error()  # type: ignore[attr-defined]
+            raise OSError(error_number, ctypes.FormatError(error_number))  # type: ignore[attr-defined]
         try:
             displaced = _read_snapshot(backup)
             if displaced.data != expected.data or displaced.size != expected.size:
@@ -737,7 +745,7 @@ def _open_snapshot_descriptor(path: Path) -> int:
                 ("index_low", wintypes.DWORD),
             ]
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
         kernel32.CreateFileW.restype = wintypes.HANDLE
         handle = kernel32.CreateFileW(
             str(path),
@@ -751,8 +759,8 @@ def _open_snapshot_descriptor(path: Path) -> int:
         invalid = ctypes.c_void_p(-1).value
         handle_value = getattr(handle, "value", handle)
         if handle_value == invalid:
-            error_number = ctypes.get_last_error()
-            raise OSError(error_number, ctypes.FormatError(error_number))
+            error_number = ctypes.get_last_error()  # type: ignore[attr-defined]
+            raise OSError(error_number, ctypes.FormatError(error_number))  # type: ignore[attr-defined]
         information = _ByHandleFileInformation()
         kernel32.GetFileInformationByHandle.argtypes = [
             wintypes.HANDLE,
@@ -760,14 +768,14 @@ def _open_snapshot_descriptor(path: Path) -> int:
         ]
         kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
         if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(information)):
-            error_number = ctypes.get_last_error()
+            error_number = ctypes.get_last_error()  # type: ignore[attr-defined]
             kernel32.CloseHandle(handle)
-            raise OSError(error_number, ctypes.FormatError(error_number))
+            raise OSError(error_number, ctypes.FormatError(error_number))  # type: ignore[attr-defined]
         if information.attributes & _REPARSE_POINT:
             kernel32.CloseHandle(handle)
             raise OSError("client config must not be a symlink or reparse point")
         try:
-            return msvcrt.open_osfhandle(handle_value, os.O_RDONLY)
+            return msvcrt.open_osfhandle(handle_value, os.O_RDONLY)  # type: ignore[attr-defined]
         except BaseException:
             kernel32.CloseHandle(handle)
             raise

@@ -86,10 +86,6 @@ python_version = "3.11"
 follow_imports = "skip"
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = ["comic_sol_product.setup"]
-disable_error_code = ["attr-defined"]
-
 [tool.coverage.run]
 branch = true
 source = ["comic_sol_product", "scripts"]
