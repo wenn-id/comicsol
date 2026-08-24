@@ -296,6 +296,7 @@ def _manifest_from_template(
     request: dict[str, object],
     *,
     image_capability: object | None = None,
+    page_count: int = 2,
 ) -> dict[str, object]:
     manifest = read_json(TEMPLATES / "manifest.json")
     timestamp = _utc_now()
@@ -329,6 +330,10 @@ def _manifest_from_template(
         except Exception:
             # Capability detection failures should not block project initialization
             pass
+    settings = manifest["settings"]
+    if not isinstance(settings, dict):
+        raise ValueError("manifest template settings must be an object")
+    settings["page_count"] = page_count
     return manifest
 
 
@@ -339,12 +344,15 @@ def init_project(
     request: dict[str, object],
     *,
     image_capability: object | None = None,
+    page_count: int = 2,
 ) -> Path:
     """Stage a complete project, then atomically publish an exclusive slug."""
     if not isinstance(source, bytes):
         raise TypeError("source must be bytes")
     if not isinstance(request, dict):
         raise TypeError("request must be a JSON object")
+    if isinstance(page_count, bool) or not isinstance(page_count, int) or not 1 <= page_count <= 4:
+        raise ValueError("page count must be an integer from 1 to 4")
     validate_narrative(title, message=TITLE_LIMIT_MESSAGE, max_chars=MAX_TITLE_CHARS)
     validate_source_bytes(source)
     validated_request = validate_request_settings(request)
@@ -378,6 +386,7 @@ def init_project(
                 source,
                 validated_request,
                 image_capability=image_capability,
+                page_count=page_count,
             )
             atomic_write_json(staging / "project.json", manifest)
             append_event(
@@ -2689,6 +2698,7 @@ def _build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--title", required=True)
     init_parser.add_argument("--source", required=True, type=Path)
     init_parser.add_argument("--request-json", required=True, type=Path)
+    init_parser.add_argument("--page-count", type=int, choices=range(1, 5), default=2)
 
     transition_parser = subparsers.add_parser("transition")
     transition_parser.add_argument("project_dir", type=Path)
@@ -2764,6 +2774,7 @@ def main(argv: list[str] | None = None) -> int:
                 source=source,
                 request=read_json(arguments.request_json),
                 suffix=arguments.source.suffix,
+                page_count=arguments.page_count,
             )
             print(project.resolve())
         elif arguments.command == "transition":

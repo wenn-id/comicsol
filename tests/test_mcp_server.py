@@ -235,6 +235,29 @@ class McpServerUnitTests(unittest.TestCase):
             mcp_server.comic_init("Too Large", "a" * (200 * 1024 + 1), {})
         self.assertEqual(before, list(self.root.iterdir()))
 
+    def test_init_accepts_page_scope_without_an_interactive_flow(self):
+        project_id = mcp_server.comic_init(
+            "Scoped Story",
+            "A story with a selected scope.",
+            {"language": "en", "mode": "short_prompt"},
+            page_count=3,
+        )
+        manifest = read_json(self.root / project_id / "project.json")
+        self.assertEqual(3, manifest["settings"]["page_count"])
+
+    def test_init_rejects_invalid_page_scope_before_project_allocation(self):
+        before = list(self.root.iterdir())
+        for page_count in (0, 5, True):
+            with self.subTest(page_count=page_count):
+                with self.assertRaisesRegex(ToolError, "page count"):
+                    mcp_server.comic_init(
+                        "Rejected Scope",
+                        "Story",
+                        {"language": "en", "mode": "short_prompt"},
+                        page_count=page_count,
+                    )
+                self.assertEqual(before, list(self.root.iterdir()))
+
     def test_attempt_tools_reject_same_drive_relative_path_as_cli(self):
         project = self.root / "project"
         project.mkdir()
@@ -719,6 +742,7 @@ class InstalledMcpProtocolTests(unittest.IsolatedAsyncioTestCase):
                             "title": "Installed Wire Test",
                             "source_text": "An installed protocol smoke test.",
                             "request_settings": {"language": "en", "mode": "short_prompt"},
+                            "page_count": 3,
                         },
                     )
                     self.assertFalse(result_is_error(created))
@@ -726,6 +750,27 @@ class InstalledMcpProtocolTests(unittest.IsolatedAsyncioTestCase):
                     status = await session.call_tool("comic_status", {"project_id": project_id})
                     self.assertFalse(result_is_error(status))
                     self.assertEqual("INIT", structured_content(status)["status"])
+                    self.assertEqual(3, structured_content(status)["settings"]["page_count"])
+                    for index, page_count in enumerate((True, 2.0, "2")):
+                        rejected = await session.call_tool(
+                            "comic_init",
+                            {
+                                "title": f"Rejected Wire {index}",
+                                "source_text": "This project must not be created.",
+                                "request_settings": {
+                                    "language": "en",
+                                    "mode": "short_prompt",
+                                },
+                                "page_count": page_count,
+                            },
+                        )
+                        self.assertTrue(result_is_error(rejected))
+                        self.assertIsNone(structured_content(rejected))
+                        error_text = " ".join(
+                            getattr(item, "text", "") for item in rejected.content
+                        )
+                        self.assertIn("CS-MCP-001", error_text)
+                        self.assertFalse((output_root / f"rejected-wire-{index}").exists())
 
 
 @unittest.skipUnless(MCP_AVAILABLE, "MCP extra is not installed")

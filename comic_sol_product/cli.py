@@ -70,11 +70,25 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--supports-reference-images", action="store_true")
     doctor.add_argument("--supports-dimensions", action="store_true")
 
-    init = subparsers.add_parser("init")
-    init.add_argument("--output-root", type=Path, default=default_output_root())
-    init.add_argument("--title", required=True)
-    init.add_argument("--source", required=True, type=Path)
-    init.add_argument("--request-json", required=True, type=Path)
+    init = subparsers.add_parser(
+        "init",
+        description="Create a project from explicit flags or a guided terminal session.",
+    )
+    init.add_argument(
+        "--interactive",
+        action="store_true",
+        help="prompt for project settings (human terminals only)",
+    )
+    init.add_argument("--output-root", type=Path, help="parent directory for the project")
+    init.add_argument("--title", help="project title")
+    init.add_argument("--source", type=Path, help="UTF-8 .txt or .md story source")
+    init.add_argument("--request-json", type=Path, help="optional request settings JSON")
+    init.add_argument(
+        "--page-count",
+        type=int,
+        choices=range(1, 5),
+        help="planned page count (default: 2)",
+    )
     init.add_argument("--image-capability-status", choices=("available", "unavailable"))
     init.add_argument("--image-capability-name")
     init.add_argument("--supports-reference-images", action="store_true")
@@ -254,6 +268,145 @@ def _render_status(arguments: argparse.Namespace) -> str:
     return f"{project_id}: {status}"
 
 
+def _validate_init_arguments(arguments: argparse.Namespace) -> None:
+    """Keep the wizard opt-in and the automation path fully non-interactive."""
+    if arguments.command != "init":
+        return
+    if arguments.interactive:
+        if arguments.as_json:
+            raise CliUsageError("--interactive cannot be combined with --json")
+        has_capability_flags = (
+            arguments.image_capability_status is not None
+            or arguments.image_capability_name is not None
+            or arguments.supports_reference_images
+            or arguments.supports_dimensions
+        )
+        if (
+            any(
+                value is not None
+                for value in (
+                    arguments.output_root,
+                    arguments.title,
+                    arguments.source,
+                    arguments.request_json,
+                    arguments.page_count,
+                )
+            )
+            or has_capability_flags
+        ):
+            raise CliUsageError("--interactive cannot be combined with init data arguments")
+        return
+    missing = [
+        name
+        for name, value in (("--title", arguments.title), ("--source", arguments.source))
+        if value is None
+    ]
+    if missing:
+        raise CliUsageError("the following arguments are required: " + ", ".join(missing))
+
+
+def _prompt_value(label: str, default: str | None = None) -> str:
+    """Read one required human answer while keeping prompts off stdout."""
+    suffix = f" [{default}]" if default is not None else ""
+    while True:
+        print(f"{label}{suffix}: ", end="", file=sys.stderr, flush=True)
+        try:
+            value = input().strip()
+        except EOFError as error:
+            raise CliUsageError("interactive initialization ended before completion") from error
+        if value:
+            return value
+        if default is not None:
+            return default
+        print("A value is required.", file=sys.stderr)
+
+
+def _prompt_page_count() -> int:
+    while True:
+        value = _prompt_value("Page count (1-4)", "2")
+        try:
+            page_count = int(value)
+        except ValueError:
+            page_count = 0
+        if 1 <= page_count <= 4:
+            return page_count
+        print("Page count must be an integer from 1 to 4.", file=sys.stderr)
+
+
+def _read_source(engine: Any, source_path: Path) -> tuple[bytes, str]:
+    """Read one bounded source file through the engine trust boundary."""
+    project_io = _load_engine_module("project_io")
+    absolute = Path(source_path).expanduser().absolute()
+    source = project_io.read_bytes_nofollow(
+        absolute,
+        max_bytes=project_io.MAX_SOURCE_BYTES,
+    )
+    engine.validate_source_bytes(source, absolute.suffix)
+    return source, absolute.suffix
+
+
+def _guided_init(
+    engine: Any,
+) -> tuple[Path, str, bytes, str | None, dict[str, object], int]:
+    """Collect and validate the small set of choices needed for initialization."""
+    print("Comic Sol guided project initializer", file=sys.stderr)
+    while True:
+        title = _prompt_value("Project name", "Comic Sol Project")
+        try:
+            engine.validate_narrative(
+                title,
+                message=engine.TITLE_LIMIT_MESSAGE,
+                max_chars=engine.MAX_TITLE_CHARS,
+            )
+        except ValueError as error:
+            print(f"Invalid project name: {_safe_message(error)}", file=sys.stderr)
+            continue
+        break
+
+    page_count = _prompt_page_count()
+    while True:
+        source_kind = _prompt_value("Story source (prompt/file)", "prompt").lower()
+        if source_kind in {"prompt", "p", "file", "f"}:
+            break
+        print("Story source must be prompt or file.", file=sys.stderr)
+
+    if source_kind in {"prompt", "p"}:
+        while True:
+            source = _prompt_value("Story prompt").encode("utf-8")
+            try:
+                engine.validate_source_bytes(source)
+            except ValueError as error:
+                print(f"Invalid story prompt: {_safe_message(error)}", file=sys.stderr)
+                continue
+            break
+        suffix = None
+        request: dict[str, object] = {"language": "en", "mode": "short_prompt"}
+    else:
+        while True:
+            source_path = Path(_prompt_value("Story file (.txt or .md)"))
+            try:
+                source, suffix = _read_source(engine, source_path)
+            except (OSError, ValueError) as error:
+                print(f"Invalid story file: {_safe_message(error)}", file=sys.stderr)
+                continue
+            break
+        request = {"language": "en", "mode": "source_file"}
+
+    while True:
+        output_root = Path(
+            _prompt_value("Output location", str(default_output_root()))
+        ).expanduser()
+        try:
+            if output_root.exists() and not output_root.is_dir():
+                raise ValueError("output location must be a directory or a new path")
+        except (OSError, ValueError) as error:
+            print(f"Invalid output location: {_safe_message(error)}", file=sys.stderr)
+            continue
+        break
+    engine.validate_request_settings(request)
+    return output_root, title, source, suffix, request, page_count
+
+
 class _ProgressReporter:
     """Render bounded lifecycle events without polluting machine output."""
 
@@ -320,29 +473,40 @@ def _run(
             image_capability=image_capability,
         )
     if arguments.command == "init":
-        source = arguments.source.read_bytes()
-        engine.validate_source_bytes(source, arguments.source.suffix)
-        request = engine.read_json(arguments.request_json)
-        image_capability = None
-        if (
-            arguments.image_capability_status is not None
-            or arguments.image_capability_name is not None
-            or arguments.supports_reference_images
-            or arguments.supports_dimensions
-        ):
-            image_capability = {
-                "status": arguments.image_capability_status,
-                "name": arguments.image_capability_name,
-                "supports_reference_images": arguments.supports_reference_images,
-                "supports_dimensions": arguments.supports_dimensions,
-            }
+        if arguments.interactive:
+            output_root, title, source, suffix, request, page_count = _guided_init(engine)
+            image_capability = None
+        else:
+            output_root = arguments.output_root or default_output_root()
+            title = arguments.title
+            source, suffix = _read_source(engine, arguments.source)
+            request = (
+                engine.read_json(arguments.request_json)
+                if arguments.request_json is not None
+                else {"language": "en", "mode": "source_file"}
+            )
+            page_count = arguments.page_count or 2
+            image_capability = None
+            if (
+                arguments.image_capability_status is not None
+                or arguments.image_capability_name is not None
+                or arguments.supports_reference_images
+                or arguments.supports_dimensions
+            ):
+                image_capability = {
+                    "status": arguments.image_capability_status,
+                    "name": arguments.image_capability_name,
+                    "supports_reference_images": arguments.supports_reference_images,
+                    "supports_dimensions": arguments.supports_dimensions,
+                }
         project = service.execute(
             "init",
-            output_root=arguments.output_root,
-            title=arguments.title,
+            output_root=output_root,
+            title=title,
             source=source,
             request=request,
-            suffix=arguments.source.suffix,
+            suffix=suffix,
+            page_count=page_count,
             image_capability=image_capability,
         )
         return {"project_id": project.name, "project_dir": project.name}
@@ -380,6 +544,7 @@ def main(argv: list[str] | None = None) -> int:
     raw_arguments = sys.argv[1:] if argv is None else list(argv)
     try:
         arguments = build_parser().parse_args(raw_arguments)
+        _validate_init_arguments(arguments)
     except CliUsageError as error:
         # Parse failures never leak argparse usage text or SystemExit: JSON
         # mode still receives exactly one envelope, human mode the canonical
@@ -434,6 +599,13 @@ def main(argv: list[str] | None = None) -> int:
         if command == "doctor" and not data["healthy"]:
             return 1
         return 0
+    except CliUsageError as error:
+        payload = _failure(command, error, detail=error.message)
+        if arguments.as_json:
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        else:
+            print(format_human_error(error, command=command), file=sys.stderr)
+        return 2
     except (ValueError, TypeError, json.JSONDecodeError) as error:
         payload = _failure(
             command, error, legacy_category="invalid-input", detail=safe_error_detail(error)

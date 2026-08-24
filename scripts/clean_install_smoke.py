@@ -141,6 +141,8 @@ def main() -> int:
                     str(source),
                     "--request-json",
                     str(request),
+                    "--page-count",
+                    "3",
                 ],
                 cwd=root,
             )
@@ -149,6 +151,8 @@ def main() -> int:
         status = json.loads(run([str(executable), "--json", "status", str(project)], cwd=root))
         if status["data"]["status"] != "INIT":
             raise RuntimeError("installed project status is not INIT")
+        if status["data"]["settings"]["page_count"] != 3:
+            raise RuntimeError("installed project did not preserve its page scope")
 
         home = root / "home"
         codex = home / ".codex" / "config.toml"

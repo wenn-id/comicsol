@@ -58,7 +58,8 @@ and its downstream stages for rerun instead of guessing.
 
 Inspect capability metadata as described in the capability reference, run
 `comic_sol.py doctor` with that observation, then run `comic_sol.py init` with exact
-source/request files. For resume, run `comic_sol.py status` and `comic_sol.py resume-plan`,
+source/request files and `--page-count PAGE_COUNT`. Agents and CI always use this
+non-interactive form. For resume, run `comic_sol.py status` and `comic_sol.py resume-plan`,
 then recover by status:
 
 - A `BLOCKED` project recovers with `comic_sol.py resume PROJECT_DIR`. Only `resume`

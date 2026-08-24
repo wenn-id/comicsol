@@ -71,15 +71,15 @@ Resolve one Python 3.11+ launcher before deterministic commands. Store its comma
 
 ### Use init, never hand-write setup scripts
 
-Do not write `setup_batch_*.py`, `build_plans.py`, or equivalent helpers. The engine
-owns project structure. Create a project with one command:
+Do not write `setup_batch_*.py`, `build_plans.py`, or equivalent helpers. The engine owns project structure. Create a project with one command:
 
 ```text
-PYTHON scripts/comic_sol.py init --output-root OUTPUT_ROOT --title TITLE --source SOURCE --request-json REQUEST_JSON
+PYTHON scripts/comic_sol.py init --output-root OUTPUT_ROOT --title TITLE --source SOURCE --request-json REQUEST_JSON --page-count PAGE_COUNT
 ```
 
-For setup, edit only the semantic artifacts the engine expects (`plan/*.json`) through
-`transition` stages. Page QA later requires agent-authored
+AI agents and CI always use this fully specified non-interactive command; the installed CLI's optional `--interactive` wizard is for human terminal sessions.
+
+For setup, edit only the semantic artifacts the engine expects (`plan/*.json`) through `transition` stages. Page QA later requires agent-authored
 `qa/pages/page-{NNN}.json` records. Hand-written scaffolding is the single largest
 hidden time sink.
 
@@ -193,7 +193,7 @@ unavailable or fails.
 
 ```text
 PYTHON scripts/comic_sol.py doctor --output-root OUTPUT_ROOT [IMAGE_CAPABILITY_FLAGS]
-PYTHON scripts/comic_sol.py init --output-root OUTPUT_ROOT --title TITLE --source SOURCE --request-json REQUEST_JSON
+PYTHON scripts/comic_sol.py init --output-root OUTPUT_ROOT --title TITLE --source SOURCE --request-json REQUEST_JSON --page-count PAGE_COUNT [IMAGE_CAPABILITY_FLAGS]
 PYTHON scripts/comic_sol.py status PROJECT_DIR --json
 PYTHON scripts/comic_sol.py transition PROJECT_DIR TARGET [--warning TEXT]
 PYTHON scripts/validate_project.py PROJECT_DIR --stage plan|storyboard|panels|final [--json]
