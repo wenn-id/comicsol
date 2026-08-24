@@ -23,7 +23,7 @@ from scripts.release_qualification import qualify
 from scripts.release_qualification import snapshot_tree
 from scripts.release_qualification import validate_published_metadata
 from scripts.release_qualification import verify_payload_checksums
-from scripts.release_visual_gate import validate_live_visual_summary
+from scripts.release_visual_gate import EXPECTED_GROUPS, validate_live_visual_summary
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -874,7 +874,9 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
                 "coverage": 1.0,
                 "overall_mean": 4.0,
                 "minimum_score": 4,
-                "group_means": {"by_character": {"bayu": 4.0, "rani": 4.0}},
+                "group_means": {
+                    axis: {name: 4.0 for name in names} for axis, names in EXPECTED_GROUPS.items()
+                },
             },
             "material_changes": [{"id": f"CS-{number:03d}"} for number in range(19, 27)]
             + [{"id": "CS-034"}, {"id": "CS-035"}],
@@ -1046,7 +1048,17 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
         )
         check(
             lambda record: record["character_consistency"].update(group_means={}),
-            "group means are missing",
+            "axes are not canonical",
+        )
+        check(
+            lambda record: record["character_consistency"]["group_means"].pop("by_view"),
+            "axes are not canonical",
+        )
+        check(
+            lambda record: record["character_consistency"]["group_means"].update(
+                unexpected={"arbitrary": 4.0}
+            ),
+            "axes are not canonical",
         )
         check(
             lambda record: record["character_consistency"]["group_means"]["by_character"].update(
@@ -1420,6 +1432,8 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
             promotion,
         )
         self.assertIn("scripts/live_visual_evidence.py", live_visual)
+        self.assertIn("vars.V2_2_LIVE_VISUAL_EVIDENCE_SHA", live_visual)
+        self.assertIn("live-visual-input/visual-evidence/manifest.json", live_visual)
         self.assertIn("vars.V2_2_REVIEWER_ATTESTATION_SHA256", live_visual)
         self.assertIn("--archive-output", live_visual)
         self.assertIn("name: live-visual-evidence", live_visual)

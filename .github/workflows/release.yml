@@ -136,6 +136,8 @@ jobs:
     name: Candidate-bound live visual evidence
     needs: prepare
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       summary_sha256: ${{ steps.validate.outputs.summary_sha256 }}
       reviewer_attestation_sha256: ${{ steps.validate.outputs.reviewer_attestation_sha256 }}
@@ -143,6 +145,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - name: Check out independently published live visual evidence
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ vars.V2_2_LIVE_VISUAL_EVIDENCE_SHA }}
+          path: live-visual-input
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
@@ -158,9 +166,10 @@ jobs:
           REVIEWER_ATTESTATION_SHA256: ${{ vars.V2_2_REVIEWER_ATTESTATION_SHA256 }}
         run: |
           set -euo pipefail
-          test -f visual-evidence/manifest.json
+          test -n "${{ vars.V2_2_LIVE_VISUAL_EVIDENCE_SHA }}"
+          test -f live-visual-input/visual-evidence/manifest.json
           python scripts/live_visual_evidence.py \
-            --manifest visual-evidence/manifest.json \
+            --manifest live-visual-input/visual-evidence/manifest.json \
             --expected-commit "$CANDIDATE_SHA" \
             --expected-engine-version "$CANDIDATE_VERSION" \
             --expected-reviewer-attestation-sha256 "$REVIEWER_ATTESTATION_SHA256" \

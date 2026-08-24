@@ -5,6 +5,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PIL import Image
 
@@ -293,6 +294,23 @@ class LiveVisualEvidenceTests(unittest.TestCase):
         self.assertIn("v2.2-live-visual-evidence/scorecard.json", names)
         self.assertIn("v2.2-live-visual-evidence/reviewer-attestation.json", names)
         self.assertNotIn("v2.2-live-visual-evidence/private-provider-response.json", names)
+
+        original_manifest_payload = manifest_path.read_bytes()
+        original_read_bytes = Path.read_bytes
+
+        def replace_after_manifest_read(path):
+            payload = original_read_bytes(path)
+            if path == manifest_path:
+                manifest_path.write_text("{}", encoding="utf-8")
+            return payload
+
+        retained = self.root / "retained.tar.gz"
+        with mock.patch.object(Path, "read_bytes", replace_after_manifest_read):
+            write_evidence_archive(summary, manifest, manifest_path, retained)
+        with tarfile.open(retained, "r:gz") as archive:
+            archived = archive.extractfile("v2.2-live-visual-evidence/manifest.json")
+            self.assertIsNotNone(archived)
+            self.assertEqual(original_manifest_payload, archived.read())
 
         manifest_path.write_text("{}", encoding="utf-8")
         with self.assertRaisesRegex(EvidenceError, "manifest changed after validation"):

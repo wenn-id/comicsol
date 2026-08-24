@@ -25,6 +25,37 @@ REQUIRED_QUALITY_REVIEWS = {
     "technical-raster",
     "text-free-generation",
 }
+EXPECTED_GROUPS = {
+    "by_character": {"bayu", "rani"},
+    "by_dimension": {
+        "accessories",
+        "age",
+        "clothing",
+        "face",
+        "hair",
+        "proportions",
+        "signature-traits",
+    },
+    "by_expression": {
+        "alarmed",
+        "braced",
+        "delighted",
+        "exhausted",
+        "focused",
+        "furious",
+        "neutral",
+        "relieved",
+        "wry",
+    },
+    "by_lighting": {
+        "cold-rim-and-red-glow",
+        "even-neutral-daylight",
+        "hard-noon-sun",
+        "single-lamp-low-light",
+    },
+    "by_scene": {"engine-shed", "harbor-noon", "rain-night-market", "reference-studio"},
+    "by_view": {"close-up", "front", "full-body", "profile", "three-quarter"},
+}
 
 
 def _mapping(value: object, label: str) -> Mapping[str, Any]:
@@ -121,11 +152,14 @@ def validate_live_visual_summary(
             "live visual character consistency does not meet the promotion threshold"
         )
     group_means = _mapping(consistency.get("group_means"), "live visual group means")
-    if not group_means:
-        raise RuntimeError("live visual group means are missing")
-    for groups in group_means.values():
+    if set(group_means) != set(EXPECTED_GROUPS):
+        raise RuntimeError("live visual group mean axes are not canonical")
+    for axis, expected_members in EXPECTED_GROUPS.items():
+        groups = group_means[axis]
         group = _mapping(groups, "live visual group")
-        if not group or any(not _is_score(score, minimum=3.0) for score in group.values()):
+        if set(group) != expected_members:
+            raise RuntimeError("live visual group mean members are not canonical")
+        if any(not _is_score(score, minimum=3.0) for score in group.values()):
             raise RuntimeError("live visual group mean does not meet the promotion threshold")
 
     material_changes = summary.get("material_changes")

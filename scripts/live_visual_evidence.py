@@ -846,23 +846,35 @@ def write_evidence_archive(
     archive_path: Path,
 ) -> None:
     """Create a deterministic archive containing only reverified reviewed files."""
-    if load_evidence(manifest_path) != manifest:
+    try:
+        manifest_payload = manifest_path.read_bytes()
+        archived_manifest = loads_bounded_json(manifest_payload, source="evidence manifest")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise EvidenceError(f"evidence manifest is invalid: {error}") from error
+    if archived_manifest != manifest:
         raise EvidenceError("evidence manifest changed after validation")
     root = manifest_path.parent.resolve()
-    files: list[tuple[str, Path, str | None]] = [("manifest.json", manifest_path.resolve(), None)]
+    files: list[tuple[str, Path | None, str | None, bytes | None]] = [
+        ("manifest.json", None, None, manifest_payload)
+    ]
     for relative, digest in _published_artifacts(summary):
         path = (root / relative).resolve()
         try:
             path.relative_to(root)
         except ValueError as error:
             raise EvidenceError("published evidence path escapes the bundle") from error
-        files.append((relative, path, digest))
+        files.append((relative, path, digest, None))
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     with archive_path.open("wb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
-                for relative, path, expected_digest in sorted(files):
-                    payload = path.read_bytes()
+                for relative, archive_source, expected_digest, retained_payload in sorted(files):
+                    if retained_payload is not None:
+                        payload = retained_payload
+                    else:
+                        if archive_source is None:  # pragma: no cover - internal tuple invariant
+                            raise EvidenceError("published evidence path is missing")
+                        payload = archive_source.read_bytes()
                     if (
                         expected_digest is not None
                         and hashlib.sha256(payload).hexdigest() != expected_digest
