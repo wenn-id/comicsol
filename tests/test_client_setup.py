@@ -35,11 +35,15 @@ class ClientSetupTests(unittest.TestCase):
             if Path(executable).name.lower() not in {"comic-sol", "comic-sol.exe"}:
                 raise RuntimeError("Comic Sol executable identity check failed")
 
+        self.real_verify_launcher_identity = client_setup._verify_launcher_identity
         launcher_check = mock.patch.object(
             client_setup, "_verify_launcher_identity", side_effect=verify_fixture_launcher
         )
         launcher_check.start()
         self.addCleanup(launcher_check.stop)
+        runtime_check = mock.patch.object(client_setup, "_mcp_runtime_available", return_value=True)
+        runtime_check.start()
+        self.addCleanup(runtime_check.stop)
 
     def adapter_paths(self, platform: str) -> dict[str, Path]:
         with mock.patch.object(client_setup.sys, "platform", platform):
@@ -1056,6 +1060,9 @@ class ClientSetupTests(unittest.TestCase):
             )[0]
 
         self.assertEqual("failure", result.state)
+        self.assertEqual("failed", result.status)
+        self.assertIsNotNone(result.error)
+        self.assertEqual("CS-INSTALL-002", result.error["code"])
         self.assertFalse(result.verified)
         self.assertIsNone(result.restored)
 
@@ -1183,7 +1190,7 @@ class ClientSetupTests(unittest.TestCase):
         with mock.patch.object(
             client_setup,
             "_verify_launcher_identity",
-            wraps=client_setup._verify_launcher_identity,
+            wraps=self.real_verify_launcher_identity,
         ) as identity:
             result = client_setup.repair_clients(
                 self.output,
@@ -1249,7 +1256,48 @@ class ClientSetupTests(unittest.TestCase):
         self.assertIn('    "other": {"command":"other"}\n', updated)
         self.assertEqual(1, updated.count('"comic-sol"'))
 
-    def test_repair_verification_failure_restores_original_bytes(self):
+    def test_repair_replaces_existing_json_entry_without_losing_indentation(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        stale = {
+            "command": str(self.launcher.resolve()),
+            "args": ["mcp", "--root", str(self.home / "old-output")],
+        }
+        original = (
+            f'{{\n  "mcpServers": {{\n    "comic-sol": {json.dumps(stale, indent=2)}\n  }}\n}}\n'
+        ).encode()
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        result = client_setup.repair_clients(
+            self.output,
+            adapters=[adapter],
+            executable=self.launcher,
+        )[0]
+
+        self.assertEqual("configured", result.status)
+        updated = config.read_text(encoding="utf-8")
+        self.assertIn('    "comic-sol": {\n', updated)
+        self.assertIn('      "args": [\n', updated)
+        self.assertEqual(1, updated.count('"comic-sol"'))
+        self.assertEqual(
+            str(self.output.resolve()), json.loads(updated)["mcpServers"]["comic-sol"]["args"][2]
+        )
+
+    def test_json_publish_ignores_same_key_outside_servers_mapping(self):
+        adapter = JsonClientAdapter("cursor", self.home / "mcp.json", "mcpServers")
+        original = b'{"metadata":{"comic-sol":{"keep":true}},"mcpServers":{}}\n'
+        published = adapter.publish(
+            original,
+            {
+                "command": str(self.launcher.resolve()),
+                "args": ["mcp", "--root", str(self.output.resolve())],
+            },
+        )
+        document = json.loads(published)
+        self.assertTrue(document["metadata"]["comic-sol"]["keep"])
+        self.assertIn("comic-sol", document["mcpServers"])
+
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)
         original = b'{"theme":"dark"}\n'

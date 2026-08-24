@@ -180,29 +180,57 @@ class JsonClientAdapter:
             raise ValueError(f"{self.servers_key} must be an object")
         entry_text = json.dumps(entry, ensure_ascii=False, indent=2, sort_keys=True)
         owned_key = json.dumps(MCP_SERVER_NAME, ensure_ascii=False)
-        owned_pattern = re.compile(rf'"{re.escape(MCP_SERVER_NAME)}"\s*:')
-        owned_match = owned_pattern.search(text)
-        if owned_match is not None:
-            value_start = _end_of_value(text, owned_match.end())
-            depth = 0
-            index = value_start - 1
-            while index < len(text):
-                if text[index] == "{":
-                    depth += 1
-                elif text[index] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                index += 1
-            value_end = index + 1
-            context = text[owned_match.start() : value_start]
-            indent = _indent_of(context) if context.strip() else ""
-            replacement = "\n".join(
-                indent + line if line.strip() else line for line in entry_text.splitlines()
+
+        decoder = json.JSONDecoder()
+        root_start = next(index for index, character in enumerate(text) if not character.isspace())
+        _, root_end = decoder.raw_decode(text, root_start)
+        root_members = _json_member_spans(text, root_start + 1, root_end - 1)
+        servers_member = next(
+            (member for member in root_members if member[0] == self.servers_key), None
+        )
+        if servers_member is not None:
+            _, member_start, member_end = servers_member
+            _, key_end = decoder.scan_once(text, member_start)
+            value_start = key_end
+            while value_start < member_end and text[value_start].isspace():
+                value_start += 1
+            if value_start >= member_end or text[value_start] != ":":
+                raise ValueError(f"{self.servers_key} mapping could not be located")
+            value_start += 1
+            while value_start < member_end and text[value_start].isspace():
+                value_start += 1
+            servers_value, servers_end = decoder.raw_decode(text, value_start)
+            if not isinstance(servers_value, dict):
+                raise ValueError(f"{self.servers_key} must be an object")
+            owned_member = next(
+                (
+                    member
+                    for member in _json_member_spans(text, value_start + 1, servers_end - 1)
+                    if member[0] == MCP_SERVER_NAME
+                ),
+                None,
             )
-            return (
-                text[: owned_match.start()] + f"{owned_key}: " + replacement + text[value_end:]
-            ).encode("utf-8")
+            if owned_member is not None:
+                _, owned_start, owned_end = owned_member
+                _, owned_key_end = decoder.scan_once(text, owned_start)
+                owned_value_start = owned_key_end
+                while owned_value_start < owned_end and text[owned_value_start].isspace():
+                    owned_value_start += 1
+                if owned_value_start >= owned_end or text[owned_value_start] != ":":
+                    raise ValueError("comic-sol entry could not be located")
+                owned_value_start += 1
+                while owned_value_start < owned_end and text[owned_value_start].isspace():
+                    owned_value_start += 1
+                owned_value, value_end = decoder.raw_decode(text, owned_value_start)
+                if not isinstance(owned_value, dict):
+                    raise ValueError("comic-sol entry must be an object")
+                line_start = text.rfind("\n", 0, owned_start) + 1
+                indent = _indent_of(text[line_start:owned_start])
+                replacement = "\n".join(
+                    line if index == 0 else indent + line
+                    for index, line in enumerate(entry_text.splitlines())
+                )
+                return (text[:owned_value_start] + replacement + text[value_end:]).encode("utf-8")
 
         servers_pattern = re.compile(rf'"{re.escape(self.servers_key)}"\s*:\s*\{{')
         servers_match = servers_pattern.search(text)

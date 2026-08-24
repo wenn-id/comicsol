@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import BinaryIO, Iterable
+from typing import BinaryIO, Iterable, Protocol
 
 from .clients import (
     ClientAdapter,
@@ -369,6 +369,14 @@ class RepairResult:
     restored: bool | None
     message: str
     error: dict[str, str | None] | None
+
+
+class _RepairTargetProtocol(Protocol):
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def config_path(self) -> Path | None: ...
 
 
 @dataclass(frozen=True)
@@ -1025,7 +1033,7 @@ def _repair_error_payload(
 
 
 def _repair_failure(
-    adapter: ClientAdapter,
+    adapter: _RepairTargetProtocol,
     error: Exception,
     *,
     status: str = "failed",
@@ -1058,7 +1066,7 @@ def _repair_failure(
 
 
 def _repair_noop(
-    adapter: ClientAdapter,
+    adapter: _RepairTargetProtocol,
     entry: dict[str, object] | None,
     *,
     status: str = "unchanged",
@@ -1115,8 +1123,8 @@ def _repair_one(
     path = adapter.config_path
     if dry_run:
         try:
-            snapshot = _read_snapshot(path)
-            config = adapter.load(snapshot.data)
+            dry_snapshot = _read_snapshot(path)
+            config = adapter.load(dry_snapshot.data)
             _, changed = adapter.mutate(config, entry)
         except Exception as error:
             return _repair_failure(adapter, error, planned_entry=entry)
@@ -1141,6 +1149,7 @@ def _repair_one(
     backup_created = False
     publish_attempted = False
     candidate_data: bytes | None = None
+    snapshot: _FileSnapshot | None = None
     with _ConfigDirectory(path.parent) as directory:
         try:
             with _ConfigLock(path, directory=directory):
@@ -1240,6 +1249,14 @@ def _repair_one(
                 _prune_backups(path, directory=directory)
         except Exception as error:
             if not publish_attempted:
+                if snapshot is None:
+                    return _repair_failure(
+                        adapter,
+                        error,
+                        action="set-comic-sol-entry",
+                        backup_required=True,
+                        planned_entry=entry,
+                    )
                 try:
                     current = _read_snapshot(path, directory=directory)
                     changed_after_failure = current.data != snapshot.data
@@ -1256,9 +1273,17 @@ def _repair_one(
                     )
             try:
                 current = _read_snapshot(path, directory=directory)
-                if current.data == snapshot.data and current.mode == snapshot.mode:
+                if (
+                    snapshot is not None
+                    and current.data == snapshot.data
+                    and current.mode == snapshot.mode
+                ):
                     restored = True
-                elif candidate_data is not None and current.data == candidate_data:
+                elif (
+                    snapshot is not None
+                    and candidate_data is not None
+                    and current.data == candidate_data
+                ):
                     restored = _restore_snapshot(path, snapshot, current, directory=directory)
                 else:
                     restored = False
