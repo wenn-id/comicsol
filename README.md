@@ -17,10 +17,16 @@ This repository, [`wenn-id/comicsol`](https://github.com/wenn-id/comicsol),
 is the canonical, independent home of Comic Sol. New development, issues, pull
 requests, documentation, and releases happen here.
 
-> **New here? Read [`docs/onboarding.md`](docs/onboarding.md) first.** It is one
-> short first-run path from installation to your first finished comic, including
-> the readiness check and where the output lands. The rest of this README is the
-> full reference.
+> **New here? Start with the [plain-language user guide](docs/user/index.md).**
+> It separates installation, first-comic, resume, repair, export, and error
+> recovery into creator-focused paths. For the complete copy-and-paste Codex
+> Skill path, use [`docs/onboarding.md`](docs/onboarding.md).
+
+## Documentation by audience
+
+- **Creators:** [user-guide index](docs/user/index.md), [getting started](docs/user/getting-started.md), [resume/repair/export](docs/user/resume-repair-export.md), and [troubleshooting](docs/user/troubleshooting.md).
+- **Installers and integrators:** [surface guide](docs/surfaces.md), [native install](docs/install.md), [manual install](docs/install-manual.md), and [structured error contract](docs/structured-errors.md).
+- **Contributors and maintainers:** [contribution guide](CONTRIBUTING.md), [agent development constitution](AGENTS.md), `references/`, benchmarks, and release runbooks.
 
 ## Install
 

@@ -1,7 +1,9 @@
 # First run: install to first comic
 
 This is the single supported happy path for a brand-new user. Follow it top to
-bottom and stop at the first step that fails.
+bottom and stop at the first step that fails. If you need to choose another
+installation path, resume an existing project, repair a comic, or export again,
+start from the [plain-language user-guide index](user/index.md).
 
 This page covers **one surface**: the Codex Skill checkout with the development
 script. The other surfaces — the Codex Plugin bundle, the installed CLI wheel,

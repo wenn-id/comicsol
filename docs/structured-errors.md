@@ -42,23 +42,23 @@ Both surfaces are fail-closed: every failure path emits exactly one canonical re
 
 | Code | Category | Boundary and recovery |
 | --- | --- | --- |
-| `CS-CLI-001` | `invalid-request` | The command line is invalid; check usage with `--help` and retry. |
-| `CS-PROJ-001` | `invalid-data` | Project or request data violates the schema; validate or restore the data, then retry. |
-| `CS-PROJ-002` | `not-found` | Required project data is missing; check the identifier/path and initialize or restore it. |
-| `CS-PROJ-003` | `permission-denied` | The process cannot access project data; grant access and retry. |
-| `CS-PROJ-004` | `io-error` | The filesystem failed during a project operation; check storage and permissions, then retry. |
-| `CS-PROJ-005` | `internal-error` | Unexpected runtime failure (also the catch-all boundary); retry once, then inspect diagnostics. |
-| `CS-SEC-001` | `security-error` | Containment failure; remove the unsafe input and retry from a trusted directory. |
-| `CS-SEC-002` | `security-error` | Input exceeded a documented resource limit; shrink the input and retry. |
-| `CS-IMG-001` | `image-error` | Image asset missing, unreadable, or outside limits; use a supported asset and retry. |
-| `CS-QA-001` | `quality-error` | Deterministic or visual QA failed (including reported validation issues); review the evidence, correct the artifact, and rerun. |
-| `CS-FONT-001` | `font-error` | Font missing, invalid, or unloadable; install or select a supported font and retry lettering. |
-| `CS-EXPORT-001` | `export-error` | The export could not be rendered or published; resolve the reported issue and retry export. |
-| `CS-INSTALL-001` | `missing-extra` | Optional component missing; reinstall with the required extra and retry. |
-| `CS-INSTALL-002` | `repair-failed` | Client integration repair failed safely; run doctor, correct the reported problem, and retry. |
-| `CS-INSTALL-003` | `rollback-failed` | Client config rollback could not be verified; stop the client, restore the reported backup, then run doctor. |
-| `CS-MCP-001` | `invalid-request` | An MCP tool argument violated the request contract; correct it and retry. |
-| `CS-MCP-002` | `internal-error` | The MCP tool hit an unexpected failure; retry once, then inspect server diagnostics. |
+| `CS-CLI-001` | `invalid-request` | The command line is invalid; [check usage and retry](user/troubleshooting.md#cs-cli-001). |
+| `CS-PROJ-001` | `invalid-data` | Project or request data violates the schema; [validate or restore it](user/troubleshooting.md#cs-proj-001). |
+| `CS-PROJ-002` | `not-found` | Required project data is missing; [locate or restore it](user/troubleshooting.md#cs-proj-002). |
+| `CS-PROJ-003` | `permission-denied` | The process cannot access project data; [restore safe access](user/troubleshooting.md#cs-proj-003). |
+| `CS-PROJ-004` | `io-error` | The filesystem failed during a project operation; [check storage and retry](user/troubleshooting.md#cs-proj-004). |
+| `CS-PROJ-005` | `internal-error` | Unexpected runtime failure; [retry once and collect diagnostics](user/troubleshooting.md#cs-proj-005). |
+| `CS-SEC-001` | `security-error` | Containment failure; [remove the unsafe path or indirection](user/troubleshooting.md#cs-sec-001). |
+| `CS-SEC-002` | `security-error` | Input exceeded a documented resource limit; [reduce the reported input](user/troubleshooting.md#cs-sec-002). |
+| `CS-IMG-001` | `image-error` | Image asset missing, unreadable, or outside limits; [repair or replace the asset](user/troubleshooting.md#cs-img-001). |
+| `CS-QA-001` | `quality-error` | Deterministic or visual QA failed; [review evidence and repair the named artifact](user/troubleshooting.md#cs-qa-001). |
+| `CS-FONT-001` | `font-error` | Font missing, invalid, or unloadable; [restore a supported font](user/troubleshooting.md#cs-font-001). |
+| `CS-EXPORT-001` | `export-error` | Export could not be rendered or published; [validate and finalize again](user/troubleshooting.md#cs-export-001). |
+| `CS-INSTALL-001` | `missing-extra` | Optional component missing; [reinstall the correct extra](user/troubleshooting.md#cs-install-001). |
+| `CS-INSTALL-002` | `repair-failed` | Client integration repair failed safely; [preview and retry the repair](user/troubleshooting.md#cs-install-002). |
+| `CS-INSTALL-003` | `rollback-failed` | Client config rollback could not be verified; [stop and restore the reported backup](user/troubleshooting.md#cs-install-003). |
+| `CS-MCP-001` | `invalid-request` | An MCP tool argument violated the request contract; [correct the request](user/troubleshooting.md#cs-mcp-001). |
+| `CS-MCP-002` | `internal-error` | The MCP tool hit an unexpected failure; [retry once and inspect diagnostics](user/troubleshooting.md#cs-mcp-002). |
 
 ## Classifier lookup surfaces
 
