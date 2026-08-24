@@ -225,52 +225,26 @@ class JsonClientAdapter:
                 if not isinstance(owned_value, dict):
                     raise ValueError("comic-sol entry must be an object")
                 line_start = text.rfind("\n", 0, owned_start) + 1
-                indent = _indent_of(text[line_start:owned_start])
+                indent = _indent_of(text[line_start:])
                 replacement = "\n".join(
                     line if index == 0 else indent + line
                     for index, line in enumerate(entry_text.splitlines())
                 )
                 return (text[:owned_value_start] + replacement + text[value_end:]).encode("utf-8")
 
-        servers_pattern = re.compile(rf'"{re.escape(self.servers_key)}"\s*:\s*\{{')
-        servers_match = servers_pattern.search(text)
-        if servers_match is None:
-            if servers is not None:
-                raise ValueError(f"{self.servers_key} mapping could not be located")
-            stripped = text.rstrip()
-            if not stripped.endswith("}"):
-                raise ValueError("client config root object could not be located")
-            body = stripped[:-1].rstrip()
-            member_indent = "  "
-            member = f"{owned_key}: {entry_text}"
-            padded = member.replace("\n", "\n" + member_indent * 2)
-            addition = f"{member_indent}{json.dumps(self.servers_key)}: {{\n{member_indent * 2}{padded}\n{member_indent}}}"
-            if body.endswith("{"):
-                return (body + "\n" + addition + "\n}\n").encode("utf-8")
-            return (body + ",\n" + addition + "\n}\n").encode("utf-8")
-        open_brace = servers_match.end() - 1
-        depth = 0
-        index = open_brace
-        while index < len(text):
-            if text[index] == "{":
-                depth += 1
-            elif text[index] == "}":
-                depth -= 1
-                if depth == 0:
-                    break
-            index += 1
-        closing = index
-        body = text[open_brace + 1 : closing].rstrip()
-        member_indent = "    "
+        if servers is not None:
+            raise ValueError(f"{self.servers_key} mapping could not be located")
+        stripped = text.rstrip()
+        if not stripped.endswith("}"):
+            raise ValueError("client config root object could not be located")
+        body = stripped[:-1].rstrip()
+        member_indent = "  "
         member = f"{owned_key}: {entry_text}"
-        padded = member.replace("\n", "\n" + member_indent)
-        if body:
-            return (text[:closing] + ",\n" + member_indent + padded + text[closing:]).encode(
-                "utf-8"
-            )
-        return (text[: open_brace + 1] + "\n" + member_indent + padded + text[closing:]).encode(
-            "utf-8"
-        )
+        padded = member.replace("\n", "\n" + member_indent * 2)
+        addition = f"{member_indent}{json.dumps(self.servers_key)}: {{\n{member_indent * 2}{padded}\n{member_indent}}}"
+        if body.endswith("{"):
+            return (body + "\n" + addition + "\n}\n").encode("utf-8")
+        return (body + ",\n" + addition + "\n}\n").encode("utf-8")
 
     def verify(self, expected: dict[str, Any] | None = None) -> bool:
         if self._verify_hook is not None:

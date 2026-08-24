@@ -263,14 +263,15 @@ comic-sol --json uninstall --output-root /absolute/path/to/comic-sol-output
 `comic-sol` command, arguments, config path, action, and backup requirement without
 writing. Apply recomputes the plan under the config lock, verifies the backup, writes
 atomically, verifies the persisted entry, and verifies rollback after failure. Each
-client returns `success`, `no-op`, or `failure`; selected clients that cannot be
-verified return a structured `failure`, while unselected or undetected clients
-may return `no-op` with `skipped` status and unverified native formats return
-`no-op` with `unsupported` status. The compatible `status` values are `planned`
+client returns `success`, `no-op`, or `failure`. Selecting an unverified client
+returns a failure result; unselected or undetected clients may return `no-op` with
+`skipped` status, and clients whose native format or location has not been verified
+return `no-op` with `unsupported` status. The complete `status` matrix is `planned`
 for preview, `configured` for an applied change, `unchanged` for a repeat/no-op,
-`rolled-back` when a failed mutation was restored, and `rollback-failed` when
-restoration could not be verified. Repair exits nonzero if any client fails.
-Repeating repair is idempotent.
+`skipped` when not selected or not detected, `unsupported` when the native format or
+location is unverified, `rolled-back` when a failed mutation was restored, and
+`rollback-failed` when restoration could not be verified. Repair exits nonzero if any
+client fails. Repeating repair is idempotent.
 
 Repair changes only the `comic-sol` MCP entry at verified Codex TOML and detected
 JSON config locations. It does not create missing third-party config files, repair

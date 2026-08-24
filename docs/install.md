@@ -160,13 +160,13 @@ client config files. It safely adds or replaces stale executable, MCP arguments,
 output-root values; it never creates missing third-party config, guesses unsupported
 formats, invokes an installer, or repairs unrelated application settings. Each change
 uses a verified private backup, atomic publication, persisted verification, and
-verified rollback. Results expose `success`, `no-op`, or `failure`; their compatible
-statuses are `planned` (preview), `configured` (applied), `unchanged` (no-op),
-`skipped` (not selected or not detected), `unsupported` (unverified native
+verified rollback. Results expose `success`, `no-op`, or `failure`. The complete status
+matrix is `planned` (preview), `configured` (applied change), `unchanged` (no-op
+repeat), `skipped` (not selected or not detected), `unsupported` (unverified native
 format/location), `rolled-back` (failed change restored), and `rollback-failed`
-(restoration could not be verified). Selecting an unverified client returns a
-failure result. Failures keep per-client evidence and direct operators to
-`comic-sol doctor` or a named backup.
+(restoration could not be verified). Selecting an unverified client returns a failure
+result. Failures keep per-client evidence and direct operators to `comic-sol doctor`
+or a named backup.
 
 ## OCI image
 

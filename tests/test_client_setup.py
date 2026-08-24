@@ -1209,22 +1209,29 @@ class ClientSetupTests(unittest.TestCase):
         fake.write_text("fake", encoding="utf-8")
         adapter = JsonClientAdapter("cursor", config, "mcpServers")
 
-        with mock.patch.object(
-            client_setup,
-            "_verify_launcher_identity",
-            wraps=self.real_verify_launcher_identity,
-        ) as identity:
-            result = client_setup.repair_clients(
-                self.output,
-                adapters=[adapter],
-                executable=fake,
-            )[0]
+        client_setup._verify_launcher_identity = self.real_verify_launcher_identity
+        try:
+            with mock.patch.object(
+                client_setup,
+                "_verify_launcher_identity",
+                wraps=self.real_verify_launcher_identity,
+            ) as identity:
+                result = client_setup.repair_clients(
+                    self.output,
+                    adapters=[adapter],
+                    executable=fake,
+                )[0]
 
-        identity.assert_called_once()
+            identity.assert_called_once()
 
-        self.assertEqual("failure", result.state)
-        self.assertEqual("CS-INSTALL-002", result.error["code"])
-        self.assertEqual("{}\n", config.read_text(encoding="utf-8"))
+            self.assertEqual("failure", result.state)
+            self.assertEqual("CS-INSTALL-002", result.error["code"])
+            self.assertEqual("{}\n", config.read_text(encoding="utf-8"))
+        finally:
+            def verify_fixture_launcher(executable):
+                if Path(executable).name.lower() not in {"comic-sol", "comic-sol.exe"}:
+                    raise RuntimeError("Comic Sol executable identity check failed")
+            client_setup._verify_launcher_identity = verify_fixture_launcher
 
     def test_repair_does_not_rollback_over_a_concurrent_third_party_edit(self):
         config = self.home / ".cursor" / "mcp.json"

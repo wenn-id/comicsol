@@ -1239,7 +1239,11 @@ def _repair_one(
                     except Exception as rollback_error:
                         try:
                             final = _read_snapshot(path, directory=directory)
-                            if final.data == snapshot.data and final.mode == snapshot.mode:
+                            if (
+                                snapshot is not None
+                                and final.data == snapshot.data
+                                and final.mode == snapshot.mode
+                            ):
                                 return _repair_failure(
                                     adapter,
                                     rollback_error,
@@ -1278,7 +1282,7 @@ def _repair_one(
                     )
                 try:
                     current = _read_snapshot(path, directory=directory)
-                    changed_after_failure = current.data != snapshot.data
+                    changed_after_failure = snapshot is None or current.data != snapshot.data
                 except (OSError, _ConfigChangedError):
                     changed_after_failure = True
                 if not changed_after_failure:
