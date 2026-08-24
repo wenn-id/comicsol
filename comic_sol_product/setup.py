@@ -445,7 +445,9 @@ def _prune_backups(path: Path, *, directory: _ConfigDirectory | None = None) -> 
             pass
 
 
-def _resolve_executable(executable: str | os.PathLike[str] | None) -> str:
+def _resolve_executable(
+    executable: str | os.PathLike[str] | None, *, require_runnable: bool = True
+) -> str:
     launcher = os.fspath(
         executable
         if executable is not None
@@ -466,7 +468,9 @@ def _resolve_executable(executable: str | os.PathLike[str] | None) -> str:
     if located is None:
         raise FileNotFoundError("Comic Sol executable could not be resolved")
     resolved = Path(located).expanduser().resolve(strict=True)
-    if not resolved.is_file() or (os.name != "nt" and not os.access(resolved, os.X_OK)):
+    if not resolved.is_file() or (
+        require_runnable and os.name != "nt" and not os.access(resolved, os.X_OK)
+    ):
         raise FileNotFoundError("Comic Sol executable is not runnable")
     return str(resolved)
 
@@ -690,6 +694,8 @@ def _assert_safe_path_components(path: Path) -> None:
         try:
             metadata = current.lstat()
         except FileNotFoundError:
+            continue
+        if sys.platform == "darwin" and current in {Path("/var"), Path("/tmp")}:
             continue
         if (
             stat.S_ISLNK(metadata.st_mode)
@@ -1346,7 +1352,7 @@ def repair_clients(
             continue
         if entry is None:
             try:
-                resolved_executable = _resolve_executable(executable)
+                resolved_executable = _resolve_executable(executable, require_runnable=False)
                 _verify_launcher_identity(resolved_executable)
                 if not _mcp_runtime_available():
                     raise RuntimeError("MCP support is unavailable; run comic-sol doctor")
