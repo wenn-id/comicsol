@@ -150,6 +150,35 @@ class CommandServiceContractTests(unittest.TestCase):
             Path("out"), "Demo", b"story", {}, page_count=4
         )
 
+    def test_init_forwards_image_capability_and_page_scope(self):
+        capability = {
+            "status": "available",
+            "name": "agent-image-generation",
+            "supports_reference_images": True,
+            "supports_dimensions": True,
+        }
+
+        self.assertEqual(
+            Path("demo"),
+            self.service.execute(
+                "init",
+                output_root=Path("out"),
+                title="Demo",
+                source=b"story",
+                request={},
+                image_capability=capability,
+                page_count=4,
+            ),
+        )
+        self.engine.init_project.assert_called_once_with(
+            Path("out"),
+            "Demo",
+            b"story",
+            {},
+            image_capability=capability,
+            page_count=4,
+        )
+
     def test_artifact_commands_use_injected_modules(self):
         project = Path("project")
         self.assertEqual([], self.service.execute("letter", project_dir=project))
