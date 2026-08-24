@@ -345,6 +345,7 @@ class ClientSetupTests(unittest.TestCase):
 
         self.assertEqual(original, config.read_bytes())
 
+    @unittest.skipIf(os.name == "nt", "Darwin path semantics are unavailable on Windows")
     def test_darwin_publish_fails_closed_when_exchange_is_unavailable(self):
         config = self.home / "config.json"
         original = b"original"
@@ -364,6 +365,7 @@ class ClientSetupTests(unittest.TestCase):
 
         self.assertEqual(original, config.read_bytes())
 
+    @unittest.skipIf(os.name == "nt", "Darwin path semantics are unavailable on Windows")
     def test_darwin_publish_tolerates_unsupported_directory_fsync(self):
         config = self.home / "config.json"
         original = b"original"
@@ -396,6 +398,7 @@ class ClientSetupTests(unittest.TestCase):
 
         self.assertEqual(b"candidate", config.read_bytes())
 
+    @unittest.skipIf(os.name == "nt", "Darwin path semantics are unavailable on Windows")
     def test_darwin_config_directory_resolves_only_sanctioned_system_alias(self):
         with (
             mock.patch.object(client_setup.sys, "platform", "darwin"),
