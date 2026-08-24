@@ -223,6 +223,13 @@ class ReadmeContractTests(unittest.TestCase):
         self.assertIn("docs/surfaces.md", install)
         self.assertIn("docs/support-matrix.md", install)
 
+    def test_guided_initializer_keeps_an_explicit_automation_equivalent(self):
+        section = self.readme.split("### Guided project initialization", 1)[1].split("\n### ", 1)[0]
+        self.assertIn("comic-sol init --interactive", section)
+        self.assertIn("comic-sol --json init", section)
+        self.assertIn("--page-count 2", section)
+        self.assertIn("never prompts", section)
+
 
 class OnboardingTests(unittest.TestCase):
     """The happy path pins an explicit output root and names its surface."""

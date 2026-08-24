@@ -34,6 +34,7 @@ from scripts.comic_sol import (  # noqa: E402
     resume_project,
     sha256_file,
     stage_cache_key,
+    summarize_project_status,
     transition,
 )
 from scripts.normalize_panels import normalize_panel  # noqa: E402
@@ -1533,6 +1534,101 @@ class ResumeTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(0, main(["record-stage", os.fspath(self.project), "export"]))
 
+    def test_status_summary_reports_complete_project_with_no_next_action(self):
+        summary = summarize_project_status(self.project)
+
+        self.assertEqual("COMPLETE", summary["status"])
+        self.assertEqual(self.project.name, summary["project_id"])
+        # Every resume stage is preserved for a freshly completed project.
+        self.assertEqual(
+            [{"stage": stage, "state": "complete"} for stage in STAGES],
+            summary["stages"],
+        )
+        self.assertEqual({"done": "project is complete"}, summary["next_action"])
+        self.assertEqual(0, summary["panels"]["failed"])
+        self.assertEqual(1, summary["panels"]["accepted"])
+        self.assertEqual(0, summary["panels"]["unreadable"])
+
+    def test_status_summary_next_action_agrees_with_resume_when_stale(self):
+        # A canonical edit to the earliest stage makes planning the first stale
+        # stage; the summary must recommend exactly what resume would run next.
+        story = read_json(self.project / "plan/story-plan.json")
+        story["title"] = "Changed title"
+        atomic_write_json(self.project / "plan/story-plan.json", story)
+
+        summary = summarize_project_status(self.project)
+        resume_result = resume_project(self.project)
+
+        self.assertEqual("stale", summary["stages"][0]["state"])
+        self.assertEqual(resume_result["next_action"], summary["next_action"])
+
+    def test_status_summary_does_not_mutate_the_project(self):
+        before = read_json(self.project / "project.json")
+        summarize_project_status(self.project)
+        after = read_json(self.project / "project.json")
+        self.assertEqual(before, after)
+
+    def test_status_summary_surfaces_unreadable_panel_records(self):
+        # A corrupt-but-diagnosable project keeps the record countable as a
+        # visible fault instead of silently shrinking the accepted total.
+        (self.project / "qa/panels/p01-01.json").write_text("{ broken", encoding="utf-8")
+        summary = summarize_project_status(self.project)
+        self.assertEqual(0, summary["panels"]["accepted"])
+        self.assertEqual(1, summary["panels"]["unreadable"])
+
+    def test_status_summary_reports_incomplete_when_panel_requires_regeneration(self):
+        # A project with a valid panel QA record that has decision="regenerate"
+        # must not report completion status even if all stages are cached.
+        qa_record = read_json(self.project / "qa/panels/p01-01.json")
+        qa_record["decision"] = "regenerate"
+        atomic_write_json(self.project / "qa/panels/p01-01.json", qa_record)
+
+        summary = summarize_project_status(self.project)
+        actions = build_resume_plan(self.project)
+
+        # The summary must show generation stage as stale, not complete
+        generation_stage = next(s for s in summary["stages"] if s["stage"] == "generation")
+        self.assertNotEqual("complete", generation_stage["state"])
+        # Status must not report the project as done
+        self.assertNotIn("done", summary["next_action"])
+        # Verify there's a panel action requiring regeneration
+        panel_actions = [a for a in actions if a.artifact == "p01-01"]
+        self.assertTrue(
+            any(a.action == "regenerate" for a in panel_actions),
+            "Expected panel to require regeneration",
+        )
+
+    def test_panel_review_counts_includes_expected_panels_without_qa_records(self):
+        # A project with known panels in the storyboard but missing QA records
+        # must count those panels as pending rather than ignoring them.
+        # Add a second panel to the storyboard
+        storyboard = read_json(self.project / "plan/storyboard.json")
+        storyboard["pages"][0]["panels"].append(
+            {
+                "id": "p01-02",
+                "scene_id": "hall",
+                "characters": ["mira"],
+                "rect": {"x": 64, "y": 64, "width": 1472, "height": 2272},
+                "text": [],
+            }
+        )
+        atomic_write_json(self.project / "plan/storyboard.json", storyboard)
+        manifest = read_json(self.project / "project.json")
+        manifest["panels"].append("p01-02")
+        atomic_write_json(self.project / "project.json", manifest)
+
+        # Don't create a QA record for p01-02.
+        summary = summarize_project_status(self.project)
+
+        self.assertEqual(1, summary["panels"]["accepted"])
+        self.assertEqual(1, summary["panels"]["pending"])
+        self.assertEqual(0, summary["panels"]["failed"])
+
+        # Manifest metadata remains sufficient when the storyboard is missing.
+        (self.project / "plan/storyboard.json").unlink()
+        manifest_only = summarize_project_status(self.project)
+        self.assertEqual(summary["panels"], manifest_only["panels"])
+
 
 class ResumeFixtureIntegrationTests(unittest.TestCase):
     def test_interrupted_fixture_without_cache_regenerates_all_panels_honestly(self):
@@ -1825,6 +1921,25 @@ class BlockedRecoveryTests(unittest.TestCase):
         self.assertEqual(len(reused_paths), len(set(reused_paths)))
         self.assertTrue(all(event["details"]["reused"] is True for event in reused))
         self.assertEqual(len(baseline_records) + len(cached_paths), len(events))
+
+    def test_status_summary_reports_blocked_stage_and_reason(self):
+        block_project(
+            self.project,
+            "image-capability-unavailable",
+            "image capability unavailable",
+        )
+        summary = summarize_project_status(self.project)
+
+        self.assertEqual("BLOCKED", summary["status"])
+        self.assertEqual("image-capability-unavailable", summary["blocked_reason"])
+        # Exactly one stage carries the blocked marker; nothing later is complete.
+        blocked_states = [entry for entry in summary["stages"] if entry["state"] == "blocked"]
+        self.assertEqual(1, len(blocked_states))
+        self.assertNotIn("complete", [entry["state"] for entry in summary["stages"][3:]])
+        # When blocked due to image-capability-unavailable and capability is still unavailable,
+        # the next action should be "required" not "resume"
+        self.assertIn("required", summary["next_action"])
+        self.assertEqual("image capability available", summary["next_action"]["required"])
 
     def test_blocked_project_cannot_be_invalidated_directly(self):
         block_project(

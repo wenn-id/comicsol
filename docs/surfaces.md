@@ -70,6 +70,9 @@ adds the MCP SDK for the same launcher.
 - **How you start it:** `comic-sol --json doctor`.
 - **Default output root:** the platform default in the table above; override
   with `--output-root`.
+- **Project initialization:** humans may run `comic-sol init --interactive` for
+  the guided flow; automation uses fully specified `comic-sol --json init`
+  flags and never receives a prompt.
 - **Details:** [`README.md` → Install](../README.md#install).
 
 ## Native portable archive

@@ -1,6 +1,8 @@
 import io
 import json
+import shutil
 import tempfile
+import types
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -10,6 +12,8 @@ from comic_sol_product import __version__
 
 from comic_sol_product import cli
 from comic_sol_product.config import default_output_root
+
+_FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 class ProductCliTests(unittest.TestCase):
@@ -35,6 +39,136 @@ class ProductCliTests(unittest.TestCase):
         self.assertEqual(home / "Comic Sol", default_output_root("linux", home))
         self.assertEqual(home / "Documents/Comic Sol", default_output_root("darwin", home))
         self.assertEqual(home / "Documents/Comic Sol", default_output_root("win32", home))
+
+    def test_guided_init_uses_sensible_defaults(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory) / "projects"
+            with (
+                mock.patch.object(cli, "default_output_root", return_value=output),
+                mock.patch(
+                    "builtins.input",
+                    side_effect=["", "", "", "A courier carries the last light.", ""],
+                ),
+            ):
+                code, stdout, stderr = self.invoke(["init", "--interactive"])
+
+            project = output / stdout.strip()
+            manifest = json.loads((project / "project.json").read_text(encoding="utf-8"))
+            request = json.loads((project / "source/request.json").read_text(encoding="utf-8"))
+            persisted_source = (project / "source/input.txt").read_bytes()
+
+        self.assertEqual(0, code)
+        self.assertEqual("comic-sol-project", stdout.strip())
+        self.assertIn("Comic Sol guided project initializer", stderr)
+        self.assertIn("Project name", stderr)
+        self.assertIn("Page count", stderr)
+        self.assertIn("Story source", stderr)
+        self.assertIn("Output location", stderr)
+        self.assertEqual("Comic Sol Project", manifest["title"])
+        self.assertEqual(2, manifest["settings"]["page_count"])
+        self.assertEqual({"language": "en", "mode": "short_prompt"}, request)
+        self.assertEqual(b"A courier carries the last light.", persisted_source)
+
+    def test_guided_and_noninteractive_init_have_identical_project_schema(self):
+        def shape(value):
+            if isinstance(value, dict):
+                return {key: shape(nested) for key, nested in value.items()}
+            if isinstance(value, list):
+                return [shape(nested) for nested in value]
+            return type(value).__name__
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "story.md"
+            source.write_text("A lighthouse wakes beneath the city.", encoding="utf-8")
+            guided_root = root / "guided"
+            automated_root = root / "automated"
+            with mock.patch(
+                "builtins.input",
+                side_effect=[
+                    "Schema Parity",
+                    "4",
+                    "file",
+                    str(source),
+                    str(guided_root),
+                ],
+            ):
+                guided_code, guided_stdout, _ = self.invoke(["init", "--interactive"])
+            with mock.patch("builtins.input", side_effect=AssertionError("unexpected prompt")):
+                automated_code, automated_stdout, automated_stderr = self.invoke(
+                    [
+                        "--json",
+                        "init",
+                        "--output-root",
+                        str(automated_root),
+                        "--title",
+                        "Schema Parity",
+                        "--source",
+                        str(source),
+                        "--page-count",
+                        "4",
+                    ]
+                )
+
+            automated_payload = json.loads(automated_stdout)
+            guided_project = guided_root / guided_stdout.strip()
+            automated_project = automated_root / automated_payload["data"]["project_id"]
+            guided_manifest = json.loads(
+                (guided_project / "project.json").read_text(encoding="utf-8")
+            )
+            automated_manifest = json.loads(
+                (automated_project / "project.json").read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(0, guided_code)
+            self.assertEqual(0, automated_code)
+            self.assertEqual("", automated_stderr)
+            self.assertEqual(shape(guided_manifest), shape(automated_manifest))
+            self.assertEqual(
+                (guided_project / "source/input.txt").read_bytes(),
+                (automated_project / "source/input.txt").read_bytes(),
+            )
+            self.assertEqual(
+                (guided_project / "source/request.json").read_bytes(),
+                (automated_project / "source/request.json").read_bytes(),
+            )
+            self.assertEqual(4, automated_manifest["settings"]["page_count"])
+
+    def test_guided_init_reprompts_invalid_page_scope_without_creating_files(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory) / "projects"
+            with (
+                mock.patch.object(cli, "default_output_root", return_value=output),
+                mock.patch("builtins.input", side_effect=["Project", "0", "5", EOFError()]),
+            ):
+                code, stdout, stderr = self.invoke(["init", "--interactive"])
+
+            self.assertEqual(2, code)
+            self.assertEqual("", stdout)
+            self.assertGreaterEqual(stderr.count("Page count must be"), 2)
+            self.assertIn("interactive initialization ended before completion", stderr)
+            self.assertFalse(output.exists())
+
+    def test_interactive_init_rejects_json_and_data_flags_before_prompting(self):
+        cases = (
+            (["--json", "init", "--interactive"], True),
+            (["init", "--interactive", "--title", "Project"], False),
+        )
+        for argv, as_json in cases:
+            with (
+                self.subTest(argv=argv),
+                mock.patch("builtins.input", side_effect=AssertionError("unexpected prompt")),
+            ):
+                code, stdout, stderr = self.invoke(argv)
+
+            self.assertEqual(2, code)
+            if as_json:
+                self.assertEqual("", stderr)
+                payload = json.loads(stdout)
+                self.assertEqual("CS-CLI-001", payload["error"]["code"])
+            else:
+                self.assertEqual("", stdout)
+                self.assertIn("CS-CLI-001", stderr)
 
     def test_json_doctor_returns_stable_success_envelope(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -363,6 +497,98 @@ class ProductCliTests(unittest.TestCase):
             self.assertIs(expected, cli._run(arguments))
 
         self.assertEqual([Path("/tmp/project")], seen)
+
+    def test_human_status_renders_visual_summary_on_stdout(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "valid-one-page"
+            shutil.copytree(_FIXTURES / "valid-one-page", project)
+
+            code, stdout, stderr = self.invoke(["status", str(project)])
+
+        self.assertEqual(0, code)
+        # The stable one-line contract stays the first line for scripts.
+        self.assertEqual("valid-one-page: QA_READY", stdout.splitlines()[0])
+        # The visual summary adds per-stage, panel, and next-action sections.
+        self.assertIn("Stages:", stdout)
+        self.assertIn("planning:", stdout)
+        self.assertIn("Panels: 3 accepted, 0 failed, 0 pending", stdout)
+        self.assertIn("Next action:", stdout)
+        # Human output stays plain: no ANSI colour escapes.
+        self.assertNotIn("\x1b[", stdout)
+
+    def test_human_status_surfaces_unreadable_panel_records(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "valid-one-page"
+            shutil.copytree(_FIXTURES / "valid-one-page", project)
+            (project / "qa/panels/p01-02.json").write_text("{ broken", encoding="utf-8")
+
+            code, stdout, stderr = self.invoke(["status", str(project)])
+
+        self.assertEqual(0, code)
+        self.assertIn("Panels: 2 accepted, 0 failed, 0 pending", stdout)
+        self.assertIn("unreadable", stdout)
+
+    def test_human_status_escapes_terminal_controls_in_all_project_fields(self):
+        """Project values stay visible without becoming terminal instructions."""
+        expected = {"project_id": "project", "status": "COMPLETE"}
+        malicious_warning = "warning \x1b[31mred\x1b[0m and \x1b[2J clear"
+        expected_summary = {
+            "project_id": "project\x1b]0;renamed\x07",
+            "status": "COMPLETE\rINJECTED",
+            "stages": [{"stage": "generation\nforged", "state": "blocked\tfake"}],
+            "panels": {"accepted": "0\x1b[2J", "failed": 0, "pending": 1},
+            "warnings": [malicious_warning],
+            "blocked_reason": "unsafe\x1b[?25l",
+            "next_action": {"required": "capability\x1b[5m available"},
+        }
+
+        class FakeEngine:
+            def read_project_status(self, project_dir):
+                return expected
+
+        class FakeCommandService:
+            def __init__(self, **kwargs):
+                pass
+
+            def execute(self, command, **kwargs):
+                return expected if command == "status" else expected_summary
+
+        fake_module = types.SimpleNamespace(CommandService=FakeCommandService)
+        with (
+            mock.patch.object(cli, "_load_engine", return_value=FakeEngine()),
+            mock.patch.object(cli, "_load_command_service", return_value=fake_module),
+        ):
+            code, stdout, stderr = self.invoke(["status", "/tmp/project"])
+
+        self.assertEqual(0, code)
+        self.assertEqual("", stderr)
+        self.assertNotIn("\x1b", stdout)
+        self.assertNotIn("\r", stdout)
+        self.assertNotIn("\t", stdout)
+        self.assertIn("project\\x1b]0;renamed\\x07: COMPLETE\\rINJECTED", stdout)
+        self.assertIn("generation\\nforged: blocked\\tfake", stdout)
+        self.assertIn("0\\x1b[2J accepted", stdout)
+        self.assertIn("warning \\x1b[31mred\\x1b[0m", stdout)
+        self.assertIn("Blocked reason: unsafe\\x1b[?25l", stdout)
+        self.assertIn("capability\\x1b[5m available", stdout)
+
+    def test_json_status_envelope_stays_the_unchanged_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "valid-one-page"
+            shutil.copytree(_FIXTURES / "valid-one-page", project)
+            expected_manifest = json.loads((project / "project.json").read_text("utf-8"))
+
+            code, stdout, stderr = self.invoke(["--json", "status", str(project)])
+
+        self.assertEqual(0, code)
+        self.assertEqual("", stderr)
+        payload = json.loads(stdout)
+        self.assertEqual({"ok", "command", "data", "error"}, set(payload))
+        self.assertTrue(payload["ok"])
+        self.assertEqual("status", payload["command"])
+        # The machine-readable status is exactly the recovered manifest; the
+        # visual summary never leaks into the JSON envelope.
+        self.assertEqual(expected_manifest, payload["data"])
 
     def test_human_lifecycle_progress_is_stage_aware_and_plain(self):
         events = [

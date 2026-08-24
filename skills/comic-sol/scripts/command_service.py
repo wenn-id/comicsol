@@ -54,14 +54,38 @@ class CommandService:
             request = self._required(kwargs, "request")
             engine.validate_source_bytes(source, kwargs.get("suffix"))
             image_capability = kwargs.get("image_capability")
+            has_page_count = "page_count" in kwargs
+            page_count = kwargs.get("page_count", 2)
             if image_capability is None:
-                return engine.init_project(output_root, title, source, request)
+                return engine.init_project(
+                    output_root, title, source, request, page_count=page_count
+                )
+            if not has_page_count:
+                return engine.init_project(
+                    output_root, title, source, request, image_capability=image_capability
+                )
             return engine.init_project(
-                output_root, title, source, request, image_capability=image_capability
+                output_root,
+                title,
+                source,
+                request,
+                image_capability=image_capability,
+                page_count=page_count,
             )
         if project_dir is None:
             raise TypeError(f"{command} requires project_dir")
         if command == "status":
+            reader = getattr(engine, "read_project_status", None)
+            if reader is not None:
+                return reader(project_dir)
+            return engine.read_project_manifest(Path(project_dir) / "project.json")
+        if command == "status-summary":
+            summarizer = getattr(engine, "summarize_project_status", None)
+            if summarizer is not None:
+                return summarizer(project_dir)
+            # Older engines without the visual summary still expose a status
+            # reader; fall back to the manifest so the human surface degrades
+            # to the stable one-line view instead of failing.
             reader = getattr(engine, "read_project_status", None)
             if reader is not None:
                 return reader(project_dir)

@@ -90,6 +90,7 @@ _REQUEST_ERROR_PREFIXES = (
     "request mode must be one of short_prompt, pasted_story, source_file, or resume",
     "request language must be a non-empty language tag",
     "request title must be a non-empty string of at most 200 characters",
+    "page count must be an integer from 1 to 4",
     "transition warning must be a non-empty string of at most 500 characters",
     "override reason must be a non-empty string of at most 1000 characters",
     "narrative field must not contain secrets or credentials",
@@ -470,8 +471,16 @@ def comic_doctor(
 
 
 @mcp.tool()
-def comic_init(title: str, source_text: str, request_settings: dict[str, Any]) -> str:
-    """Initialize a new isolated project folder."""
+def comic_init(
+    title: str,
+    source_text: str,
+    request_settings: dict[str, Any],
+    page_count: Annotated[
+        Any,
+        WithJsonSchema({"type": "integer", "minimum": 1, "maximum": 4}),
+    ] = 2,
+) -> str:
+    """Initialize a new isolated 1-4 page project folder."""
     try:
         validate_narrative(title, message=TITLE_LIMIT_MESSAGE, max_chars=MAX_TITLE_CHARS)
         if not isinstance(source_text, str) or len(source_text.encode("utf-8")) > 200 * 1024:
@@ -479,12 +488,19 @@ def comic_init(title: str, source_text: str, request_settings: dict[str, Any]) -
         if not isinstance(request_settings, dict):
             raise TypeError("request_settings must be a JSON object")
         validate_request_settings(request_settings)
+        if (
+            isinstance(page_count, bool)
+            or not isinstance(page_count, int)
+            or not 1 <= page_count <= 4
+        ):
+            raise ValueError("page count must be an integer from 1 to 4")
         project_dir = _command_service().execute(
             "init",
             output_root=OUTPUT_ROOT,
             title=title,
             source=source_text.encode("utf-8"),
             request=request_settings,
+            page_count=page_count,
         )
         return str(project_dir.name)
     except Exception as e:

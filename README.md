@@ -136,6 +136,29 @@ The CLI exposes `doctor`, `init`, `status`, `validate`, `resume`, `finalize`,
 `setup`, `repair`, and `uninstall`, plus the optional `mcp` launcher. Machine-readable
 responses use one stable envelope containing `ok`, `command`, `data`, and `error`.
 
+### Guided project initialization
+
+The installed CLI can guide a new user through project name, 1–4 page scope,
+story prompt or local `.txt`/`.md` source, and output location:
+
+```bash
+comic-sol init --interactive
+```
+
+The defaults are `Comic Sol Project`, 2 pages, an English short prompt, and the
+platform-native output root. The wizard validates every answer before it creates
+the output root or project. It is explicit and human-only: `--interactive` cannot
+be combined with `--json` or init data flags.
+
+Automation, CI, and AI agents use the equivalent non-interactive path, which
+never prompts. `--request-json` remains available when a caller needs to override
+the inferred `source_file` request settings:
+
+```bash
+comic-sol --json init --output-root /absolute/projects \
+  --title "Sunlight Courier" --source story.md --page-count 2
+```
+
 Lifecycle commands report concise stage progress only on the human-readable surface:
 `WORKING`, `BLOCKED`, `FAILED`, or `COMPLETE`, followed by the current stage and known
 completed/remaining counts. Progress is written to `stderr`, so scripts can consume
