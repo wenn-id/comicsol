@@ -2,6 +2,7 @@ import io
 import json
 import shutil
 import tempfile
+import types
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -325,9 +326,10 @@ class ProductCliTests(unittest.TestCase):
             def execute(self, command, **kwargs):
                 return expected_summary
 
+        fake_module = types.SimpleNamespace(CommandService=FakeCommandService)
         with (
             mock.patch.object(cli, "_load_engine", return_value=FakeEngine()),
-            mock.patch.object(cli, "_load_command_service", return_value=FakeCommandService),
+            mock.patch.object(cli, "_load_command_service", return_value=fake_module),
         ):
             code, stdout, stderr = self.invoke(["status", "/tmp/project"])
 

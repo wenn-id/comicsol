@@ -1227,11 +1227,15 @@ def _stage_progress_from_plan(
 
     for stage in RESUME_STAGES:
         action = stage_actions.get(stage)
-        # If we're at the generation stage and have panel regeneration needs, treat as stale
-        if stale_stage is None and stage == "generation" and has_panel_regeneration:
-            if action is not None and action.action == "reuse":
-                # Stage cache says reuse, but panels need regeneration
-                stale_stage = stage
+        # Stage cache says reuse, but panels need regeneration.
+        if (
+            stale_stage is None
+            and stage == "generation"
+            and has_panel_regeneration
+            and action is not None
+            and action.action == "reuse"
+        ):
+            stale_stage = stage
         elif stale_stage is None and action is not None and action.action == "reuse":
             preserved.append(stage)
         elif stale_stage is None:
@@ -1287,9 +1291,7 @@ def _panel_review_counts(project_dir: Path) -> dict[str, int]:
             storyboard = read_json(storyboard_path)
             panels = _storyboard_panels(storyboard)
             expected_panel_ids = {
-                panel.get("id")
-                for panel in panels
-                if isinstance(panel.get("id"), str)
+                panel.get("id") for panel in panels if isinstance(panel.get("id"), str)
             }
     except (OSError, UnicodeError, ValueError, KeyError):
         # If we can't read the storyboard, fall back to counting only existing records

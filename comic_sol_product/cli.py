@@ -170,11 +170,11 @@ def _sanitize_control_chars(text: str) -> str:
     could manipulate the user's display or inject malicious output.
     """
     # Remove ANSI escape sequences (CSI sequences like \x1b[...m)
-    text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
+    text = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
     # Remove other escape sequences starting with ESC
-    text = re.sub(r'\x1b[^\[]*', '', text)
+    text = re.sub(r"\x1b[^\[]*", "", text)
     # Remove other common control characters except newline/tab
-    text = ''.join(char for char in text if char >= ' ' or char in '\n\t')
+    text = "".join(char for char in text if char >= " " or char in "\n\t")
     return text
 
 

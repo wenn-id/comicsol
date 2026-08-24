@@ -1603,13 +1603,15 @@ class ResumeTests(unittest.TestCase):
         # must count those panels as pending rather than ignoring them.
         # Add a second panel to the storyboard
         storyboard = read_json(self.project / "plan/storyboard.json")
-        storyboard["pages"][0]["panels"].append({
-            "id": "p01-02",
-            "scene_id": "hall",
-            "characters": ["mira"],
-            "rect": {"x": 64, "y": 64, "width": 1472, "height": 2272},
-            "text": [],
-        })
+        storyboard["pages"][0]["panels"].append(
+            {
+                "id": "p01-02",
+                "scene_id": "hall",
+                "characters": ["mira"],
+                "rect": {"x": 64, "y": 64, "width": 1472, "height": 2272},
+                "text": [],
+            }
+        )
         atomic_write_json(self.project / "plan/storyboard.json", storyboard)
 
         # Don't create a QA record for p01-02
@@ -1617,7 +1619,7 @@ class ResumeTests(unittest.TestCase):
 
         # Verify pending count includes the missing QA record
         self.assertEqual(1, summary["panels"]["accepted"])  # p01-01 is accepted
-        self.assertEqual(1, summary["panels"]["pending"])   # p01-02 has no QA record yet
+        self.assertEqual(1, summary["panels"]["pending"])  # p01-02 has no QA record yet
         self.assertEqual(0, summary["panels"]["failed"])
 
 
