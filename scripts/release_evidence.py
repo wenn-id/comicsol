@@ -8,6 +8,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from scripts.release_visual_gate import (
+    BUNDLE_ASSET,
+    MARKDOWN_ASSET,
+    SUMMARY_ASSET,
+    validate_live_visual_summary,
+)
+
 
 _APPROVED_RELEASE_BYPASS_ACTOR = {
     "actor_type": "RepositoryRole",
@@ -82,8 +89,10 @@ def build_evidence(
     candidate_identity: dict[str, Any],
     qualification: dict[str, Any],
     benchmark: dict[str, Any],
+    live_visual: dict[str, Any],
     qualification_sha256: str,
     benchmark_sha256: str,
+    live_visual_sha256: str,
     actions_artifacts: list[Any],
     deployment: dict[str, Any],
     required_reviewers: list[Any],
@@ -100,10 +109,15 @@ def build_evidence(
         raise RuntimeError("qualification evidence is not release-ready")
     if benchmark.get("status") != "passed" or benchmark.get("decision") != "NO REGRESSION":
         raise RuntimeError("benchmark evidence is not release-ready")
-    if not _is_sha256(qualification_sha256) or not _is_sha256(benchmark_sha256):
+    if (
+        not _is_sha256(qualification_sha256)
+        or not _is_sha256(benchmark_sha256)
+        or not _is_sha256(live_visual_sha256)
+    ):
         raise RuntimeError("summary digest identity is invalid")
 
     tag = candidate_identity.get("tag")
+    version = candidate_identity.get("version")
     tag_object_sha = candidate_identity.get("tag_object_sha")
     commit_sha = candidate_identity.get("candidate_commit")
     protected_main_sha = candidate_identity.get("protected_main_sha")
@@ -114,11 +128,15 @@ def build_evidence(
     if (
         not isinstance(tag, str)
         or not tag.startswith("v")
+        or not isinstance(version, str)
+        or not version
         or not _is_git_sha(tag_object_sha)
         or not _is_git_sha(commit_sha)
         or not _is_git_sha(protected_main_sha)
     ):
         raise RuntimeError("candidate tag or commit identity is invalid")
+    assert isinstance(version, str)
+    assert isinstance(commit_sha, str)
     if (
         not isinstance(matched_ruleset_ids, list)
         or not matched_ruleset_ids
@@ -143,6 +161,26 @@ def build_evidence(
     payload_names = [item["name"] for item in payloads]
     if len(payload_names) != len(set(payload_names)):
         raise RuntimeError("candidate payload names are not unique")
+    live_visual_identity = candidate_identity.get("live_visual")
+    if not isinstance(live_visual_identity, dict):
+        raise RuntimeError("candidate live visual identity is missing")
+    reviewer_attestation_sha256 = live_visual_identity.get("reviewer_attestation_sha256")
+    if not isinstance(reviewer_attestation_sha256, str):
+        raise RuntimeError("candidate live visual reviewer attestation identity is invalid")
+    live_visual_gate = validate_live_visual_summary(
+        live_visual,
+        expected_commit=commit_sha,
+        expected_version=version,
+        expected_reviewer_attestation_sha256=reviewer_attestation_sha256,
+        summary_sha256=live_visual_sha256,
+    )
+    if live_visual_identity != live_visual_gate:
+        raise RuntimeError("live visual evidence does not match candidate identity")
+    payload_by_name = {item["name"]: item["sha256"] for item in payloads}
+    if payload_by_name.get(SUMMARY_ASSET) != live_visual_sha256:
+        raise RuntimeError("live visual summary is not bound as a candidate payload")
+    if not {SUMMARY_ASSET, MARKDOWN_ASSET, BUNDLE_ASSET} <= set(payload_by_name):
+        raise RuntimeError("live visual release payload set is incomplete")
 
     qualification_candidate = qualification.get("candidate")
     expected_qualification_identity = {
@@ -159,6 +197,8 @@ def build_evidence(
         raise RuntimeError("qualification evidence belongs to another candidate")
     if benchmark.get("candidate_sha") != commit_sha:
         raise RuntimeError("benchmark evidence belongs to another candidate")
+    if qualification.get("live_visual") != live_visual_gate:
+        raise RuntimeError("qualification live visual evidence belongs to another candidate")
 
     candidate_artifacts = candidate_identity.get("actions_artifacts", [])
     if not isinstance(candidate_artifacts, list):
@@ -174,6 +214,7 @@ def build_evidence(
     required_artifacts = {
         "benchmark-results",
         "candidate-identity",
+        "live-visual-evidence",
         "release-qualification-summary",
     }
     if not required_artifacts <= artifact_names:
@@ -228,6 +269,20 @@ def build_evidence(
                 "decision": benchmark["decision"],
                 "summary_sha256": benchmark_sha256,
                 "artifact": next(item for item in artifacts if item["name"] == "benchmark-results"),
+            },
+            "live_visual": {
+                **live_visual_gate,
+                "artifact": next(
+                    item for item in artifacts if item["name"] == "live-visual-evidence"
+                ),
+                "release_assets": [
+                    {
+                        "name": name,
+                        "sha256": payload_by_name[name],
+                        "url": f"{download_base_url}/{quote(name, safe='')}",
+                    }
+                    for name in (SUMMARY_ASSET, MARKDOWN_ASSET, BUNDLE_ASSET)
+                ],
             },
         },
         "supply_chain": {
@@ -287,6 +342,8 @@ def write_evidence(record: dict[str, Any], json_path: Path, markdown_path: Path)
         f"- Signed checksum manifest: `{checksums['sha256']}` ({checksums['url']})",
         f"- Benchmark: **{record['gates']['benchmark']['decision']}** "
         f"(`{record['gates']['benchmark']['summary_sha256']}`)",
+        f"- Live visual review: **{record['gates']['live_visual']['decision']}** "
+        f"(`{record['gates']['live_visual']['summary_sha256']}`)",
         f"- Qualification: **{record['qualification']['decision']}** "
         f"(`{record['qualification']['summary_sha256']}`)",
         f"- Protected environment: `{promotion['environment']}`",
@@ -311,6 +368,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--qualification-sha256", required=True)
     parser.add_argument("--benchmark-delta", type=Path, required=True)
     parser.add_argument("--benchmark-sha256", required=True)
+    parser.add_argument("--live-visual", type=Path, required=True)
+    parser.add_argument("--live-visual-sha256", required=True)
     parser.add_argument("--actions-artifacts", type=Path, required=True)
     parser.add_argument("--deployment", type=Path, required=True)
     parser.add_argument("--required-reviewers", type=Path, required=True)
@@ -327,8 +386,10 @@ def main(argv: list[str] | None = None) -> int:
         candidate_identity=_read_object(arguments.candidate_identity),
         qualification=_read_object(arguments.qualification),
         benchmark=_read_object(arguments.benchmark_delta),
+        live_visual=_read_object(arguments.live_visual),
         qualification_sha256=arguments.qualification_sha256,
         benchmark_sha256=arguments.benchmark_sha256,
+        live_visual_sha256=arguments.live_visual_sha256,
         actions_artifacts=_read_array(arguments.actions_artifacts),
         deployment=_read_object(arguments.deployment),
         required_reviewers=_read_array(arguments.required_reviewers),

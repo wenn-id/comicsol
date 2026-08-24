@@ -19,6 +19,7 @@ TYPED_FILES = [
     "comic_sol_product/release.py",
     "scripts/release_qualification.py",
     "scripts/release_evidence.py",
+    "scripts/release_visual_gate.py",
 ]
 
 

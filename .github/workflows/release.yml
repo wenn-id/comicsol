@@ -132,6 +132,50 @@ jobs:
       candidate_sha: ${{ needs.prepare.outputs.sha }}
       baseline: ${{ format('{0}^', needs.prepare.outputs.sha) }}
 
+  live-visual:
+    name: Candidate-bound live visual evidence
+    needs: prepare
+    runs-on: ubuntu-latest
+    outputs:
+      summary_sha256: ${{ steps.validate.outputs.summary_sha256 }}
+      reviewer_attestation_sha256: ${{ steps.validate.outputs.reviewer_attestation_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11.15'
+      - name: Install locked visual evidence validator
+        run: python -m pip install --require-hashes -r requirements/locks/release-linux-x86_64.txt
+      - name: Validate and package approved live visual evidence
+        id: validate
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ needs.prepare.outputs.sha }}
+          CANDIDATE_VERSION: ${{ needs.prepare.outputs.version }}
+          REVIEWER_ATTESTATION_SHA256: ${{ vars.V2_2_REVIEWER_ATTESTATION_SHA256 }}
+        run: |
+          set -euo pipefail
+          test -f visual-evidence/manifest.json
+          python scripts/live_visual_evidence.py \
+            --manifest visual-evidence/manifest.json \
+            --expected-commit "$CANDIDATE_SHA" \
+            --expected-engine-version "$CANDIDATE_VERSION" \
+            --expected-reviewer-attestation-sha256 "$REVIEWER_ATTESTATION_SHA256" \
+            --json-output live-visual-assets/v2.2-live-visual-summary.json \
+            --markdown-output live-visual-assets/v2.2-live-visual-summary.md \
+            --archive-output live-visual-assets/v2.2-live-visual-evidence.tar.gz
+          echo "summary_sha256=$(sha256sum live-visual-assets/v2.2-live-visual-summary.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "reviewer_attestation_sha256=$REVIEWER_ATTESTATION_SHA256" >> "$GITHUB_OUTPUT"
+      - name: Preserve live visual evidence as current-run evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: live-visual-evidence
+          path: live-visual-assets/*
+          if-no-files-found: error
+
   native:
     needs: [prepare, full-tests, codeql, benchmark]
     strategy:
@@ -269,7 +313,7 @@ jobs:
 
   candidate:
     name: Publish immutable prerelease candidate
-    needs: [prepare, full-tests, codeql, benchmark, native, container, source]
+    needs: [prepare, full-tests, codeql, benchmark, live-visual, native, container, source]
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -288,6 +332,8 @@ jobs:
       MAIN_SHA: ${{ needs.prepare.outputs.main_sha }}
       MATCHED_RULESET_IDS: ${{ needs.prepare.outputs.matched_ruleset_ids }}
       APPROVED_BYPASS_ACTORS: ${{ needs.prepare.outputs.approved_bypass_actors }}
+      LIVE_VISUAL_SUMMARY_SHA256: ${{ needs.live-visual.outputs.summary_sha256 }}
+      LIVE_VISUAL_REVIEWER_ATTESTATION_SHA256: ${{ needs.live-visual.outputs.reviewer_attestation_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -303,6 +349,10 @@ jobs:
         with:
           pattern: comic-sol-*
           path: bundles
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: live-visual-evidence
+          path: bundles/live-visual-evidence
       - name: Verify Actions artifacts and create global SHA256SUMS
         shell: bash
         run: |
@@ -321,7 +371,11 @@ jobs:
               for path in sorted(bundle.iterdir()):
                   if path.name != "SHA256SUMS":
                       records.append((path.name, hashlib.sha256(path.read_bytes()).hexdigest()))
-          for artifact_dir in (root / "comic-sol-source", root / "comic-sol-container"):
+          for artifact_dir in (
+              root / "comic-sol-source",
+              root / "comic-sol-container",
+              root / "live-visual-evidence",
+          ):
               for path in sorted(artifact_dir.iterdir()):
                   records.append((path.name, hashlib.sha256(path.read_bytes()).hexdigest()))
           names = [name for name, _ in records]
@@ -361,6 +415,7 @@ jobs:
           import json
           import os
           from pathlib import Path
+          from scripts.release_visual_gate import validate_live_visual_summary
           root = Path("bundles")
           payloads = []
           for line in (root / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
@@ -378,6 +433,7 @@ jobs:
               "comic-sol-macos-arm64",
               "comic-sol-source",
               "comic-sol-windows-x86_64",
+              "live-visual-evidence",
           }
           artifacts_by_name = {}
           for artifact in artifact_response.get("artifacts", []):
@@ -403,6 +459,20 @@ jobs:
                       if artifact.get(key) is not None
                   }
               )
+          live_visual_path = root / "live-visual-evidence" / "v2.2-live-visual-summary.json"
+          live_visual_bytes = live_visual_path.read_bytes()
+          live_visual_sha256 = hashlib.sha256(live_visual_bytes).hexdigest()
+          if live_visual_sha256 != os.environ["LIVE_VISUAL_SUMMARY_SHA256"]:
+              raise RuntimeError("live visual summary output digest changed")
+          live_visual = validate_live_visual_summary(
+              json.loads(live_visual_bytes),
+              expected_commit=os.environ["CANDIDATE_SHA"],
+              expected_version=os.environ["RELEASE_VERSION"],
+              expected_reviewer_attestation_sha256=(
+                  os.environ["LIVE_VISUAL_REVIEWER_ATTESTATION_SHA256"]
+              ),
+              summary_sha256=live_visual_sha256,
+          )
           record = {
               "schema_version": 1,
               "state": "candidate",
@@ -415,6 +485,7 @@ jobs:
               "approved_bypass_actors": json.loads(os.environ["APPROVED_BYPASS_ACTORS"]),
               "workflow_run_url": os.environ["RUN_URL"],
               "actions_artifacts": actions_artifacts,
+              "live_visual": live_visual,
               "release_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/tag/{os.environ['RELEASE_TAG']}",
               "checksum_manifest": {"name": "SHA256SUMS", "sha256": manifest_sha},
               "supporting_assets": [
@@ -612,7 +683,7 @@ jobs:
 
   promote:
     name: Revalidate bytes and promote release state
-    needs: [prepare, full-tests, codeql, benchmark, native, container, source, candidate, qualification]
+    needs: [prepare, full-tests, codeql, benchmark, live-visual, native, container, source, candidate, qualification]
     runs-on: ubuntu-latest
     environment:
       name: release-production
@@ -632,6 +703,8 @@ jobs:
       MAIN_SHA: ${{ needs.prepare.outputs.main_sha }}
       MATCHED_RULESET_IDS: ${{ needs.prepare.outputs.matched_ruleset_ids }}
       APPROVED_BYPASS_ACTORS: ${{ needs.prepare.outputs.approved_bypass_actors }}
+      LIVE_VISUAL_SUMMARY_SHA256: ${{ needs.live-visual.outputs.summary_sha256 }}
+      LIVE_VISUAL_REVIEWER_ATTESTATION_SHA256: ${{ needs.live-visual.outputs.reviewer_attestation_sha256 }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Fail closed unless the production Environment is protected
@@ -669,6 +742,10 @@ jobs:
           path: evidence-input/benchmark
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          name: live-visual-evidence
+          path: evidence-input/live-visual
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
           name: release-qualification-summary
           path: evidence-input/qualification
       - name: Bind current-run Actions artifacts and protected deployment
@@ -685,6 +762,7 @@ jobs:
           expected = {
               "benchmark-results",
               "candidate-identity",
+              "live-visual-evidence",
               "release-qualification-summary",
           }
           selected = {}
@@ -841,19 +919,24 @@ jobs:
           TRIGGER_ACTOR: ${{ github.triggering_actor }}
           EXPECTED_BENCHMARK_DECISION: ${{ needs.benchmark.outputs.decision }}
           EXPECTED_BENCHMARK_SHA256: ${{ needs.benchmark.outputs.summary_sha256 }}
+          EXPECTED_LIVE_VISUAL_SHA256: ${{ needs.live-visual.outputs.summary_sha256 }}
           EXPECTED_QUALIFICATION_DECISION: ${{ needs.qualification.outputs.decision }}
           EXPECTED_QUALIFICATION_SHA256: ${{ needs.qualification.outputs.summary_sha256 }}
         run: |
           set -euo pipefail
           benchmark_file=evidence-input/benchmark/summary-delta.json
+          live_visual_file=evidence-input/live-visual/v2.2-live-visual-summary.json
           qualification_file=evidence-input/qualification/release-summary.json
           test "$EXPECTED_BENCHMARK_DECISION" = "NO REGRESSION"
           test "$EXPECTED_QUALIFICATION_DECISION" = "RELEASE READY"
           test "$(sha256sum "$benchmark_file" | cut -d' ' -f1)" = "$EXPECTED_BENCHMARK_SHA256"
+          test "$(sha256sum "$live_visual_file" | cut -d' ' -f1)" = "$EXPECTED_LIVE_VISUAL_SHA256"
           test "$(sha256sum "$qualification_file" | cut -d' ' -f1)" = "$EXPECTED_QUALIFICATION_SHA256"
           test "$(jq -r .decision "$benchmark_file")" = "$EXPECTED_BENCHMARK_DECISION"
+          test "$(jq -r .decision "$live_visual_file")" = "PROMOTION APPROVED"
           test "$(jq -r .decision "$qualification_file")" = "$EXPECTED_QUALIFICATION_DECISION"
           test "$(jq -r .candidate_sha "$benchmark_file")" = "$CANDIDATE_SHA"
+          test "$(jq -r .candidate.commit_sha "$live_visual_file")" = "$CANDIDATE_SHA"
           test "$(jq -r .candidate.commit_sha "$qualification_file")" = "$CANDIDATE_SHA"
           python scripts/release_evidence.py \
             --candidate-identity evidence-input/candidate/candidate-identity.json \
@@ -861,6 +944,8 @@ jobs:
             --qualification-sha256 "$EXPECTED_QUALIFICATION_SHA256" \
             --benchmark-delta "$benchmark_file" \
             --benchmark-sha256 "$EXPECTED_BENCHMARK_SHA256" \
+            --live-visual "$live_visual_file" \
+            --live-visual-sha256 "$EXPECTED_LIVE_VISUAL_SHA256" \
             --actions-artifacts evidence-actions-artifacts.json \
             --deployment deployment-identity.json \
             --required-reviewers required-reviewers.json \

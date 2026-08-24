@@ -679,7 +679,8 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("ref: ${{ needs.prepare.outputs.sha }}", workflow)
         self.assertGreaterEqual(workflow.count("ref: ${{ needs.prepare.outputs.sha }}"), 5)
         self.assertIn(
-            "needs: [prepare, full-tests, codeql, benchmark, native, container, source]", workflow
+            "needs: [prepare, full-tests, codeql, benchmark, live-visual, native, container, source]",
+            workflow,
         )
         self.assertIn("uses: ./.github/workflows/tests.yml", workflow)
         self.assertIn("uses: ./.github/workflows/codeql.yml", workflow)
