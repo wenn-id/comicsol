@@ -1271,40 +1271,50 @@ def read_project_status(project_dir: Path) -> dict[str, object]:
         return read_project_manifest(manifest_path)
 
 
-def _panel_review_counts(project_dir: Path) -> dict[str, int]:
-    """Count panels by review outcome from their QA records.
+def _panel_review_counts(project_dir: Path, manifest: dict[str, object]) -> dict[str, int]:
+    """Count expected panels by review outcome from their QA records.
 
-    ``accepted`` counts panels whose latest record decides accept (either
-    quality schema spelling), ``failed`` counts an explicit repair decision, and
-    ``pending`` counts panels with a record that is neither or panels that are
-    expected but have no QA record yet. A record that cannot be read is reported
-    under ``unreadable`` so a corrupt project stays diagnosable instead of
-    silently under-counting.
+    Expected IDs come from both the recovered manifest and the canonical
+    storyboard. ``accepted`` counts either supported acceptance spelling,
+    ``failed`` counts an explicit repair decision, and ``pending`` includes
+    records without a decision plus expected panels with no QA record. A record
+    that cannot be read is reported under ``unreadable`` so a corrupt project
+    stays diagnosable instead of silently under-counting.
     """
     counts = {"accepted": 0, "failed": 0, "pending": 0, "unreadable": 0}
+    manifest_panels = manifest.get("panels")
+    expected_panel_ids = (
+        {
+            panel_id
+            for panel_id in manifest_panels
+            if isinstance(panel_id, str) and PANEL_ID_PATTERN.fullmatch(panel_id)
+        }
+        if isinstance(manifest_panels, list)
+        else set()
+    )
 
-    # Derive expected panel IDs from the storyboard if available
-    expected_panel_ids: set[str] = set()
     try:
-        storyboard_path = project_dir / "plan/storyboard.json"
-        if storyboard_path.is_file():
-            storyboard = read_json(storyboard_path)
-            panels = _storyboard_panels(storyboard)
-            expected_panel_ids = {
-                panel.get("id") for panel in panels if isinstance(panel.get("id"), str)
-            }
+        storyboard_path = contained_project_path(
+            project_dir, "plan/storyboard.json", must_exist=True
+        )
+        storyboard = read_json(storyboard_path)
+        expected_panel_ids.update(
+            panel_id
+            for panel in _storyboard_panels(storyboard)
+            if isinstance((panel_id := panel.get("id")), str)
+            and PANEL_ID_PATTERN.fullmatch(panel_id)
+        )
     except (OSError, UnicodeError, ValueError, KeyError):
-        # If we can't read the storyboard, fall back to counting only existing records
+        # The recovered manifest still gives a useful count when the storyboard
+        # is absent or corrupt. Other status fields expose the project state.
         pass
 
-    # Track which expected panels have QA records
     reviewed_panel_ids: set[str] = set()
-
-    qa_dir = project_dir / "qa/panels"
+    qa_dir = contained_project_path(project_dir, "qa/panels")
     if qa_dir.is_dir():
         for record_path in sorted(qa_dir.glob("*.json")):
-            panel_id = record_path.stem
-            reviewed_panel_ids.add(panel_id)
+            # An unreadable expected record is unreadable, not also pending.
+            reviewed_panel_ids.add(record_path.stem)
             try:
                 record = read_json(record_path)
             except (OSError, UnicodeError, ValueError):
@@ -1318,10 +1328,7 @@ def _panel_review_counts(project_dir: Path) -> dict[str, int]:
             else:
                 counts["pending"] += 1
 
-    # Count expected panels that lack QA records as pending
-    missing_qa_panels = expected_panel_ids - reviewed_panel_ids
-    counts["pending"] += len(missing_qa_panels)
-
+    counts["pending"] += len(expected_panel_ids - reviewed_panel_ids)
     return counts
 
 
@@ -1392,7 +1399,7 @@ def summarize_project_status(project_dir: Path) -> dict[str, object]:
             "project_id": manifest.get("project_id"),
             "status": status,
             "stages": _stage_state_from_actions(preserved, stale_stage, status),
-            "panels": _panel_review_counts(project_dir),
+            "panels": _panel_review_counts(project_dir, manifest),
             "warnings": list(warnings) if isinstance(warnings, list) else [],
             "blocked_reason": manifest.get("blocked_reason"),
             "next_action": next_action,

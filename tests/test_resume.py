@@ -1613,14 +1613,21 @@ class ResumeTests(unittest.TestCase):
             }
         )
         atomic_write_json(self.project / "plan/storyboard.json", storyboard)
+        manifest = read_json(self.project / "project.json")
+        manifest["panels"].append("p01-02")
+        atomic_write_json(self.project / "project.json", manifest)
 
-        # Don't create a QA record for p01-02
+        # Don't create a QA record for p01-02.
         summary = summarize_project_status(self.project)
 
-        # Verify pending count includes the missing QA record
-        self.assertEqual(1, summary["panels"]["accepted"])  # p01-01 is accepted
-        self.assertEqual(1, summary["panels"]["pending"])  # p01-02 has no QA record yet
+        self.assertEqual(1, summary["panels"]["accepted"])
+        self.assertEqual(1, summary["panels"]["pending"])
         self.assertEqual(0, summary["panels"]["failed"])
+
+        # Manifest metadata remains sufficient when the storyboard is missing.
+        (self.project / "plan/storyboard.json").unlink()
+        manifest_only = summarize_project_status(self.project)
+        self.assertEqual(summary["panels"], manifest_only["panels"])
 
 
 class ResumeFixtureIntegrationTests(unittest.TestCase):

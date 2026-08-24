@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
-import re
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -139,6 +138,24 @@ _STAGE_STATE_GLYPH = {
 }
 
 
+def _escape_terminal_controls(value: object) -> str:
+    """Return text with every terminal control character visibly escaped.
+
+    Status values originate in project files. Rendering raw C0/C1 controls
+    would allow ANSI/OSC sequences, line injection, or cursor movement. Escape
+    the control byte itself instead of deleting it so diagnostics retain the
+    original content without letting a terminal interpret it.
+    """
+    escaped: list[str] = []
+    for char in str(value):
+        codepoint = ord(char)
+        if codepoint < 0x20 or 0x7F <= codepoint <= 0x9F:
+            escaped.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(char, f"\\x{codepoint:02x}"))
+        else:
+            escaped.append(char)
+    return "".join(escaped)
+
+
 def _format_next_action(next_action: object) -> str:
     """Render the single recommended next step as a stable human line.
 
@@ -150,32 +167,20 @@ def _format_next_action(next_action: object) -> str:
     if not isinstance(next_action, dict) or not next_action:
         return "Next action: none — nothing to do."
     if "done" in next_action:
-        return f"Next action: {next_action['done']}."
+        return f"Next action: {_escape_terminal_controls(next_action['done'])}."
     if "command" in next_action:
-        return f"Next action: run `{next_action['command']}`."
+        return f"Next action: run `{_escape_terminal_controls(next_action['command'])}`."
     if "agent_required" in next_action:
-        return f"Next action: agent must produce the {next_action['agent_required']} stage."
+        stage = _escape_terminal_controls(next_action["agent_required"])
+        return f"Next action: agent must produce the {stage} stage."
     if "resume" in next_action:
-        return f"Next action: run `resume` to recover (blocked: {next_action['resume']})."
+        reason = _escape_terminal_controls(next_action["resume"])
+        return f"Next action: run `resume` to recover (blocked: {reason})."
     if "required" in next_action:
-        return f"Next action: blocked until {next_action['required']}; then run `resume`."
+        requirement = _escape_terminal_controls(next_action["required"])
+        return f"Next action: blocked until {requirement}; then run `resume`."
     key, value = next(iter(next_action.items()))
-    return f"Next action: {key}={value}."
-
-
-def _sanitize_control_chars(text: str) -> str:
-    """Remove ANSI escape sequences and other control characters from text.
-
-    Project-supplied strings must not contain terminal control sequences that
-    could manipulate the user's display or inject malicious output.
-    """
-    # Remove ANSI escape sequences (CSI sequences like \x1b[...m)
-    text = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)
-    # Remove other escape sequences starting with ESC
-    text = re.sub(r"\x1b[^\[]*", "", text)
-    # Remove other common control characters except newline/tab
-    text = "".join(char for char in text if char >= " " or char in "\n\t")
-    return text
+    return f"Next action: {_escape_terminal_controls(key)}={_escape_terminal_controls(value)}."
 
 
 def _render_status_summary(summary: dict[str, Any]) -> str:
@@ -186,8 +191,8 @@ def _render_status_summary(summary: dict[str, Any]) -> str:
     stays legible. The first line keeps the stable ``<project_id>: <STATUS>``
     contract that scripts have parsed from the human surface.
     """
-    project_id = summary.get("project_id")
-    status = summary.get("status")
+    project_id = _escape_terminal_controls(summary.get("project_id"))
+    status = _escape_terminal_controls(summary.get("status"))
     lines = [f"{project_id}: {status}"]
 
     stages = summary.get("stages")
@@ -196,33 +201,31 @@ def _render_status_summary(summary: dict[str, Any]) -> str:
         for entry in stages:
             if not isinstance(entry, dict):
                 continue
-            state = str(entry.get("state", "pending"))
-            glyph = _STAGE_STATE_GLYPH.get(state, "[ ]")
-            lines.append(f"  {glyph} {entry.get('stage')}: {state}")
+            raw_state = str(entry.get("state", "pending"))
+            state = _escape_terminal_controls(raw_state)
+            stage = _escape_terminal_controls(entry.get("stage"))
+            glyph = _STAGE_STATE_GLYPH.get(raw_state, "[ ]")
+            lines.append(f"  {glyph} {stage}: {state}")
 
     panels = summary.get("panels")
     if isinstance(panels, dict) and panels:
-        summary_line = (
-            f"Panels: {panels.get('accepted', 0)} accepted, "
-            f"{panels.get('failed', 0)} failed, "
-            f"{panels.get('pending', 0)} pending"
-        )
-        lines.append(summary_line)
+        accepted = _escape_terminal_controls(panels.get("accepted", 0))
+        failed = _escape_terminal_controls(panels.get("failed", 0))
+        pending = _escape_terminal_controls(panels.get("pending", 0))
+        lines.append(f"Panels: {accepted} accepted, {failed} failed, {pending} pending")
         unreadable = panels.get("unreadable", 0)
         if isinstance(unreadable, int) and unreadable > 0:
             lines.append(f"  WARNING: {unreadable} panel QA record(s) unreadable.")
 
     blocked_reason = summary.get("blocked_reason")
     if isinstance(blocked_reason, str) and blocked_reason:
-        sanitized_reason = _sanitize_control_chars(blocked_reason)
-        lines.append(f"Blocked reason: {sanitized_reason}")
+        lines.append(f"Blocked reason: {_escape_terminal_controls(blocked_reason)}")
 
     warnings = summary.get("warnings")
     if isinstance(warnings, list) and warnings:
         lines.append(f"Warnings ({len(warnings)}):")
         for warning in warnings:
-            sanitized_warning = _sanitize_control_chars(str(warning))
-            lines.append(f"  - {sanitized_warning}")
+            lines.append(f"  - {_escape_terminal_controls(warning)}")
 
     lines.append(_format_next_action(summary.get("next_action")))
     return "\n".join(lines)
@@ -240,8 +243,14 @@ def _render_status(arguments: argparse.Namespace) -> str:
     if isinstance(summary, dict) and "stages" in summary:
         return _render_status_summary(summary)
     # Fallback: a plain manifest without the visual summary fields.
-    project_id = summary.get("project_id") if isinstance(summary, dict) else None
-    status = summary.get("status") if isinstance(summary, dict) else None
+    project_id = (
+        _escape_terminal_controls(summary.get("project_id"))
+        if isinstance(summary, dict)
+        else "None"
+    )
+    status = (
+        _escape_terminal_controls(summary.get("status")) if isinstance(summary, dict) else "None"
+    )
     return f"{project_id}: {status}"
 
 

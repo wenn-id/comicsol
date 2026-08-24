@@ -301,18 +301,18 @@ class ProductCliTests(unittest.TestCase):
         self.assertIn("Panels: 2 accepted, 0 failed, 0 pending", stdout)
         self.assertIn("unreadable", stdout)
 
-    def test_human_status_sanitizes_ansi_escapes_in_warnings(self):
-        """Verify ANSI escape sequences in project warnings are sanitized."""
+    def test_human_status_escapes_terminal_controls_in_all_project_fields(self):
+        """Project values stay visible without becoming terminal instructions."""
         expected = {"project_id": "project", "status": "COMPLETE"}
-        # Inject an ANSI escape sequence that could manipulate terminal output
-        malicious_warning = "This is a warning \x1b[31mwith color\x1b[0m and \x1b[2J clear"
+        malicious_warning = "warning \x1b[31mred\x1b[0m and \x1b[2J clear"
         expected_summary = {
-            **expected,
-            "stages": [],
-            "panels": {"accepted": 0, "failed": 0, "pending": 0},
+            "project_id": "project\x1b]0;renamed\x07",
+            "status": "COMPLETE\rINJECTED",
+            "stages": [{"stage": "generation\nforged", "state": "blocked\tfake"}],
+            "panels": {"accepted": "0\x1b[2J", "failed": 0, "pending": 1},
             "warnings": [malicious_warning],
-            "blocked_reason": None,
-            "next_action": {"done": "project is complete"},
+            "blocked_reason": "unsafe\x1b[?25l",
+            "next_action": {"required": "capability\x1b[5m available"},
         }
 
         class FakeEngine:
@@ -320,11 +320,11 @@ class ProductCliTests(unittest.TestCase):
                 return expected
 
         class FakeCommandService:
-            def __init__(self, engine):
+            def __init__(self, **kwargs):
                 pass
 
             def execute(self, command, **kwargs):
-                return expected_summary
+                return expected if command == "status" else expected_summary
 
         fake_module = types.SimpleNamespace(CommandService=FakeCommandService)
         with (
@@ -334,14 +334,16 @@ class ProductCliTests(unittest.TestCase):
             code, stdout, stderr = self.invoke(["status", "/tmp/project"])
 
         self.assertEqual(0, code)
-        # Verify the ANSI escape sequences are removed
-        self.assertNotIn("\x1b[", stdout)
+        self.assertEqual("", stderr)
         self.assertNotIn("\x1b", stdout)
-        # Verify the text content is preserved
-        self.assertIn("This is a warning", stdout)
-        self.assertIn("with color", stdout)
-        self.assertIn("and", stdout)
-        self.assertIn("clear", stdout)
+        self.assertNotIn("\r", stdout)
+        self.assertNotIn("\t", stdout)
+        self.assertIn("project\\x1b]0;renamed\\x07: COMPLETE\\rINJECTED", stdout)
+        self.assertIn("generation\\nforged: blocked\\tfake", stdout)
+        self.assertIn("0\\x1b[2J accepted", stdout)
+        self.assertIn("warning \\x1b[31mred\\x1b[0m", stdout)
+        self.assertIn("Blocked reason: unsafe\\x1b[?25l", stdout)
+        self.assertIn("capability\\x1b[5m available", stdout)
 
     def test_json_status_envelope_stays_the_unchanged_manifest(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
