@@ -30,7 +30,7 @@ Use the exact doctor command printed by your installer. For a Skill checkout,
 run the source command from the checkout and choose an explicit folder:
 
 ```bash
-python scripts/comic_sol.py doctor --output-root "$HOME/Comic Sol"
+"$PYTHON" scripts/comic_sol.py doctor --output-root "$HOME/Comic Sol"
 ```
 
 On macOS, a conventional choice is `$HOME/Documents/Comic Sol`; on Windows use

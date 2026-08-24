@@ -14,10 +14,11 @@ installed-CLI option, for example `comic-sol --json status PROJECT_DIR`.
 
 ### `CS-PROJ-001`
 
-Project or request data is invalid. Run `comic-sol validate PROJECT_DIR` and use
-its issue list to identify the file or field. Restore a known-good file or ask
-the Skill to repair the project; do not guess at schema fields. Retry validation
-before resuming.
+Project data is invalid. Run `comic-sol validate PROJECT_DIR` and use its issue
+list to identify the file or field. Restore a known-good file or ask the Skill
+to repair the project, then validate again before resuming. If request data is
+invalid, correct the command or tool request against its documented schema and
+retry that request. Do not guess at schema fields.
 
 ### `CS-PROJ-002`
 
@@ -58,8 +59,9 @@ the containment check.
 ### `CS-SEC-002`
 
 An input exceeded a documented size, depth, collection, or text limit. Reduce the
-reported input; source stories must be UTF-8 `.txt` or `.md` files no larger than
-200 KiB. Retry with the smaller input instead of raising engine limits.
+input or field named in the error instead of raising engine limits. For source
+stories, use UTF-8 `.txt` or `.md` files no larger than 200 KiB; other input
+types must follow the limit named in the error.
 
 ## Image, quality, font, and export errors
 
