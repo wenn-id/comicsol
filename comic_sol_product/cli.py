@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import re
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -162,6 +163,21 @@ def _format_next_action(next_action: object) -> str:
     return f"Next action: {key}={value}."
 
 
+def _sanitize_control_chars(text: str) -> str:
+    """Remove ANSI escape sequences and other control characters from text.
+
+    Project-supplied strings must not contain terminal control sequences that
+    could manipulate the user's display or inject malicious output.
+    """
+    # Remove ANSI escape sequences (CSI sequences like \x1b[...m)
+    text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
+    # Remove other escape sequences starting with ESC
+    text = re.sub(r'\x1b[^\[]*', '', text)
+    # Remove other common control characters except newline/tab
+    text = ''.join(char for char in text if char >= ' ' or char in '\n\t')
+    return text
+
+
 def _render_status_summary(summary: dict[str, Any]) -> str:
     """Render the visual project-status summary as plain, uncolored text.
 
@@ -198,13 +214,15 @@ def _render_status_summary(summary: dict[str, Any]) -> str:
 
     blocked_reason = summary.get("blocked_reason")
     if isinstance(blocked_reason, str) and blocked_reason:
-        lines.append(f"Blocked reason: {blocked_reason}")
+        sanitized_reason = _sanitize_control_chars(blocked_reason)
+        lines.append(f"Blocked reason: {sanitized_reason}")
 
     warnings = summary.get("warnings")
     if isinstance(warnings, list) and warnings:
         lines.append(f"Warnings ({len(warnings)}):")
         for warning in warnings:
-            lines.append(f"  - {warning}")
+            sanitized_warning = _sanitize_control_chars(str(warning))
+            lines.append(f"  - {sanitized_warning}")
 
     lines.append(_format_next_action(summary.get("next_action")))
     return "\n".join(lines)

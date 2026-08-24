@@ -300,6 +300,47 @@ class ProductCliTests(unittest.TestCase):
         self.assertIn("Panels: 2 accepted, 0 failed, 0 pending", stdout)
         self.assertIn("unreadable", stdout)
 
+    def test_human_status_sanitizes_ansi_escapes_in_warnings(self):
+        """Verify ANSI escape sequences in project warnings are sanitized."""
+        expected = {"project_id": "project", "status": "COMPLETE"}
+        # Inject an ANSI escape sequence that could manipulate terminal output
+        malicious_warning = "This is a warning \x1b[31mwith color\x1b[0m and \x1b[2J clear"
+        expected_summary = {
+            **expected,
+            "stages": [],
+            "panels": {"accepted": 0, "failed": 0, "pending": 0},
+            "warnings": [malicious_warning],
+            "blocked_reason": None,
+            "next_action": {"done": "project is complete"},
+        }
+
+        class FakeEngine:
+            def read_project_status(self, project_dir):
+                return expected
+
+        class FakeCommandService:
+            def __init__(self, engine):
+                pass
+
+            def execute(self, command, **kwargs):
+                return expected_summary
+
+        with (
+            mock.patch.object(cli, "_load_engine", return_value=FakeEngine()),
+            mock.patch.object(cli, "_load_command_service", return_value=FakeCommandService),
+        ):
+            code, stdout, stderr = self.invoke(["status", "/tmp/project"])
+
+        self.assertEqual(0, code)
+        # Verify the ANSI escape sequences are removed
+        self.assertNotIn("\x1b[", stdout)
+        self.assertNotIn("\x1b", stdout)
+        # Verify the text content is preserved
+        self.assertIn("This is a warning", stdout)
+        self.assertIn("with color", stdout)
+        self.assertIn("and", stdout)
+        self.assertIn("clear", stdout)
+
     def test_json_status_envelope_stays_the_unchanged_manifest(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             project = Path(temporary_directory) / "valid-one-page"

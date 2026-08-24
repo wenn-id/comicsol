@@ -1209,13 +1209,30 @@ def _stage_progress_from_plan(
     surfaces never disagree about which stage is the first one that must run
     again. Stages before the first non-``reuse`` action are preserved; that stage
     and everything after it are invalidated.
+
+    A panel with a valid QA record that has decision="regenerate" also requires
+    regeneration and prevents the generation stage from being marked complete.
     """
     stage_actions = {action.stage: action for action in actions if action.artifact == "stage"}
     preserved: list[str] = []
     stale_stage: str | None = None
+
+    # Check for panel-level regeneration requirements in the generation stage
+    has_panel_regeneration = any(
+        action.stage == "generation"
+        and action.artifact != "stage"
+        and action.action == "regenerate"
+        for action in actions
+    )
+
     for stage in RESUME_STAGES:
         action = stage_actions.get(stage)
-        if stale_stage is None and action is not None and action.action == "reuse":
+        # If we're at the generation stage and have panel regeneration needs, treat as stale
+        if stale_stage is None and stage == "generation" and has_panel_regeneration:
+            if action is not None and action.action == "reuse":
+                # Stage cache says reuse, but panels need regeneration
+                stale_stage = stage
+        elif stale_stage is None and action is not None and action.action == "reuse":
             preserved.append(stage)
         elif stale_stage is None:
             stale_stage = stage
@@ -1255,27 +1272,54 @@ def _panel_review_counts(project_dir: Path) -> dict[str, int]:
 
     ``accepted`` counts panels whose latest record decides accept (either
     quality schema spelling), ``failed`` counts an explicit repair decision, and
-    ``pending`` counts panels with a record that is neither. A record that cannot
-    be read is reported under ``unreadable`` so a corrupt project stays diagnosable
-    instead of silently under-counting.
+    ``pending`` counts panels with a record that is neither or panels that are
+    expected but have no QA record yet. A record that cannot be read is reported
+    under ``unreadable`` so a corrupt project stays diagnosable instead of
+    silently under-counting.
     """
     counts = {"accepted": 0, "failed": 0, "pending": 0, "unreadable": 0}
+
+    # Derive expected panel IDs from the storyboard if available
+    expected_panel_ids: set[str] = set()
+    try:
+        storyboard_path = project_dir / "plan/storyboard.json"
+        if storyboard_path.is_file():
+            storyboard = read_json(storyboard_path)
+            panels = _storyboard_panels(storyboard)
+            expected_panel_ids = {
+                panel.get("id")
+                for panel in panels
+                if isinstance(panel.get("id"), str)
+            }
+    except (OSError, UnicodeError, ValueError, KeyError):
+        # If we can't read the storyboard, fall back to counting only existing records
+        pass
+
+    # Track which expected panels have QA records
+    reviewed_panel_ids: set[str] = set()
+
     qa_dir = project_dir / "qa/panels"
-    if not qa_dir.is_dir():
-        return counts
-    for record_path in sorted(qa_dir.glob("*.json")):
-        try:
-            record = read_json(record_path)
-        except (OSError, UnicodeError, ValueError):
-            counts["unreadable"] += 1
-            continue
-        decision = record.get("decision") if isinstance(record, dict) else None
-        if decision in ACCEPTED_DECISIONS:
-            counts["accepted"] += 1
-        elif decision in REPAIR_DECISIONS:
-            counts["failed"] += 1
-        else:
-            counts["pending"] += 1
+    if qa_dir.is_dir():
+        for record_path in sorted(qa_dir.glob("*.json")):
+            panel_id = record_path.stem
+            reviewed_panel_ids.add(panel_id)
+            try:
+                record = read_json(record_path)
+            except (OSError, UnicodeError, ValueError):
+                counts["unreadable"] += 1
+                continue
+            decision = record.get("decision") if isinstance(record, dict) else None
+            if decision in ACCEPTED_DECISIONS:
+                counts["accepted"] += 1
+            elif decision in REPAIR_DECISIONS:
+                counts["failed"] += 1
+            else:
+                counts["pending"] += 1
+
+    # Count expected panels that lack QA records as pending
+    missing_qa_panels = expected_panel_ids - reviewed_panel_ids
+    counts["pending"] += len(missing_qa_panels)
+
     return counts
 
 
@@ -1324,9 +1368,14 @@ def summarize_project_status(project_dir: Path) -> dict[str, object]:
         preserved, stale_stage, _ = _stage_progress_from_plan(actions)
         if status == "BLOCKED":
             reason = manifest.get("blocked_reason")
-            next_action: dict[str, str] | None = {
-                "resume": str(reason) if isinstance(reason, str) and reason else "blocked",
-            }
+            # When blocked due to image-capability-unavailable and capability remains
+            # unavailable, return a required action instead of resume
+            if reason == "image-capability-unavailable" and not _resolved_block(manifest, reason):
+                next_action: dict[str, str] | None = {"required": "image capability available"}
+            else:
+                next_action = {
+                    "resume": str(reason) if isinstance(reason, str) and reason else "blocked",
+                }
         elif stale_stage is None and status in TERMINAL_STATUSES:
             # A terminal project whose stages all still reuse is genuinely done.
             next_action = {"done": "project is complete"}
