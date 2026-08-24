@@ -23,6 +23,7 @@ from scripts.release_qualification import qualify
 from scripts.release_qualification import snapshot_tree
 from scripts.release_qualification import validate_published_metadata
 from scripts.release_qualification import verify_payload_checksums
+from scripts.release_visual_gate import EXPECTED_GROUPS, validate_live_visual_summary
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -836,6 +837,80 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
             ),
         }
 
+    def _live_visual(self):
+        return {
+            "schema_version": "1.0",
+            "kind": "milestone-live-visual-evidence-summary",
+            "status": "passed",
+            "decision": "PROMOTION APPROVED",
+            "candidate": {
+                "engine_version": "9.9.9rc1",
+                "commit_sha": "a" * 40,
+                "milestone": "v2.2",
+            },
+            "provenance": {
+                "evidence_mode": "live-visual",
+                "provider": "example provider",
+                "model": "example model",
+                "reviewer": "release reviewer",
+                "method": "bounded human review",
+                "reviewed_at": "2026-08-22T10:00:00Z",
+                "approval": "approved",
+            },
+            "reviewer_attestation": {
+                "path": "reviewer-attestation.json",
+                "sha256": "9" * 64,
+            },
+            "threshold": {
+                "expected_scores": 105,
+                "minimum_group_mean": 3.0,
+                "minimum_individual_score": 3,
+                "minimum_overall_mean": 3.5,
+                "reviewer_approval": "approved",
+            },
+            "character_consistency": {
+                "scored_dimensions": 105,
+                "total_dimensions": 105,
+                "coverage": 1.0,
+                "overall_mean": 4.0,
+                "minimum_score": 4,
+                "group_means": {
+                    axis: {name: 4.0 for name in names} for axis, names in EXPECTED_GROUPS.items()
+                },
+            },
+            "material_changes": [{"id": f"CS-{number:03d}"} for number in range(19, 27)]
+            + [{"id": "CS-034"}, {"id": "CS-035"}],
+            "quality_reviews": {
+                category: {"result": "pass"}
+                for category in (
+                    "action",
+                    "anatomy",
+                    "character-identity",
+                    "composition",
+                    "continuity",
+                    "lettering",
+                    "sfx",
+                    "technical-raster",
+                    "text-free-generation",
+                )
+            },
+            "limitations": ["One provider, model, and reviewer scope is not universal."],
+        }
+
+    def _live_visual_gate(self):
+        return {
+            "status": "passed",
+            "decision": "PROMOTION APPROVED",
+            "summary_asset": "v2.2-live-visual-summary.json",
+            "summary_sha256": "8" * 64,
+            "reviewer_attestation_sha256": "9" * 64,
+            "candidate": {
+                "engine_version": "9.9.9rc1",
+                "commit_sha": "a" * 40,
+                "milestone": "v2.2",
+            },
+        }
+
     def _candidate(self):
         return {
             "schema_version": 1,
@@ -857,8 +932,15 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
             "payloads": [
                 {"name": "comic-sol-9.9.9rc1-linux-x86_64.zip", "sha256": "c" * 64},
                 {"name": "comic-sol-9.9.9rc1-linux-x86_64.sbom.json", "sha256": "d" * 64},
+                {"name": "v2.2-live-visual-summary.json", "sha256": "8" * 64},
+                {"name": "v2.2-live-visual-summary.md", "sha256": "6" * 64},
+                {"name": "v2.2-live-visual-evidence.tar.gz", "sha256": "7" * 64},
             ],
-            "actions_artifacts": [self._artifact(1, "benchmark-results")],
+            "live_visual": self._live_visual_gate(),
+            "actions_artifacts": [
+                self._artifact(1, "benchmark-results"),
+                self._artifact(4, "live-visual-evidence"),
+            ],
         }
 
     def _qualification(self):
@@ -886,6 +968,7 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
                 "checksum_manifest_sha256": "b" * 64,
             },
             "summaries": {"linux": {"status": "passed", "exceptions": []}},
+            "live_visual": self._live_visual_gate(),
         }
 
     def _arguments(self):
@@ -897,12 +980,15 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
                 "decision": "NO REGRESSION",
                 "candidate_sha": "a" * 40,
             },
+            "live_visual": self._live_visual(),
             "qualification_sha256": "e" * 64,
             "benchmark_sha256": "f" * 64,
+            "live_visual_sha256": "8" * 64,
             "actions_artifacts": [
                 self._artifact(1, "benchmark-results"),
                 self._artifact(2, "candidate-identity"),
                 self._artifact(3, "release-qualification-summary"),
+                self._artifact(4, "live-visual-evidence"),
             ],
             "deployment": {
                 "id": 42,
@@ -919,6 +1005,106 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
             "environment": "release-production",
             "trigger_actor": "workflow-trigger",
         }
+
+    def test_live_visual_gate_rejects_every_untrusted_release_boundary(self):
+        options = {
+            "expected_commit": "a" * 40,
+            "expected_version": "9.9.9rc1",
+            "expected_reviewer_attestation_sha256": "9" * 64,
+            "summary_sha256": "8" * 64,
+        }
+
+        def check(mutator, message):
+            summary = json.loads(json.dumps(self._live_visual()))
+            mutator(summary)
+            with self.assertRaisesRegex(RuntimeError, message):
+                validate_live_visual_summary(summary, **options)
+
+        check(lambda record: record.update(schema_version="2.0"), "schema")
+        check(lambda record: record.update(kind="foreign"), "kind")
+        check(lambda record: record.update(status="failed"), "not promotion-approved")
+        check(lambda record: record.update(candidate=None), "candidate.*not a JSON object")
+        check(
+            lambda record: record["candidate"].update(commit_sha="0" * 40),
+            "another candidate",
+        )
+        check(lambda record: record.update(provenance=None), "provenance.*not a JSON object")
+        check(
+            lambda record: record["provenance"].update(approval="pending"),
+            "provenance is not approved",
+        )
+        check(lambda record: record["provenance"].update(provider=""), "provider is invalid")
+        check(
+            lambda record: record["reviewer_attestation"].update(sha256="0" * 64),
+            "another approval",
+        )
+        check(
+            lambda record: record["threshold"].update(minimum_overall_mean=0),
+            "threshold is invalid",
+        )
+        check(
+            lambda record: record["character_consistency"].update(scored_dimensions=104),
+            "does not meet",
+        )
+        check(
+            lambda record: record["character_consistency"].update(group_means={}),
+            "axes are not canonical",
+        )
+        check(
+            lambda record: record["character_consistency"]["group_means"].pop("by_view"),
+            "axes are not canonical",
+        )
+        check(
+            lambda record: record["character_consistency"]["group_means"].update(
+                unexpected={"arbitrary": 4.0}
+            ),
+            "axes are not canonical",
+        )
+        check(
+            lambda record: record["character_consistency"]["group_means"]["by_character"].update(
+                bayu=2.9
+            ),
+            "group mean does not meet",
+        )
+        for field in ("overall_mean", "minimum_score"):
+            for invalid in (float("nan"), float("inf"), float("-inf"), True, 5.1):
+                check(
+                    lambda record, field=field, invalid=invalid: record[
+                        "character_consistency"
+                    ].update({field: invalid}),
+                    "does not meet",
+                )
+        for invalid in (float("nan"), float("inf"), float("-inf"), True, 5.1):
+            check(
+                lambda record, invalid=invalid: record["character_consistency"]["group_means"][
+                    "by_character"
+                ].update(bayu=invalid),
+                "group mean does not meet",
+            )
+        check(lambda record: record.update(material_changes=None), "material changes are invalid")
+        check(lambda record: record["material_changes"].pop(), "coverage is incomplete")
+        check(lambda record: record.update(quality_reviews={}), "review coverage is incomplete")
+        check(
+            lambda record: record["quality_reviews"]["action"].update(result="fail"),
+            "blocking result",
+        )
+        check(lambda record: record.update(limitations=[]), "limitations are missing")
+
+        with self.assertRaisesRegex(RuntimeError, "candidate commit is invalid"):
+            validate_live_visual_summary(
+                self._live_visual(), **{**options, "expected_commit": "invalid"}
+            )
+        with self.assertRaisesRegex(RuntimeError, "candidate version is invalid"):
+            validate_live_visual_summary(self._live_visual(), **{**options, "expected_version": ""})
+        with self.assertRaisesRegex(RuntimeError, "attestation digest is invalid"):
+            validate_live_visual_summary(
+                self._live_visual(),
+                **{**options, "expected_reviewer_attestation_sha256": "invalid"},
+            )
+        with self.assertRaisesRegex(RuntimeError, "summary digest is invalid"):
+            validate_live_visual_summary(
+                self._live_visual(), **{**options, "summary_sha256": "invalid"}
+            )
 
     def test_disposable_candidate_evidence_drill_is_deterministic(self):
         arguments = self._arguments()
@@ -945,6 +1131,8 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
         )
         self.assertEqual("e" * 64, first["qualification"]["summary_sha256"])
         self.assertEqual("f" * 64, first["gates"]["benchmark"]["summary_sha256"])
+        self.assertEqual("PROMOTION APPROVED", first["gates"]["live_visual"]["decision"])
+        self.assertEqual("8" * 64, first["gates"]["live_visual"]["summary_sha256"])
         self.assertEqual(
             ["eligible-maintainer"],
             [item["login"] for item in first["promotion"]["required_reviewers"]],
@@ -972,6 +1160,21 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
         arguments = self._arguments()
         arguments["benchmark"]["decision"] = "REGRESSION"
         with self.assertRaisesRegex(RuntimeError, "benchmark evidence"):
+            build_evidence(**arguments)
+
+        arguments = self._arguments()
+        arguments["live_visual"]["decision"] = "PROMOTION BLOCKED"
+        with self.assertRaisesRegex(RuntimeError, "not promotion-approved"):
+            build_evidence(**arguments)
+
+        arguments = self._arguments()
+        arguments["live_visual"]["candidate"]["commit_sha"] = "0" * 40
+        with self.assertRaisesRegex(RuntimeError, "another candidate"):
+            build_evidence(**arguments)
+
+        arguments = self._arguments()
+        arguments["qualification"]["live_visual"]["summary_sha256"] = "0" * 64
+        with self.assertRaisesRegex(RuntimeError, "qualification live visual"):
             build_evidence(**arguments)
 
         arguments = self._arguments()
@@ -1133,6 +1336,7 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
             "full-tests",
             "codeql",
             "benchmark",
+            "live-visual",
             "native",
             "container",
             "source",
@@ -1216,6 +1420,31 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
             self.assertIn("summary_sha256:", workflow)
         self.assertIn('summary["candidate"]', qualification)
         self.assertIn('record["candidate_sha"]', benchmark)
+
+    def test_live_visual_evidence_is_required_by_publication_qualification_and_promotion(self):
+        release = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        qualification = WORKFLOW.read_text(encoding="utf-8")
+        live_visual = release.split("\n  live-visual:\n", 1)[1].split("\n  native:\n", 1)[0]
+        candidate = release.split("\n  candidate:\n", 1)[1].split("\n  qualification:\n", 1)[0]
+        promotion = release.split("\n  promote:\n", 1)[1]
+        self.assertIn(
+            "needs: [prepare, full-tests, codeql, benchmark, live-visual, native",
+            promotion,
+        )
+        self.assertIn("scripts/live_visual_evidence.py", live_visual)
+        self.assertIn("vars.V2_2_LIVE_VISUAL_EVIDENCE_SHA", live_visual)
+        self.assertIn("live-visual-input/visual-evidence/manifest.json", live_visual)
+        self.assertIn("vars.V2_2_REVIEWER_ATTESTATION_SHA256", live_visual)
+        self.assertIn("--archive-output", live_visual)
+        self.assertIn("name: live-visual-evidence", live_visual)
+        self.assertIn("live-visual-evidence", candidate)
+        self.assertIn('"live_visual": live_visual', candidate)
+        self.assertIn("v2.2-live-visual-summary.json", qualification)
+        self.assertIn("validate_live_visual_summary", qualification)
+        self.assertIn('summary["live_visual"]', qualification)
+        self.assertIn("EXPECTED_LIVE_VISUAL_SHA256", promotion)
+        self.assertIn("--live-visual", promotion)
+        self.assertIn("live-visual-evidence", promotion)
 
     def test_promotion_attests_evidence_and_closes_final_mutation_boundary(self):
         release = RELEASE_WORKFLOW.read_text(encoding="utf-8")

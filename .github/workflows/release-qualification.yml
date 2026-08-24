@@ -724,6 +724,9 @@ jobs:
             --pattern candidate-identity.json.sha256 \
             --pattern SHA256SUMS \
             --pattern SHA256SUMS.sigstore.json \
+            --pattern v2.2-live-visual-summary.json \
+            --pattern v2.2-live-visual-summary.md \
+            --pattern v2.2-live-visual-evidence.tar.gz \
             --dir qualification-identity
           (cd qualification-identity && sha256sum -c candidate-identity.json.sha256)
           gh attestation verify qualification-identity/candidate-identity.json \
@@ -732,6 +735,17 @@ jobs:
             --source-digest "$CANDIDATE_SHA" \
             --source-ref "refs/tags/$RELEASE_TAG" \
             --deny-self-hosted-runners
+          for subject in \
+            qualification-identity/v2.2-live-visual-summary.json \
+            qualification-identity/v2.2-live-visual-summary.md \
+            qualification-identity/v2.2-live-visual-evidence.tar.gz; do
+            gh attestation verify "$subject" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow wenn-id/comicsol/.github/workflows/release.yml \
+              --source-digest "$CANDIDATE_SHA" \
+              --source-ref "refs/tags/$RELEASE_TAG" \
+              --deny-self-hosted-runners
+          done
           git ls-remote --tags origin \
             "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" \
             > qualification-aggregate-refs.txt
@@ -756,6 +770,12 @@ jobs:
           import json
           import os
           from pathlib import Path
+          from scripts.release_visual_gate import (
+              BUNDLE_ASSET,
+              MARKDOWN_ASSET,
+              SUMMARY_ASSET,
+              validate_live_visual_summary,
+          )
 
           identity_path = Path("qualification-identity/candidate-identity.json")
           identity = json.loads(identity_path.read_text(encoding="utf-8"))
@@ -794,6 +814,32 @@ jobs:
               ).hexdigest()
               if actual != recorded[name]:
                   raise RuntimeError(f"supporting evidence digest mismatch: {name}")
+          visual_root = Path("qualification-identity")
+          for name in (SUMMARY_ASSET, MARKDOWN_ASSET, BUNDLE_ASSET):
+              actual = hashlib.sha256((visual_root / name).read_bytes()).hexdigest()
+              if actual != recorded.get(name):
+                  raise RuntimeError(f"live visual payload digest mismatch: {name}")
+          visual_bytes = (visual_root / SUMMARY_ASSET).read_bytes()
+          visual_sha256 = hashlib.sha256(visual_bytes).hexdigest()
+          live_visual_identity = identity.get("live_visual")
+          if not isinstance(live_visual_identity, dict):
+              raise RuntimeError("candidate live visual identity is missing")
+          live_visual = validate_live_visual_summary(
+              json.loads(visual_bytes),
+              expected_commit=os.environ["CANDIDATE_SHA"],
+              expected_version=identity["version"],
+              expected_reviewer_attestation_sha256=(
+                  live_visual_identity.get("reviewer_attestation_sha256")
+              ),
+              summary_sha256=visual_sha256,
+          )
+          if live_visual != live_visual_identity:
+              raise RuntimeError("published live visual evidence changed from candidate identity")
+          Path("qualification-live-visual.json").write_text(
+              json.dumps(live_visual, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+              encoding="utf-8",
+              newline="\n",
+          )
           candidate = {
               "tag": identity["tag"],
               "tag_object_sha": identity["tag_object_sha"],
@@ -823,6 +869,9 @@ jobs:
           summary = json.loads(path.read_text(encoding="utf-8"))
           summary["candidate"] = json.loads(
               Path("qualification-candidate.json").read_text(encoding="utf-8")
+          )
+          summary["live_visual"] = json.loads(
+              Path("qualification-live-visual.json").read_text(encoding="utf-8")
           )
           path.write_text(
               json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2) + "\n",

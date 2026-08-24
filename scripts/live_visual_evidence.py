@@ -9,9 +9,12 @@ provider run. It never calls a provider, reads credentials, or persists prompts.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
+import io
 import json
 import sys
+import tarfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
@@ -813,6 +816,83 @@ def write_summary(summary: Mapping[str, Any], json_path: Path, markdown_path: Pa
     markdown_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _published_artifacts(summary: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """Return only validated files and digests referenced by the public summary."""
+    artifacts: dict[str, str] = {}
+
+    def visit(value: object) -> None:
+        if isinstance(value, Mapping):
+            path = value.get("path")
+            digest = value.get("sha256")
+            if isinstance(path, str) and isinstance(digest, str) and _is_digest(digest, 64):
+                existing = artifacts.get(path)
+                if existing is not None and existing != digest:
+                    raise EvidenceError("published evidence path has conflicting digests")
+                artifacts[path] = digest
+            for nested in value.values():
+                visit(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                visit(nested)
+
+    visit(summary)
+    return sorted(artifacts.items())
+
+
+def write_evidence_archive(
+    summary: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    manifest_path: Path,
+    archive_path: Path,
+) -> None:
+    """Create a deterministic archive containing only reverified reviewed files."""
+    try:
+        manifest_payload = manifest_path.read_bytes()
+        archived_manifest = loads_bounded_json(manifest_payload, source="evidence manifest")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise EvidenceError(f"evidence manifest is invalid: {error}") from error
+    if archived_manifest != manifest:
+        raise EvidenceError("evidence manifest changed after validation")
+    root = manifest_path.parent.resolve()
+    files: list[tuple[str, Path | None, str | None, bytes | None]] = [
+        ("manifest.json", None, None, manifest_payload)
+    ]
+    for relative, digest in _published_artifacts(summary):
+        path = (root / relative).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as error:
+            raise EvidenceError("published evidence path escapes the bundle") from error
+        files.append((relative, path, digest, None))
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with archive_path.open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
+                for relative, archive_source, expected_digest, retained_payload in sorted(files):
+                    if retained_payload is not None:
+                        payload = retained_payload
+                    else:
+                        if archive_source is None:  # pragma: no cover - internal tuple invariant
+                            raise EvidenceError("published evidence path is missing")
+                        payload = archive_source.read_bytes()
+                    if (
+                        expected_digest is not None
+                        and hashlib.sha256(payload).hexdigest() != expected_digest
+                    ):
+                        raise EvidenceError(
+                            f"published evidence file changed after validation: {relative}"
+                        )
+                    info = tarfile.TarInfo(f"v2.2-live-visual-evidence/{relative}")
+                    info.size = len(payload)
+                    info.mode = 0o644
+                    info.mtime = 0
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = ""
+                    info.gname = ""
+                    archive.addfile(info, io.BytesIO(payload))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -821,6 +901,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-reviewer-attestation-sha256", required=True)
     parser.add_argument("--json-output", type=Path, required=True)
     parser.add_argument("--markdown-output", type=Path, required=True)
+    parser.add_argument("--archive-output", type=Path)
     arguments = parser.parse_args(argv)
     try:
         manifest = load_evidence(arguments.manifest)
@@ -832,6 +913,8 @@ def main(argv: list[str] | None = None) -> int:
             expected_reviewer_attestation_sha256=(arguments.expected_reviewer_attestation_sha256),
         )
         write_summary(summary, arguments.json_output, arguments.markdown_output)
+        if arguments.archive_output is not None:
+            write_evidence_archive(summary, manifest, arguments.manifest, arguments.archive_output)
     except EvidenceError as error:
         print(f"BLOCKED: {error}", file=sys.stderr)
         return 1

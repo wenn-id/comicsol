@@ -32,6 +32,9 @@ digest cannot create a cycle. For version `X` and tag `vX`:
 | `comic-sol-X-linux-x86_64.container.sbom.json` | CycloneDX 1.6 SBOM of the image's installed runtime (inventoried from the image's own `site-packages`) | `SHA256SUMS` entry + attestation |
 | `installers/install.sh` → `install.sh` | POSIX installer | `SHA256SUMS` entry + attestation |
 | `installers/install.ps1` → `install.ps1` | Windows installer | `SHA256SUMS` entry + attestation |
+| `v2.2-live-visual-evidence.tar.gz` | Sanitized reviewer bundle containing the manifest, scorecard, retained attempts, and before/after renders | `SHA256SUMS` entry + attestation; generated deterministically from reviewed manifest references only |
+| `v2.2-live-visual-summary.json` | Candidate-bound machine-readable visual approval | `SHA256SUMS` entry + attestation + digest and reviewer-attestation binding in `candidate-identity.json` |
+| `v2.2-live-visual-summary.md` | Human-readable visual approval and limitations | `SHA256SUMS` entry + attestation |
 | `SHA256SUMS` | Signed checksum manifest | Sigstore keyless signature (`SHA256SUMS.sigstore.json`) + digest recorded in `candidate-identity.json` |
 | `SHA256SUMS.sigstore.json` | Signature bundle | Digest recorded in `candidate-identity.json` |
 | `candidate-identity.json` | Identity record: tag, version, signed annotated tag-object SHA, candidate commit, captured protected-main SHA, canonical matching ruleset IDs, approved bypass authority, run URL, Actions artifact digests, manifest/signature/payload digests | Sidecar `candidate-identity.json.sha256` + build-provenance attestation under the release workflow identity; re-downloaded, provenance-verified, and compared byte-for-byte at qualification and promotion |
@@ -82,7 +85,8 @@ Verification walks the chain in this order, and every step is fail-closed:
    plus the issuer `https://token.actions.githubusercontent.com`.
 3. **Payload attestations.** `actions/attest-build-provenance` attests every
    subject named by `SHA256SUMS` — each native archive, its metadata and SBOM,
-   the wheel, the sdist, the container tar, and both installers — with the
+   the wheel, the sdist, the container tar, both installers, and the candidate-bound
+   live visual archive plus JSON/Markdown summaries — with the
    subject digest taken from the manifest itself, so an attestation can never
    cover bytes the manifest does not name.
 4. **Signed manifest.** `cosign sign-blob` keyless-signs `SHA256SUMS` under the
@@ -109,18 +113,21 @@ Verification walks the chain in this order, and every step is fail-closed:
    tag and source commit; the manifest and signature-bundle digests against the
    identity record; the Sigstore bundle; every payload checksum; a
    build-provenance attestation for the wheel, the sdist, each native archive,
-   each metadata file, each SBOM, both installers, and the container tar — each
+   each metadata file, each SBOM, both installers, the container tar, and all
+   three live visual evidence payloads — each
    checked for signer workflow, source digest (the exact candidate commit), and
    source ref (`refs/tags/vX`) with self-hosted runners denied; the metadata and
-   SBOM identity contracts; and the container bytes by loading and running them.
+   SBOM identity contracts; the candidate-bound visual summary's approval,
+   reviewer-attestation digest, score coverage, thresholds, material-change
+   coverage, and quality-review coverage; and the container bytes by loading and running them.
 7. **Promotion evidence.** After approval by a configured reviewer other than
    the triggering actor through the protected `release-production` Environment,
    promotion re-downloads every byte, compares them to the candidate identity,
    freshly revalidates the exact Release `tag_name`, remote tag-object SHA, and
    peeled candidate commit at each promotion boundary, binds the
-   benchmark and qualification summaries to the reusable-workflow output
-   digests, records the deployment identity, and attests the resulting
-   `release-evidence.{json,md}` digests under the release workflow identity.
+   benchmark, candidate-bound live visual approval, and qualification summaries
+   to the reusable-workflow output digests, records the deployment identity, and
+   attests the resulting `release-evidence.{json,md}` digests under the release workflow identity.
 
 An external verifier can reproduce steps 4–6 with public data alone: the
 `cosign verify-blob` command in [`docs/install-manual.md`](../install-manual.md#verify-installer-bytes-before-first-execution), the

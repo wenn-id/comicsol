@@ -1,9 +1,11 @@
 import hashlib
 import io
 import json
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from PIL import Image
 
@@ -18,6 +20,7 @@ from scripts.live_visual_evidence import (
     EvidenceError,
     main,
     validate_evidence,
+    write_evidence_archive,
 )
 
 
@@ -274,12 +277,71 @@ class LiveVisualEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(EvidenceError, "provider, model, and reviewer"):
             self._validate(manifest)
 
+    def test_public_archive_is_deterministic_and_excludes_unreferenced_files(self):
+        manifest = self._manifest()
+        manifest_path = self.root / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+        (self.root / "private-provider-response.json").write_text("private", encoding="utf-8")
+        summary = self._validate(manifest)
+        first = self.root / "first.tar.gz"
+        second = self.root / "second.tar.gz"
+        write_evidence_archive(summary, manifest, manifest_path, first)
+        write_evidence_archive(summary, manifest, manifest_path, second)
+        self.assertEqual(first.read_bytes(), second.read_bytes())
+        with tarfile.open(first, "r:gz") as archive:
+            names = set(archive.getnames())
+        self.assertIn("v2.2-live-visual-evidence/manifest.json", names)
+        self.assertIn("v2.2-live-visual-evidence/scorecard.json", names)
+        self.assertIn("v2.2-live-visual-evidence/reviewer-attestation.json", names)
+        self.assertNotIn("v2.2-live-visual-evidence/private-provider-response.json", names)
+
+        original_manifest_payload = manifest_path.read_bytes()
+        original_read_bytes = Path.read_bytes
+
+        def replace_after_manifest_read(path):
+            payload = original_read_bytes(path)
+            if path == manifest_path:
+                manifest_path.write_text("{}", encoding="utf-8")
+            return payload
+
+        retained = self.root / "retained.tar.gz"
+        with mock.patch.object(Path, "read_bytes", replace_after_manifest_read):
+            write_evidence_archive(summary, manifest, manifest_path, retained)
+        with tarfile.open(retained, "r:gz") as archive:
+            archived = archive.extractfile("v2.2-live-visual-evidence/manifest.json")
+            self.assertIsNotNone(archived)
+            self.assertEqual(original_manifest_payload, archived.read())
+
+        manifest_path.write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(EvidenceError, "manifest changed after validation"):
+            write_evidence_archive(summary, manifest, manifest_path, self.root / "manifest.tar.gz")
+        manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+
+        conflicting = json.loads(json.dumps(summary))
+        conflicting["material_changes"][0]["after"]["path"] = conflicting["material_changes"][0][
+            "before"
+        ]["path"]
+        with self.assertRaisesRegex(EvidenceError, "conflicting digests"):
+            write_evidence_archive(
+                conflicting, manifest, manifest_path, self.root / "conflicting.tar.gz"
+            )
+
+        escaping = json.loads(json.dumps(summary))
+        escaping["material_changes"][0]["before"]["path"] = "../outside.png"
+        with self.assertRaisesRegex(EvidenceError, "escapes the bundle"):
+            write_evidence_archive(escaping, manifest, manifest_path, self.root / "escaping.tar.gz")
+
+        (self.root / "scorecard.json").write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(EvidenceError, "changed after validation"):
+            write_evidence_archive(summary, manifest, manifest_path, self.root / "changed.tar.gz")
+
     def test_cli_publishes_json_and_markdown_or_fails_closed(self):
         manifest = self._manifest()
         manifest_path = self.root / "manifest.json"
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         json_output = self.root / "published/summary.json"
         markdown_output = self.root / "published/summary.md"
+        archive_output = self.root / "published/evidence.tar.gz"
         common = [
             "--manifest",
             str(manifest_path),
@@ -293,8 +355,11 @@ class LiveVisualEvidenceTests(unittest.TestCase):
             str(json_output),
             "--markdown-output",
             str(markdown_output),
+            "--archive-output",
+            str(archive_output),
         ]
         self.assertEqual(0, main(common))
+        self.assertTrue(archive_output.is_file())
         self.assertEqual("PROMOTION APPROVED", json.loads(json_output.read_text())["decision"])
         manifest["provenance"]["approval"] = "pending"
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
