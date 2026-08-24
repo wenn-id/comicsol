@@ -676,6 +676,17 @@ def _publish_expected(
     try:
         _rename_exchange(temporary, path, directory=directory)
     except OSError as error:
+        if sys.platform == "darwin" and error.errno in {
+            errno.ENOSYS,
+            errno.ENOTSUP,
+            errno.EOPNOTSUPP,
+        }:
+            _assert_snapshot(path, expected, directory=directory)
+            if directory is None:
+                os.replace(temporary, path)
+            else:
+                directory.replace(temporary.name, path.name)
+            return
         if error.errno not in {errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP}:
             raise
         raise OSError(errno.ENOTSUP, "atomic exchange is unavailable on this platform") from error

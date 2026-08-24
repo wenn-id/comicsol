@@ -3,6 +3,7 @@ import errno
 import json
 import os
 import stat
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -324,7 +325,10 @@ class ClientSetupTests(unittest.TestCase):
             client_setup._atomic_write(config, b"stale", expected=snapshot)
         self.assertEqual(concurrent, config.read_bytes())
 
-    @unittest.skipIf(os.name == "nt", "Windows uses native ReplaceFileW publication")
+    @unittest.skipIf(
+        os.name == "nt" or sys.platform == "darwin",
+        "Windows and macOS have platform-specific publication paths",
+    )
     def test_atomic_publish_fails_closed_when_exchange_is_unavailable(self):
         config = self.home / "config.json"
         original = b"original"
@@ -340,6 +344,24 @@ class ClientSetupTests(unittest.TestCase):
                 client_setup._atomic_write(config, b"candidate", expected=snapshot)
 
         self.assertEqual(original, config.read_bytes())
+
+    def test_darwin_publish_uses_locked_replace_when_exchange_is_unavailable(self):
+        config = self.home / "config.json"
+        original = b"original"
+        config.write_bytes(original)
+        snapshot = client_setup._read_snapshot(config)
+
+        with (
+            mock.patch.object(client_setup.sys, "platform", "darwin"),
+            mock.patch.object(
+                client_setup,
+                "_rename_exchange",
+                side_effect=OSError(errno.ENOTSUP, "exchange unavailable"),
+            ),
+        ):
+            client_setup._atomic_write(config, b"candidate", expected=snapshot)
+
+        self.assertEqual(b"candidate", config.read_bytes())
 
     def test_adapter_detect_failure_is_per_client(self):
         class DetectFailure:
