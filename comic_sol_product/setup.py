@@ -113,11 +113,23 @@ class _ConfigChangedError(RuntimeError):
     """The client changed its config during our read-modify-write cycle."""
 
 
+def _canonical_config_directory(path: Path) -> Path:
+    """Resolve only macOS's documented system aliases before no-follow traversal."""
+    absolute = Path(path).absolute()
+    if sys.platform != "darwin" or len(absolute.parts) < 2:
+        return absolute
+    prefix = Path(absolute.anchor) / absolute.parts[1]
+    if prefix not in {Path("/var"), Path("/tmp")}:
+        return absolute
+    resolved_prefix = prefix.resolve(strict=True)
+    return resolved_prefix.joinpath(*absolute.parts[2:])
+
+
 class _ConfigDirectory:
     """Retain a verified config directory while one repair transaction runs."""
 
     def __init__(self, path: Path) -> None:
-        self.path = Path(path).absolute()
+        self.path = _canonical_config_directory(path)
         self.descriptor: int | None = None
         self._windows_handles: list[int] = []
         self._identity: tuple[int, int] | None = None
@@ -689,17 +701,6 @@ def _publish_expected(
     try:
         _rename_exchange(temporary, path, directory=directory)
     except OSError as error:
-        if sys.platform == "darwin" and error.errno in {
-            errno.ENOSYS,
-            errno.ENOTSUP,
-            errno.EOPNOTSUPP,
-        }:
-            _assert_snapshot(path, expected, directory=directory)
-            if directory is None:
-                os.replace(temporary, path)
-            else:
-                directory.replace(temporary.name, path.name)
-            return
         if error.errno not in {errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP}:
             raise
         raise OSError(errno.ENOTSUP, "atomic exchange is unavailable on this platform") from error

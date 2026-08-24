@@ -345,7 +345,7 @@ class ClientSetupTests(unittest.TestCase):
 
         self.assertEqual(original, config.read_bytes())
 
-    def test_darwin_publish_uses_locked_replace_when_exchange_is_unavailable(self):
+    def test_darwin_publish_fails_closed_when_exchange_is_unavailable(self):
         config = self.home / "config.json"
         original = b"original"
         config.write_bytes(original)
@@ -359,9 +359,10 @@ class ClientSetupTests(unittest.TestCase):
                 side_effect=OSError(errno.ENOTSUP, "exchange unavailable"),
             ),
         ):
-            client_setup._atomic_write(config, b"candidate", expected=snapshot)
+            with self.assertRaises(OSError):
+                client_setup._atomic_write(config, b"candidate", expected=snapshot)
 
-        self.assertEqual(b"candidate", config.read_bytes())
+        self.assertEqual(original, config.read_bytes())
 
     def test_darwin_publish_tolerates_unsupported_directory_fsync(self):
         config = self.home / "config.json"
@@ -375,18 +376,35 @@ class ClientSetupTests(unittest.TestCase):
                 raise OSError(errno.ENOTSUP, "directory fsync unavailable")
             real_fsync(descriptor)
 
+        def exchange(source, destination, *, directory=None):
+            self.assertIsNone(directory)
+            displaced = source.with_name(f"{source.name}.exchange")
+            os.replace(destination, displaced)
+            os.replace(source, destination)
+            os.replace(displaced, source)
+
         with (
             mock.patch.object(client_setup.sys, "platform", "darwin"),
             mock.patch.object(
                 client_setup,
                 "_rename_exchange",
-                side_effect=OSError(errno.ENOTSUP, "exchange unavailable"),
+                side_effect=exchange,
             ),
             mock.patch.object(client_setup.os, "fsync", side_effect=fail_directory_fsync),
         ):
             client_setup._atomic_write(config, b"candidate", expected=snapshot)
 
         self.assertEqual(b"candidate", config.read_bytes())
+
+    def test_darwin_config_directory_resolves_only_sanctioned_system_alias(self):
+        with (
+            mock.patch.object(client_setup.sys, "platform", "darwin"),
+            mock.patch.object(Path, "resolve", return_value=Path("/private/var")) as resolve,
+        ):
+            directory = client_setup._ConfigDirectory(Path("/var/folders/example"))
+
+        resolve.assert_called_once_with(strict=True)
+        self.assertEqual(Path("/private/var/folders/example"), directory.path)
 
     def test_adapter_detect_failure_is_per_client(self):
         class DetectFailure:
