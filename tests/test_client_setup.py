@@ -3,6 +3,7 @@ import errno
 import json
 import os
 import stat
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -30,6 +31,20 @@ class ClientSetupTests(unittest.TestCase):
         self.launcher.write_bytes(b"launcher")
         if os.name != "nt":
             self.launcher.chmod(0o755)
+
+        def verify_fixture_launcher(executable):
+            if Path(executable).name.lower() not in {"comic-sol", "comic-sol.exe"}:
+                raise RuntimeError("Comic Sol executable identity check failed")
+
+        self.real_verify_launcher_identity = client_setup._verify_launcher_identity
+        launcher_check = mock.patch.object(
+            client_setup, "_verify_launcher_identity", side_effect=verify_fixture_launcher
+        )
+        launcher_check.start()
+        self.addCleanup(launcher_check.stop)
+        runtime_check = mock.patch.object(client_setup, "_mcp_runtime_available", return_value=True)
+        runtime_check.start()
+        self.addCleanup(runtime_check.stop)
 
     def adapter_paths(self, platform: str) -> dict[str, Path]:
         with mock.patch.object(client_setup.sys, "platform", platform):
@@ -310,7 +325,10 @@ class ClientSetupTests(unittest.TestCase):
             client_setup._atomic_write(config, b"stale", expected=snapshot)
         self.assertEqual(concurrent, config.read_bytes())
 
-    @unittest.skipIf(os.name == "nt", "Windows uses native ReplaceFileW publication")
+    @unittest.skipIf(
+        os.name == "nt" or sys.platform == "darwin",
+        "Windows and macOS have platform-specific publication paths",
+    )
     def test_atomic_publish_fails_closed_when_exchange_is_unavailable(self):
         config = self.home / "config.json"
         original = b"original"
@@ -326,6 +344,70 @@ class ClientSetupTests(unittest.TestCase):
                 client_setup._atomic_write(config, b"candidate", expected=snapshot)
 
         self.assertEqual(original, config.read_bytes())
+
+    @unittest.skipIf(os.name == "nt", "Darwin path semantics are unavailable on Windows")
+    def test_darwin_publish_fails_closed_when_exchange_is_unavailable(self):
+        config = self.home / "config.json"
+        original = b"original"
+        config.write_bytes(original)
+        snapshot = client_setup._read_snapshot(config)
+
+        with (
+            mock.patch.object(client_setup.sys, "platform", "darwin"),
+            mock.patch.object(
+                client_setup,
+                "_rename_exchange",
+                side_effect=OSError(errno.ENOTSUP, "exchange unavailable"),
+            ),
+        ):
+            with self.assertRaises(OSError):
+                client_setup._atomic_write(config, b"candidate", expected=snapshot)
+
+        self.assertEqual(original, config.read_bytes())
+
+    @unittest.skipIf(os.name == "nt", "Darwin path semantics are unavailable on Windows")
+    def test_darwin_publish_tolerates_unsupported_directory_fsync(self):
+        config = self.home / "config.json"
+        original = b"original"
+        config.write_bytes(original)
+        snapshot = client_setup._read_snapshot(config)
+        real_fsync = os.fsync
+
+        def fail_directory_fsync(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                raise OSError(errno.ENOTSUP, "directory fsync unavailable")
+            real_fsync(descriptor)
+
+        def exchange(source, destination, *, directory=None):
+            self.assertIsNone(directory)
+            displaced = source.with_name(f"{source.name}.exchange")
+            os.replace(destination, displaced)
+            os.replace(source, destination)
+            os.replace(displaced, source)
+
+        with (
+            mock.patch.object(client_setup.sys, "platform", "darwin"),
+            mock.patch.object(
+                client_setup,
+                "_rename_exchange",
+                side_effect=exchange,
+            ),
+            mock.patch.object(client_setup.os, "fsync", side_effect=fail_directory_fsync),
+        ):
+            client_setup._atomic_write(config, b"candidate", expected=snapshot)
+
+        self.assertEqual(b"candidate", config.read_bytes())
+
+    @unittest.skipIf(os.name == "nt", "Darwin path semantics are unavailable on Windows")
+    def test_darwin_config_directory_resolves_only_sanctioned_system_alias(self):
+        with (
+            mock.patch.object(client_setup.sys, "platform", "darwin"),
+            mock.patch.object(Path, "resolve", return_value=Path("/private/var")) as resolve,
+        ):
+            directory = client_setup._ConfigDirectory(Path("/var/folders/example"))
+
+        resolve.assert_called_once_with(strict=True)
+        self.assertEqual(Path("/private/var/folders/example"), directory.path)
 
     def test_adapter_detect_failure_is_per_client(self):
         class DetectFailure:
@@ -922,6 +1004,426 @@ class ClientSetupTests(unittest.TestCase):
         entry = json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["comic-sol"]
         self.assertEqual("configured", result.status)
         self.assertEqual(str(native_launcher.resolve()), entry["command"])
+
+    def test_repair_dry_run_previews_without_mutating_config(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = b'{"mcpServers":{"other":{"command":"other"}}}\n'
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        result = client_setup.repair_clients(
+            self.output,
+            adapters=[adapter],
+            executable=self.launcher,
+            dry_run=True,
+        )[0]
+
+        self.assertEqual("success", result.state)
+        self.assertEqual("planned", result.status)
+        self.assertEqual("set-comic-sol-entry", result.action)
+        self.assertEqual(str(config), result.config_path)
+        self.assertTrue(result.backup_required)
+        self.assertEqual(
+            {
+                "command": str(self.launcher.resolve()),
+                "args": ["mcp", "--root", str(self.output.resolve())],
+            },
+            result.planned_entry,
+        )
+        self.assertFalse(result.verified)
+        self.assertIsNone(result.restored)
+        self.assertIsNone(result.error)
+        self.assertEqual(original, config.read_bytes())
+        self.assertEqual([], list(config.parent.glob("*.bak-*")))
+
+    def test_repair_missing_launcher_is_a_structured_failure_without_mutation(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = b"{}\n"
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        with mock.patch("comic_sol_product.setup.shutil.which", return_value=None):
+            result = client_setup.repair_clients(
+                self.output,
+                adapters=[adapter],
+                executable="missing-comic-sol",
+            )[0]
+
+        self.assertEqual(("failure", "failed"), (result.state, result.status))
+        self.assertEqual("CS-INSTALL-002", result.error["code"])
+        self.assertIn("doctor", result.error["recovery"])
+        self.assertEqual(original, config.read_bytes())
+        self.assertEqual([], list(config.parent.glob("*.bak-*")))
+
+    def test_repair_twice_is_idempotent(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.write_text("{}\n", encoding="utf-8")
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        first = client_setup.repair_clients(
+            self.output,
+            adapters=[adapter],
+            executable=self.launcher,
+        )[0]
+        repaired = config.read_bytes()
+        second = client_setup.repair_clients(
+            self.output,
+            adapters=[adapter],
+            executable=self.launcher,
+        )[0]
+
+        self.assertEqual(("success", "configured"), (first.state, first.status))
+        self.assertTrue(first.verified)
+        self.assertEqual(("no-op", "unchanged"), (second.state, second.status))
+        self.assertIsNone(second.backup_path)
+        self.assertEqual(repaired, config.read_bytes())
+
+    def test_repair_restores_after_post_publication_failure(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = b'{"theme":"dark"}\n'
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+        real_atomic_write = client_setup._atomic_write
+        calls = 0
+
+        def fail_after_publish(path, data, mode=None, *, expected=None, directory=None):
+            nonlocal calls
+            calls += 1
+            real_atomic_write(path, data, mode, expected=expected, directory=directory)
+            if calls == 1:
+                raise OSError("durability failed after publish")
+
+        with mock.patch.object(client_setup, "_atomic_write", side_effect=fail_after_publish):
+            result = client_setup.repair_clients(
+                self.output,
+                adapters=[adapter],
+                executable=self.launcher,
+            )[0]
+
+        self.assertEqual(("failure", "rolled-back"), (result.state, result.status))
+        self.assertTrue(result.restored)
+        self.assertEqual(original, config.read_bytes())
+
+    def test_unchanged_repair_recomputes_under_lock(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        expected = {
+            "command": str(self.launcher.resolve()),
+            "args": ["mcp", "--root", str(self.output.resolve())],
+        }
+        config.write_text(json.dumps({"mcpServers": {"comic-sol": expected}}), encoding="utf-8")
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        with mock.patch.object(
+            client_setup, "_ConfigLock", side_effect=PermissionError("lock denied")
+        ):
+            result = client_setup.repair_clients(
+                self.output,
+                adapters=[adapter],
+                executable=self.launcher,
+            )[0]
+
+        self.assertEqual("failure", result.state)
+        self.assertEqual("failed", result.status)
+        self.assertIsNotNone(result.error)
+        self.assertEqual("CS-INSTALL-002", result.error["code"])
+        self.assertFalse(result.verified)
+        self.assertIsNone(result.restored)
+
+    def test_repair_failure_and_skipped_evidence_only_claims_completed_work(self):
+        missing = JsonClientAdapter("missing", self.home / "missing.json", "mcpServers")
+
+        class DetectFailure:
+            name = "broken"
+            config_path = self.home / "broken.json"
+
+            def detect(self):
+                raise OSError("detect failed")
+
+        results = client_setup.repair_clients(
+            self.output,
+            selected=["missing", "broken"],
+            adapters=[missing, DetectFailure()],
+            executable=self.launcher,
+        )
+
+        self.assertFalse(results[0].verified)
+        self.assertIsNone(results[0].restored)
+        self.assertFalse(results[1].verified)
+        self.assertIsNone(results[1].restored)
+
+    def test_repair_missing_mcp_runtime_is_diagnostic_only(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = b"{}\n"
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        with mock.patch.object(client_setup, "_mcp_runtime_available", return_value=False):
+            result = client_setup.repair_clients(
+                self.output,
+                adapters=[adapter],
+                executable=self.launcher,
+            )[0]
+
+        self.assertEqual("failure", result.state)
+        self.assertEqual("CS-INSTALL-002", result.error["code"])
+        self.assertIn("doctor", result.error["recovery"])
+        self.assertEqual(original, config.read_bytes())
+
+    def test_repair_rejects_unknown_selected_client(self):
+        with self.assertRaisesRegex(ValueError, "unsupported client"):
+            client_setup.repair_clients(
+                self.output,
+                selected=["curser"],
+                adapters=[],
+                executable=self.launcher,
+            )
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink semantics are unavailable on Windows")
+    def test_repair_refuses_symlinked_config_parent(self):
+        outside = self.home / "outside"
+        outside.mkdir()
+        config = outside / "mcp.json"
+        original = b"{}\n"
+        config.write_bytes(original)
+        linked_parent = self.home / ".cursor"
+        linked_parent.symlink_to(outside, target_is_directory=True)
+        adapter = JsonClientAdapter("cursor", linked_parent / "mcp.json", "mcpServers")
+
+        result = client_setup.repair_clients(
+            self.output,
+            adapters=[adapter],
+            executable=self.launcher,
+        )[0]
+
+        self.assertEqual("failure", result.state)
+        self.assertEqual(original, config.read_bytes())
+        self.assertEqual([], list(outside.glob("*.bak-*")))
+
+    def test_repair_parent_guard_failure_returns_structured_result(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.write_text("{}\n", encoding="utf-8")
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        with mock.patch.object(
+            client_setup._ConfigDirectory,
+            "__enter__",
+            side_effect=OSError("parent is a reparse point"),
+        ):
+            result = client_setup.repair_clients(
+                self.output,
+                adapters=[adapter],
+                executable=self.launcher,
+            )[0]
+
+        self.assertEqual(("failure", "failed"), (result.state, result.status))
+        self.assertEqual("CS-INSTALL-002", result.error["code"])
+        self.assertIsNone(result.restored)
+        self.assertEqual("{}\n", config.read_text(encoding="utf-8"))
+
+    def test_repair_pre_publish_failure_does_not_claim_rollback(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = b"{}\n"
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        with mock.patch.object(
+            client_setup, "_atomic_write", side_effect=OSError("temporary write failed")
+        ):
+            result = client_setup.repair_clients(
+                self.output,
+                adapters=[adapter],
+                executable=self.launcher,
+            )[0]
+
+        self.assertEqual(("failure", "failed"), (result.state, result.status))
+        self.assertIsNone(result.restored)
+        self.assertEqual(original, config.read_bytes())
+
+    def test_repair_rejects_fake_launcher_identity(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        config.write_text("{}\n", encoding="utf-8")
+        fake = self.home / "not-comic-sol.exe"
+        fake.write_text("fake", encoding="utf-8")
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        client_setup._verify_launcher_identity = self.real_verify_launcher_identity
+        try:
+            with mock.patch.object(
+                client_setup,
+                "_verify_launcher_identity",
+                wraps=self.real_verify_launcher_identity,
+            ) as identity:
+                result = client_setup.repair_clients(
+                    self.output,
+                    adapters=[adapter],
+                    executable=fake,
+                )[0]
+
+            identity.assert_called_once()
+
+            self.assertEqual("failure", result.state)
+            self.assertEqual("CS-INSTALL-002", result.error["code"])
+            self.assertEqual("{}\n", config.read_text(encoding="utf-8"))
+        finally:
+
+            def verify_fixture_launcher(executable):
+                if Path(executable).name.lower() not in {"comic-sol", "comic-sol.exe"}:
+                    raise RuntimeError("Comic Sol executable identity check failed")
+
+            client_setup._verify_launcher_identity = verify_fixture_launcher
+
+    def test_repair_does_not_rollback_over_a_concurrent_third_party_edit(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = b'{"theme":"dark"}\n'
+        config.write_bytes(original)
+
+        def edit_before_verification():
+            config.write_bytes(b'{"thirdParty":true}\n')
+            return False
+
+        adapter = JsonClientAdapter(
+            "cursor", config, "mcpServers", verify_hook=edit_before_verification
+        )
+        result = client_setup.repair_clients(
+            self.output,
+            adapters=[adapter],
+            executable=self.launcher,
+        )[0]
+
+        self.assertEqual(("failure", "rollback-failed"), (result.state, result.status))
+        self.assertFalse(result.restored)
+        self.assertEqual("CS-INSTALL-003", result.error["code"])
+        self.assertEqual(b'{"thirdParty":true}\n', config.read_bytes())
+
+    def test_repair_preserves_unrelated_json_bytes(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = (
+            "{\n"
+            '  "z": [1, 2],\n'
+            '  "mcpServers": {\n'
+            '    "other": {"command":"other"}\n'
+            "  },\n"
+            '  "a": 1\n'
+            "}\n"
+        ).encode()
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        result = client_setup.repair_clients(
+            self.output,
+            adapters=[adapter],
+            executable=self.launcher,
+        )[0]
+
+        self.assertEqual("configured", result.status)
+        updated = config.read_bytes().decode()
+        self.assertIn('  "z": [1, 2],\n', updated)
+        self.assertIn('  "a": 1\n', updated)
+        self.assertIn('    "other": {"command":"other"}\n', updated)
+        self.assertEqual(1, updated.count('"comic-sol"'))
+
+    def test_repair_replaces_existing_json_entry_without_losing_indentation(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        stale = {
+            "command": str(self.launcher.resolve()),
+            "args": ["mcp", "--root", str(self.home / "old-output")],
+        }
+        original = (
+            f'{{\n  "mcpServers": {{\n    "comic-sol": {json.dumps(stale, indent=2)}\n  }}\n}}\n'
+        ).encode()
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        result = client_setup.repair_clients(
+            self.output,
+            adapters=[adapter],
+            executable=self.launcher,
+        )[0]
+
+        self.assertEqual("configured", result.status)
+        updated = config.read_text(encoding="utf-8")
+        self.assertIn('    "comic-sol": {\n', updated)
+        self.assertIn('      "args": [\n', updated)
+        self.assertEqual(1, updated.count('"comic-sol"'))
+        self.assertEqual(
+            str(self.output.resolve()), json.loads(updated)["mcpServers"]["comic-sol"]["args"][2]
+        )
+
+    def test_json_publish_ignores_same_key_outside_servers_mapping(self):
+        adapter = JsonClientAdapter("cursor", self.home / "mcp.json", "mcpServers")
+        original = b'{"metadata":{"comic-sol":{"keep":true}},"mcpServers":{}}\n'
+        published = adapter.publish(
+            original,
+            {
+                "command": str(self.launcher.resolve()),
+                "args": ["mcp", "--root", str(self.output.resolve())],
+            },
+        )
+        document = json.loads(published)
+        self.assertTrue(document["metadata"]["comic-sol"]["keep"])
+        self.assertIn("comic-sol", document["mcpServers"])
+
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = b'{"theme":"dark"}\n'
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers", verify_hook=lambda: False)
+
+        result = client_setup.repair_clients(
+            self.output,
+            adapters=[adapter],
+            executable=self.launcher,
+        )[0]
+
+        self.assertEqual(("failure", "rolled-back"), (result.state, result.status))
+        self.assertFalse(result.verified)
+        self.assertTrue(result.restored)
+        self.assertEqual("CS-INSTALL-002", result.error["code"])
+        self.assertEqual(original, config.read_bytes())
+        self.assertEqual(original, Path(result.backup_path).read_bytes())
+
+    def test_repair_reports_when_rollback_cannot_be_verified(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = b'{"theme":"dark"}\n'
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers", verify_hook=lambda: False)
+        real_atomic_write = client_setup._atomic_write
+        calls = 0
+
+        def corrupt_restoration(path, data, mode=None, *, expected=None, directory=None):
+            nonlocal calls
+            calls += 1
+            real_atomic_write(path, data, mode, expected=expected, directory=directory)
+            if calls == 2:
+                path.write_bytes(b"corrupt restoration")
+
+        with mock.patch.object(client_setup, "_atomic_write", side_effect=corrupt_restoration):
+            result = client_setup.repair_clients(
+                self.output,
+                adapters=[adapter],
+                executable=self.launcher,
+            )[0]
+
+        self.assertEqual("failure", result.state)
+        self.assertEqual("rollback-failed", result.status)
+        self.assertFalse(result.verified)
+        self.assertFalse(result.restored)
+        self.assertEqual("CS-INSTALL-003", result.error["code"])
+        self.assertNotEqual(original, config.read_bytes())
+        self.assertEqual(original, Path(result.backup_path).read_bytes())
 
     def test_cli_exposes_transaction_commands(self):
         parser = cli.build_parser()

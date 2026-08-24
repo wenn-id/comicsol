@@ -292,16 +292,31 @@ Transactional client integration is available through:
 
 ```bash
 comic-sol --json setup --output-root /absolute/path/to/comic-sol-output
+comic-sol --json repair --dry-run --output-root /absolute/path/to/comic-sol-output
 comic-sol --json repair --output-root /absolute/path/to/comic-sol-output
 comic-sol --json uninstall --output-root /absolute/path/to/comic-sol-output
 ```
 
-Setup refuses malformed native config, creates a timestamped backup before each
-change, writes atomically, and restores the original bytes if verification fails.
-Repeated setup is idempotent. Uninstall removes only the MCP integration and
-preserves comic projects. Codex TOML and detected JSON client configs are mutated
-only at verified locations; clients whose native format or location has not been
-verified are reported as `unsupported` rather than guessed.
+`repair --dry-run` diagnoses each detected integration and previews the intended
+`comic-sol` command, arguments, config path, action, and backup requirement without
+writing. Apply recomputes the plan under the config lock, verifies the backup, writes
+atomically, verifies the persisted entry, and verifies rollback after failure. Each
+client returns `success`, `no-op`, or `failure`. Selecting an unverified client
+returns a failure result; unselected or undetected clients may return `no-op` with
+`skipped` status, and clients whose native format or location has not been verified
+return `no-op` with `unsupported` status. The complete `status` matrix is `planned`
+for preview, `configured` for an applied change, `unchanged` for a repeat/no-op,
+`skipped` when not selected or not detected, `unsupported` when the native format or
+location is unverified, `rolled-back` when a failed mutation was restored, and
+`rollback-failed` when restoration could not be verified. Repair exits nonzero if any
+client fails. Repeating repair is idempotent.
+
+Repair changes only the `comic-sol` MCP entry at verified Codex TOML and detected
+JSON config locations. It does not create missing third-party config files, repair
+unsupported clients, or reinstall runtime components; those cases return diagnostic
+and `doctor` guidance. Uninstall removes only the MCP integration and preserves comic
+projects. Clients whose native format or location has not been verified are reported
+as `unsupported` rather than guessed.
 
 During source development, `"$PYTHON" scripts/mcp_server.py --root PATH` remains
 available. Both entry points expose the same protocol-tested deterministic lifecycle

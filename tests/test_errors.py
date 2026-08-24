@@ -6,6 +6,8 @@ from comic_sol_product.errors import (
     REQUIRED_NAMESPACES,
     ERROR_DEFINITIONS,
     CliUsageError,
+    IntegrationRepairError,
+    IntegrationRollbackError,
     ValidationFailureError,
     classify_exception,
     error_payload,
@@ -112,6 +114,8 @@ class StructuredErrorContractTests(unittest.TestCase):
                 RuntimeError("MCP support is not installed; run: pip install 'comic-sol[mcp]'"),
                 {},
             ),
+            ("CS-INSTALL-002", IntegrationRepairError("repair failed"), {}),
+            ("CS-INSTALL-003", IntegrationRollbackError("rollback failed"), {}),
             ("CS-MCP-001", ValueError("invalid project ID"), {"request": True}),
             ("CS-MCP-002", RuntimeError("tool failed"), {"surface": "mcp"}),
         )

@@ -55,6 +55,8 @@ Both surfaces are fail-closed: every failure path emits exactly one canonical re
 | `CS-FONT-001` | `font-error` | Font missing, invalid, or unloadable; install or select a supported font and retry lettering. |
 | `CS-EXPORT-001` | `export-error` | The export could not be rendered or published; resolve the reported issue and retry export. |
 | `CS-INSTALL-001` | `missing-extra` | Optional component missing; reinstall with the required extra and retry. |
+| `CS-INSTALL-002` | `repair-failed` | Client integration repair failed safely; run doctor, correct the reported problem, and retry. |
+| `CS-INSTALL-003` | `rollback-failed` | Client config rollback could not be verified; stop the client, restore the reported backup, then run doctor. |
 | `CS-MCP-001` | `invalid-request` | An MCP tool argument violated the request contract; correct it and retry. |
 | `CS-MCP-002` | `internal-error` | The MCP tool hit an unexpected failure; retry once, then inspect server diagnostics. |
 
@@ -62,7 +64,7 @@ Both surfaces are fail-closed: every failure path emits exactly one canonical re
 
 `classify_exception()` maps an exception to one definition through exactly two boundary registries plus the type-based fallback chain:
 
-- **Typed boundaries** (`_BOUNDARY_TYPE_NAMES`): the engine's typed exception classes are matched by class name so `comic_sol_product.errors` never imports the engine. `PdfExportError` → `CS-EXPORT-001`; `PdfQualityError`, `PageQualityMigrationError`, `ProjectValidationError`, and `ValidationFailureError` → `CS-QA-001`; `TypographyPreflightError` → `CS-FONT-001`; `CliUsageError` → `CS-CLI-001`.
+- **Typed boundaries** (`_BOUNDARY_TYPE_NAMES`): the engine's typed exception classes are matched by class name so `comic_sol_product.errors` never imports the engine. `PdfExportError` → `CS-EXPORT-001`; `PdfQualityError`, `PageQualityMigrationError`, `ProjectValidationError`, and `ValidationFailureError` → `CS-QA-001`; `TypographyPreflightError` → `CS-FONT-001`; `IntegrationRepairError` → `CS-INSTALL-002`; `IntegrationRollbackError` → `CS-INSTALL-003`; `CliUsageError` → `CS-CLI-001`.
 - **Message-prefix boundaries** (`_BOUNDARY_MESSAGE_PREFIXES`): stable lowercase prefixes the owning engine module raises — `security-error: input exceeds` → `CS-SEC-002`, `security-error` → `CS-SEC-001`, `page_qa_required:` → `CS-QA-001`, the raster messages (`panel is not a readable image`, `source is not a readable image`, `source image format must be`, `source image exceeds the decoded pixel limit`, `missing required lettered panel image`) → `CS-IMG-001`, and the font messages (`font policy`, `font script override`, `font is not a readable TrueType/OpenType file`) → `CS-FONT-001`.
 - **Type fallback chain**: `FileNotFoundError`, `PermissionError`, `UnicodeError`, `ValueError`/`TypeError`, `OSError`, then `RuntimeError` (with the missing-extra prefixes → `CS-INSTALL-001`). Request-rejection prefixes (`invalid project ID`, `unknown validation stage`, `attempt path`) classify as `CS-MCP-001` only on the MCP surface or when `request=True`. Anything else is the internal-error definition for the surface (`CS-PROJ-005` on CLI, `CS-MCP-002` on MCP).
 
