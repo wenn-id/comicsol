@@ -274,8 +274,37 @@ class ManifestTests(unittest.TestCase):
             hashlib.sha256(b"A courier.\r\nExact bytes.").hexdigest(),
             manifest["input"]["source_sha256"],
         )
+        self.assertEqual(2, manifest["settings"]["page_count"])
         self.assertEqual(request, read_json(project / "source/request.json"))
         self.assertEqual(1, len((project / "logs/events.jsonl").read_text("utf-8").splitlines()))
+
+    def test_init_persists_selected_page_scope_without_changing_request_schema(self):
+        request = {"mode": "short_prompt", "language": "en"}
+        for page_count in (1, 4):
+            with self.subTest(page_count=page_count):
+                project = init_project(
+                    self.root,
+                    f"Scope {page_count}",
+                    b"Story",
+                    request,
+                    page_count=page_count,
+                )
+                manifest = read_json(project / "project.json")
+                self.assertEqual(page_count, manifest["settings"]["page_count"])
+                self.assertEqual(request, read_json(project / "source/request.json"))
+
+    def test_init_rejects_invalid_page_scope_before_allocation(self):
+        for page_count in (0, 5, True, "2"):
+            with self.subTest(page_count=page_count):
+                with self.assertRaisesRegex(ValueError, "page count"):
+                    init_project(
+                        self.root,
+                        "Rejected Scope",
+                        b"Story",
+                        {},
+                        page_count=page_count,
+                    )
+                self.assertEqual([], list(self.root.iterdir()))
 
     def test_init_allocates_deterministic_suffix_and_never_overwrites(self):
         request = {"mode": "short_prompt", "language": "en"}
@@ -727,6 +756,37 @@ class ManifestTests(unittest.TestCase):
 
 
 class SourceBoundaryTests(unittest.TestCase):
+    def test_source_cli_passes_selected_page_scope_to_the_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "story.md"
+            request = root / "request.json"
+            output_root = root / "output"
+            source.write_text("A scoped story.", encoding="utf-8")
+            atomic_write_json(request, {"language": "en", "mode": "short_prompt"})
+            stdout = io.StringIO()
+
+            with contextlib.redirect_stdout(stdout):
+                result = main(
+                    [
+                        "init",
+                        "--output-root",
+                        os.fspath(output_root),
+                        "--title",
+                        "Scoped Story",
+                        "--source",
+                        os.fspath(source),
+                        "--request-json",
+                        os.fspath(request),
+                        "--page-count",
+                        "3",
+                    ]
+                )
+
+            self.assertEqual(0, result)
+            project = Path(stdout.getvalue().strip())
+            self.assertEqual(3, read_json(project / "project.json")["settings"]["page_count"])
+
     def test_source_over_200_kib_creates_no_project(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

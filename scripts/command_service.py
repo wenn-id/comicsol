@@ -54,10 +54,23 @@ class CommandService:
             request = self._required(kwargs, "request")
             engine.validate_source_bytes(source, kwargs.get("suffix"))
             image_capability = kwargs.get("image_capability")
+            has_page_count = "page_count" in kwargs
+            page_count = kwargs.get("page_count", 2)
             if image_capability is None:
-                return engine.init_project(output_root, title, source, request)
+                return engine.init_project(
+                    output_root, title, source, request, page_count=page_count
+                )
+            if not has_page_count:
+                return engine.init_project(
+                    output_root, title, source, request, image_capability=image_capability
+                )
             return engine.init_project(
-                output_root, title, source, request, image_capability=image_capability
+                output_root,
+                title,
+                source,
+                request,
+                image_capability=image_capability,
+                page_count=page_count,
             )
         if project_dir is None:
             raise TypeError(f"{command} requires project_dir")

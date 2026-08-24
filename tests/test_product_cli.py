@@ -36,6 +36,136 @@ class ProductCliTests(unittest.TestCase):
         self.assertEqual(home / "Documents/Comic Sol", default_output_root("darwin", home))
         self.assertEqual(home / "Documents/Comic Sol", default_output_root("win32", home))
 
+    def test_guided_init_uses_sensible_defaults(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory) / "projects"
+            with (
+                mock.patch.object(cli, "default_output_root", return_value=output),
+                mock.patch(
+                    "builtins.input",
+                    side_effect=["", "", "", "A courier carries the last light.", ""],
+                ),
+            ):
+                code, stdout, stderr = self.invoke(["init", "--interactive"])
+
+            project = output / stdout.strip()
+            manifest = json.loads((project / "project.json").read_text(encoding="utf-8"))
+            request = json.loads((project / "source/request.json").read_text(encoding="utf-8"))
+            persisted_source = (project / "source/input.txt").read_bytes()
+
+        self.assertEqual(0, code)
+        self.assertEqual("comic-sol-project", stdout.strip())
+        self.assertIn("Comic Sol guided project initializer", stderr)
+        self.assertIn("Project name", stderr)
+        self.assertIn("Page count", stderr)
+        self.assertIn("Story source", stderr)
+        self.assertIn("Output location", stderr)
+        self.assertEqual("Comic Sol Project", manifest["title"])
+        self.assertEqual(2, manifest["settings"]["page_count"])
+        self.assertEqual({"language": "en", "mode": "short_prompt"}, request)
+        self.assertEqual(b"A courier carries the last light.", persisted_source)
+
+    def test_guided_and_noninteractive_init_have_identical_project_schema(self):
+        def shape(value):
+            if isinstance(value, dict):
+                return {key: shape(nested) for key, nested in value.items()}
+            if isinstance(value, list):
+                return [shape(nested) for nested in value]
+            return type(value).__name__
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "story.md"
+            source.write_text("A lighthouse wakes beneath the city.", encoding="utf-8")
+            guided_root = root / "guided"
+            automated_root = root / "automated"
+            with mock.patch(
+                "builtins.input",
+                side_effect=[
+                    "Schema Parity",
+                    "4",
+                    "file",
+                    str(source),
+                    str(guided_root),
+                ],
+            ):
+                guided_code, guided_stdout, _ = self.invoke(["init", "--interactive"])
+            with mock.patch("builtins.input", side_effect=AssertionError("unexpected prompt")):
+                automated_code, automated_stdout, automated_stderr = self.invoke(
+                    [
+                        "--json",
+                        "init",
+                        "--output-root",
+                        str(automated_root),
+                        "--title",
+                        "Schema Parity",
+                        "--source",
+                        str(source),
+                        "--page-count",
+                        "4",
+                    ]
+                )
+
+            automated_payload = json.loads(automated_stdout)
+            guided_project = guided_root / guided_stdout.strip()
+            automated_project = automated_root / automated_payload["data"]["project_id"]
+            guided_manifest = json.loads(
+                (guided_project / "project.json").read_text(encoding="utf-8")
+            )
+            automated_manifest = json.loads(
+                (automated_project / "project.json").read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(0, guided_code)
+            self.assertEqual(0, automated_code)
+            self.assertEqual("", automated_stderr)
+            self.assertEqual(shape(guided_manifest), shape(automated_manifest))
+            self.assertEqual(
+                (guided_project / "source/input.txt").read_bytes(),
+                (automated_project / "source/input.txt").read_bytes(),
+            )
+            self.assertEqual(
+                (guided_project / "source/request.json").read_bytes(),
+                (automated_project / "source/request.json").read_bytes(),
+            )
+            self.assertEqual(4, automated_manifest["settings"]["page_count"])
+
+    def test_guided_init_reprompts_invalid_page_scope_without_creating_files(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory) / "projects"
+            with (
+                mock.patch.object(cli, "default_output_root", return_value=output),
+                mock.patch("builtins.input", side_effect=["Project", "0", "5", EOFError()]),
+            ):
+                code, stdout, stderr = self.invoke(["init", "--interactive"])
+
+            self.assertEqual(2, code)
+            self.assertEqual("", stdout)
+            self.assertGreaterEqual(stderr.count("Page count must be"), 2)
+            self.assertIn("interactive initialization ended before completion", stderr)
+            self.assertFalse(output.exists())
+
+    def test_interactive_init_rejects_json_and_data_flags_before_prompting(self):
+        cases = (
+            (["--json", "init", "--interactive"], True),
+            (["init", "--interactive", "--title", "Project"], False),
+        )
+        for argv, as_json in cases:
+            with (
+                self.subTest(argv=argv),
+                mock.patch("builtins.input", side_effect=AssertionError("unexpected prompt")),
+            ):
+                code, stdout, stderr = self.invoke(argv)
+
+            self.assertEqual(2, code)
+            if as_json:
+                self.assertEqual("", stderr)
+                payload = json.loads(stdout)
+                self.assertEqual("CS-CLI-001", payload["error"]["code"])
+            else:
+                self.assertEqual("", stdout)
+                self.assertIn("CS-CLI-001", stderr)
+
     def test_json_doctor_returns_stable_success_envelope(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             code, stdout, stderr = self.invoke(

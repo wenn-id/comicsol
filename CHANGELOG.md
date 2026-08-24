@@ -15,6 +15,12 @@ carries it.
   and reference-image/dimension feature flags are reported, but no credential,
   provider payload, project state, provider SDK, or automatic provider setup is
   introduced.
+- Added an opt-in `comic-sol init --interactive` wizard for project name, 1–4
+  page scope, story prompt or source file, and output location. The wizard
+  validates choices before allocation and uses the same schema and atomic init
+  path as the non-interactive CLI. `--page-count` is also available to the
+  source CLI and existing `comic_init` MCP tool, so automation and AI agents
+  retain a prompt-free equivalent with the existing 2-page default.
 
 - Aligned the user-facing documentation contract from issue #213. New
   `docs/surfaces.md` separates the Skill checkout, Codex Plugin, source
@@ -761,4 +767,3 @@ First Native Distribution release candidate.
 - x86_64 is the release architecture for `v2.0.0rc1`; arm64 naming is reserved but no arm64 artifact is claimed.
 - Image generation still depends on an agent-exposed provider capability; deterministic fixtures do not claim live visual quality.
 - Provider credentials and provider SDKs remain outside the base package.
-
