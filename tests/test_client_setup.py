@@ -1228,9 +1228,11 @@ class ClientSetupTests(unittest.TestCase):
             self.assertEqual("CS-INSTALL-002", result.error["code"])
             self.assertEqual("{}\n", config.read_text(encoding="utf-8"))
         finally:
+
             def verify_fixture_launcher(executable):
                 if Path(executable).name.lower() not in {"comic-sol", "comic-sol.exe"}:
                     raise RuntimeError("Comic Sol executable identity check failed")
+
             client_setup._verify_launcher_identity = verify_fixture_launcher
 
     def test_repair_does_not_rollback_over_a_concurrent_third_party_edit(self):

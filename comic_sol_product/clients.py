@@ -232,6 +232,33 @@ class JsonClientAdapter:
                 )
                 return (text[:owned_value_start] + replacement + text[value_end:]).encode("utf-8")
 
+            mapping_indent_start = text.rfind("\n", 0, member_start) + 1
+            mapping_indent = _indent_of(text[mapping_indent_start:])
+            mapping_body = text[value_start + 1 : servers_end - 1].rstrip()
+            if mapping_body:
+                first_member = next(line for line in mapping_body.splitlines() if line.strip())
+                member_indent = _indent_of(first_member)
+            else:
+                member_indent = mapping_indent + "  "
+            member = f"{owned_key}: {entry_text}"
+            padded = member.replace("\n", "\n" + member_indent)
+            if mapping_body:
+                return (
+                    text[: servers_end - 1]
+                    + ",\n"
+                    + member_indent
+                    + padded
+                    + text[servers_end - 1 :]
+                ).encode("utf-8")
+            return (
+                text[: value_start + 1]
+                + "\n"
+                + member_indent
+                + padded
+                + "\n"
+                + text[servers_end - 1 :]
+            ).encode("utf-8")
+
         if servers is not None:
             raise ValueError(f"{self.servers_key} mapping could not be located")
         stripped = text.rstrip()
