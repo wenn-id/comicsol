@@ -91,9 +91,14 @@ def load_starter(
 
     source = read_bytes_nofollow(root / "source/input.txt", max_bytes=MAX_SOURCE_BYTES)
     validate_source_bytes(source)
-    request = cast(dict[str, object], read_json_nofollow(root / "source/request.json"))
-    if request_validator is not None:
-        request = request_validator(request)
+    request_value = read_json_nofollow(root / "source/request.json")
+    if not isinstance(request_value, dict):
+        raise TypeError("starter request must be a JSON object")
+    if request_validator is None:
+        # Import lazily because comic_sol imports this catalog during startup.
+        from .comic_sol import validate_request_settings as request_validator
+
+    request = request_validator(cast(dict[str, object], request_value))
     story = cast(dict[str, object], read_json_nofollow(root / "plan/story-plan.json"))
     characters = cast(dict[str, object], read_json_nofollow(root / "plan/character-bible.json"))
     storyboard = cast(dict[str, object], read_json_nofollow(root / "plan/storyboard.json"))

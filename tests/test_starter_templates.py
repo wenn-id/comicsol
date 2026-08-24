@@ -1,5 +1,6 @@
 import io
 import json
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -13,6 +14,7 @@ from scripts.starter_templates import (
     STARTER_FILES,
     STARTER_IDS,
     STARTER_VERSION,
+    inventory_starters,
     load_starter,
 )
 from scripts.validate_project import validate_project
@@ -43,6 +45,30 @@ class StarterTemplateTests(unittest.TestCase):
         for invalid in ("../minimal-one-page", "/tmp/action-focused", "v1", "unknown"):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "starter"):
                 load_starter(TEMPLATES, invalid)
+
+    def test_default_loader_and_inventory_reject_malformed_request_settings(self):
+        cases = (
+            ([], ValueError, "JSON object"),
+            ({"language": "en", "mode": "unsupported"}, ValueError, "request mode"),
+        )
+        for request, error_type, message in cases:
+            with self.subTest(request=request), tempfile.TemporaryDirectory() as raw:
+                templates = Path(raw) / "templates"
+                shutil.copytree(TEMPLATES, templates)
+                request_path = templates / "starters/v1/minimal-one-page/source/request.json"
+                request_path.write_text(
+                    json.dumps(request, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+
+                with self.assertRaisesRegex(error_type, message):
+                    load_starter(templates, "minimal-one-page")
+                available, invalid = inventory_starters(templates)
+                self.assertNotIn("minimal-one-page", available)
+                self.assertTrue(
+                    any(item.startswith("minimal-one-page (") for item in invalid),
+                    invalid,
+                )
 
     def test_every_starter_initializes_as_a_standard_storyboarded_project(self):
         with tempfile.TemporaryDirectory() as raw:
