@@ -1200,6 +1200,31 @@ def _resolved_block(manifest: dict[str, object], reason: str) -> bool:
     return isinstance(capability, dict) and capability.get("status") == "available"
 
 
+def _stage_progress_from_plan(
+    actions: list[ResumeAction],
+) -> tuple[list[str], str | None, list[str]]:
+    """Split resume-plan actions into preserved, first-stale, and invalidated stages.
+
+    This is the single derivation shared by ``resume`` and ``status`` so the two
+    surfaces never disagree about which stage is the first one that must run
+    again. Stages before the first non-``reuse`` action are preserved; that stage
+    and everything after it are invalidated.
+    """
+    stage_actions = {action.stage: action for action in actions if action.artifact == "stage"}
+    preserved: list[str] = []
+    stale_stage: str | None = None
+    for stage in RESUME_STAGES:
+        action = stage_actions.get(stage)
+        if stale_stage is None and action is not None and action.action == "reuse":
+            preserved.append(stage)
+        elif stale_stage is None:
+            stale_stage = stage
+    invalidated = (
+        list(RESUME_STAGES[RESUME_STAGES.index(stale_stage) :]) if stale_stage is not None else []
+    )
+    return preserved, stale_stage, invalidated
+
+
 def _next_resume_action(project_dir: Path, stage: str | None) -> dict[str, str] | None:
     if stage is None:
         return None
@@ -1223,6 +1248,104 @@ def read_project_status(project_dir: Path) -> dict[str, object]:
     with ProjectLock(project_dir):
         ProjectTransaction.recover(project_dir)
         return read_project_manifest(manifest_path)
+
+
+def _panel_review_counts(project_dir: Path) -> dict[str, int]:
+    """Count panels by review outcome from their QA records.
+
+    ``accepted`` counts panels whose latest record decides accept (either
+    quality schema spelling), ``failed`` counts an explicit repair decision, and
+    ``pending`` counts panels with a record that is neither. A record that cannot
+    be read is reported under ``unreadable`` so a corrupt project stays diagnosable
+    instead of silently under-counting.
+    """
+    counts = {"accepted": 0, "failed": 0, "pending": 0, "unreadable": 0}
+    qa_dir = project_dir / "qa/panels"
+    if not qa_dir.is_dir():
+        return counts
+    for record_path in sorted(qa_dir.glob("*.json")):
+        try:
+            record = read_json(record_path)
+        except (OSError, UnicodeError, ValueError):
+            counts["unreadable"] += 1
+            continue
+        decision = record.get("decision") if isinstance(record, dict) else None
+        if decision in ACCEPTED_DECISIONS:
+            counts["accepted"] += 1
+        elif decision in REPAIR_DECISIONS:
+            counts["failed"] += 1
+        else:
+            counts["pending"] += 1
+    return counts
+
+
+def _stage_state_from_actions(
+    preserved: list[str], stale_stage: str | None, status: str
+) -> list[dict[str, str]]:
+    """Describe each resume stage as complete, blocked, stale, or pending.
+
+    The first stale stage is reported as ``blocked`` when the project status is
+    ``BLOCKED`` and ``stale`` otherwise; stages after it are ``pending``. Stages
+    before it are ``complete``. This mirrors the resume plan exactly so the
+    visual summary never contradicts what ``resume`` would do.
+    """
+    stages: list[dict[str, str]] = []
+    reached_stale = False
+    for stage in RESUME_STAGES:
+        if stage in preserved and not reached_stale:
+            state = "complete"
+        elif stage == stale_stage:
+            reached_stale = True
+            state = "blocked" if status == "BLOCKED" else "stale"
+        else:
+            reached_stale = True
+            state = "pending"
+        stages.append({"stage": stage, "state": state})
+    return stages
+
+
+def summarize_project_status(project_dir: Path) -> dict[str, object]:
+    """Return a read-only visual summary of project progress and recovery options.
+
+    The result composes the recovered manifest status, a per-stage completion or
+    blocking view, panel review counts, and the next recommended action. The next
+    action is derived from the same resume plan that ``resume`` and ``finalize``
+    consume, so a human summary can never suggest a step the recovery logic would
+    not take. Reading a project never mutates it: recovery of an interrupted
+    publication is the only side effect, exactly as ``read_project_status`` does.
+    """
+    project_dir = Path(project_dir).resolve(strict=True)
+    manifest_path = contained_project_path(project_dir, "project.json", must_exist=True)
+    with ProjectLock(project_dir):
+        ProjectTransaction.recover(project_dir)
+        manifest = read_project_manifest(manifest_path)
+        status = str(manifest.get("status", ""))
+        actions = build_resume_plan(project_dir)
+        preserved, stale_stage, _ = _stage_progress_from_plan(actions)
+        if status == "BLOCKED":
+            reason = manifest.get("blocked_reason")
+            next_action: dict[str, str] | None = {
+                "resume": str(reason) if isinstance(reason, str) and reason else "blocked",
+            }
+        elif stale_stage is None and status in TERMINAL_STATUSES:
+            # A terminal project whose stages all still reuse is genuinely done.
+            next_action = {"done": "project is complete"}
+        else:
+            # For every other non-blocked project the recommended step is the
+            # first stale stage, exactly as resume would run it. A terminal
+            # project whose inputs changed is therefore reported as having work
+            # left, never as falsely finished.
+            next_action = _next_resume_action(project_dir, stale_stage)
+        warnings = manifest.get("warnings")
+        return {
+            "project_id": manifest.get("project_id"),
+            "status": status,
+            "stages": _stage_state_from_actions(preserved, stale_stage, status),
+            "panels": _panel_review_counts(project_dir),
+            "warnings": list(warnings) if isinstance(warnings, list) else [],
+            "blocked_reason": manifest.get("blocked_reason"),
+            "next_action": next_action,
+        }
 
 
 def resume_project(
@@ -1271,22 +1394,7 @@ def _resume_project_locked(project_dir: Path, manifest_path: Path) -> dict[str, 
         manifest = read_project_manifest(manifest_path, normalize_legacy=False)
         if manifest.get("status") != "BLOCKED":
             actions = build_resume_plan(project_dir)
-            stage_actions = {
-                action.stage: action for action in actions if action.artifact == "stage"
-            }
-            preserved: list[str] = []
-            stale_stage: str | None = None
-            for stage in RESUME_STAGES:
-                action = stage_actions.get(stage)
-                if stale_stage is None and action is not None and action.action == "reuse":
-                    preserved.append(stage)
-                elif stale_stage is None:
-                    stale_stage = stage
-            invalidated = (
-                list(RESUME_STAGES[RESUME_STAGES.index(stale_stage) :])
-                if stale_stage is not None
-                else []
-            )
+            preserved, stale_stage, invalidated = _stage_progress_from_plan(actions)
             return {
                 "status": manifest.get("status"),
                 "preserved": preserved,
@@ -1294,20 +1402,7 @@ def _resume_project_locked(project_dir: Path, manifest_path: Path) -> dict[str, 
                 "next_action": _next_resume_action(project_dir, stale_stage),
             }
         actions = build_resume_plan(project_dir)
-        stage_actions = {action.stage: action for action in actions if action.artifact == "stage"}
-        preserved: list[str] = []
-        stale_stage: str | None = None
-        for stage in RESUME_STAGES:
-            action = stage_actions.get(stage)
-            if stale_stage is None and action is not None and action.action == "reuse":
-                preserved.append(stage)
-            elif stale_stage is None:
-                stale_stage = stage
-        invalidated = (
-            list(RESUME_STAGES[RESUME_STAGES.index(stale_stage) :])
-            if stale_stage is not None
-            else []
-        )
+        preserved, stale_stage, invalidated = _stage_progress_from_plan(actions)
         blocked_from = manifest.get("blocked_from")
         if blocked_from not in LINEAR_STATUSES:
             blocked_from = STAGE_COMPLETION_STATUS[preserved[-1]] if preserved else "INIT"

@@ -130,6 +130,103 @@ def _safe_message(error: Exception) -> str:
     return safe_error_detail(error)
 
 
+_STAGE_STATE_GLYPH = {
+    "complete": "[x]",
+    "stale": "[~]",
+    "blocked": "[!]",
+    "pending": "[ ]",
+}
+
+
+def _format_next_action(next_action: object) -> str:
+    """Render the single recommended next step as a stable human line.
+
+    The summary reuses the resume plan's own vocabulary: ``command`` and
+    ``agent_required`` come straight from ``_next_resume_action``, ``done`` marks
+    a terminal project, and ``resume``/``required`` describe a blocked one. An
+    unrecognized shape is shown verbatim so a diagnostic is never swallowed.
+    """
+    if not isinstance(next_action, dict) or not next_action:
+        return "Next action: none — nothing to do."
+    if "done" in next_action:
+        return f"Next action: {next_action['done']}."
+    if "command" in next_action:
+        return f"Next action: run `{next_action['command']}`."
+    if "agent_required" in next_action:
+        return f"Next action: agent must produce the {next_action['agent_required']} stage."
+    if "resume" in next_action:
+        return f"Next action: run `resume` to recover (blocked: {next_action['resume']})."
+    if "required" in next_action:
+        return f"Next action: blocked until {next_action['required']}; then run `resume`."
+    key, value = next(iter(next_action.items()))
+    return f"Next action: {key}={value}."
+
+
+def _render_status_summary(summary: dict[str, Any]) -> str:
+    """Render the visual project-status summary as plain, uncolored text.
+
+    Errors are surfaced, never decorated away: unreadable panel QA records and
+    active warnings each get their own line so a corrupt-but-diagnosable project
+    stays legible. The first line keeps the stable ``<project_id>: <STATUS>``
+    contract that scripts have parsed from the human surface.
+    """
+    project_id = summary.get("project_id")
+    status = summary.get("status")
+    lines = [f"{project_id}: {status}"]
+
+    stages = summary.get("stages")
+    if isinstance(stages, list) and stages:
+        lines.append("Stages:")
+        for entry in stages:
+            if not isinstance(entry, dict):
+                continue
+            state = str(entry.get("state", "pending"))
+            glyph = _STAGE_STATE_GLYPH.get(state, "[ ]")
+            lines.append(f"  {glyph} {entry.get('stage')}: {state}")
+
+    panels = summary.get("panels")
+    if isinstance(panels, dict) and panels:
+        summary_line = (
+            f"Panels: {panels.get('accepted', 0)} accepted, "
+            f"{panels.get('failed', 0)} failed, "
+            f"{panels.get('pending', 0)} pending"
+        )
+        lines.append(summary_line)
+        unreadable = panels.get("unreadable", 0)
+        if isinstance(unreadable, int) and unreadable > 0:
+            lines.append(f"  WARNING: {unreadable} panel QA record(s) unreadable.")
+
+    blocked_reason = summary.get("blocked_reason")
+    if isinstance(blocked_reason, str) and blocked_reason:
+        lines.append(f"Blocked reason: {blocked_reason}")
+
+    warnings = summary.get("warnings")
+    if isinstance(warnings, list) and warnings:
+        lines.append(f"Warnings ({len(warnings)}):")
+        for warning in warnings:
+            lines.append(f"  - {warning}")
+
+    lines.append(_format_next_action(summary.get("next_action")))
+    return "\n".join(lines)
+
+
+def _render_status(arguments: argparse.Namespace) -> str:
+    """Compute and render the human status view for one project.
+
+    A rich summary is preferred, but an older engine that only knows the stable
+    manifest reader falls back to the canonical one-line view so the human
+    surface always prints something parseable.
+    """
+    service = _load_command_service().CommandService(engine=_load_engine())
+    summary = service.execute("status-summary", project_dir=arguments.project_dir)
+    if isinstance(summary, dict) and "stages" in summary:
+        return _render_status_summary(summary)
+    # Fallback: a plain manifest without the visual summary fields.
+    project_id = summary.get("project_id") if isinstance(summary, dict) else None
+    status = summary.get("status") if isinstance(summary, dict) else None
+    return f"{project_id}: {status}"
+
+
 class _ProgressReporter:
     """Render bounded lifecycle events without polluting machine output."""
 
@@ -301,7 +398,7 @@ def main(argv: list[str] | None = None) -> int:
         elif command == "init":
             print(data["project_id"])
         elif command == "status":
-            print(f"{data['project_id']}: {data['status']}")
+            print(_render_status(arguments))
         elif command in {"setup", "repair", "uninstall"}:
             for result in data:
                 print(f"{result['client']}: {result['status']} — {result['message']}")

@@ -66,6 +66,17 @@ class CommandService:
             if reader is not None:
                 return reader(project_dir)
             return engine.read_project_manifest(Path(project_dir) / "project.json")
+        if command == "status-summary":
+            summarizer = getattr(engine, "summarize_project_status", None)
+            if summarizer is not None:
+                return summarizer(project_dir)
+            # Older engines without the visual summary still expose a status
+            # reader; fall back to the manifest so the human surface degrades
+            # to the stable one-line view instead of failing.
+            reader = getattr(engine, "read_project_status", None)
+            if reader is not None:
+                return reader(project_dir)
+            return engine.read_project_manifest(Path(project_dir) / "project.json")
         if command == "transition":
             return engine.transition(
                 project_dir,

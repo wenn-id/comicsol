@@ -1,5 +1,6 @@
 import io
 import json
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -10,6 +11,8 @@ from comic_sol_product import __version__
 
 from comic_sol_product import cli
 from comic_sol_product.config import default_output_root
+
+_FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 class ProductCliTests(unittest.TestCase):
@@ -266,6 +269,54 @@ class ProductCliTests(unittest.TestCase):
             self.assertIs(expected, cli._run(arguments))
 
         self.assertEqual([Path("/tmp/project")], seen)
+
+    def test_human_status_renders_visual_summary_on_stdout(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "valid-one-page"
+            shutil.copytree(_FIXTURES / "valid-one-page", project)
+
+            code, stdout, stderr = self.invoke(["status", str(project)])
+
+        self.assertEqual(0, code)
+        # The stable one-line contract stays the first line for scripts.
+        self.assertEqual("valid-one-page: QA_READY", stdout.splitlines()[0])
+        # The visual summary adds per-stage, panel, and next-action sections.
+        self.assertIn("Stages:", stdout)
+        self.assertIn("planning:", stdout)
+        self.assertIn("Panels: 3 accepted, 0 failed, 0 pending", stdout)
+        self.assertIn("Next action:", stdout)
+        # Human output stays plain: no ANSI colour escapes.
+        self.assertNotIn("\x1b[", stdout)
+
+    def test_human_status_surfaces_unreadable_panel_records(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "valid-one-page"
+            shutil.copytree(_FIXTURES / "valid-one-page", project)
+            (project / "qa/panels/p01-02.json").write_text("{ broken", encoding="utf-8")
+
+            code, stdout, stderr = self.invoke(["status", str(project)])
+
+        self.assertEqual(0, code)
+        self.assertIn("Panels: 2 accepted, 0 failed, 0 pending", stdout)
+        self.assertIn("unreadable", stdout)
+
+    def test_json_status_envelope_stays_the_unchanged_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory) / "valid-one-page"
+            shutil.copytree(_FIXTURES / "valid-one-page", project)
+            expected_manifest = json.loads((project / "project.json").read_text("utf-8"))
+
+            code, stdout, stderr = self.invoke(["--json", "status", str(project)])
+
+        self.assertEqual(0, code)
+        self.assertEqual("", stderr)
+        payload = json.loads(stdout)
+        self.assertEqual({"ok", "command", "data", "error"}, set(payload))
+        self.assertTrue(payload["ok"])
+        self.assertEqual("status", payload["command"])
+        # The machine-readable status is exactly the recovered manifest; the
+        # visual summary never leaks into the JSON envelope.
+        self.assertEqual(expected_manifest, payload["data"])
 
     def test_human_lifecycle_progress_is_stage_aware_and_plain(self):
         events = [
