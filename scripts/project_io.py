@@ -261,7 +261,7 @@ def normalized_project_relative_path(relative: str | Path) -> str:
     cannot identify one file with different hashes or IDs.
     """
     text = os.fspath(relative)
-    if not text or "\\" in text or text.startswith("/") or _DRIVE.match(text):
+    if not text or "\x00" in text or "\\" in text or text.startswith("/") or _DRIVE.match(text):
         raise ValueError("path must be a normalized relative project path")
     path = PurePosixPath(text)
     parts = path.parts
@@ -278,7 +278,13 @@ def contained_project_path(
 ) -> Path:
     """Resolve a safe relative path within a project directory."""
     text = os.fspath(relative).replace("\\", "/")
-    if not text or text.startswith("/") or _DRIVE.match(text) or ".." in text.split("/"):
+    if (
+        not text
+        or "\x00" in text
+        or text.startswith("/")
+        or _DRIVE.match(text)
+        or ".." in text.split("/")
+    ):
         raise ValueError("path must be a relative project path")
     root = Path(project_dir).resolve(strict=True)
     unresolved = root.joinpath(*PurePosixPath(text).parts)

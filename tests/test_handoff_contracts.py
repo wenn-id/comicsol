@@ -177,6 +177,76 @@ class GenerationContractTests(unittest.TestCase):
         self.assertEqual([], validate_generation_receipt(receipt))
         self.assertEqual([], validate_handoff_manifest(manifest))
 
+    def test_failure_receipts_allow_a_null_raster_pair(self):
+        job = valid_job()
+        receipt = build_generation_receipt(
+            attempt_id="p01-01-initial-001",
+            job_id=job["job_id"],
+            job_sha256=generation_job_sha256(job),
+            raster_path=None,
+            raster_sha256=None,
+            executor_kind="native-tool",
+            executor_id="session-image-tool",
+            provider="host-reported",
+            model=None,
+            capabilities_used={
+                "reference_images": True,
+                "dimensions": True,
+                "localized_edit": False,
+            },
+            outcome="failure",
+            category="transient-tool-error",
+        )
+
+        self.assertIsNone(receipt["raster_path"])
+        self.assertIsNone(receipt["raster_sha256"])
+        self.assertEqual([], validate_generation_receipt(receipt))
+
+    def test_receipt_raster_pair_is_consistent_with_outcome(self):
+        failure = valid_receipt()
+        failure["outcome"] = "failure"
+        failure["category"] = "transient-tool-error"
+        failure["raster_path"] = None
+        failure["raster_sha256"] = None
+        self.assertEqual([], validate_generation_receipt(failure))
+
+        success_without_raster = deepcopy(failure)
+        success_without_raster["outcome"] = "success"
+        self.assert_invalid(
+            validate_generation_receipt,
+            success_without_raster,
+            "must be populated when outcome is success",
+        )
+
+        for raster_path, raster_sha256 in (
+            (None, RASTER_SHA256),
+            ("panels/attempts/p01-01/initial-001.png", None),
+        ):
+            with self.subTest(raster_path=raster_path, raster_sha256=raster_sha256):
+                half_populated = deepcopy(failure)
+                half_populated["raster_path"] = raster_path
+                half_populated["raster_sha256"] = raster_sha256
+                self.assert_invalid(
+                    validate_generation_receipt,
+                    half_populated,
+                    "raster_path and raster_sha256",
+                )
+
+        populated_failure = valid_receipt()
+        populated_failure["outcome"] = "failure"
+        populated_failure["category"] = "rejected-raster"
+        self.assertEqual([], validate_generation_receipt(populated_failure))
+
+        populated_failure["raster_path"] = "project.json"
+        self.assert_invalid(validate_generation_receipt, populated_failure, "raster_path")
+        populated_failure = valid_receipt()
+        populated_failure["outcome"] = "failure"
+        populated_failure["raster_sha256"] = "invalid"
+        self.assert_invalid(validate_generation_receipt, populated_failure, "raster_sha256")
+
+        failure["category"] = "provider refusal with raw detail"
+        self.assert_invalid(validate_generation_receipt, failure, "category")
+
     def test_every_contract_rejects_unknown_and_missing_keys(self):
         job = valid_job()
         values = (
@@ -391,6 +461,11 @@ class GenerationContractTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(HandoffContractError, "credential"):
             rank_executors([declaration])
+
+    def test_contract_paths_reject_nul_bytes_deterministically(self):
+        manifest = valid_handoff_manifest()
+        manifest["required_artifacts"][0]["path"] = "plan/a\x00b"
+        self.assert_invalid(validate_handoff_manifest, manifest, "required_artifacts[0].path")
 
     def test_noncanonical_path_aliases_are_rejected_across_contracts(self):
         job = valid_job()

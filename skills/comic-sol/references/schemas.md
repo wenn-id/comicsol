@@ -57,7 +57,7 @@ refused or interrupted migration leaves the record byte-for-byte unchanged.
 - IDs match `^[a-z][a-z0-9-]{0,47}$`.
 - Timestamps are strings in ISO 8601 UTC form `YYYY-MM-DDTHH:MM:SSZ`.
 - SHA-256 values are 64-character lowercase hexadecimal strings once their referenced artifact exists. A template may use `null` before the artifact exists; persisted stage output may not use an empty string or sentinel hash.
-- Project paths are POSIX-style relative paths rooted at the generated project directory. Absolute paths and `..` components are invalid.
+- Project paths are POSIX-style relative paths rooted at the generated project directory. Absolute paths, `..` components, and NUL bytes are invalid.
 - JSON numbers used for pixels, page numbers, order, priority, dimensions, and attempts are integers.
 
 ## Project manifest: `project.json`
@@ -206,12 +206,17 @@ on-disk JSON bytes.
 ### Generation receipt: `generation/receipts/<attempt-id>.json`
 
 A receipt contains exactly `schema_version`, `attempt_id`, source `job_id` and
-`job_sha256`, accepted local `raster_path` and `raster_sha256`, `executor_kind`,
-`executor_id`, nullable sanitized `provider` and `model`, `capabilities_used`, `outcome`,
-and sanitized `category`. Executor kind is `native-tool` or `external-tool`.
-`capabilities_used` contains exactly the booleans `reference_images`, `dimensions`, and
-`localized_edit`. A receipt never contains credentials, endpoint URLs, private absolute
-paths, or raw responses; outcome categories follow the stable bounded category grammar.
+`job_sha256`, `raster_path`, `raster_sha256`, `executor_kind`, `executor_id`,
+nullable sanitized `provider` and `model`, `capabilities_used`, `outcome`, and
+sanitized `category`. The raster fields are a pair: both are populated or both are
+JSON `null`. A successful outcome requires a populated accepted local `raster_path`
+and valid `raster_sha256`. A failed outcome may use `null`/`null` when no raster was
+produced; if a failure retains a populated pair, the existing retained-raster path
+and SHA-256 validation still applies. Half-populated pairs are invalid. Executor kind
+is `native-tool` or `external-tool`. `capabilities_used` contains exactly the
+booleans `reference_images`, `dimensions`, and `localized_edit`. A receipt never
+contains credentials, endpoint URLs, private absolute paths, or raw responses;
+outcome categories follow the stable bounded category grammar.
 
 ### Handoff manifest: `handoff/manifest.json`
 

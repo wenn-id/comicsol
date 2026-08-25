@@ -482,9 +482,18 @@ def validate_generation_receipt(value: object) -> list[str]:
     _identifier(root.get("attempt_id"), "attempt_id", issues)
     _sha256(root.get("job_id"), "job_id", issues)
     _sha256(root.get("job_sha256"), "job_sha256", issues)
-    _relative_path(root.get("raster_path"), "raster_path", issues)
-    _retained_raster_path(root.get("raster_path"), "raster_path", issues)
-    _sha256(root.get("raster_sha256"), "raster_sha256", issues)
+    raster_path = root.get("raster_path")
+    raster_sha256 = root.get("raster_sha256")
+    raster_path_populated = raster_path is not None
+    raster_sha256_populated = raster_sha256 is not None
+    if raster_path_populated != raster_sha256_populated:
+        issues.append("raster_path and raster_sha256: must both be null or both populated")
+    if raster_path_populated and raster_sha256_populated:
+        _relative_path(raster_path, "raster_path", issues)
+        _retained_raster_path(raster_path, "raster_path", issues)
+        _sha256(raster_sha256, "raster_sha256", issues)
+    elif root.get("outcome") == "success":
+        issues.append("raster_path and raster_sha256: must be populated when outcome is success")
     if root.get("executor_kind") not in _EXECUTOR_KINDS:
         issues.append("executor_kind: must be native-tool or external-tool")
     _identifier(root.get("executor_id"), "executor_id", issues)
@@ -515,8 +524,8 @@ def build_generation_receipt(
     attempt_id: str,
     job_id: str,
     job_sha256: str,
-    raster_path: str,
-    raster_sha256: str,
+    raster_path: str | None,
+    raster_sha256: str | None,
     executor_kind: str,
     executor_id: str,
     provider: str | None,
