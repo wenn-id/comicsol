@@ -37,6 +37,12 @@ from scripts.comic_sol import (  # noqa: E402
     summarize_project_status,
     transition,
 )
+from scripts.handoff import (  # noqa: E402
+    HandoffContractError,
+    HandoffResultError,
+    StaleLockedScopeError,
+)
+from scripts.input_limits import InputResourceLimitError  # noqa: E402
 from scripts.normalize_panels import normalize_panel  # noqa: E402
 from scripts.validate_project import validate_panel_record  # noqa: E402
 
@@ -2608,7 +2614,7 @@ class SourceHandoffCliContractTests(unittest.TestCase):
 
     def test_source_handoff_routes_are_nested_and_forward_exactly(self):
         project = Path("/shared/demo")
-        raster = Path("/renderer/result.png")
+        raster = Path("renderer/result.png")
         job_a = "job-" + "a" * 40
         job_b = "job-" + "b" * 40
         cases = (
@@ -2813,6 +2819,54 @@ class SourceHandoffCliContractTests(unittest.TestCase):
                 self.assertEqual(2, code)
                 self.assertEqual("", stdout)
                 self.assertTrue(stderr)
+
+    def test_source_handoff_runtime_invalid_input_errors_exit_two(self):
+        errors = (
+            HandoffContractError(["contract_version: unsupported"]),
+            StaleLockedScopeError(["locked_scope_sha256: stale"]),
+            HandoffResultError(["attempt ordinal conflicts with the next attempt"]),
+            HandoffResultError(["result raster does not match requested dimensions"]),
+            InputResourceLimitError("the encoded raster byte limit"),
+            ValueError("security-error: result raster path must not contain symlinks"),
+        )
+        for error in errors:
+
+            class FailingService:
+                def execute(self, command, **kwargs):
+                    raise error
+
+            with self.subTest(error=type(error).__name__, detail=str(error)):
+                code, stdout, stderr = self.invoke_with_service(
+                    ["handoff", "inspect", "/shared/demo", "--json"],
+                    FailingService(),
+                )
+
+                self.assertEqual(2, code)
+                self.assertEqual("", stdout)
+                self.assertEqual(
+                    f"ERROR {type(error).__name__}: {error}\n",
+                    stderr,
+                )
+
+    def test_source_handoff_unexpected_io_and_internal_errors_remain_exit_one(self):
+        for error in (OSError("injected I/O failure"), RuntimeError("injected internal failure")):
+
+            class FailingService:
+                def execute(self, command, **kwargs):
+                    raise error
+
+            with self.subTest(error=type(error).__name__):
+                code, stdout, stderr = self.invoke_with_service(
+                    ["handoff", "inspect", "/shared/demo", "--json"],
+                    FailingService(),
+                )
+
+                self.assertEqual(1, code)
+                self.assertEqual("", stdout)
+                self.assertEqual(
+                    f"ERROR {type(error).__name__}: {error}\n",
+                    stderr,
+                )
 
 
 if __name__ == "__main__":

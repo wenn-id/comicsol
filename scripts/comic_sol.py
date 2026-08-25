@@ -1755,6 +1755,13 @@ def _invalidate_from_locked(project_dir: Path, stage: str, tx: ProjectTransactio
     cache_path = project_dir / STAGE_CACHE_PATH
     cache, _ = _load_stage_cache(cache_path)
     removed = _invalidate_state_locked(project_dir, stage, manifest, cache)
+    binding = manifest.get("handoff")
+    if isinstance(binding, dict):
+        manifest["handoff"] = {
+            "contract_version": HANDOFF_CONTRACT_VERSION,
+            "locked_scope_sha256": None,
+            "manifest_path": None,
+        }
     if cache_path.is_file():
         tx.stage_bytes(str(STAGE_CACHE_PATH), canonical_artifact_bytes(cache))
     manifest["status"] = _post_invalidation_status(project_dir, stage, str(manifest.get("status")))
@@ -2451,6 +2458,17 @@ def _build_handoff_content(
         managed = cast(str, job["job_id"]) in existing_jobs
         if retained.exists() and not managed:
             raise HandoffContractError([f"{target_path}: unmanaged retained target collision"])
+        if not managed:
+            retry_limit = cast(int, job["retry_limit"])
+            for ordinal in range(1, retry_limit + 2):
+                receipt_id = generation_attempt_id(
+                    job_id=cast(str, job["job_id"]),
+                    attempt=ordinal,
+                )
+                receipt_relative = f"generation/receipts/{receipt_id}.json"
+                receipt_path = contained_project_path(project_dir, receipt_relative)
+                if receipt_path.exists() or receipt_path.is_symlink():
+                    raise HandoffContractError([f"{receipt_relative}: unmanaged receipt collision"])
         artifacts[relative] = canonical_artifact_bytes(job)
 
     scope_content: dict[str, bytes] = {
@@ -2814,7 +2832,13 @@ def accept_handoff_result(
             if not is_reference and approve_reference:
                 raise HandoffResultError(["--approve-reference is valid only for reference jobs"])
             try:
-                payload = read_bytes_nofollow(Path(raster_path), max_bytes=MAX_ENCODED_RASTER_BYTES)
+                source_path = Path(raster_path).expanduser().absolute()
+            except (OSError, RuntimeError) as error:
+                raise HandoffResultError(
+                    ["result raster path: cannot be expanded safely"]
+                ) from error
+            try:
+                payload = read_bytes_nofollow(source_path, max_bytes=MAX_ENCODED_RASTER_BYTES)
             except InputResourceLimitError:
                 raise
             except ValueError as error:
@@ -4451,7 +4475,13 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"{result['status']}: {result['pdf']} | {result['report']}")
         return 0
-    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+    except ValueError as error:
+        print(
+            f"ERROR {type(error).__name__}: {_escape_cli_controls(error)}",
+            file=sys.stderr,
+        )
+        return 2 if arguments.command == "handoff" else 1
+    except (OSError, TypeError, RuntimeError) as error:
         print(
             f"ERROR {type(error).__name__}: {_escape_cli_controls(error)}",
             file=sys.stderr,

@@ -14,6 +14,7 @@ from scripts.core_primitives import canonical_artifact_bytes, canonical_json_byt
 from scripts.handoff import (
     HANDOFF_CONTRACT_VERSION,
     HandoffContractError,
+    HandoffResultError,
     build_generation_batches,
     build_generation_job,
     build_generation_receipt,
@@ -499,6 +500,35 @@ class HandoffPureContractTests(unittest.TestCase):
                 stale=False,
             )
 
+    def test_receipt_reconciliation_rejects_receipts_after_terminal_success(self):
+        reconcile = _require_api(self, handoff, "reconcile_job_receipts")
+        job = _contract_job()
+        job_digest = generation_job_sha256(job)
+        success = _contract_receipt(job, 1, outcome="success", category="accepted")
+        cases = (
+            (
+                "success-then-failure",
+                _contract_receipt(job, 2),
+                "after successful receipt",
+            ),
+            (
+                "success-then-success",
+                _contract_receipt(job, 2, outcome="success", category="accepted"),
+                "multiple successful receipts",
+            ),
+        )
+
+        for label, later_receipt, message in cases:
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(HandoffContractError, message):
+                    reconcile(
+                        job=job,
+                        job_sha256=job_digest,
+                        receipts=[success, later_receipt],
+                        declared_status="completed",
+                        stale=False,
+                    )
+
     def test_schema_1_0_migration_is_composed_in_memory_without_writes(self):
         migrate = _require_api(self, schema, "migrate_project_manifest_in_memory")
         legacy = valid_manifest()
@@ -941,6 +971,56 @@ class HandoffPrepareInspectTests(unittest.TestCase):
                     prepare(project)
                 self.assertEqual(before, self._tree_snapshot(project))
 
+    def test_explicit_invalidation_releases_stale_handoff_for_reprepare(self):
+        prepare = _require_api(self, comic_sol, "prepare_handoff")
+        inspect = _require_api(self, comic_sol, "inspect_handoff")
+        _, project = self._planner_project()
+        prepared = prepare(project)
+        self.assertTrue(prepared["changed"])
+        sentinel = project / "user-retained-note.txt"
+        sentinel.write_bytes(b"retain this user artifact\n")
+        retained_paths = (
+            "handoff/manifest.json",
+            "generation/batches.json",
+            "logs/reference-selection.json",
+            "user-retained-note.txt",
+        )
+        retained_before = {
+            relative: (project / relative).read_bytes() for relative in retained_paths
+        }
+        prompt = project / "prompts/references/mira.txt"
+        prompt.write_bytes(prompt.read_bytes() + b" Preserve the amber scarf.\n")
+
+        stale = inspect(project)
+
+        self.assertEqual("stale", stale["scope_state"])
+        self.assertEqual("invalidate", stale["next_action"])
+        comic_sol.invalidate_from(project, "generation")
+        self.assertEqual(
+            {
+                "contract_version": HANDOFF_CONTRACT_VERSION,
+                "locked_scope_sha256": None,
+                "manifest_path": None,
+            },
+            comic_sol.read_json(project / "project.json")["handoff"],
+        )
+        released = inspect(project)
+        self.assertFalse(released["prepared"])
+        self.assertEqual("unprepared", released["scope_state"])
+        self.assertEqual("prepare", released["next_action"])
+        self.assertEqual([], released["jobs"])
+        self.assertEqual([], released["batches"])
+        self.assertEqual(
+            retained_before,
+            {relative: (project / relative).read_bytes() for relative in retained_paths},
+        )
+
+        reparsed = prepare(project)
+
+        self.assertTrue(reparsed["changed"])
+        self.assertEqual("current", inspect(project)["scope_state"])
+        self.assertEqual(b"retain this user artifact\n", sentinel.read_bytes())
+
     def test_reference_to_panel_advancement_requires_current_successful_receipt(self):
         prepare = _require_api(self, comic_sol, "prepare_handoff")
         _, project = self._planner_project()
@@ -1014,15 +1094,18 @@ class HandoffPrepareInspectTests(unittest.TestCase):
                     )
                 else:
                     replace_calls = 0
+                    project_identity = project.resolve()
                     if os.name == "nt" or not getattr(os, "O_NOFOLLOW", 0):
                         real_replace = os.replace
 
                         def fail_during_publication(source, destination):
                             nonlocal replace_calls
-                            source_path = Path(source)
-                            destination_path = Path(destination)
-                            source_relative = source_path.relative_to(project).as_posix()
-                            destination_relative = destination_path.relative_to(project).as_posix()
+                            source_path = Path(source).resolve()
+                            destination_path = Path(destination).resolve()
+                            source_relative = source_path.relative_to(project_identity).as_posix()
+                            destination_relative = destination_path.relative_to(
+                                project_identity
+                            ).as_posix()
                             is_publication = source_relative.startswith(
                                 "logs/transactions/"
                             ) and not destination_relative.startswith("logs/transactions/")
@@ -1223,6 +1306,85 @@ class HandoffIntakeFailureTests(unittest.TestCase):
         source_locator = str(raster).encode("utf-8")
         for relative, payload in self._artifact_snapshot(project).items():
             self.assertNotIn(source_locator, payload, relative)
+
+    def test_relative_png_intake_is_absolutized_without_resolving_source(self):
+        import os
+
+        accept = _require_api(self, comic_sol, "accept_handoff_result")
+        root, project, panel_job = self._prepared_panel()
+        dimensions = panel_job["requested_dimensions"]
+        relative = Path("relative-renderer-output.png")
+        self._write_raster(
+            root / relative,
+            (dimensions["width"], dimensions["height"]),
+            (25, 35, 45),
+        )
+        previous_cwd = Path.cwd()
+        try:
+            os.chdir(root)
+            expected_source = relative.expanduser().absolute()
+            with mock.patch.object(
+                comic_sol,
+                "read_bytes_nofollow",
+                wraps=comic_sol.read_bytes_nofollow,
+            ) as read_nofollow:
+                result = accept(
+                    project,
+                    **self._success_arguments(panel_job, relative),
+                )
+        finally:
+            os.chdir(previous_cwd)
+
+        self.assertEqual(panel_job["target_path"], result["raster_path"])
+        source_path = read_nofollow.call_args.args[0]
+        self.assertTrue(source_path.is_absolute())
+        self.assertEqual(expected_source, source_path)
+        self.assertEqual(
+            (root / relative).read_bytes(),
+            (project / panel_job["target_path"]).read_bytes(),
+        )
+
+    def test_unexpandable_raster_path_is_invalid_input_without_mutation(self):
+        import contextlib
+        import io
+
+        accept = _require_api(self, comic_sol, "accept_handoff_result")
+        root, project, panel_job = self._prepared_panel()
+        raster_path = Path("~comic-sol-user-that-must-not-exist/result.png")
+        before = self._artifact_snapshot(project)
+
+        with self.assertRaisesRegex(HandoffResultError, "raster.*path"):
+            accept(project, **self._success_arguments(panel_job, raster_path))
+        self.assertEqual(before, self._artifact_snapshot(project))
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = comic_sol.main(
+                [
+                    "handoff",
+                    "accept-result",
+                    str(project),
+                    "--job",
+                    panel_job["job_id"],
+                    "--attempt",
+                    "1",
+                    "--path",
+                    str(raster_path),
+                    "--executor-kind",
+                    "external-tool",
+                    "--executor-id",
+                    "fixture-renderer",
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(2, code)
+        self.assertEqual("", stdout.getvalue())
+        self.assertRegex(stderr.getvalue(), r"^ERROR HandoffResultError: .*raster.*path.*\n$")
+        self.assertEqual(before, self._artifact_snapshot(project))
+        self.assertEqual([], self._transaction_names(project))
+        self.assertFalse((root / "result.png").exists())
 
     def test_intake_rejects_non_png_wrong_dimensions_and_wrong_aspect_without_writes(self):
         accept = _require_api(self, comic_sol, "accept_handoff_result")
@@ -1558,16 +1720,19 @@ class HandoffIntakeFailureTests(unittest.TestCase):
                         )
                     else:
                         replace_calls = 0
+                        project_identity = project.resolve()
                         if os.name == "nt" or not getattr(os, "O_NOFOLLOW", 0):
                             real_replace = os.replace
 
                             def fail_during_publication(source, destination):
                                 nonlocal replace_calls
-                                source_path = Path(source)
-                                destination_path = Path(destination)
-                                source_relative = source_path.relative_to(project).as_posix()
+                                source_path = Path(source).resolve()
+                                destination_path = Path(destination).resolve()
+                                source_relative = source_path.relative_to(
+                                    project_identity
+                                ).as_posix()
                                 destination_relative = destination_path.relative_to(
-                                    project
+                                    project_identity
                                 ).as_posix()
                                 is_publication = source_relative.startswith(
                                     "logs/transactions/"
@@ -1821,6 +1986,32 @@ class HandoffStep10RegressionTests(unittest.TestCase):
 
                 self.assertRegex(str(error), "unmanaged retained target collision")
                 self.assertEqual(sentinel, target.read_bytes())
+
+    def test_prepare_rejects_unmanaged_receipt_collision_without_any_publication(self):
+        _oracle_root, oracle = self._planner_project()
+        comic_sol.prepare_handoff(oracle)
+        _manifest, jobs = self._manifest_jobs(oracle)
+        intended_job = jobs["reference", "mira"]
+
+        _root, project = self._planner_project()
+        receipt = self._failure_receipt(intended_job)
+        receipt_path = project / f"generation/receipts/{receipt['attempt_id']}.json"
+        comic_sol.atomic_write_json(receipt_path, receipt)
+        before = self._artifact_snapshot(project)
+
+        error = self._assert_rejected_without_mutation(
+            project,
+            lambda: comic_sol.prepare_handoff(project),
+            HandoffContractError,
+        )
+
+        self.assertRegex(str(error), "unmanaged receipt collision")
+        self.assertEqual(before, self._artifact_snapshot(project))
+        self.assertEqual(canonical_artifact_bytes(receipt), receipt_path.read_bytes())
+        self.assertFalse((project / "handoff/manifest.json").exists())
+        self.assertFalse((project / "generation/batches.json").exists())
+        self.assertFalse((project / "logs/reference-selection.json").exists())
+        self.assertEqual([], self._transaction_names(project))
 
     def test_prepare_rejects_malformed_and_non_png_canonical_references_without_mutation(self):
         for case in ("malformed", "jpeg"):
@@ -2158,6 +2349,49 @@ class HandoffStep10RegressionTests(unittest.TestCase):
                             self.assertRegex(str(error), "current handoff job")
                         else:
                             self.assertRegex(str(error), "filename|duplicate attempt")
+
+    def test_receipts_after_success_block_inspection_without_mutation(self):
+        cases = (
+            ("failure", "transient-tool-error", "after successful receipt"),
+            ("success", "accepted", "multiple successful receipts"),
+        )
+        for later_outcome, category, message in cases:
+            with self.subTest(later_outcome=later_outcome):
+                _root, project, job = self._prepared_reference()
+                _canonical, _first_receipt, raster_sha256 = (
+                    HandoffPrepareInspectTests._activate_current_reference(self, project, job)
+                )
+                success = later_outcome == "success"
+                identifier = handoff.attempt_id(job_id=job["job_id"], attempt=2)
+                later_receipt = build_generation_receipt(
+                    attempt_id=identifier,
+                    job_id=job["job_id"],
+                    job_sha256=generation_job_sha256(job),
+                    raster_path=job["target_path"] if success else None,
+                    raster_sha256=raster_sha256 if success else None,
+                    executor_kind="external-tool",
+                    executor_id="fixture-renderer",
+                    provider="fixture-provider",
+                    model="fixture-model",
+                    capabilities_used={
+                        "reference_images": False,
+                        "dimensions": False,
+                        "localized_edit": False,
+                    },
+                    outcome=later_outcome,
+                    category=category,
+                )
+                later_path = project / f"generation/receipts/{identifier}.json"
+                comic_sol.atomic_write_json(later_path, later_receipt)
+
+                error = self._assert_rejected_without_mutation(
+                    project,
+                    lambda: comic_sol.inspect_handoff(project),
+                    HandoffContractError,
+                )
+
+                self.assertRegex(str(error), message)
+                self.assertEqual(canonical_artifact_bytes(later_receipt), later_path.read_bytes())
 
     def test_reference_phase_locks_preexisting_canonical_scene_rasters(self):
         _root, project = self._planner_project()

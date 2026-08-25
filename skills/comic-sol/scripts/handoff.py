@@ -657,6 +657,23 @@ def reconcile_job_receipts(
     if ordinals != list(range(1, len(ordinals) + 1)):
         raise HandoffContractError(["receipt attempts: ordinals must be contiguous from 1"])
     ordered_receipts = [dict(by_ordinal[ordinal]) for ordinal in ordinals]
+    successful_ordinals = [
+        ordinal for ordinal in ordinals if by_ordinal[ordinal].get("outcome") == "success"
+    ]
+    if len(successful_ordinals) > 1:
+        raise HandoffContractError(
+            ["receipt attempts: multiple successful receipts are not allowed"]
+        )
+    if successful_ordinals:
+        successful_ordinal = successful_ordinals[0]
+        later_ordinals = [ordinal for ordinal in ordinals if ordinal > successful_ordinal]
+        if later_ordinals:
+            raise HandoffContractError(
+                [
+                    f"attempt {later_ordinals[0]}: receipt appears after successful receipt "
+                    f"at attempt {successful_ordinal}"
+                ]
+            )
     attempts_used = len(ordered_receipts)
     attempts_remaining = budget - attempts_used
     if stale:

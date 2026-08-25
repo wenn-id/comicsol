@@ -1335,6 +1335,43 @@ class ProjectValidationTests(unittest.TestCase):
 
                 self.assert_project_issue(issues, relative, field, *fragments)
 
+    def test_populated_handoff_rejects_every_receipt_after_terminal_success(self):
+        job, _ = self.prepare_generation_handoff(status="completed")
+        payload = self.raster_bytes((20, 30, 40))
+        target = self.project / job["target_path"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+        raster_sha256 = hashlib.sha256(payload).hexdigest()
+        cases = (
+            ("failure", "after successful receipt"),
+            ("success", "multiple successful receipts"),
+        )
+
+        for later_outcome, message in cases:
+            with self.subTest(later_outcome=later_outcome):
+                self.clear_generation_receipts()
+                self.write_generation_receipt(
+                    job,
+                    attempt=1,
+                    outcome="success",
+                    raster_sha256=raster_sha256,
+                )
+                _, later_relative = self.write_generation_receipt(
+                    job,
+                    attempt=2,
+                    outcome=later_outcome,
+                    raster_sha256=raster_sha256 if later_outcome == "success" else None,
+                )
+
+                issues = validate_project(self.project, "plan")
+
+                self.assert_project_issue(
+                    issues,
+                    later_relative,
+                    "attempt_id",
+                    message,
+                )
+
     def test_populated_handoff_binds_success_receipts_to_retained_raster_bytes(self):
         job, _ = self.prepare_generation_handoff(status="completed")
         expected_payload = self.raster_bytes((20, 30, 40))

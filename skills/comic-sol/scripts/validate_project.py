@@ -2156,6 +2156,29 @@ def _receipt_failure_location(
                     return path, "attempt_id", "conflicting duplicate receipt"
                 seen[identifier] = receipt
         return fallback, "attempt_id", detail
+    if "multiple successful receipts" in detail or "after successful receipt" in detail:
+        ordered = sorted(
+            (
+                (allowed[identifier], path, receipt)
+                for path, receipt in receipts
+                if isinstance((identifier := receipt.get("attempt_id")), str)
+                and identifier in allowed
+            ),
+            key=lambda item: item[0],
+        )
+        successful = [item for item in ordered if item[2].get("outcome") == "success"]
+        if "multiple successful receipts" in detail and len(successful) > 1:
+            return successful[1][1], "attempt_id", "multiple successful receipts are not allowed"
+        if successful:
+            success_ordinal = successful[0][0]
+            later = next((item for item in ordered if item[0] > success_ordinal), None)
+            if later is not None:
+                return (
+                    later[1],
+                    "attempt_id",
+                    f"receipt appears after successful receipt at attempt {success_ordinal}",
+                )
+        return fallback, "attempt_id", detail
     if "contiguous" in detail:
         ordered = sorted(
             (
