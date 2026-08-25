@@ -1970,10 +1970,17 @@ def _prepared_handoff_snapshot(
 
     receipts = _receipt_inventory(project_dir)
     receipts_by_job: dict[str, list[dict[str, object]]] = {job_id: [] for job_id in jobs}
+    current_attempt_ids = {
+        generation_attempt_id(job_id=job_id, attempt=ordinal)
+        for job_id, job in jobs.items()
+        for ordinal in range(1, cast(int, job["retry_limit"]) + 2)
+    }
     for receipt in receipts:
         receipt_job_id = receipt.get("job_id")
         if not isinstance(receipt_job_id, str) or receipt_job_id not in receipts_by_job:
-            raise HandoffContractError(["receipt job_id: does not name a current handoff job"])
+            if receipt.get("attempt_id") in current_attempt_ids:
+                raise HandoffContractError(["receipt job_id: does not name a current handoff job"])
+            continue
         job = jobs[receipt_job_id]
         if receipt.get("outcome") == "success":
             raster_path = receipt.get("raster_path")

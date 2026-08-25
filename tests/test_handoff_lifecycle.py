@@ -974,15 +974,27 @@ class HandoffPrepareInspectTests(unittest.TestCase):
     def test_explicit_invalidation_releases_stale_handoff_for_reprepare(self):
         prepare = _require_api(self, comic_sol, "prepare_handoff")
         inspect = _require_api(self, comic_sol, "inspect_handoff")
-        _, project = self._planner_project()
+        root, project = self._planner_project()
         prepared = prepare(project)
         self.assertTrue(prepared["changed"])
+        _manifest, initial_jobs = self._manifest_jobs(project)
+        initial_job = initial_jobs["reference", "mira"]
+        failure = comic_sol.record_handoff_failure(
+            project,
+            job_id=initial_job["job_id"],
+            attempt=1,
+            executor_kind="external-tool",
+            executor_id="fixture-renderer",
+            category="transient-tool-error",
+        )
+        retired_receipt_path = failure["receipt_path"]
         sentinel = project / "user-retained-note.txt"
         sentinel.write_bytes(b"retain this user artifact\n")
         retained_paths = (
             "handoff/manifest.json",
             "generation/batches.json",
             "logs/reference-selection.json",
+            retired_receipt_path,
             "user-retained-note.txt",
         )
         retained_before = {
@@ -1018,7 +1030,33 @@ class HandoffPrepareInspectTests(unittest.TestCase):
         reparsed = prepare(project)
 
         self.assertTrue(reparsed["changed"])
-        self.assertEqual("current", inspect(project)["scope_state"])
+        _manifest, reparsed_jobs = self._manifest_jobs(project)
+        reparsed_job = reparsed_jobs["reference", "mira"]
+        self.assertNotEqual(initial_job["job_id"], reparsed_job["job_id"])
+        current = inspect(project)
+        self.assertEqual("current", current["scope_state"])
+        self.assertEqual(0, current["jobs"][0]["attempts_used"])
+        self.assertFalse(
+            any(
+                "current handoff job" in issue.message
+                for issue in validate_project(project, "plan")
+            )
+        )
+
+        replacement = root / "replacement-reference.png"
+        self._write_png(replacement, (80, 120, 160))
+        accepted = comic_sol.accept_handoff_result(
+            project,
+            job_id=reparsed_job["job_id"],
+            attempt=1,
+            raster_path=replacement,
+            executor_kind="external-tool",
+            executor_id="fixture-renderer",
+            approve_reference=True,
+        )
+
+        self.assertEqual("completed", accepted["status"])
+        self.assertTrue((project / retired_receipt_path).is_file())
         self.assertEqual(b"retain this user artifact\n", sentinel.read_bytes())
 
     def test_reference_to_panel_advancement_requires_current_successful_receipt(self):
@@ -2302,11 +2340,9 @@ class HandoffStep10RegressionTests(unittest.TestCase):
                 receipt_dir = project / "generation/receipts"
                 receipt_dir.mkdir(parents=True, exist_ok=True)
                 if case == "unknown-job":
-                    receipt = self._failure_receipt(
-                        job,
-                        job_id="f" * 64,
-                        job_sha256="e" * 64,
-                    )
+                    receipt = self._failure_receipt(job)
+                    receipt["job_id"] = "f" * 64
+                    receipt["job_sha256"] = "e" * 64
                     comic_sol.atomic_write_json(
                         receipt_dir / f"{receipt['attempt_id']}.json",
                         receipt,

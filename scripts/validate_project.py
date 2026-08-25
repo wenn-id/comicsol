@@ -2466,15 +2466,21 @@ def _validate_handoff_binding(
     receipts_by_job: dict[str, list[tuple[str, dict[str, object]]]] = {
         job_id: [] for job_id in jobs_by_id
     }
+    current_attempt_ids = {
+        attempt_id(job_id=job_id, attempt=ordinal)
+        for job_id, job in jobs_by_id.items()
+        for ordinal in range(1, job["retry_limit"] + 2)
+    }
     for receipt_path, receipt in receipt_inventory:
         receipt_job_id = receipt.get("job_id")
         if not isinstance(receipt_job_id, str) or receipt_job_id not in receipts_by_job:
-            _add(
-                issues,
-                receipt_path,
-                "job_id",
-                "does not name a current handoff job",
-            )
+            if receipt.get("attempt_id") in current_attempt_ids:
+                _add(
+                    issues,
+                    receipt_path,
+                    "job_id",
+                    "does not name a current handoff job",
+                )
             continue
         receipts_by_job[receipt_job_id].append((receipt_path, receipt))
 
