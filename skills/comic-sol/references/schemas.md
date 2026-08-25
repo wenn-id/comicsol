@@ -239,7 +239,9 @@ map invalidates the handoff. Batch and handoff job IDs must match exactly. Every
 whose status is not `missing` is then canonical-read and contract-validated; its job ID,
 batch membership, subject kind, and canonical on-disk SHA-256 must match the batch and
 handoff declarations. A `missing` job remains dispatch-ineligible without requiring an
-artifact on disk.
+artifact on disk. Every required artifact is bounded-read through the contained no-follow
+reader, and the SHA-256 of its exact bytes must match the handoff declaration; missing,
+linked, oversized, or changed required artifacts invalidate the handoff.
 
 The locked-scope digest covers canonical content for `plan/story-plan.json`,
 `plan/character-bible.json`, `plan/storyboard.json`, every generation prompt,

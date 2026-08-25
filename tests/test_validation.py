@@ -27,6 +27,7 @@ from scripts.handoff import (  # noqa: E402
     build_generation_job,
     build_handoff_manifest,
 )
+from scripts.project_io import MAX_READ_BYTES  # noqa: E402
 from scripts.validate_project import (  # noqa: E402
     ProjectValidationError,
     ValidationIssue,
@@ -961,7 +962,13 @@ class ProjectValidationTests(unittest.TestCase):
             "status": status,
         }
 
-    def valid_handoff_manifest(self, *, batches_sha256="b" * 64, jobs=()):
+    def valid_handoff_manifest(
+        self,
+        *,
+        batches_sha256="b" * 64,
+        jobs=(),
+        required_artifacts=(),
+    ):
         manifest = read_json(self.project / "project.json")
         return build_handoff_manifest(
             project_id=manifest["project_id"],
@@ -971,7 +978,7 @@ class ProjectValidationTests(unittest.TestCase):
             batches_path="generation/batches.json",
             batches_sha256=batches_sha256,
             jobs=jobs,
-            required_artifacts=[],
+            required_artifacts=required_artifacts,
         )
 
     def bind_generation_handoff(
@@ -1218,6 +1225,111 @@ class ProjectValidationTests(unittest.TestCase):
         self.bind_generation_handoff(job, status="missing")
 
         self.assertEqual([], validate_project(self.project, "plan"))
+
+    def test_populated_handoff_requires_declared_artifact_on_disk(self):
+        batches_sha256 = self.write_generation_batches()
+        handoff = self.valid_handoff_manifest(
+            batches_sha256=batches_sha256,
+            required_artifacts=[{"path": "plan/missing.txt", "sha256": "1" * 64}],
+        )
+        self.bind_handoff(handoff)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "plan/missing.txt"
+                and issue.field == "file"
+                and "missing" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_requires_matching_artifact_hash(self):
+        batches_sha256 = self.write_generation_batches()
+        handoff = self.valid_handoff_manifest(
+            batches_sha256=batches_sha256,
+            required_artifacts=[{"path": "source/input.txt", "sha256": "2" * 64}],
+        )
+        self.bind_handoff(handoff)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "source/input.txt"
+                and issue.field == "sha256"
+                and "handoff manifest" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_accepts_valid_required_artifact(self):
+        batches_sha256 = self.write_generation_batches()
+        handoff = self.valid_handoff_manifest(
+            batches_sha256=batches_sha256,
+            required_artifacts=[
+                {
+                    "path": "source/input.txt",
+                    "sha256": sha256_file(self.project / "source/input.txt"),
+                }
+            ],
+        )
+        self.bind_handoff(handoff)
+
+        self.assertEqual([], validate_project(self.project, "plan"))
+
+    def test_populated_handoff_rejects_oversized_required_artifact(self):
+        artifact_path = self.project / "plan/oversized.bin"
+        with artifact_path.open("wb") as stream:
+            stream.truncate(MAX_READ_BYTES + 1)
+        batches_sha256 = self.write_generation_batches()
+        handoff = self.valid_handoff_manifest(
+            batches_sha256=batches_sha256,
+            required_artifacts=[{"path": "plan/oversized.bin", "sha256": "3" * 64}],
+        )
+        self.bind_handoff(handoff)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "plan/oversized.bin"
+                and issue.field == "file"
+                and "InputResourceLimitError" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_rejects_linked_required_artifact(self):
+        outside = self.root / "outside.txt"
+        outside.write_text("private", encoding="utf-8")
+        linked = self.project / "plan/linked.txt"
+        try:
+            linked.symlink_to(outside)
+        except OSError as error:
+            self.skipTest(f"symlink unavailable: {error}")
+        batches_sha256 = self.write_generation_batches()
+        handoff = self.valid_handoff_manifest(
+            batches_sha256=batches_sha256,
+            required_artifacts=[{"path": "plan/linked.txt", "sha256": sha256_file(outside)}],
+        )
+        self.bind_handoff(handoff)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "plan/linked.txt"
+                and issue.field == "file"
+                and "required artifact" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_plan_stage_reads_only_plan_files(self):
         (self.project / "plan/storyboard.json").unlink()

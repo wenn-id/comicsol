@@ -33,7 +33,13 @@ from .handoff import (
     validate_generation_job,
     validate_handoff_manifest,
 )
-from .project_io import contained_project_path, open_path_nofollow, read_bytes_nofollow
+from .project_io import (
+    MAX_READ_BYTES,
+    contained_project_path,
+    open_path_nofollow,
+    read_bytes_nofollow,
+    read_contained_bytes,
+)
 from .layouts import layout_rects
 from .lifecycle_contracts import ALL_STATUSES, CATEGORY, LINEAR_STATUSES
 from .input_limits import (
@@ -2055,6 +2061,28 @@ def _validate_handoff_binding(
         )
     if contract_issues:
         return
+    for required_artifact in handoff_manifest["required_artifacts"]:
+        artifact_path = required_artifact["path"]
+        try:
+            artifact_bytes = read_contained_bytes(
+                project_dir,
+                artifact_path,
+                max_bytes=MAX_READ_BYTES,
+            )
+        except FileNotFoundError:
+            _add(issues, artifact_path, "file", "required file is missing")
+            continue
+        except (OSError, ValueError) as error:
+            _add(
+                issues,
+                artifact_path,
+                "file",
+                f"cannot read required artifact: {type(error).__name__}",
+            )
+            continue
+        actual_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+        if actual_sha256 != required_artifact["sha256"]:
+            _add(issues, artifact_path, "sha256", "does not match handoff manifest")
     batches = handoff_manifest["batches"]
     batches_path = batches["path"]
     batch_map = _read_canonical_json(project_dir, batches_path, issues)
