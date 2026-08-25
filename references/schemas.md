@@ -235,7 +235,11 @@ each job binds its canonical path and hash and reports `missing`, `ready`, `comp
 When a project carries a populated handoff binding, project validation loads the
 contained batch map, validates its generation-batches contract, and compares its
 canonical on-disk SHA-256 with `batches.sha256`. A missing, malformed, or changed batch
-map invalidates the handoff.
+map invalidates the handoff. Batch and handoff job IDs must match exactly. Every job
+whose status is not `missing` is then canonical-read and contract-validated; its job ID,
+batch membership, subject kind, and canonical on-disk SHA-256 must match the batch and
+handoff declarations. A `missing` job remains dispatch-ineligible without requiring an
+artifact on disk.
 
 The locked-scope digest covers canonical content for `plan/story-plan.json`,
 `plan/character-bible.json`, `plan/storyboard.json`, every generation prompt,

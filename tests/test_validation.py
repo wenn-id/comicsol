@@ -22,7 +22,11 @@ from scripts.comic_sol import (  # noqa: E402
     rectangles_overlap,
     sha256_file,
 )
-from scripts.handoff import build_generation_batches, build_handoff_manifest  # noqa: E402
+from scripts.handoff import (  # noqa: E402
+    build_generation_batches,
+    build_generation_job,
+    build_handoff_manifest,
+)
 from scripts.validate_project import (  # noqa: E402
     ProjectValidationError,
     ValidationIssue,
@@ -926,7 +930,38 @@ class ProjectValidationTests(unittest.TestCase):
         atomic_write_json(path, build_generation_batches([]) if value is None else value)
         return sha256_file(path)
 
-    def valid_handoff_manifest(self, *, batches_sha256="b" * 64):
+    def valid_generation_job(self, *, batch_id="panels-001"):
+        return build_generation_job(
+            subject_kind="panel",
+            subject_id="p01-01",
+            prompt_path="prompts/panels/p01-01.txt",
+            prompt_sha256="c" * 64,
+            references=[],
+            requested_dimensions={"width": 736, "height": 1136},
+            requested_aspect_ratio="46:71",
+            attempt_kind="initial",
+            retry_limit=2,
+            batch_id=batch_id,
+            target_path="panels/attempts/p01-01/initial-001.png",
+        )
+
+    def write_generation_job(self, job, *, path_job_id=None):
+        job_id = job["job_id"] if path_job_id is None else path_job_id
+        path = self.project / f"generation/jobs/{job_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, job)
+        return sha256_file(path)
+
+    @staticmethod
+    def handoff_job(job_id, *, sha256="d" * 64, status="ready"):
+        return {
+            "job_id": job_id,
+            "path": f"generation/jobs/{job_id}.json",
+            "sha256": sha256,
+            "status": status,
+        }
+
+    def valid_handoff_manifest(self, *, batches_sha256="b" * 64, jobs=()):
         manifest = read_json(self.project / "project.json")
         return build_handoff_manifest(
             project_id=manifest["project_id"],
@@ -935,9 +970,32 @@ class ProjectValidationTests(unittest.TestCase):
             locked_scope_sha256="a" * 64,
             batches_path="generation/batches.json",
             batches_sha256=batches_sha256,
-            jobs=[],
+            jobs=jobs,
             required_artifacts=[],
         )
+
+    def bind_generation_handoff(
+        self,
+        job,
+        *,
+        job_sha256="d" * 64,
+        status="ready",
+        batch_id="panels-001",
+        batch_kind="panel",
+        batch_job_ids=None,
+        handoff_jobs=None,
+    ):
+        job_ids = [job["job_id"]] if batch_job_ids is None else batch_job_ids
+        batches = (
+            [] if not job_ids else [{"batch_id": batch_id, "kind": batch_kind, "job_ids": job_ids}]
+        )
+        batches_sha256 = self.write_generation_batches(build_generation_batches(batches))
+        jobs = (
+            [self.handoff_job(job["job_id"], sha256=job_sha256, status=status)]
+            if handoff_jobs is None
+            else handoff_jobs
+        )
+        self.bind_handoff(self.valid_handoff_manifest(batches_sha256=batches_sha256, jobs=jobs))
 
     def test_populated_handoff_requires_manifest_on_disk(self):
         self.bind_handoff()
@@ -1037,6 +1095,129 @@ class ProjectValidationTests(unittest.TestCase):
             ),
             issues,
         )
+
+    def test_populated_handoff_accepts_valid_ready_job_artifact(self):
+        job = self.valid_generation_job()
+        job_sha256 = self.write_generation_job(job)
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+
+        self.assertEqual([], validate_project(self.project, "plan"))
+
+    def test_populated_handoff_requires_non_missing_job_artifact(self):
+        job = self.valid_generation_job()
+        self.bind_generation_handoff(job)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{job['job_id']}.json"
+                and issue.field == "file"
+                and "missing" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_rejects_invalid_job_contract(self):
+        job = self.valid_generation_job()
+        invalid_job = {"schema_version": "1.0"}
+        job_sha256 = self.write_generation_job(invalid_job, path_job_id=job["job_id"])
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{job['job_id']}.json" and issue.field == "job_id"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_requires_matching_job_hash(self):
+        job = self.valid_generation_job()
+        self.write_generation_job(job)
+        self.bind_generation_handoff(job)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{job['job_id']}.json" and issue.field == "sha256"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_requires_job_content_id_to_match_manifest(self):
+        declared_job = self.valid_generation_job()
+        stored_job = self.valid_generation_job(batch_id="panels-002")
+        job_sha256 = self.write_generation_job(stored_job, path_job_id=declared_job["job_id"])
+        self.bind_generation_handoff(declared_job, job_sha256=job_sha256)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{declared_job['job_id']}.json"
+                and issue.field == "job_id"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_reconciles_batch_and_manifest_job_ids(self):
+        job = self.valid_generation_job()
+        cases = (
+            {"handoff_jobs": []},
+            {"batch_job_ids": [], "status": "missing"},
+        )
+        for options in cases:
+            with self.subTest(options=options):
+                self.bind_generation_handoff(job, **options)
+
+                issues = validate_project(self.project, "plan")
+
+                self.assertTrue(
+                    any(
+                        issue.path == "handoff/manifest.json" and issue.field == "jobs"
+                        for issue in issues
+                    ),
+                    issues,
+                )
+
+    def test_populated_handoff_requires_job_to_match_batch_membership(self):
+        cases = (
+            ("panels-002", "panel", "batch_id"),
+            ("panels-001", "reference", "subject_kind"),
+        )
+        for job_batch_id, batch_kind, expected_field in cases:
+            with self.subTest(expected_field=expected_field):
+                job = self.valid_generation_job(batch_id=job_batch_id)
+                job_sha256 = self.write_generation_job(job)
+                self.bind_generation_handoff(
+                    job,
+                    job_sha256=job_sha256,
+                    batch_kind=batch_kind,
+                )
+
+                issues = validate_project(self.project, "plan")
+
+                self.assertTrue(
+                    any(
+                        issue.path == f"generation/jobs/{job['job_id']}.json"
+                        and issue.field == expected_field
+                        for issue in issues
+                    ),
+                    issues,
+                )
+
+    def test_populated_handoff_allows_missing_status_without_job_artifact(self):
+        job = self.valid_generation_job()
+        self.bind_generation_handoff(job, status="missing")
+
+        self.assertEqual([], validate_project(self.project, "plan"))
 
     def test_plan_stage_reads_only_plan_files(self):
         (self.project / "plan/storyboard.json").unlink()

@@ -28,7 +28,11 @@ from .character_quality import (
 )
 from .core_primitives import PANEL_ID_PATTERN as CORE_PANEL_ID_PATTERN
 from .core_primitives import dialogue_attribution_conflicts, is_normalized_point
-from .handoff import validate_generation_batches, validate_handoff_manifest
+from .handoff import (
+    validate_generation_batches,
+    validate_generation_job,
+    validate_handoff_manifest,
+)
 from .project_io import contained_project_path, open_path_nofollow, read_bytes_nofollow
 from .layouts import layout_rects
 from .lifecycle_contracts import ALL_STATUSES, CATEGORY, LINEAR_STATUSES
@@ -2054,6 +2058,7 @@ def _validate_handoff_binding(
     batches = handoff_manifest["batches"]
     batches_path = batches["path"]
     batch_map = _read_canonical_json(project_dir, batches_path, issues)
+    batch_membership: dict[str, tuple[str, str]] | None = None
     if batch_map is not None:
         batch_issues = validate_generation_batches(batch_map)
         for batch_issue in batch_issues:
@@ -2065,9 +2070,60 @@ def _validate_handoff_binding(
                 message if separator else batch_issue,
             )
         if not batch_issues:
+            batch_membership = {
+                job_id: (batch["batch_id"], batch["kind"])
+                for batch in batch_map["batches"]
+                for job_id in batch["job_ids"]
+            }
             actual_sha256 = hashlib.sha256(canonical_artifact_bytes(batch_map)).hexdigest()
             if actual_sha256 != batches["sha256"]:
                 _add(issues, batches_path, "sha256", "does not match handoff manifest")
+    if batch_membership is not None:
+        handoff_jobs = handoff_manifest["jobs"]
+        manifest_job_ids = {job["job_id"] for job in handoff_jobs}
+        if manifest_job_ids != set(batch_membership):
+            _add(
+                issues,
+                manifest_path,
+                "jobs",
+                "job IDs must exactly match generation/batches.json",
+            )
+        for handoff_job in handoff_jobs:
+            if handoff_job["status"] == "missing":
+                continue
+            job_path = handoff_job["path"]
+            job = _read_canonical_json(project_dir, job_path, issues)
+            if job is None:
+                continue
+            job_issues = validate_generation_job(job)
+            for job_issue in job_issues:
+                field, separator, message = job_issue.partition(": ")
+                _add(
+                    issues,
+                    job_path,
+                    field,
+                    message if separator else job_issue,
+                )
+            if job_issues:
+                continue
+            job_id = handoff_job["job_id"]
+            if job["job_id"] != job_id:
+                _add(issues, job_path, "job_id", "does not match handoff manifest")
+            membership = batch_membership.get(job_id)
+            if membership is not None:
+                expected_batch_id, expected_kind = membership
+                if job["batch_id"] != expected_batch_id:
+                    _add(issues, job_path, "batch_id", "does not match generation/batches.json")
+                if job["subject_kind"] != expected_kind:
+                    _add(
+                        issues,
+                        job_path,
+                        "subject_kind",
+                        "does not match generation/batches.json",
+                    )
+            actual_sha256 = hashlib.sha256(canonical_artifact_bytes(job)).hexdigest()
+            if actual_sha256 != handoff_job["sha256"]:
+                _add(issues, job_path, "sha256", "does not match handoff manifest")
     expected = {
         "locked_scope_sha256": locked_scope,
         "project_id": manifest.get("project_id"),
