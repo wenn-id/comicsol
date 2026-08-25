@@ -258,6 +258,127 @@ class CommandServiceContractTests(unittest.TestCase):
         )
 
 
+class HandoffCommandServiceContractTests(unittest.TestCase):
+    """WP2 adapters share these dotted, transport-neutral handoff routes."""
+
+    def setUp(self):
+        self.engine = types.SimpleNamespace(
+            prepare_handoff=Mock(return_value={"phase": "reference"}),
+            inspect_handoff=Mock(return_value={"prepared": True}),
+            accept_handoff_result=Mock(return_value={"status": "completed"}),
+            record_handoff_failure=Mock(return_value={"status": "ready"}),
+        )
+        self.service = CommandService(engine=self.engine)
+
+    def test_prepare_and_inspect_use_dotted_routes_with_only_the_project(self):
+        project = Path("shared/project")
+        cases = (
+            (
+                "handoff.prepare",
+                {"phase": "reference"},
+                self.engine.prepare_handoff,
+            ),
+            (
+                "handoff.inspect",
+                {"prepared": True},
+                self.engine.inspect_handoff,
+            ),
+        )
+
+        for route, expected, engine_call in cases:
+            with self.subTest(route=route):
+                self.assertEqual(
+                    expected,
+                    self.service.execute(route, project_dir=project),
+                )
+                engine_call.assert_called_once_with(project)
+
+    def test_accept_result_forwards_every_argument_exactly(self):
+        project = Path("shared/project")
+        raster = Path("renderer/result.png")
+        capabilities = {
+            "reference_images": True,
+            "dimensions": True,
+            "localized_edit": False,
+        }
+
+        self.assertEqual(
+            {"status": "completed"},
+            self.service.execute(
+                "handoff.accept-result",
+                project_dir=project,
+                job_id="job-" + "a" * 40,
+                attempt=2,
+                raster_path=raster,
+                executor_kind="external-tool",
+                executor_id="renderer-a",
+                provider="provider-category",
+                model="model-category",
+                capabilities_used=capabilities,
+                approve_reference=True,
+            ),
+        )
+
+        self.engine.accept_handoff_result.assert_called_once_with(
+            project,
+            job_id="job-" + "a" * 40,
+            attempt=2,
+            raster_path=raster,
+            executor_kind="external-tool",
+            executor_id="renderer-a",
+            provider="provider-category",
+            model="model-category",
+            capabilities_used=capabilities,
+            approve_reference=True,
+        )
+
+    def test_record_failure_forwards_every_argument_exactly(self):
+        project = Path("shared/project")
+        capabilities = {
+            "reference_images": False,
+            "dimensions": True,
+            "localized_edit": True,
+        }
+
+        self.assertEqual(
+            {"status": "ready"},
+            self.service.execute(
+                "handoff.record-failure",
+                project_dir=project,
+                job_id="job-" + "b" * 40,
+                attempt=1,
+                executor_kind="native-tool",
+                executor_id="renderer-b",
+                category="provider-refusal",
+                provider="provider-category",
+                model="model-category",
+                capabilities_used=capabilities,
+            ),
+        )
+
+        self.engine.record_handoff_failure.assert_called_once_with(
+            project,
+            job_id="job-" + "b" * 40,
+            attempt=1,
+            executor_kind="native-tool",
+            executor_id="renderer-b",
+            category="provider-refusal",
+            provider="provider-category",
+            model="model-category",
+            capabilities_used=capabilities,
+        )
+
+    def test_missing_handoff_arguments_fail_before_engine_calls(self):
+        cases = (
+            ("handoff.accept-result", self.engine.accept_handoff_result),
+            ("handoff.record-failure", self.engine.record_handoff_failure),
+        )
+        for command, engine_call in cases:
+            with self.subTest(command=command), self.assertRaises(TypeError):
+                self.service.execute(command, project_dir=Path("shared/project"))
+            engine_call.assert_not_called()
+
+
 class StarterCommandServiceContractTests(unittest.TestCase):
     def setUp(self):
         self.engine = types.SimpleNamespace(

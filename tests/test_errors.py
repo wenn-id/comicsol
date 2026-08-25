@@ -15,6 +15,11 @@ from comic_sol_product.errors import (
 )
 
 from scripts.export_pdf import PdfExportError  # noqa: E402
+from scripts.handoff import (  # noqa: E402
+    HandoffContractError,
+    HandoffResultError,
+    StaleLockedScopeError,
+)
 from scripts.page_quality import PageQualityMigrationError  # noqa: E402
 from scripts.pdf_quality import PdfQualityError  # noqa: E402
 from scripts.typography import TypographyPreflightError  # noqa: E402
@@ -94,12 +99,25 @@ class StructuredErrorContractTests(unittest.TestCase):
     def test_every_registered_code_is_reachable_through_the_classifier(self):
         cases = (
             ("CS-CLI-001", CliUsageError("the following arguments are required: command"), {}),
+            ("CS-HANDOFF-001", HandoffContractError(["invalid handoff"]), {}),
+            ("CS-HANDOFF-001", StaleLockedScopeError(["stale scope"]), {}),
+            ("CS-HANDOFF-003", HandoffResultError(["invalid result"]), {}),
             ("CS-PROJ-001", ValueError("invalid project data"), {}),
             ("CS-PROJ-002", FileNotFoundError("/private/project.json"), {}),
             ("CS-PROJ-003", PermissionError("/private/project.json"), {}),
             ("CS-PROJ-004", OSError("storage unavailable"), {}),
             ("CS-PROJ-005", RuntimeError("engine failed"), {}),
             ("CS-SEC-001", ValueError("security-error: project contains a symlink"), {}),
+            (
+                "CS-SEC-001",
+                ValueError("project path must not contain symlinks"),
+                {},
+            ),
+            (
+                "CS-SEC-001",
+                ValueError("path must not contain symlinks or reparse points"),
+                {},
+            ),
             (
                 "CS-SEC-002",
                 ValueError("security-error: input exceeds the JSON size limit"),

@@ -93,6 +93,35 @@ class CommandService:
             )
         if project_dir is None:
             raise TypeError(f"{command} requires project_dir")
+        if command == "handoff.prepare":
+            return engine.prepare_handoff(project_dir)
+        if command == "handoff.inspect":
+            return engine.inspect_handoff(project_dir)
+        if command == "handoff.accept-result":
+            return engine.accept_handoff_result(
+                project_dir,
+                job_id=self._required(kwargs, "job_id"),
+                attempt=self._required(kwargs, "attempt"),
+                raster_path=self._required(kwargs, "raster_path"),
+                executor_kind=self._required(kwargs, "executor_kind"),
+                executor_id=self._required(kwargs, "executor_id"),
+                provider=kwargs.get("provider"),
+                model=kwargs.get("model"),
+                capabilities_used=kwargs.get("capabilities_used"),
+                approve_reference=kwargs.get("approve_reference", False),
+            )
+        if command == "handoff.record-failure":
+            return engine.record_handoff_failure(
+                project_dir,
+                job_id=self._required(kwargs, "job_id"),
+                attempt=self._required(kwargs, "attempt"),
+                executor_kind=self._required(kwargs, "executor_kind"),
+                executor_id=self._required(kwargs, "executor_id"),
+                category=self._required(kwargs, "category"),
+                provider=kwargs.get("provider"),
+                model=kwargs.get("model"),
+                capabilities_used=kwargs.get("capabilities_used"),
+            )
         if command == "status":
             reader = getattr(engine, "read_project_status", None)
             if reader is not None:

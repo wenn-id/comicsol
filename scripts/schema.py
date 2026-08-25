@@ -150,6 +150,32 @@ def read_project_manifest(
     return manifest
 
 
+def migrate_project_manifest_in_memory(manifest: Manifest) -> Manifest:
+    """Compose the registered migration without acquiring a lock or writing files."""
+    source = dict(manifest)
+    source_version = source.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
+    if source_version == CURRENT_PROJECT_SCHEMA_VERSION:
+        source.setdefault("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
+        return source
+    migration = PROJECT_MIGRATIONS.get((str(source_version), CURRENT_PROJECT_SCHEMA_VERSION))
+    if migration is None:
+        ensure_supported_project_schema(source_version)
+        raise UnsupportedSchemaVersionError(
+            source_version, reason="no migration path is registered"
+        )
+    migrated = migration(source)
+    if not isinstance(migrated, dict):
+        raise ValueError("project migration must return a JSON object")
+    migrated["schema_version"] = CURRENT_PROJECT_SCHEMA_VERSION
+    # Import lazily: validate_project imports schema constants at module load.
+    from .validate_project import ProjectValidationError, validate_manifest
+
+    issues = validate_manifest(migrated)
+    if issues:
+        raise ProjectValidationError(issues)
+    return migrated
+
+
 def migrate_project_manifest(project_dir: Path) -> Manifest:
     """Run a registered migration transactionally, or fail without mutation.
 
@@ -178,21 +204,6 @@ def migrate_project_manifest(project_dir: Path) -> Manifest:
         if source_version == CURRENT_PROJECT_SCHEMA_VERSION:
             manifest.setdefault("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
             return manifest
-        migration = PROJECT_MIGRATIONS.get((str(source_version), CURRENT_PROJECT_SCHEMA_VERSION))
-        if migration is None:
-            ensure_supported_project_schema(source_version)
-            raise UnsupportedSchemaVersionError(
-                source_version, reason="no migration path is registered"
-            )
-        migrated = migration(dict(manifest))
-        if not isinstance(migrated, dict):
-            raise ValueError("project migration must return a JSON object")
-        migrated["schema_version"] = CURRENT_PROJECT_SCHEMA_VERSION
-        # Import lazily: validate_project imports schema constants at module load.
-        from .validate_project import ProjectValidationError, validate_manifest
-
-        issues = validate_manifest(migrated)
-        if issues:
-            raise ProjectValidationError(issues)
+        migrated = migrate_project_manifest_in_memory(manifest)
         transaction.stage_bytes("project.json", canonical_artifact_bytes(migrated))
         return migrated
