@@ -320,9 +320,17 @@ def validate_generation_job(value: object) -> list[str]:
             issues.append("subject_id: panel jobs must use a pNN-NN panel ID")
     else:
         _identifier(subject_id, "subject_id", issues)
-    _relative_path(root.get("prompt_path"), "prompt_path", issues)
-    if isinstance(root.get("prompt_path"), str) and not root["prompt_path"].startswith("prompts/"):
-        issues.append("prompt_path: must be beneath prompts/")
+    prompt_path = root.get("prompt_path")
+    _relative_path(prompt_path, "prompt_path", issues)
+    if isinstance(prompt_path, str) and isinstance(subject_id, str):
+        if kind == "panel":
+            expected_prompt_path = f"prompts/panels/{subject_id}.txt"
+        elif kind == "reference":
+            expected_prompt_path = f"prompts/references/{subject_id}.txt"
+        else:
+            expected_prompt_path = None
+        if expected_prompt_path is not None and prompt_path != expected_prompt_path:
+            issues.append(f"prompt_path: must equal {expected_prompt_path}")
     _sha256(root.get("prompt_sha256"), "prompt_sha256", issues)
     references = root.get("references")
     reference_paths: list[str] = []
@@ -366,6 +374,30 @@ def validate_generation_job(value: object) -> list[str]:
         not isinstance(aspect_ratio, str) or _ASPECT_RATIO_PATTERN.fullmatch(aspect_ratio) is None
     ):
         issues.append("requested_aspect_ratio: must be null or a positive W:H ratio")
+    if (
+        isinstance(dimensions, Mapping)
+        and isinstance(aspect_ratio, str)
+        and _ASPECT_RATIO_PATTERN.fullmatch(aspect_ratio) is not None
+    ):
+        width = dimensions.get("width")
+        height = dimensions.get("height")
+        if (
+            not isinstance(width, bool)
+            and isinstance(width, int)
+            and width > 0
+            and not isinstance(height, bool)
+            and isinstance(height, int)
+            and height > 0
+        ):
+            try:
+                ratio_width, ratio_height = map(int, aspect_ratio.split(":"))
+            except ValueError:
+                issues.append("requested_aspect_ratio: components are too large")
+            else:
+                if width * ratio_height != height * ratio_width:
+                    issues.append(
+                        "requested_aspect_ratio: must match requested_dimensions width:height"
+                    )
     if root.get("attempt_kind") not in _ATTEMPT_KINDS:
         issues.append("attempt_kind: unknown retained-attempt kind")
     retry_limit = root.get("retry_limit")

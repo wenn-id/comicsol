@@ -188,5 +188,11 @@ def migrate_project_manifest(project_dir: Path) -> Manifest:
         if not isinstance(migrated, dict):
             raise ValueError("project migration must return a JSON object")
         migrated["schema_version"] = CURRENT_PROJECT_SCHEMA_VERSION
+        # Import lazily: validate_project imports schema constants at module load.
+        from .validate_project import ProjectValidationError, validate_manifest
+
+        issues = validate_manifest(migrated)
+        if issues:
+            raise ProjectValidationError(issues)
         transaction.stage_bytes("project.json", canonical_artifact_bytes(migrated))
         return migrated

@@ -249,6 +249,74 @@ class GenerationContractTests(unittest.TestCase):
         self.assertNotEqual(first["job_id"], second["job_id"])
         self.assertNotEqual(second["job_id"], reversed_references["job_id"])
 
+    def test_job_prompt_is_bound_to_subject_namespace_and_id(self):
+        panel_job = build_generation_job(
+            subject_kind="panel",
+            subject_id="p01-02",
+            prompt_path="prompts/panels/p01-02.txt",
+            prompt_sha256=PROMPT_SHA256,
+            references=[],
+            requested_dimensions=None,
+            requested_aspect_ratio=None,
+            attempt_kind="initial",
+            retry_limit=2,
+            batch_id="panels-001",
+            target_path="panels/attempts/p01-02/initial-001.png",
+        )
+        reference_job = build_generation_job(
+            subject_kind="reference",
+            subject_id="mira",
+            prompt_path="prompts/references/mira.txt",
+            prompt_sha256=PROMPT_SHA256,
+            references=[],
+            requested_dimensions=None,
+            requested_aspect_ratio=None,
+            attempt_kind="initial",
+            retry_limit=2,
+            batch_id="references-001",
+            target_path="references/attempts/mira/initial-001.png",
+        )
+        self.assertEqual([], validate_generation_job(panel_job))
+        self.assertEqual([], validate_generation_job(reference_job))
+
+        for job, path in (
+            (panel_job, "prompts/references/mira.txt"),
+            (reference_job, "prompts/panels/p01-02.txt"),
+            (panel_job, "prompts/panels/p01-01.txt"),
+            (reference_job, "prompts/references/ren.txt"),
+        ):
+            with self.subTest(subject=job["subject_id"], path=path):
+                mismatched = deepcopy(job)
+                mismatched["prompt_path"] = path
+                self.assert_invalid(validate_generation_job, mismatched, "prompt_path")
+
+    def test_dimensions_and_aspect_ratio_must_be_consistent(self):
+        conflicting = valid_job()
+        conflicting["requested_dimensions"] = {"width": 1024, "height": 1024}
+        conflicting["requested_aspect_ratio"] = "16:9"
+        self.assert_invalid(validate_generation_job, conflicting, "requested_aspect_ratio")
+
+        oversized = valid_job()
+        oversized["requested_aspect_ratio"] = f"{'9' * 5000}:1"
+        self.assert_invalid(validate_generation_job, oversized, "requested_aspect_ratio")
+
+        for width, height in ((1024, 768), (2048, 1536)):
+            with self.subTest(width=width, height=height):
+                job = build_generation_job(
+                    subject_kind="panel",
+                    subject_id="p01-01",
+                    prompt_path="prompts/panels/p01-01.txt",
+                    prompt_sha256=PROMPT_SHA256,
+                    references=[],
+                    requested_dimensions={"width": width, "height": height},
+                    requested_aspect_ratio="4:3",
+                    attempt_kind="initial",
+                    retry_limit=2,
+                    batch_id="panels-001",
+                    target_path="panels/attempts/p01-01/initial-001.png",
+                )
+                self.assertEqual([], validate_generation_job(job))
+
     def test_job_references_are_canonical_local_character_or_scene_pngs(self):
         for path in (
             "project.json",

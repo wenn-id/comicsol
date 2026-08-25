@@ -38,6 +38,7 @@ from scripts.schema import (  # noqa: E402
     migrate_project_manifest,
     read_project_manifest,
 )
+from scripts.validate_project import ProjectValidationError  # noqa: E402
 from scripts import comic_sol, letter_panels, project_io  # noqa: E402
 
 
@@ -138,6 +139,30 @@ class ManifestTests(unittest.TestCase):
         unchanged["schema_version"] = "1.0"
         self.assertEqual(original, unchanged)
         self.assertEqual(canonical_json_bytes(published), canonical_json_bytes(migrated))
+
+    def test_invalid_legacy_manifest_is_rejected_before_staging(self):
+        project = self._copy_schema_1_0_fixture("invalid-migration")
+        manifest_path = project / "project.json"
+        atomic_write_json(manifest_path, {"schema_version": "1.0"})
+        original = manifest_path.read_bytes()
+        transactions = project / "logs/transactions"
+
+        with mock.patch.object(ProjectTransaction, "stage_bytes") as stage_bytes:
+            with self.assertRaises(ProjectValidationError) as raised:
+                migrate_project_manifest(project)
+
+        self.assertTrue(
+            any(issue.field == "project_id" for issue in raised.exception.issues),
+            raised.exception.issues,
+        )
+        stage_bytes.assert_not_called()
+        self.assertEqual(original, manifest_path.read_bytes())
+        self.assertEqual("1.0", read_json(manifest_path)["schema_version"])
+        self.assertEqual([], self._transaction_names(transactions))
+
+        ProjectTransaction.recover(project)
+        self.assertEqual(original, manifest_path.read_bytes())
+        self.assertEqual([], self._transaction_names(transactions))
 
     def test_injected_publication_failure_rolls_back_legacy_fixture_bytes(self):
         project = self._copy_schema_1_0_fixture("migration-rollback")
