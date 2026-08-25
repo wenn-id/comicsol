@@ -24,7 +24,7 @@ from .project_io import (
     normalized_project_relative_path,
     read_contained_bytes,
 )
-from .raster_limits import MAX_DECODED_PIXELS
+from .raster_limits import MAX_DECODED_PIXELS, MIN_RASTER_DIMENSION
 
 HANDOFF_CONTRACT_VERSION = "1.0"
 BATCHES_PATH = "generation/batches.json"
@@ -375,6 +375,10 @@ def validate_generation_job(value: object) -> list[str]:
                 number = item.get(name)
                 if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
                     issues.append(f"requested_dimensions.{name}: must be a positive integer")
+                elif number < MIN_RASTER_DIMENSION:
+                    issues.append(
+                        f"requested_dimensions.{name}: must be at least {MIN_RASTER_DIMENSION}px"
+                    )
             width = item.get("width")
             height = item.get("height")
             if (

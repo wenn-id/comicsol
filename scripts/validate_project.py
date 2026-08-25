@@ -38,6 +38,7 @@ from .handoff import (
 )
 from .project_io import (
     MAX_READ_BYTES,
+    ProjectLock,
     contained_project_path,
     open_path_nofollow,
     read_bytes_nofollow,
@@ -53,7 +54,7 @@ from .input_limits import (
     looks_like_secret,
     loads_bounded_json,
 )
-from .raster_limits import MAX_DECODED_PIXELS
+from .raster_limits import MAX_DECODED_PIXELS, MIN_RASTER_DIMENSION
 from .repair_strategy import (
     REPAIR_PLAN_PATH,
     validate_defect_regions,
@@ -2033,15 +2034,13 @@ def _load_artifact(
     return data
 
 
-def _validate_handoff_binding(
-    project_dir: Path,
+def _populated_handoff_binding(
     manifest: dict[str, object],
-    issues: list[ValidationIssue],
-) -> None:
-    """Validate the populated project-to-handoff manifest binding."""
+) -> tuple[str, str] | None:
+    """Return a populated handoff binding, if the manifest declares one."""
     handoff = manifest.get("handoff")
     if not isinstance(handoff, dict):
-        return
+        return None
     manifest_path = handoff.get("manifest_path")
     locked_scope = handoff.get("locked_scope_sha256")
     if (
@@ -2049,7 +2048,20 @@ def _validate_handoff_binding(
         or not isinstance(locked_scope, str)
         or SHA256_PATTERN.fullmatch(locked_scope) is None
     ):
+        return None
+    return manifest_path, locked_scope
+
+
+def _validate_handoff_binding(
+    project_dir: Path,
+    manifest: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    """Validate the populated project-to-handoff manifest binding."""
+    binding = _populated_handoff_binding(manifest)
+    if binding is None:
         return
+    manifest_path, locked_scope = binding
     handoff_manifest = _read_canonical_json(project_dir, manifest_path, issues)
     if handoff_manifest is None:
         return
@@ -2274,8 +2286,13 @@ def _validate_raster(
                 width, height = image.size
                 if width * height > MAX_DECODED_PIXELS:
                     raise Image.DecompressionBombError("raster exceeds decode limit")
-                if width < 512 or height < 512:
-                    _add(issues, issue_path, field, "image dimensions must both be at least 512px")
+                if width < MIN_RASTER_DIMENSION or height < MIN_RASTER_DIMENSION:
+                    _add(
+                        issues,
+                        issue_path,
+                        field,
+                        f"image dimensions must both be at least {MIN_RASTER_DIMENSION}px",
+                    )
                 if "A" in image.mode or "transparency" in image.info:
                     _add(issues, issue_path, field, "image has unintended alpha transparency")
                 if expected_ratio is not None and height > 0:
@@ -2446,9 +2463,20 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
         raise FileNotFoundError(f"project directory does not exist: {project_dir}")
 
     issues: list[ValidationIssue] = []
-    manifest = _load_artifact(project_dir, "project.json", validate_manifest, issues)
-    if manifest is not None:
-        _validate_handoff_binding(project_dir, manifest, issues)
+    manifest_issues: list[ValidationIssue] = []
+    manifest = _load_artifact(project_dir, "project.json", validate_manifest, manifest_issues)
+    if manifest is not None and _populated_handoff_binding(manifest) is not None:
+        manifest_issues = []
+        with ProjectLock(project_dir):
+            manifest = _load_artifact(
+                project_dir,
+                "project.json",
+                validate_manifest,
+                manifest_issues,
+            )
+            if manifest is not None:
+                _validate_handoff_binding(project_dir, manifest, manifest_issues)
+    issues.extend(manifest_issues)
     needs_plan = stage in {"all", "plan", "storyboard", "panels", "final", "export-ready"}
     needs_storyboard = stage in {"all", "storyboard", "panels", "final", "export-ready"}
     needs_panels = stage in {"all", "panels", "final", "export-ready"}

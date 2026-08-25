@@ -53,7 +53,11 @@ from .input_limits import (
     InputResourceLimitError,
     validate_narrative,
 )
-from .raster_limits import MAX_DECODED_PIXELS, MAX_ENCODED_RASTER_BYTES
+from .raster_limits import (
+    MAX_DECODED_PIXELS,
+    MAX_ENCODED_RASTER_BYTES,
+    MIN_RASTER_DIMENSION,
+)
 from .repair_strategy import REPAIR_STRATEGIES, recorded_panel_plan
 from .schema import read_project_manifest
 from .sfx_verification import (
@@ -1899,8 +1903,10 @@ def _verify_raster_payload(payload: bytes, media_type: str, width: int, height: 
                 if image.width * image.height > MAX_DECODED_PIXELS:
                     raise ValueError("attempt exceeds the decoded pixel limit")
                 image.load()
-                if image.width < 512 or image.height < 512:
-                    raise ValueError("attempt must be a readable raster at least 512px")
+                if image.width < MIN_RASTER_DIMENSION or image.height < MIN_RASTER_DIMENSION:
+                    raise ValueError(
+                        f"attempt must be a readable raster at least {MIN_RASTER_DIMENSION}px"
+                    )
                 actual_size = image.size
     except (
         OSError,
@@ -1925,8 +1931,10 @@ def _verify_raster(path: Path) -> tuple[int, int]:
                 if image.width * image.height > MAX_DECODED_PIXELS:
                     raise ValueError("attempt exceeds the decoded pixel limit")
                 image.load()
-                if image.width < 512 or image.height < 512:
-                    raise ValueError("attempt must be a readable raster at least 512px")
+                if image.width < MIN_RASTER_DIMENSION or image.height < MIN_RASTER_DIMENSION:
+                    raise ValueError(
+                        f"attempt must be a readable raster at least {MIN_RASTER_DIMENSION}px"
+                    )
                 return image.width, image.height
     except InputResourceLimitError:
         raise

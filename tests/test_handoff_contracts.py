@@ -404,7 +404,11 @@ class GenerationContractTests(unittest.TestCase):
                 target_path="panels/attempts/p01-01/initial-001.png",
             )
 
-        at_limit = build_job({"width": MAX_DECODED_PIXELS, "height": 1})
+        at_limit = build_job({"width": MAX_DECODED_PIXELS // 512, "height": 512})
+        self.assertEqual(
+            MAX_DECODED_PIXELS,
+            at_limit["requested_dimensions"]["width"] * at_limit["requested_dimensions"]["height"],
+        )
         self.assertEqual([], validate_generation_job(at_limit))
 
         above_limit = deepcopy(at_limit)
@@ -413,6 +417,34 @@ class GenerationContractTests(unittest.TestCase):
 
         without_dimensions = build_job(None)
         self.assertEqual([], validate_generation_job(without_dimensions))
+
+    def test_requested_dimensions_respect_raster_intake_minimum(self):
+        def build_job(width, height):
+            return build_generation_job(
+                subject_kind="panel",
+                subject_id="p01-01",
+                prompt_path="prompts/panels/p01-01.txt",
+                prompt_sha256=PROMPT_SHA256,
+                references=[],
+                requested_dimensions={"width": width, "height": height},
+                requested_aspect_ratio=None,
+                attempt_kind="initial",
+                retry_limit=2,
+                batch_id="panels-001",
+                target_path="panels/attempts/p01-01/initial-001.png",
+            )
+
+        valid = build_job(512, 512)
+        self.assertEqual([], validate_generation_job(valid))
+        for width, height in ((511, 512), (512, 511)):
+            with self.subTest(width=width, height=height):
+                undersized = deepcopy(valid)
+                undersized["requested_dimensions"] = {"width": width, "height": height}
+                self.assert_invalid(
+                    validate_generation_job,
+                    undersized,
+                    "requested_dimensions",
+                )
 
     def test_job_references_are_canonical_local_character_or_scene_pngs(self):
         for path in (

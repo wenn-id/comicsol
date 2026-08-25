@@ -4,6 +4,7 @@ import json
 import re
 import shutil
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
@@ -14,6 +15,7 @@ from PIL import Image, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 
+import scripts.validate_project as validation  # noqa: E402
 from scripts.comic_sol import (  # noqa: E402
     atomic_write_json,
     init_project,
@@ -28,7 +30,7 @@ from scripts.handoff import (  # noqa: E402
     build_handoff_manifest,
     locked_scope_sha256,
 )
-from scripts.project_io import MAX_READ_BYTES  # noqa: E402
+from scripts.project_io import MAX_READ_BYTES, ProjectLock  # noqa: E402
 from scripts.validate_project import (  # noqa: E402
     ProjectValidationError,
     ValidationIssue,
@@ -1045,6 +1047,14 @@ class ProjectValidationTests(unittest.TestCase):
             issues,
         )
 
+    def test_unpopulated_handoff_validation_does_not_create_project_lock(self):
+        lock_path = self.project / ".comic-sol.lock"
+        lock_path.unlink(missing_ok=True)
+
+        self.assertEqual([], validate_project(self.project, "plan"))
+
+        self.assertFalse(lock_path.exists())
+
     def test_populated_handoff_rejects_invalid_manifest_contract(self):
         self.bind_handoff({"schema_version": "1.0"})
 
@@ -1138,6 +1148,95 @@ class ProjectValidationTests(unittest.TestCase):
         self.refresh_locked_scope()
 
         self.assertEqual([], validate_project(self.project, "plan"))
+
+    def test_populated_handoff_holds_project_lock_through_binding_validation(self):
+        job = self.valid_generation_job()
+        job_sha256 = self.write_generation_job(job)
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+        self.refresh_locked_scope()
+        binding_entered = threading.Event()
+        release_binding = threading.Event()
+        scope_entered = threading.Event()
+        release_scope = threading.Event()
+        validation_issues = []
+        validation_errors = []
+        real_validate_binding = validation._validate_handoff_binding
+        real_assert_current_scope = validation.assert_current_locked_scope
+
+        def paused_validate_binding(*args, **kwargs):
+            binding_entered.set()
+            if not release_binding.wait(5):
+                raise TimeoutError("test did not release handoff binding validation")
+            return real_validate_binding(*args, **kwargs)
+
+        def paused_assert_current_scope(*args, **kwargs):
+            scope_entered.set()
+            if not release_scope.wait(5):
+                raise TimeoutError("test did not release locked-scope recomputation")
+            return real_assert_current_scope(*args, **kwargs)
+
+        def run_validation():
+            try:
+                validation_issues.extend(validate_project(self.project, "plan"))
+            except BaseException as error:
+                validation_errors.append(error)
+
+        def attempt_project_lock():
+            outcome = []
+
+            def contend_for_project():
+                try:
+                    with ProjectLock(self.project, timeout=0):
+                        outcome.append("acquired")
+                except TimeoutError:
+                    outcome.append("blocked")
+
+            contender = threading.Thread(target=contend_for_project)
+            contender.start()
+            contender.join(5)
+            self.assertFalse(contender.is_alive())
+            self.assertEqual(1, len(outcome))
+            return outcome[0]
+
+        validator = threading.Thread(target=run_validation)
+        before_binding_outcome = None
+        during_scope_outcome = None
+        binding_observed = False
+        scope_observed = False
+        with (
+            patch.object(
+                validation,
+                "_validate_handoff_binding",
+                side_effect=paused_validate_binding,
+            ),
+            patch.object(
+                validation,
+                "assert_current_locked_scope",
+                side_effect=paused_assert_current_scope,
+            ),
+        ):
+            validator.start()
+            try:
+                binding_observed = binding_entered.wait(5)
+                if binding_observed:
+                    before_binding_outcome = attempt_project_lock()
+                    release_binding.set()
+                    scope_observed = scope_entered.wait(5)
+                    if scope_observed:
+                        during_scope_outcome = attempt_project_lock()
+            finally:
+                release_binding.set()
+                release_scope.set()
+                validator.join(5)
+
+        self.assertTrue(binding_observed)
+        self.assertTrue(scope_observed)
+        self.assertFalse(validator.is_alive())
+        self.assertEqual([], validation_errors)
+        self.assertEqual([], validation_issues)
+        self.assertEqual("blocked", before_binding_outcome)
+        self.assertEqual("blocked", during_scope_outcome)
+        self.assertEqual("acquired", attempt_project_lock())
 
     def test_populated_handoff_rejects_changed_locked_scope(self):
         job = self.valid_generation_job()
