@@ -241,8 +241,10 @@ batch membership, subject kind, and canonical on-disk SHA-256 must match the bat
 handoff declarations. A `missing` job remains dispatch-ineligible without requiring an
 artifact on disk. Before dispatch, every `ready` job's prompt and reference images are
 bounded-read through the contained no-follow reader, and the SHA-256 of each file's exact
-bytes must match the job declaration. Every required artifact is checked the same way;
-missing, linked, oversized, or changed inputs invalidate the handoff.
+bytes must match the job declaration. Ready reference images must also decode as accepted
+local raster data through the same no-follow boundary and stay within the shared decoded-
+pixel limit. Every required artifact is checked the same way; missing, linked, oversized,
+changed, or undecodable inputs invalidate the handoff.
 
 The locked-scope digest covers canonical content for `plan/story-plan.json`,
 `plan/character-bible.json`, `plan/storyboard.json`, every generation prompt,
@@ -253,7 +255,10 @@ directories. The supplied reference path set is the complete union of selected a
 job-referenced assets; every selected path is mandatory, while job-only paths are included in
 the digest instead of being rejected as extras. JSON is compact-canonicalized before content
 hashing. File records are sorted by project-relative path, serialized with the contract
-version, and hashed, so filesystem and caller ordering cannot change the digest.
+version, and hashed, so filesystem and caller ordering cannot change the digest. Project
+validation rediscovers the authoritative prompt and selected-reference sets, adds references
+from valid on-disk jobs, recomputes this digest under the project lock, and rejects a populated
+binding when the current scope is stale.
 
 Executor declarations contain exactly a stable `capability_id`, `executor_kind`,
 `text_to_image`, `local_raster`, and the three support flags above. Declarations that do

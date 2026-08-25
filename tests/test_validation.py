@@ -26,6 +26,7 @@ from scripts.handoff import (  # noqa: E402
     build_generation_batches,
     build_generation_job,
     build_handoff_manifest,
+    locked_scope_sha256,
 )
 from scripts.project_io import MAX_READ_BYTES  # noqa: E402
 from scripts.validate_project import (  # noqa: E402
@@ -1007,6 +1008,28 @@ class ProjectValidationTests(unittest.TestCase):
         )
         self.bind_handoff(self.valid_handoff_manifest(batches_sha256=batches_sha256, jobs=jobs))
 
+    def refresh_locked_scope(self, *, reference_paths=()):
+        selection_path = self.project / "logs/reference-selection.json"
+        if not selection_path.exists():
+            atomic_write_json(selection_path, {"panels": [], "schema_version": "1.0"})
+        prompt_paths = sorted(
+            path.relative_to(self.project).as_posix()
+            for relative_dir in ("prompts/panels", "prompts/references")
+            for path in (self.project / relative_dir).glob("*.txt")
+        )
+        digest = locked_scope_sha256(
+            self.project,
+            prompt_paths=prompt_paths,
+            reference_paths=reference_paths,
+        )
+        manifest = read_json(self.project / "project.json")
+        manifest["handoff"]["locked_scope_sha256"] = digest
+        atomic_write_json(self.project / "project.json", manifest)
+        handoff = read_json(self.project / "handoff/manifest.json")
+        handoff["locked_scope_sha256"] = digest
+        atomic_write_json(self.project / "handoff/manifest.json", handoff)
+        return digest
+
     def test_populated_handoff_requires_manifest_on_disk(self):
         self.bind_handoff()
 
@@ -1038,7 +1061,9 @@ class ProjectValidationTests(unittest.TestCase):
     def test_populated_handoff_manifest_must_match_project_binding(self):
         handoff = self.valid_handoff_manifest(batches_sha256=self.write_generation_batches())
         self.bind_handoff(handoff)
+        self.refresh_locked_scope()
         self.assertEqual([], validate_project(self.project, "plan"))
+        handoff = read_json(self.project / "handoff/manifest.json")
 
         cases = (
             ("locked_scope_sha256", "b" * 64),
@@ -1110,8 +1135,30 @@ class ProjectValidationTests(unittest.TestCase):
         job = self.valid_generation_job()
         job_sha256 = self.write_generation_job(job)
         self.bind_generation_handoff(job, job_sha256=job_sha256)
+        self.refresh_locked_scope()
 
         self.assertEqual([], validate_project(self.project, "plan"))
+
+    def test_populated_handoff_rejects_changed_locked_scope(self):
+        job = self.valid_generation_job()
+        job_sha256 = self.write_generation_job(job)
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+        self.refresh_locked_scope()
+        self.assertEqual([], validate_project(self.project, "plan"))
+        atomic_write_json(
+            self.project / "logs/reference-selection.json",
+            {"panels": [], "revision": "changed", "schema_version": "1.0"},
+        )
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "handoff/manifest.json" and issue.field == "locked_scope_sha256"
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_populated_handoff_rejects_changed_ready_job_prompt(self):
         job = self.valid_generation_job()
@@ -1132,7 +1179,7 @@ class ProjectValidationTests(unittest.TestCase):
 
     def test_populated_handoff_rejects_changed_ready_job_reference(self):
         reference_path = self.project / "references/characters/mira.png"
-        Image.new("RGB", (8, 8), "white").save(reference_path)
+        Image.new("RGB", (512, 512), "white").save(reference_path)
         job = self.valid_generation_job(
             references=[
                 {
@@ -1143,7 +1190,7 @@ class ProjectValidationTests(unittest.TestCase):
         )
         job_sha256 = self.write_generation_job(job)
         self.bind_generation_handoff(job, job_sha256=job_sha256)
-        Image.new("RGB", (8, 8), "black").save(reference_path)
+        Image.new("RGB", (512, 512), "black").save(reference_path)
 
         issues = validate_project(self.project, "plan")
 
@@ -1151,6 +1198,29 @@ class ProjectValidationTests(unittest.TestCase):
             any(
                 issue.path == f"generation/jobs/{job['job_id']}.json"
                 and issue.field == "references[0].sha256"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_rejects_undecodable_ready_job_reference(self):
+        reference_path = self.project / "references/characters/mira.png"
+        reference_path.write_bytes(b"not a PNG")
+        relative_path = "references/characters/mira.png"
+        job = self.valid_generation_job(
+            references=[{"path": relative_path, "sha256": sha256_file(reference_path)}]
+        )
+        job_sha256 = self.write_generation_job(job)
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+        self.refresh_locked_scope(reference_paths=[relative_path])
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{job['job_id']}.json"
+                and issue.field == "references[0].path"
+                and "unreadable" in issue.message
                 for issue in issues
             ),
             issues,
@@ -1269,6 +1339,7 @@ class ProjectValidationTests(unittest.TestCase):
     def test_populated_handoff_allows_missing_status_without_job_artifact(self):
         job = self.valid_generation_job()
         self.bind_generation_handoff(job, status="missing")
+        self.refresh_locked_scope()
 
         self.assertEqual([], validate_project(self.project, "plan"))
 
@@ -1324,6 +1395,7 @@ class ProjectValidationTests(unittest.TestCase):
             ],
         )
         self.bind_handoff(handoff)
+        self.refresh_locked_scope()
 
         self.assertEqual([], validate_project(self.project, "plan"))
 

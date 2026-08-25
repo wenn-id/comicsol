@@ -29,6 +29,9 @@ from .character_quality import (
 from .core_primitives import PANEL_ID_PATTERN as CORE_PANEL_ID_PATTERN
 from .core_primitives import dialogue_attribution_conflicts, is_normalized_point
 from .handoff import (
+    HandoffContractError,
+    StaleLockedScopeError,
+    assert_current_locked_scope,
     validate_generation_batches,
     validate_generation_job,
     validate_handoff_manifest,
@@ -2106,6 +2109,7 @@ def _validate_handoff_binding(
             actual_sha256 = hashlib.sha256(canonical_artifact_bytes(batch_map)).hexdigest()
             if actual_sha256 != batches["sha256"]:
                 _add(issues, batches_path, "sha256", "does not match handoff manifest")
+    job_reference_paths: set[str] = set()
     if batch_membership is not None:
         handoff_jobs = handoff_manifest["jobs"]
         manifest_job_ids = {job["job_id"] for job in handoff_jobs}
@@ -2134,6 +2138,7 @@ def _validate_handoff_binding(
                 )
             if job_issues:
                 continue
+            job_reference_paths.update(reference["path"] for reference in job["references"])
             job_id = handoff_job["job_id"]
             if handoff_job["status"] == "ready":
                 job_inputs = [
@@ -2142,6 +2147,7 @@ def _validate_handoff_binding(
                         "prompt_path",
                         "prompt_sha256",
                         job["prompt_sha256"],
+                        False,
                     )
                 ]
                 job_inputs.extend(
@@ -2150,10 +2156,17 @@ def _validate_handoff_binding(
                         f"references[{index}].path",
                         f"references[{index}].sha256",
                         reference["sha256"],
+                        True,
                     )
                     for index, reference in enumerate(job["references"])
                 )
-                for input_path, path_field, sha256_field, expected_sha256 in job_inputs:
+                for (
+                    input_path,
+                    path_field,
+                    sha256_field,
+                    expected_sha256,
+                    validate_raster,
+                ) in job_inputs:
                     try:
                         input_bytes = read_contained_bytes(
                             project_dir,
@@ -2174,6 +2187,8 @@ def _validate_handoff_binding(
                     actual_sha256 = hashlib.sha256(input_bytes).hexdigest()
                     if actual_sha256 != expected_sha256:
                         _add(issues, job_path, sha256_field, "does not match input file")
+                    if validate_raster:
+                        _validate_raster(project_dir, input_path, job_path, path_field, issues)
             if job["job_id"] != job_id:
                 _add(issues, job_path, "job_id", "does not match handoff manifest")
             membership = batch_membership.get(job_id)
@@ -2191,6 +2206,26 @@ def _validate_handoff_binding(
             actual_sha256 = hashlib.sha256(canonical_artifact_bytes(job)).hexdigest()
             if actual_sha256 != handoff_job["sha256"]:
                 _add(issues, job_path, "sha256", "does not match handoff manifest")
+    try:
+        assert_current_locked_scope(
+            project_dir,
+            locked_scope,
+            reference_paths=sorted(job_reference_paths),
+        )
+    except StaleLockedScopeError:
+        _add(
+            issues,
+            manifest_path,
+            "locked_scope_sha256",
+            "does not match current project scope",
+        )
+    except (HandoffContractError, OSError, ValueError) as error:
+        _add(
+            issues,
+            manifest_path,
+            "locked_scope_sha256",
+            f"cannot recompute current project scope: {type(error).__name__}",
+        )
     expected = {
         "locked_scope_sha256": locked_scope,
         "project_id": manifest.get("project_id"),

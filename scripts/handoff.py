@@ -842,6 +842,26 @@ def assert_locked_scope(
             raise StaleLockedScopeError(["locked_scope_sha256: stale project scope"])
 
 
+def assert_current_locked_scope(
+    project_dir: Path,
+    expected_sha256: str,
+    *,
+    reference_paths: Sequence[str],
+) -> None:
+    """Verify a digest against authoritative prompts, selections, and job references."""
+    issues: list[str] = []
+    _sha256(expected_sha256, "locked_scope_sha256", issues)
+    _require_valid(issues)
+    project_dir = Path(project_dir)
+    with ProjectLock(project_dir):
+        prompt_paths = sorted(_authoritative_prompt_paths(project_dir))
+        selected_references = _authoritative_reference_paths(project_dir)
+        complete_references = sorted(selected_references | set(reference_paths))
+        actual = _locked_scope_sha256(project_dir, prompt_paths, complete_references)
+        if not hmac.compare_digest(actual, expected_sha256):
+            raise StaleLockedScopeError(["locked_scope_sha256: stale project scope"])
+
+
 def rank_executors(
     declarations: Sequence[Mapping[str, object]],
 ) -> list[dict[str, object]]:
