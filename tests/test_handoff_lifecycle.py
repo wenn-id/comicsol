@@ -1353,7 +1353,11 @@ class HandoffIntakeFailureTests(unittest.TestCase):
         raster_path = Path("~comic-sol-user-that-must-not-exist/result.png")
         before = self._artifact_snapshot(project)
 
-        with self.assertRaisesRegex(HandoffResultError, "raster.*path"):
+        error_pattern = (
+            r"result raster(?: path)?: "
+            r"(?:cannot be expanded safely|cannot be read safely)"
+        )
+        with self.assertRaisesRegex(HandoffResultError, error_pattern):
             accept(project, **self._success_arguments(panel_job, raster_path))
         self.assertEqual(before, self._artifact_snapshot(project))
 
@@ -1381,7 +1385,10 @@ class HandoffIntakeFailureTests(unittest.TestCase):
 
         self.assertEqual(2, code)
         self.assertEqual("", stdout.getvalue())
-        self.assertRegex(stderr.getvalue(), r"^ERROR HandoffResultError: .*raster.*path.*\n$")
+        self.assertRegex(
+            stderr.getvalue(),
+            rf"^ERROR HandoffResultError: .*{error_pattern}.*\n$",
+        )
         self.assertEqual(before, self._artifact_snapshot(project))
         self.assertEqual([], self._transaction_names(project))
         self.assertFalse((root / "result.png").exists())
