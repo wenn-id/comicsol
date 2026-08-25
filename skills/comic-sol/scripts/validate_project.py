@@ -28,7 +28,7 @@ from .character_quality import (
 )
 from .core_primitives import PANEL_ID_PATTERN as CORE_PANEL_ID_PATTERN
 from .core_primitives import dialogue_attribution_conflicts, is_normalized_point
-from .handoff import validate_handoff_manifest
+from .handoff import validate_generation_batches, validate_handoff_manifest
 from .project_io import contained_project_path, open_path_nofollow, read_bytes_nofollow
 from .layouts import layout_rects
 from .lifecycle_contracts import ALL_STATUSES, CATEGORY, LINEAR_STATUSES
@@ -2051,6 +2051,23 @@ def _validate_handoff_binding(
         )
     if contract_issues:
         return
+    batches = handoff_manifest["batches"]
+    batches_path = batches["path"]
+    batch_map = _read_canonical_json(project_dir, batches_path, issues)
+    if batch_map is not None:
+        batch_issues = validate_generation_batches(batch_map)
+        for batch_issue in batch_issues:
+            field, separator, message = batch_issue.partition(": ")
+            _add(
+                issues,
+                batches_path,
+                field,
+                message if separator else batch_issue,
+            )
+        if not batch_issues:
+            actual_sha256 = hashlib.sha256(canonical_artifact_bytes(batch_map)).hexdigest()
+            if actual_sha256 != batches["sha256"]:
+                _add(issues, batches_path, "sha256", "does not match handoff manifest")
     expected = {
         "locked_scope_sha256": locked_scope,
         "project_id": manifest.get("project_id"),

@@ -22,7 +22,7 @@ from scripts.comic_sol import (  # noqa: E402
     rectangles_overlap,
     sha256_file,
 )
-from scripts.handoff import build_handoff_manifest  # noqa: E402
+from scripts.handoff import build_generation_batches, build_handoff_manifest  # noqa: E402
 from scripts.validate_project import (  # noqa: E402
     ProjectValidationError,
     ValidationIssue,
@@ -920,7 +920,13 @@ class ProjectValidationTests(unittest.TestCase):
             atomic_write_json(self.project / "handoff/manifest.json", handoff_manifest)
         return manifest
 
-    def valid_handoff_manifest(self):
+    def write_generation_batches(self, value=None):
+        path = self.project / "generation/batches.json"
+        path.parent.mkdir(exist_ok=True)
+        atomic_write_json(path, build_generation_batches([]) if value is None else value)
+        return sha256_file(path)
+
+    def valid_handoff_manifest(self, *, batches_sha256="b" * 64):
         manifest = read_json(self.project / "project.json")
         return build_handoff_manifest(
             project_id=manifest["project_id"],
@@ -928,7 +934,7 @@ class ProjectValidationTests(unittest.TestCase):
             stage=manifest["status"],
             locked_scope_sha256="a" * 64,
             batches_path="generation/batches.json",
-            batches_sha256="b" * 64,
+            batches_sha256=batches_sha256,
             jobs=[],
             required_artifacts=[],
         )
@@ -962,7 +968,7 @@ class ProjectValidationTests(unittest.TestCase):
         )
 
     def test_populated_handoff_manifest_must_match_project_binding(self):
-        handoff = self.valid_handoff_manifest()
+        handoff = self.valid_handoff_manifest(batches_sha256=self.write_generation_batches())
         self.bind_handoff(handoff)
         self.assertEqual([], validate_project(self.project, "plan"))
 
@@ -986,6 +992,51 @@ class ProjectValidationTests(unittest.TestCase):
                     ),
                     issues,
                 )
+
+    def test_populated_handoff_requires_batch_map_on_disk(self):
+        handoff = self.valid_handoff_manifest()
+        self.bind_handoff(handoff)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "generation/batches.json"
+                and issue.field == "file"
+                and "missing" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_rejects_invalid_batch_contract(self):
+        batches_sha256 = self.write_generation_batches({"schema_version": "1.0"})
+        handoff = self.valid_handoff_manifest(batches_sha256=batches_sha256)
+        self.bind_handoff(handoff)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "generation/batches.json" and issue.field == "batches"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_requires_matching_batch_hash(self):
+        self.write_generation_batches()
+        self.bind_handoff(self.valid_handoff_manifest())
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "generation/batches.json" and issue.field == "sha256"
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_plan_stage_reads_only_plan_files(self):
         (self.project / "plan/storyboard.json").unlink()

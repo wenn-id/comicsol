@@ -41,7 +41,10 @@ _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 _PANEL_ID_PATTERN = re.compile(r"^p[0-9]{2}-[0-9]{2}$")
 _ASPECT_RATIO_PATTERN = re.compile(r"^[1-9][0-9]*:[1-9][0-9]*$")
-_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:")
+_EMBEDDED_LOCATOR_PATTERN = re.compile(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*:\S+")
+_PRIVATE_PATH_TOKEN_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9:/\\])(?:[A-Za-z]:[\\/]|~[\\/]|/(?!/)\S|\\+\S)"
+)
 _ATTEMPT_KINDS = frozenset({"initial", "visual_retry", "transient_repeat"})
 _EXECUTOR_KINDS = frozenset({"native-tool", "external-tool"})
 _JOB_STATUSES = frozenset({"missing", "ready", "completed", "failed", "stale"})
@@ -137,10 +140,12 @@ def _safe_label(
         issues.append(f"{field}: must not contain control characters")
     if looks_like_secret(value):
         issues.append(f"{field}: must not contain secrets or credentials")
-    if value.startswith(("/", "\\", "~")) or _DRIVE_PATTERN.match(value):
+    if _PRIVATE_PATH_TOKEN_PATTERN.search(value):
         issues.append(f"{field}: must not contain a private absolute path")
+    locator = _EMBEDDED_LOCATOR_PATTERN.search(value)
+    candidate = value if locator is None else locator.group()
     try:
-        parsed = urlsplit(value)
+        parsed = urlsplit(candidate)
     except ValueError:
         issues.append(f"{field}: must not contain a malformed URL")
         return

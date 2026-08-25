@@ -220,7 +220,9 @@ and SHA-256 validation still applies. Half-populated pairs are invalid. Executor
 is `native-tool` or `external-tool`. `capabilities_used` contains exactly the
 booleans `reference_images`, `dimensions`, and `localized_edit`. A receipt never
 contains credentials, endpoint URLs, private absolute paths, or raw responses;
-outcome categories follow the stable bounded category grammar.
+provider and model sanitization scans the complete label, so adding an opaque prefix
+does not hide an embedded URI, credential URL, or absolute path. Outcome categories
+follow the stable bounded category grammar.
 
 ### Handoff manifest: `handoff/manifest.json`
 
@@ -229,6 +231,11 @@ The root contains exactly `schema_version`, `project_schema_version`, `project_i
 `project_schema_version` is `1.1`; `batches` binds `generation/batches.json` by hash;
 each job binds its canonical path and hash and reports `missing`, `ready`, `completed`,
 `failed`, or `stale`; required artifacts are path/hash pairs.
+
+When a project carries a populated handoff binding, project validation loads the
+contained batch map, validates its generation-batches contract, and compares its
+canonical on-disk SHA-256 with `batches.sha256`. A missing, malformed, or changed batch
+map invalidates the handoff.
 
 The locked-scope digest covers canonical content for `plan/story-plan.json`,
 `plan/character-bible.json`, `plan/storyboard.json`, every generation prompt,

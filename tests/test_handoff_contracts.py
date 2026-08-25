@@ -458,6 +458,10 @@ class GenerationContractTests(unittest.TestCase):
             ("model", "file:///home/creator/private/model.safetensors"),
             ("model", "file:private-data"),
             ("provider", "https://[malformed"),
+            ("provider", "host-reported https://creator:hunter2@example.invalid/v1"),
+            ("provider", "host-reported file:private-data"),
+            ("model", "host-reported C:/private/model.safetensors"),
+            ("model", "host-reported /home/creator/private/model.safetensors"),
         ):
             with self.subTest(field=field, value=value):
                 receipt = valid_receipt()
