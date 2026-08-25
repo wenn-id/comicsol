@@ -28,7 +28,22 @@ from .character_quality import (
 )
 from .core_primitives import PANEL_ID_PATTERN as CORE_PANEL_ID_PATTERN
 from .core_primitives import dialogue_attribution_conflicts, is_normalized_point
-from .project_io import contained_project_path, open_path_nofollow, read_bytes_nofollow
+from .handoff import (
+    HandoffContractError,
+    StaleLockedScopeError,
+    assert_current_locked_scope,
+    validate_generation_batches,
+    validate_generation_job,
+    validate_handoff_manifest,
+)
+from .project_io import (
+    MAX_READ_BYTES,
+    ProjectLock,
+    contained_project_path,
+    open_path_nofollow,
+    read_bytes_nofollow,
+    read_contained_bytes,
+)
 from .layouts import layout_rects
 from .lifecycle_contracts import ALL_STATUSES, CATEGORY, LINEAR_STATUSES
 from .input_limits import (
@@ -39,7 +54,7 @@ from .input_limits import (
     looks_like_secret,
     loads_bounded_json,
 )
-from .raster_limits import MAX_DECODED_PIXELS
+from .raster_limits import MAX_DECODED_PIXELS, MIN_RASTER_DIMENSION
 from .repair_strategy import (
     REPAIR_PLAN_PATH,
     validate_defect_regions,
@@ -58,6 +73,7 @@ from .sfx_verification import (
 )
 from .schema import (
     CURRENT_PROJECT_SCHEMA_VERSION,
+    LEGACY_PROJECT_SCHEMA_VERSION,
     MIN_READER_PROJECT_SCHEMA_VERSION,
     SUPPORTED_PROJECT_SCHEMA_VERSIONS,
 )
@@ -323,7 +339,7 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
     """Validate the project manifest structure and references."""
     path = "project.json"
     issues: list[ValidationIssue] = []
-    required_fields = {
+    base_required_fields = {
         "project_id",
         "title",
         "created_at",
@@ -337,11 +353,17 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         "panels",
         "warnings",
     }
+    declared_version = data.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
+    is_legacy = declared_version == LEGACY_PROJECT_SCHEMA_VERSION
+    required_fields = set(base_required_fields)
     fields = required_fields | {"schema_version", "blocked_from", "blocked_reason"}
+    if not is_legacy:
+        required_fields.add("handoff")
+        fields.add("handoff")
     root = _object(data, fields, required_fields, issues, path, "")
     if root is None:
         return _sorted(issues)
-    schema_version = root.get("schema_version", CURRENT_PROJECT_SCHEMA_VERSION)
+    schema_version = root.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
     if (
         not isinstance(schema_version, str)
         or schema_version not in SUPPORTED_PROJECT_SCHEMA_VERSIONS
@@ -356,6 +378,49 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
                 f"{CURRENT_PROJECT_SCHEMA_VERSION}"
             ),
         )
+    if not is_legacy:
+        handoff_fields = {"contract_version", "locked_scope_sha256", "manifest_path"}
+        handoff = _object(
+            root.get("handoff"),
+            handoff_fields,
+            handoff_fields,
+            issues,
+            path,
+            "handoff",
+        )
+        if handoff is not None:
+            if handoff.get("contract_version") != "1.0":
+                _add(issues, path, "handoff.contract_version", "must equal 1.0")
+            _sha256(
+                handoff.get("locked_scope_sha256"),
+                issues,
+                path,
+                "handoff.locked_scope_sha256",
+                nullable=True,
+            )
+            _relative_path(
+                handoff.get("manifest_path"),
+                issues,
+                path,
+                "handoff.manifest_path",
+                nullable=True,
+            )
+            locked_scope = handoff.get("locked_scope_sha256")
+            manifest_path = handoff.get("manifest_path")
+            if (locked_scope is None) != (manifest_path is None):
+                _add(
+                    issues,
+                    path,
+                    "handoff",
+                    "locked_scope_sha256 and manifest_path must both be null or both populated",
+                )
+            if manifest_path is not None and manifest_path != "handoff/manifest.json":
+                _add(
+                    issues,
+                    path,
+                    "handoff.manifest_path",
+                    "must equal handoff/manifest.json when populated",
+                )
     _identifier(root.get("project_id"), issues, path, "project_id")
     _narrative_field(root.get("title"), issues, path, "title", max_chars=MAX_TITLE_CHARS)
     _timestamp(root.get("created_at"), issues, path, "created_at")
@@ -1969,6 +2034,221 @@ def _load_artifact(
     return data
 
 
+def _populated_handoff_binding(
+    manifest: dict[str, object],
+) -> tuple[str, str] | None:
+    """Return a populated handoff binding, if the manifest declares one."""
+    handoff = manifest.get("handoff")
+    if not isinstance(handoff, dict):
+        return None
+    manifest_path = handoff.get("manifest_path")
+    locked_scope = handoff.get("locked_scope_sha256")
+    if (
+        manifest_path != "handoff/manifest.json"
+        or not isinstance(locked_scope, str)
+        or SHA256_PATTERN.fullmatch(locked_scope) is None
+    ):
+        return None
+    return manifest_path, locked_scope
+
+
+def _validate_handoff_binding(
+    project_dir: Path,
+    manifest: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    """Validate the populated project-to-handoff manifest binding."""
+    binding = _populated_handoff_binding(manifest)
+    if binding is None:
+        return
+    manifest_path, locked_scope = binding
+    handoff_manifest = _read_canonical_json(project_dir, manifest_path, issues)
+    if handoff_manifest is None:
+        return
+    contract_issues = validate_handoff_manifest(handoff_manifest)
+    for contract_issue in contract_issues:
+        field, separator, message = contract_issue.partition(": ")
+        _add(
+            issues,
+            manifest_path,
+            field,
+            message if separator else contract_issue,
+        )
+    if contract_issues:
+        return
+    for required_artifact in handoff_manifest["required_artifacts"]:
+        artifact_path = required_artifact["path"]
+        try:
+            artifact_bytes = read_contained_bytes(
+                project_dir,
+                artifact_path,
+                max_bytes=MAX_READ_BYTES,
+            )
+        except FileNotFoundError:
+            _add(issues, artifact_path, "file", "required file is missing")
+            continue
+        except (OSError, ValueError) as error:
+            _add(
+                issues,
+                artifact_path,
+                "file",
+                f"cannot read required artifact: {type(error).__name__}",
+            )
+            continue
+        actual_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+        if actual_sha256 != required_artifact["sha256"]:
+            _add(issues, artifact_path, "sha256", "does not match handoff manifest")
+    batches = handoff_manifest["batches"]
+    batches_path = batches["path"]
+    batch_map = _read_canonical_json(project_dir, batches_path, issues)
+    batch_membership: dict[str, tuple[str, str]] | None = None
+    if batch_map is not None:
+        batch_issues = validate_generation_batches(batch_map)
+        for batch_issue in batch_issues:
+            field, separator, message = batch_issue.partition(": ")
+            _add(
+                issues,
+                batches_path,
+                field,
+                message if separator else batch_issue,
+            )
+        if not batch_issues:
+            batch_membership = {
+                job_id: (batch["batch_id"], batch["kind"])
+                for batch in batch_map["batches"]
+                for job_id in batch["job_ids"]
+            }
+            actual_sha256 = hashlib.sha256(canonical_artifact_bytes(batch_map)).hexdigest()
+            if actual_sha256 != batches["sha256"]:
+                _add(issues, batches_path, "sha256", "does not match handoff manifest")
+    job_reference_paths: set[str] = set()
+    if batch_membership is not None:
+        handoff_jobs = handoff_manifest["jobs"]
+        manifest_job_ids = {job["job_id"] for job in handoff_jobs}
+        if manifest_job_ids != set(batch_membership):
+            _add(
+                issues,
+                manifest_path,
+                "jobs",
+                "job IDs must exactly match generation/batches.json",
+            )
+        for handoff_job in handoff_jobs:
+            if handoff_job["status"] == "missing":
+                continue
+            job_path = handoff_job["path"]
+            job = _read_canonical_json(project_dir, job_path, issues)
+            if job is None:
+                continue
+            job_issues = validate_generation_job(job)
+            for job_issue in job_issues:
+                field, separator, message = job_issue.partition(": ")
+                _add(
+                    issues,
+                    job_path,
+                    field,
+                    message if separator else job_issue,
+                )
+            if job_issues:
+                continue
+            job_reference_paths.update(reference["path"] for reference in job["references"])
+            job_id = handoff_job["job_id"]
+            if handoff_job["status"] == "ready":
+                job_inputs = [
+                    (
+                        job["prompt_path"],
+                        "prompt_path",
+                        "prompt_sha256",
+                        job["prompt_sha256"],
+                        False,
+                    )
+                ]
+                job_inputs.extend(
+                    (
+                        reference["path"],
+                        f"references[{index}].path",
+                        f"references[{index}].sha256",
+                        reference["sha256"],
+                        True,
+                    )
+                    for index, reference in enumerate(job["references"])
+                )
+                for (
+                    input_path,
+                    path_field,
+                    sha256_field,
+                    expected_sha256,
+                    validate_raster,
+                ) in job_inputs:
+                    try:
+                        input_bytes = read_contained_bytes(
+                            project_dir,
+                            input_path,
+                            max_bytes=MAX_READ_BYTES,
+                        )
+                    except FileNotFoundError:
+                        _add(issues, job_path, path_field, "input file is missing")
+                        continue
+                    except (OSError, ValueError) as error:
+                        _add(
+                            issues,
+                            job_path,
+                            path_field,
+                            f"cannot read input file: {type(error).__name__}",
+                        )
+                        continue
+                    actual_sha256 = hashlib.sha256(input_bytes).hexdigest()
+                    if actual_sha256 != expected_sha256:
+                        _add(issues, job_path, sha256_field, "does not match input file")
+                    if validate_raster:
+                        _validate_raster(project_dir, input_path, job_path, path_field, issues)
+            if job["job_id"] != job_id:
+                _add(issues, job_path, "job_id", "does not match handoff manifest")
+            membership = batch_membership.get(job_id)
+            if membership is not None:
+                expected_batch_id, expected_kind = membership
+                if job["batch_id"] != expected_batch_id:
+                    _add(issues, job_path, "batch_id", "does not match generation/batches.json")
+                if job["subject_kind"] != expected_kind:
+                    _add(
+                        issues,
+                        job_path,
+                        "subject_kind",
+                        "does not match generation/batches.json",
+                    )
+            actual_sha256 = hashlib.sha256(canonical_artifact_bytes(job)).hexdigest()
+            if actual_sha256 != handoff_job["sha256"]:
+                _add(issues, job_path, "sha256", "does not match handoff manifest")
+    try:
+        assert_current_locked_scope(
+            project_dir,
+            locked_scope,
+            reference_paths=sorted(job_reference_paths),
+        )
+    except StaleLockedScopeError:
+        _add(
+            issues,
+            manifest_path,
+            "locked_scope_sha256",
+            "does not match current project scope",
+        )
+    except (HandoffContractError, OSError, ValueError) as error:
+        _add(
+            issues,
+            manifest_path,
+            "locked_scope_sha256",
+            f"cannot recompute current project scope: {type(error).__name__}",
+        )
+    expected = {
+        "locked_scope_sha256": locked_scope,
+        "project_id": manifest.get("project_id"),
+        "project_schema_version": manifest.get("schema_version"),
+        "stage": manifest.get("status"),
+    }
+    for field, value in expected.items():
+        if handoff_manifest.get(field) != value:
+            _add(issues, manifest_path, field, f"must match project.json {field}")
+
+
 def _validate_raster(
     project_dir: Path,
     relative_path: object,
@@ -2006,8 +2286,13 @@ def _validate_raster(
                 width, height = image.size
                 if width * height > MAX_DECODED_PIXELS:
                     raise Image.DecompressionBombError("raster exceeds decode limit")
-                if width < 512 or height < 512:
-                    _add(issues, issue_path, field, "image dimensions must both be at least 512px")
+                if width < MIN_RASTER_DIMENSION or height < MIN_RASTER_DIMENSION:
+                    _add(
+                        issues,
+                        issue_path,
+                        field,
+                        f"image dimensions must both be at least {MIN_RASTER_DIMENSION}px",
+                    )
                 if "A" in image.mode or "transparency" in image.info:
                     _add(issues, issue_path, field, "image has unintended alpha transparency")
                 if expected_ratio is not None and height > 0:
@@ -2178,7 +2463,20 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
         raise FileNotFoundError(f"project directory does not exist: {project_dir}")
 
     issues: list[ValidationIssue] = []
-    manifest = _load_artifact(project_dir, "project.json", validate_manifest, issues)
+    manifest_issues: list[ValidationIssue] = []
+    manifest = _load_artifact(project_dir, "project.json", validate_manifest, manifest_issues)
+    if manifest is not None and _populated_handoff_binding(manifest) is not None:
+        manifest_issues = []
+        with ProjectLock(project_dir):
+            manifest = _load_artifact(
+                project_dir,
+                "project.json",
+                validate_manifest,
+                manifest_issues,
+            )
+            if manifest is not None:
+                _validate_handoff_binding(project_dir, manifest, manifest_issues)
+    issues.extend(manifest_issues)
     needs_plan = stage in {"all", "plan", "storyboard", "panels", "final", "export-ready"}
     needs_storyboard = stage in {"all", "storyboard", "panels", "final", "export-ready"}
     needs_panels = stage in {"all", "panels", "final", "export-ready"}

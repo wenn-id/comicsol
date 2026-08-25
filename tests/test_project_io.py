@@ -23,6 +23,12 @@ class ContainedProjectPathTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
+    def test_rejects_nul_in_normalized_and_contained_paths(self):
+        with self.assertRaisesRegex(ValueError, "normalized relative project path"):
+            project_io.normalized_project_relative_path("plan/a\x00b")
+        with self.assertRaisesRegex(ValueError, "relative project path"):
+            contained_project_path(self.project, "plan/a\x00b")
+
     def test_rejects_absolute_traversal_and_windows_drive_paths(self):
         for bad in (
             "../outside.png",

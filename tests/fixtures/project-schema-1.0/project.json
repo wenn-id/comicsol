@@ -1,0 +1,53 @@
+{
+  "artifacts": {
+    "story_plan": {
+      "path": "plan/story-plan.json",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "blocked_from": null,
+  "blocked_reason": null,
+  "capability": {
+    "detected_at": null,
+    "name": null,
+    "status": "not_checked",
+    "supports_dimensions": false,
+    "supports_reference_images": false
+  },
+  "created_at": "2026-08-24T00:00:00Z",
+  "input": {
+    "language": "en",
+    "mode": "short_prompt",
+    "request_path": "source/request.json",
+    "source_path": "source/input.txt",
+    "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "panels": [
+    "p01-01"
+  ],
+  "project_id": "schema-migration-fixture",
+  "schema_version": "1.0",
+  "settings": {
+    "max_panel_retries": 2,
+    "page_count": 1,
+    "page_height": 2400,
+    "page_width": 1600,
+    "panel_count": 1,
+    "reading_direction": "ltr",
+    "style_anchor": "original monochrome ink with restrained amber accents"
+  },
+  "stage_versions": {
+    "composition": "1",
+    "export": "1",
+    "generation": "1",
+    "lettering": "3",
+    "planning": "1",
+    "storyboard": "1"
+  },
+  "status": "PLANNED",
+  "title": "Schema Migration Fixture",
+  "updated_at": "2026-08-24T00:01:00Z",
+  "warnings": [
+    "preserve this unrelated value"
+  ]
+}

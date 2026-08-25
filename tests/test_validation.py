@@ -4,6 +4,7 @@ import json
 import re
 import shutil
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
@@ -14,6 +15,7 @@ from PIL import Image, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 
+import scripts.validate_project as validation  # noqa: E402
 from scripts.comic_sol import (  # noqa: E402
     atomic_write_json,
     init_project,
@@ -22,6 +24,13 @@ from scripts.comic_sol import (  # noqa: E402
     rectangles_overlap,
     sha256_file,
 )
+from scripts.handoff import (  # noqa: E402
+    build_generation_batches,
+    build_generation_job,
+    build_handoff_manifest,
+    locked_scope_sha256,
+)
+from scripts.project_io import MAX_READ_BYTES, ProjectLock  # noqa: E402
 from scripts.validate_project import (  # noqa: E402
     ProjectValidationError,
     ValidationIssue,
@@ -33,6 +42,7 @@ from scripts.validate_project import (  # noqa: E402
     validate_story_plan,
     validate_storyboard,
 )
+from tests.support import make_symlink  # noqa: E402
 from scripts.page_quality import (  # noqa: E402
     CURRENT_PAGE_QA_SCHEMA_VERSION,
     PAGE_BINDING_FIELDS,
@@ -241,7 +251,12 @@ class TemplateContractTests(unittest.TestCase):
             raw = (ROOT / "templates" / name).read_bytes()
             self.assertTrue(raw.endswith(b"\n"), name)
             data = json.loads(raw)
-            expected_schema = "2.0" if name == "panel-record.json" else "1.0"
+            if name == "panel-record.json":
+                expected_schema = "2.0"
+            elif name == "manifest.json":
+                expected_schema = "1.1"
+            else:
+                expected_schema = "1.0"
             self.assertEqual(expected_schema, data["schema_version"])
             expected = (
                 json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -371,9 +386,44 @@ class StrictSchemaValidationTests(unittest.TestCase):
 
         legacy = valid_manifest()
         legacy.pop("schema_version")
+        legacy.pop("handoff", None)
         self.assertEqual([], validate_manifest(legacy))
 
+        explicit_legacy = deepcopy(legacy)
+        explicit_legacy["schema_version"] = "1.0"
+        self.assertEqual([], validate_manifest(explicit_legacy))
+
+        populated = valid_manifest()
+        populated["handoff"] = {
+            "contract_version": "1.0",
+            "locked_scope_sha256": "a" * 64,
+            "manifest_path": "handoff/manifest.json",
+        }
+        self.assertEqual([], validate_manifest(populated))
+
         cases = []
+        data = valid_manifest()
+        data.pop("handoff")
+        cases.append((data, "handoff"))
+        data = valid_manifest()
+        data["handoff"]["unexpected"] = True
+        cases.append((data, "handoff.unexpected"))
+        data = valid_manifest()
+        data["handoff"]["contract_version"] = "1.1"
+        cases.append((data, "handoff.contract_version"))
+        data = valid_manifest()
+        data["handoff"]["locked_scope_sha256"] = "ABC"
+        cases.append((data, "handoff.locked_scope_sha256"))
+        data = valid_manifest()
+        data["handoff"]["locked_scope_sha256"] = "a" * 64
+        cases.append((data, "handoff"))
+        data = valid_manifest()
+        data["handoff"]["manifest_path"] = "handoff/manifest.json"
+        cases.append((data, "handoff"))
+        for unsafe_path in ("../handoff/manifest.json", "/tmp/manifest.json", "C:/manifest.json"):
+            data = valid_manifest()
+            data["handoff"]["manifest_path"] = unsafe_path
+            cases.append((data, "handoff.manifest_path"))
         data = valid_manifest()
         data["surprise"] = True
         cases.append((data, "surprise"))
@@ -865,6 +915,635 @@ class ProjectValidationTests(unittest.TestCase):
         record = valid_panel_record()
         record["raw_sha256"] = sha256_file(raw)
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
+
+    def bind_handoff(self, handoff_manifest=None):
+        manifest = read_json(self.project / "project.json")
+        manifest["handoff"] = {
+            "contract_version": "1.0",
+            "locked_scope_sha256": "a" * 64,
+            "manifest_path": "handoff/manifest.json",
+        }
+        atomic_write_json(self.project / "project.json", manifest)
+        if handoff_manifest is not None:
+            (self.project / "handoff").mkdir(exist_ok=True)
+            atomic_write_json(self.project / "handoff/manifest.json", handoff_manifest)
+        return manifest
+
+    def write_generation_batches(self, value=None):
+        path = self.project / "generation/batches.json"
+        path.parent.mkdir(exist_ok=True)
+        atomic_write_json(path, build_generation_batches([]) if value is None else value)
+        return sha256_file(path)
+
+    def valid_generation_job(self, *, batch_id="panels-001", references=()):
+        prompt = self.project / "prompts/panels/p01-01.txt"
+        prompt.write_text("original panel prompt", encoding="utf-8")
+        return build_generation_job(
+            subject_kind="panel",
+            subject_id="p01-01",
+            prompt_path="prompts/panels/p01-01.txt",
+            prompt_sha256=sha256_file(prompt),
+            references=references,
+            requested_dimensions={"width": 736, "height": 1136},
+            requested_aspect_ratio="46:71",
+            attempt_kind="initial",
+            retry_limit=2,
+            batch_id=batch_id,
+            target_path="panels/attempts/p01-01/initial-001.png",
+        )
+
+    def write_generation_job(self, job, *, path_job_id=None):
+        job_id = job["job_id"] if path_job_id is None else path_job_id
+        path = self.project / f"generation/jobs/{job_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, job)
+        return sha256_file(path)
+
+    @staticmethod
+    def handoff_job(job_id, *, sha256="d" * 64, status="ready"):
+        return {
+            "job_id": job_id,
+            "path": f"generation/jobs/{job_id}.json",
+            "sha256": sha256,
+            "status": status,
+        }
+
+    def valid_handoff_manifest(
+        self,
+        *,
+        batches_sha256="b" * 64,
+        jobs=(),
+        required_artifacts=(),
+    ):
+        manifest = read_json(self.project / "project.json")
+        return build_handoff_manifest(
+            project_id=manifest["project_id"],
+            project_schema_version=manifest["schema_version"],
+            stage=manifest["status"],
+            locked_scope_sha256="a" * 64,
+            batches_path="generation/batches.json",
+            batches_sha256=batches_sha256,
+            jobs=jobs,
+            required_artifacts=required_artifacts,
+        )
+
+    def bind_generation_handoff(
+        self,
+        job,
+        *,
+        job_sha256="d" * 64,
+        status="ready",
+        batch_id="panels-001",
+        batch_kind="panel",
+        batch_job_ids=None,
+        handoff_jobs=None,
+    ):
+        job_ids = [job["job_id"]] if batch_job_ids is None else batch_job_ids
+        batches = (
+            [] if not job_ids else [{"batch_id": batch_id, "kind": batch_kind, "job_ids": job_ids}]
+        )
+        batches_sha256 = self.write_generation_batches(build_generation_batches(batches))
+        jobs = (
+            [self.handoff_job(job["job_id"], sha256=job_sha256, status=status)]
+            if handoff_jobs is None
+            else handoff_jobs
+        )
+        self.bind_handoff(self.valid_handoff_manifest(batches_sha256=batches_sha256, jobs=jobs))
+
+    def refresh_locked_scope(self, *, reference_paths=()):
+        selection_path = self.project / "logs/reference-selection.json"
+        if not selection_path.exists():
+            atomic_write_json(selection_path, {"panels": [], "schema_version": "1.0"})
+        prompt_paths = sorted(
+            path.relative_to(self.project).as_posix()
+            for relative_dir in ("prompts/panels", "prompts/references")
+            for path in (self.project / relative_dir).glob("*.txt")
+        )
+        digest = locked_scope_sha256(
+            self.project,
+            prompt_paths=prompt_paths,
+            reference_paths=reference_paths,
+        )
+        manifest = read_json(self.project / "project.json")
+        manifest["handoff"]["locked_scope_sha256"] = digest
+        atomic_write_json(self.project / "project.json", manifest)
+        handoff = read_json(self.project / "handoff/manifest.json")
+        handoff["locked_scope_sha256"] = digest
+        atomic_write_json(self.project / "handoff/manifest.json", handoff)
+        return digest
+
+    def test_populated_handoff_requires_manifest_on_disk(self):
+        self.bind_handoff()
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "handoff/manifest.json"
+                and issue.field == "file"
+                and "missing" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_unpopulated_handoff_validation_does_not_create_project_lock(self):
+        lock_path = self.project / ".comic-sol.lock"
+        lock_path.unlink(missing_ok=True)
+
+        self.assertEqual([], validate_project(self.project, "plan"))
+
+        self.assertFalse(lock_path.exists())
+
+    def test_populated_handoff_rejects_invalid_manifest_contract(self):
+        self.bind_handoff({"schema_version": "1.0"})
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "handoff/manifest.json" and issue.field == "locked_scope_sha256"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_manifest_must_match_project_binding(self):
+        handoff = self.valid_handoff_manifest(batches_sha256=self.write_generation_batches())
+        self.bind_handoff(handoff)
+        self.refresh_locked_scope()
+        self.assertEqual([], validate_project(self.project, "plan"))
+        handoff = read_json(self.project / "handoff/manifest.json")
+
+        cases = (
+            ("locked_scope_sha256", "b" * 64),
+            ("project_id", "another-project"),
+            ("stage", "PLANNED"),
+        )
+        for field, replacement in cases:
+            with self.subTest(field=field):
+                mismatched = deepcopy(handoff)
+                mismatched[field] = replacement
+                atomic_write_json(self.project / "handoff/manifest.json", mismatched)
+
+                issues = validate_project(self.project, "plan")
+
+                self.assertTrue(
+                    any(
+                        issue.path == "handoff/manifest.json" and issue.field == field
+                        for issue in issues
+                    ),
+                    issues,
+                )
+
+    def test_populated_handoff_requires_batch_map_on_disk(self):
+        handoff = self.valid_handoff_manifest()
+        self.bind_handoff(handoff)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "generation/batches.json"
+                and issue.field == "file"
+                and "missing" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_rejects_invalid_batch_contract(self):
+        batches_sha256 = self.write_generation_batches({"schema_version": "1.0"})
+        handoff = self.valid_handoff_manifest(batches_sha256=batches_sha256)
+        self.bind_handoff(handoff)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "generation/batches.json" and issue.field == "batches"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_requires_matching_batch_hash(self):
+        self.write_generation_batches()
+        self.bind_handoff(self.valid_handoff_manifest())
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "generation/batches.json" and issue.field == "sha256"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_accepts_valid_ready_job_artifact(self):
+        job = self.valid_generation_job()
+        job_sha256 = self.write_generation_job(job)
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+        self.refresh_locked_scope()
+
+        self.assertEqual([], validate_project(self.project, "plan"))
+
+    def test_populated_handoff_holds_project_lock_through_binding_validation(self):
+        job = self.valid_generation_job()
+        job_sha256 = self.write_generation_job(job)
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+        self.refresh_locked_scope()
+        binding_entered = threading.Event()
+        release_binding = threading.Event()
+        scope_entered = threading.Event()
+        release_scope = threading.Event()
+        validation_issues = []
+        validation_errors = []
+        real_validate_binding = validation._validate_handoff_binding
+        real_assert_current_scope = validation.assert_current_locked_scope
+
+        def paused_validate_binding(*args, **kwargs):
+            binding_entered.set()
+            if not release_binding.wait(5):
+                raise TimeoutError("test did not release handoff binding validation")
+            return real_validate_binding(*args, **kwargs)
+
+        def paused_assert_current_scope(*args, **kwargs):
+            scope_entered.set()
+            if not release_scope.wait(5):
+                raise TimeoutError("test did not release locked-scope recomputation")
+            return real_assert_current_scope(*args, **kwargs)
+
+        def run_validation():
+            try:
+                validation_issues.extend(validate_project(self.project, "plan"))
+            except BaseException as error:
+                validation_errors.append(error)
+
+        def attempt_project_lock():
+            outcome = []
+
+            def contend_for_project():
+                try:
+                    with ProjectLock(self.project, timeout=0):
+                        outcome.append("acquired")
+                except TimeoutError:
+                    outcome.append("blocked")
+
+            contender = threading.Thread(target=contend_for_project)
+            contender.start()
+            contender.join(5)
+            self.assertFalse(contender.is_alive())
+            self.assertEqual(1, len(outcome))
+            return outcome[0]
+
+        validator = threading.Thread(target=run_validation)
+        before_binding_outcome = None
+        during_scope_outcome = None
+        binding_observed = False
+        scope_observed = False
+        with (
+            patch.object(
+                validation,
+                "_validate_handoff_binding",
+                side_effect=paused_validate_binding,
+            ),
+            patch.object(
+                validation,
+                "assert_current_locked_scope",
+                side_effect=paused_assert_current_scope,
+            ),
+        ):
+            validator.start()
+            try:
+                binding_observed = binding_entered.wait(5)
+                if binding_observed:
+                    before_binding_outcome = attempt_project_lock()
+                    release_binding.set()
+                    scope_observed = scope_entered.wait(5)
+                    if scope_observed:
+                        during_scope_outcome = attempt_project_lock()
+            finally:
+                release_binding.set()
+                release_scope.set()
+                validator.join(5)
+
+        self.assertTrue(binding_observed)
+        self.assertTrue(scope_observed)
+        self.assertFalse(validator.is_alive())
+        self.assertEqual([], validation_errors)
+        self.assertEqual([], validation_issues)
+        self.assertEqual("blocked", before_binding_outcome)
+        self.assertEqual("blocked", during_scope_outcome)
+        self.assertEqual("acquired", attempt_project_lock())
+
+    def test_populated_handoff_rejects_changed_locked_scope(self):
+        job = self.valid_generation_job()
+        job_sha256 = self.write_generation_job(job)
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+        self.refresh_locked_scope()
+        self.assertEqual([], validate_project(self.project, "plan"))
+        atomic_write_json(
+            self.project / "logs/reference-selection.json",
+            {"panels": [], "revision": "changed", "schema_version": "1.0"},
+        )
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "handoff/manifest.json" and issue.field == "locked_scope_sha256"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_rejects_changed_ready_job_prompt(self):
+        job = self.valid_generation_job()
+        job_sha256 = self.write_generation_job(job)
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+        (self.project / job["prompt_path"]).write_text("changed prompt", encoding="utf-8")
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{job['job_id']}.json"
+                and issue.field == "prompt_sha256"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_rejects_changed_ready_job_reference(self):
+        reference_path = self.project / "references/characters/mira.png"
+        Image.new("RGB", (512, 512), "white").save(reference_path)
+        job = self.valid_generation_job(
+            references=[
+                {
+                    "path": "references/characters/mira.png",
+                    "sha256": sha256_file(reference_path),
+                }
+            ]
+        )
+        job_sha256 = self.write_generation_job(job)
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+        Image.new("RGB", (512, 512), "black").save(reference_path)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{job['job_id']}.json"
+                and issue.field == "references[0].sha256"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_rejects_undecodable_ready_job_reference(self):
+        reference_path = self.project / "references/characters/mira.png"
+        reference_path.write_bytes(b"not a PNG")
+        relative_path = "references/characters/mira.png"
+        job = self.valid_generation_job(
+            references=[{"path": relative_path, "sha256": sha256_file(reference_path)}]
+        )
+        job_sha256 = self.write_generation_job(job)
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+        self.refresh_locked_scope(reference_paths=[relative_path])
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{job['job_id']}.json"
+                and issue.field == "references[0].path"
+                and "unreadable" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_requires_non_missing_job_artifact(self):
+        job = self.valid_generation_job()
+        self.bind_generation_handoff(job)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{job['job_id']}.json"
+                and issue.field == "file"
+                and "missing" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_rejects_invalid_job_contract(self):
+        job = self.valid_generation_job()
+        invalid_job = {"schema_version": "1.0"}
+        job_sha256 = self.write_generation_job(invalid_job, path_job_id=job["job_id"])
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{job['job_id']}.json" and issue.field == "job_id"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_requires_matching_job_hash(self):
+        job = self.valid_generation_job()
+        self.write_generation_job(job)
+        self.bind_generation_handoff(job)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{job['job_id']}.json" and issue.field == "sha256"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_requires_job_content_id_to_match_manifest(self):
+        declared_job = self.valid_generation_job()
+        stored_job = self.valid_generation_job(batch_id="panels-002")
+        job_sha256 = self.write_generation_job(stored_job, path_job_id=declared_job["job_id"])
+        self.bind_generation_handoff(declared_job, job_sha256=job_sha256)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{declared_job['job_id']}.json"
+                and issue.field == "job_id"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_reconciles_batch_and_manifest_job_ids(self):
+        job = self.valid_generation_job()
+        cases = (
+            {"handoff_jobs": []},
+            {"batch_job_ids": [], "status": "missing"},
+        )
+        for options in cases:
+            with self.subTest(options=options):
+                self.bind_generation_handoff(job, **options)
+
+                issues = validate_project(self.project, "plan")
+
+                self.assertTrue(
+                    any(
+                        issue.path == "handoff/manifest.json" and issue.field == "jobs"
+                        for issue in issues
+                    ),
+                    issues,
+                )
+
+    def test_populated_handoff_requires_job_to_match_batch_membership(self):
+        cases = (
+            ("panels-002", "panel", "batch_id"),
+            ("panels-001", "reference", "subject_kind"),
+        )
+        for job_batch_id, batch_kind, expected_field in cases:
+            with self.subTest(expected_field=expected_field):
+                job = self.valid_generation_job(batch_id=job_batch_id)
+                job_sha256 = self.write_generation_job(job)
+                self.bind_generation_handoff(
+                    job,
+                    job_sha256=job_sha256,
+                    batch_kind=batch_kind,
+                )
+
+                issues = validate_project(self.project, "plan")
+
+                self.assertTrue(
+                    any(
+                        issue.path == f"generation/jobs/{job['job_id']}.json"
+                        and issue.field == expected_field
+                        for issue in issues
+                    ),
+                    issues,
+                )
+
+    def test_populated_handoff_allows_missing_status_without_job_artifact(self):
+        job = self.valid_generation_job()
+        self.bind_generation_handoff(job, status="missing")
+        self.refresh_locked_scope()
+
+        self.assertEqual([], validate_project(self.project, "plan"))
+
+    def test_populated_handoff_requires_declared_artifact_on_disk(self):
+        batches_sha256 = self.write_generation_batches()
+        handoff = self.valid_handoff_manifest(
+            batches_sha256=batches_sha256,
+            required_artifacts=[{"path": "plan/missing.txt", "sha256": "1" * 64}],
+        )
+        self.bind_handoff(handoff)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "plan/missing.txt"
+                and issue.field == "file"
+                and "missing" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_requires_matching_artifact_hash(self):
+        batches_sha256 = self.write_generation_batches()
+        handoff = self.valid_handoff_manifest(
+            batches_sha256=batches_sha256,
+            required_artifacts=[{"path": "source/input.txt", "sha256": "2" * 64}],
+        )
+        self.bind_handoff(handoff)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "source/input.txt"
+                and issue.field == "sha256"
+                and "handoff manifest" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_accepts_valid_required_artifact(self):
+        batches_sha256 = self.write_generation_batches()
+        handoff = self.valid_handoff_manifest(
+            batches_sha256=batches_sha256,
+            required_artifacts=[
+                {
+                    "path": "source/input.txt",
+                    "sha256": sha256_file(self.project / "source/input.txt"),
+                }
+            ],
+        )
+        self.bind_handoff(handoff)
+        self.refresh_locked_scope()
+
+        self.assertEqual([], validate_project(self.project, "plan"))
+
+    def test_populated_handoff_rejects_oversized_required_artifact(self):
+        artifact_path = self.project / "plan/oversized.bin"
+        with artifact_path.open("wb") as stream:
+            stream.truncate(MAX_READ_BYTES + 1)
+        batches_sha256 = self.write_generation_batches()
+        handoff = self.valid_handoff_manifest(
+            batches_sha256=batches_sha256,
+            required_artifacts=[{"path": "plan/oversized.bin", "sha256": "3" * 64}],
+        )
+        self.bind_handoff(handoff)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "plan/oversized.bin"
+                and issue.field == "file"
+                and "InputResourceLimitError" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_rejects_linked_required_artifact(self):
+        outside = self.root / "outside.txt"
+        outside.write_text("private", encoding="utf-8")
+        linked = self.project / "plan/linked.txt"
+        make_symlink(self, linked, outside)
+        batches_sha256 = self.write_generation_batches()
+        handoff = self.valid_handoff_manifest(
+            batches_sha256=batches_sha256,
+            required_artifacts=[{"path": "plan/linked.txt", "sha256": sha256_file(outside)}],
+        )
+        self.bind_handoff(handoff)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "plan/linked.txt"
+                and issue.field == "file"
+                and "required artifact" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_plan_stage_reads_only_plan_files(self):
         (self.project / "plan/storyboard.json").unlink()

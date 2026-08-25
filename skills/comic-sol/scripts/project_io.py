@@ -253,6 +253,23 @@ def validate_source_bytes(source: bytes, suffix: str | None = None) -> str:
         raise ValueError("source must be valid UTF-8") from error
 
 
+def normalized_project_relative_path(relative: str | Path) -> str:
+    """Return one already-normalized POSIX project-relative path.
+
+    Contract artifacts must use a single lexical spelling so aliases such as
+    repeated separators, dot components, trailing separators, and backslashes
+    cannot identify one file with different hashes or IDs.
+    """
+    text = os.fspath(relative)
+    if not text or "\x00" in text or "\\" in text or text.startswith("/") or _DRIVE.match(text):
+        raise ValueError("path must be a normalized relative project path")
+    path = PurePosixPath(text)
+    parts = path.parts
+    if not parts or any(part in {"", ".", ".."} for part in parts) or path.as_posix() != text:
+        raise ValueError("path must be a normalized relative project path")
+    return text
+
+
 def contained_project_path(
     project_dir: Path,
     relative: str | Path,
@@ -261,7 +278,13 @@ def contained_project_path(
 ) -> Path:
     """Resolve a safe relative path within a project directory."""
     text = os.fspath(relative).replace("\\", "/")
-    if not text or text.startswith("/") or _DRIVE.match(text) or ".." in text.split("/"):
+    if (
+        not text
+        or "\x00" in text
+        or text.startswith("/")
+        or _DRIVE.match(text)
+        or ".." in text.split("/")
+    ):
         raise ValueError("path must be a relative project path")
     root = Path(project_dir).resolve(strict=True)
     unresolved = root.joinpath(*PurePosixPath(text).parts)

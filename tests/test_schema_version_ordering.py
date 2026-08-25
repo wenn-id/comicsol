@@ -20,7 +20,9 @@ class SchemaVersionParserTests(unittest.TestCase):
     """
 
     def test_supported_version_has_no_error(self):
+        self.assertEqual("1.1", CURRENT_PROJECT_SCHEMA_VERSION)
         self.assertIsNone(schema_version_error(CURRENT_PROJECT_SCHEMA_VERSION))
+        self.assertIsNone(schema_version_error("1.0"))
 
     def test_newer_double_digit_version_is_reported_as_newer(self):
         error = schema_version_error("10.0")
@@ -30,8 +32,8 @@ class SchemaVersionParserTests(unittest.TestCase):
     def test_double_digit_minor_orders_numerically(self):
         error = schema_version_error("1.10")
         self.assertIsInstance(error, UnsupportedSchemaVersionError)
-        # "1.10" is newer than "1.9" numerically but older lexicographically;
-        # the parser must treat it as a newer version than the current 1.0.
+        # "1.10" is newer than "1.1" numerically but older lexicographically;
+        # the parser must treat it as newer than the current reader.
         self.assertIn("upgrade Comic Sol", str(error))
 
     def test_older_version_without_migration_is_unsupported(self):
@@ -40,7 +42,7 @@ class SchemaVersionParserTests(unittest.TestCase):
         self.assertIn("no migration path", str(error))
 
     def test_version_between_reader_and_current_without_migration_fails_closed(self):
-        # "1.5" is newer than 1.0 (and newer than any 1.x the reader knows) but
+        # "1.5" is newer than 1.1 (and newer than any 1.x the reader knows) but
         # has no registered migration, so it must fail closed rather than
         # being treated as an old readable version.
         error = schema_version_error("1.5")
@@ -62,7 +64,7 @@ class SchemaVersionParserTests(unittest.TestCase):
                 self.assertIsNone(schema_version_error(version))
 
     def test_reader_rejects_manifest_version_above_current_reader_support(self):
-        # The reader supports at most 1.0 today; 2.0 must be a "newer" error,
+        # The reader supports at most 1.1 today; 2.0 must be a "newer" error,
         # not an "older/no migration" error, even though "2.0" < "10.0" both ways.
         error = schema_version_error("2.0")
         self.assertIn("upgrade Comic Sol", str(error))
