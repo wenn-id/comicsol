@@ -648,6 +648,33 @@ class LockedScopeTests(unittest.TestCase):
                 reference_paths=["references/characters/mira.png"],
             )
 
+    def test_scope_hash_covers_job_references_outside_the_selection_plan(self):
+        job_reference = self.project / "references/characters/sol.png"
+        job_reference.write_bytes(b"job reference version one")
+        prompt_paths = ["prompts/panels/p01-01.txt", "prompts/panels/p01-02.txt"]
+        reference_paths = [
+            "references/characters/mira.png",
+            "references/characters/sol.png",
+        ]
+
+        try:
+            expected = locked_scope_sha256(
+                self.project,
+                prompt_paths=prompt_paths,
+                reference_paths=reference_paths,
+            )
+        except HandoffContractError as error:
+            self.fail(f"job reference was excluded from the locked scope: {error}")
+        job_reference.write_bytes(b"job reference version two")
+
+        with self.assertRaisesRegex(StaleLockedScopeError, "stale project scope"):
+            assert_locked_scope(
+                self.project,
+                expected,
+                prompt_paths=prompt_paths,
+                reference_paths=reference_paths,
+            )
+
     def test_locked_scope_holds_project_lock_through_discovery_and_comparison(self):
         expected = locked_scope_sha256(
             self.project,

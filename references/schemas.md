@@ -90,7 +90,10 @@ The manifest is created from `templates/manifest.json` and is the authoritative 
 Schema `1.1` requires exactly `contract_version`, `locked_scope_sha256`, and
 `manifest_path`. `contract_version` is `"1.0"`. New and freshly migrated projects set
 the latter two fields to `null`; once prepared, they are a lowercase SHA-256 and exactly
-`handoff/manifest.json`. Schema `1.0` manifests do not contain this object.
+`handoff/manifest.json`. When populated, project validation loads that contained handoff
+manifest, validates its contract, and requires its locked-scope digest, project ID, project
+schema version, and lifecycle stage to match `project.json`. Schema `1.0` manifests do not
+contain this object.
 
 ### Manifest statuses
 
@@ -229,12 +232,14 @@ each job binds its canonical path and hash and reports `missing`, `ready`, `comp
 
 The locked-scope digest covers canonical content for `plan/story-plan.json`,
 `plan/character-bible.json`, `plan/storyboard.json`, every generation prompt,
-`logs/reference-selection.json`, `generation/batches.json`, and every selected local
-reference asset. The supplied prompt and reference path sets must exactly match the regular
-`.txt` files in both generation-prompt directories and the selected paths in the reference
-selection plan; an omitted or extra path fails closed. JSON is compact-canonicalized before
-content hashing. File records are sorted by project-relative path, serialized with the
-contract version, and hashed, so filesystem and caller ordering cannot change the digest.
+`logs/reference-selection.json`, `generation/batches.json`, every selected local reference
+asset, and every additional local reference asset named by a generation job. The supplied
+prompt path set must exactly match the regular `.txt` files in both generation-prompt
+directories. The supplied reference path set is the complete union of selected and
+job-referenced assets; every selected path is mandatory, while job-only paths are included in
+the digest instead of being rejected as extras. JSON is compact-canonicalized before content
+hashing. File records are sorted by project-relative path, serialized with the contract
+version, and hashed, so filesystem and caller ordering cannot change the digest.
 
 Executor declarations contain exactly a stable `capability_id`, `executor_kind`,
 `text_to_image`, `local_raster`, and the three support flags above. Declarations that do

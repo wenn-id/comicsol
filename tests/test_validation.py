@@ -22,6 +22,7 @@ from scripts.comic_sol import (  # noqa: E402
     rectangles_overlap,
     sha256_file,
 )
+from scripts.handoff import build_handoff_manifest  # noqa: E402
 from scripts.validate_project import (  # noqa: E402
     ProjectValidationError,
     ValidationIssue,
@@ -905,6 +906,86 @@ class ProjectValidationTests(unittest.TestCase):
         record = valid_panel_record()
         record["raw_sha256"] = sha256_file(raw)
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
+
+    def bind_handoff(self, handoff_manifest=None):
+        manifest = read_json(self.project / "project.json")
+        manifest["handoff"] = {
+            "contract_version": "1.0",
+            "locked_scope_sha256": "a" * 64,
+            "manifest_path": "handoff/manifest.json",
+        }
+        atomic_write_json(self.project / "project.json", manifest)
+        if handoff_manifest is not None:
+            (self.project / "handoff").mkdir(exist_ok=True)
+            atomic_write_json(self.project / "handoff/manifest.json", handoff_manifest)
+        return manifest
+
+    def valid_handoff_manifest(self):
+        manifest = read_json(self.project / "project.json")
+        return build_handoff_manifest(
+            project_id=manifest["project_id"],
+            project_schema_version=manifest["schema_version"],
+            stage=manifest["status"],
+            locked_scope_sha256="a" * 64,
+            batches_path="generation/batches.json",
+            batches_sha256="b" * 64,
+            jobs=[],
+            required_artifacts=[],
+        )
+
+    def test_populated_handoff_requires_manifest_on_disk(self):
+        self.bind_handoff()
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "handoff/manifest.json"
+                and issue.field == "file"
+                and "missing" in issue.message
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_rejects_invalid_manifest_contract(self):
+        self.bind_handoff({"schema_version": "1.0"})
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == "handoff/manifest.json" and issue.field == "locked_scope_sha256"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_manifest_must_match_project_binding(self):
+        handoff = self.valid_handoff_manifest()
+        self.bind_handoff(handoff)
+        self.assertEqual([], validate_project(self.project, "plan"))
+
+        cases = (
+            ("locked_scope_sha256", "b" * 64),
+            ("project_id", "another-project"),
+            ("stage", "PLANNED"),
+        )
+        for field, replacement in cases:
+            with self.subTest(field=field):
+                mismatched = deepcopy(handoff)
+                mismatched[field] = replacement
+                atomic_write_json(self.project / "handoff/manifest.json", mismatched)
+
+                issues = validate_project(self.project, "plan")
+
+                self.assertTrue(
+                    any(
+                        issue.path == "handoff/manifest.json" and issue.field == field
+                        for issue in issues
+                    ),
+                    issues,
+                )
 
     def test_plan_stage_reads_only_plan_files(self):
         (self.project / "plan/storyboard.json").unlink()

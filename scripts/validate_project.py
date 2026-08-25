@@ -28,6 +28,7 @@ from .character_quality import (
 )
 from .core_primitives import PANEL_ID_PATTERN as CORE_PANEL_ID_PATTERN
 from .core_primitives import dialogue_attribution_conflicts, is_normalized_point
+from .handoff import validate_handoff_manifest
 from .project_io import contained_project_path, open_path_nofollow, read_bytes_nofollow
 from .layouts import layout_rects
 from .lifecycle_contracts import ALL_STATUSES, CATEGORY, LINEAR_STATUSES
@@ -2019,6 +2020,48 @@ def _load_artifact(
     return data
 
 
+def _validate_handoff_binding(
+    project_dir: Path,
+    manifest: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    """Validate the populated project-to-handoff manifest binding."""
+    handoff = manifest.get("handoff")
+    if not isinstance(handoff, dict):
+        return
+    manifest_path = handoff.get("manifest_path")
+    locked_scope = handoff.get("locked_scope_sha256")
+    if (
+        manifest_path != "handoff/manifest.json"
+        or not isinstance(locked_scope, str)
+        or SHA256_PATTERN.fullmatch(locked_scope) is None
+    ):
+        return
+    handoff_manifest = _read_canonical_json(project_dir, manifest_path, issues)
+    if handoff_manifest is None:
+        return
+    contract_issues = validate_handoff_manifest(handoff_manifest)
+    for contract_issue in contract_issues:
+        field, separator, message = contract_issue.partition(": ")
+        _add(
+            issues,
+            manifest_path,
+            field,
+            message if separator else contract_issue,
+        )
+    if contract_issues:
+        return
+    expected = {
+        "locked_scope_sha256": locked_scope,
+        "project_id": manifest.get("project_id"),
+        "project_schema_version": manifest.get("schema_version"),
+        "stage": manifest.get("status"),
+    }
+    for field, value in expected.items():
+        if handoff_manifest.get(field) != value:
+            _add(issues, manifest_path, field, f"must match project.json {field}")
+
+
 def _validate_raster(
     project_dir: Path,
     relative_path: object,
@@ -2229,6 +2272,8 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
 
     issues: list[ValidationIssue] = []
     manifest = _load_artifact(project_dir, "project.json", validate_manifest, issues)
+    if manifest is not None:
+        _validate_handoff_binding(project_dir, manifest, issues)
     needs_plan = stage in {"all", "plan", "storyboard", "panels", "final", "export-ready"}
     needs_storyboard = stage in {"all", "storyboard", "panels", "final", "export-ready"}
     needs_panels = stage in {"all", "panels", "final", "export-ready"}

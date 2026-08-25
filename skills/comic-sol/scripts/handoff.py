@@ -779,14 +779,13 @@ def _complete_scope_paths(
             ["prompt_paths: must contain all generation prompts exactly once"]
         )
     authoritative_references = _authoritative_reference_paths(project_dir)
-    if (
-        len(provided_references) != len(set(provided_references))
-        or set(provided_references) != authoritative_references
-    ):
+    if len(provided_references) != len(
+        set(provided_references)
+    ) or not authoritative_references.issubset(provided_references):
         raise HandoffContractError(
             ["reference_paths: must contain all selected references exactly once"]
         )
-    return set(LOCKED_SCOPE_FIXED_PATHS) | authoritative_prompts | authoritative_references
+    return set(LOCKED_SCOPE_FIXED_PATHS) | authoritative_prompts | set(provided_references)
 
 
 def _locked_scope_sha256(
