@@ -2135,6 +2135,45 @@ def _validate_handoff_binding(
             if job_issues:
                 continue
             job_id = handoff_job["job_id"]
+            if handoff_job["status"] == "ready":
+                job_inputs = [
+                    (
+                        job["prompt_path"],
+                        "prompt_path",
+                        "prompt_sha256",
+                        job["prompt_sha256"],
+                    )
+                ]
+                job_inputs.extend(
+                    (
+                        reference["path"],
+                        f"references[{index}].path",
+                        f"references[{index}].sha256",
+                        reference["sha256"],
+                    )
+                    for index, reference in enumerate(job["references"])
+                )
+                for input_path, path_field, sha256_field, expected_sha256 in job_inputs:
+                    try:
+                        input_bytes = read_contained_bytes(
+                            project_dir,
+                            input_path,
+                            max_bytes=MAX_READ_BYTES,
+                        )
+                    except FileNotFoundError:
+                        _add(issues, job_path, path_field, "input file is missing")
+                        continue
+                    except (OSError, ValueError) as error:
+                        _add(
+                            issues,
+                            job_path,
+                            path_field,
+                            f"cannot read input file: {type(error).__name__}",
+                        )
+                        continue
+                    actual_sha256 = hashlib.sha256(input_bytes).hexdigest()
+                    if actual_sha256 != expected_sha256:
+                        _add(issues, job_path, sha256_field, "does not match input file")
             if job["job_id"] != job_id:
                 _add(issues, job_path, "job_id", "does not match handoff manifest")
             membership = batch_membership.get(job_id)

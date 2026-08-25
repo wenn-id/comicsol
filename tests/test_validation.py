@@ -39,6 +39,7 @@ from scripts.validate_project import (  # noqa: E402
     validate_story_plan,
     validate_storyboard,
 )
+from tests.support import make_symlink  # noqa: E402
 from scripts.page_quality import (  # noqa: E402
     CURRENT_PAGE_QA_SCHEMA_VERSION,
     PAGE_BINDING_FIELDS,
@@ -931,13 +932,15 @@ class ProjectValidationTests(unittest.TestCase):
         atomic_write_json(path, build_generation_batches([]) if value is None else value)
         return sha256_file(path)
 
-    def valid_generation_job(self, *, batch_id="panels-001"):
+    def valid_generation_job(self, *, batch_id="panels-001", references=()):
+        prompt = self.project / "prompts/panels/p01-01.txt"
+        prompt.write_text("original panel prompt", encoding="utf-8")
         return build_generation_job(
             subject_kind="panel",
             subject_id="p01-01",
             prompt_path="prompts/panels/p01-01.txt",
-            prompt_sha256="c" * 64,
-            references=[],
+            prompt_sha256=sha256_file(prompt),
+            references=references,
             requested_dimensions={"width": 736, "height": 1136},
             requested_aspect_ratio="46:71",
             attempt_kind="initial",
@@ -1109,6 +1112,49 @@ class ProjectValidationTests(unittest.TestCase):
         self.bind_generation_handoff(job, job_sha256=job_sha256)
 
         self.assertEqual([], validate_project(self.project, "plan"))
+
+    def test_populated_handoff_rejects_changed_ready_job_prompt(self):
+        job = self.valid_generation_job()
+        job_sha256 = self.write_generation_job(job)
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+        (self.project / job["prompt_path"]).write_text("changed prompt", encoding="utf-8")
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{job['job_id']}.json"
+                and issue.field == "prompt_sha256"
+                for issue in issues
+            ),
+            issues,
+        )
+
+    def test_populated_handoff_rejects_changed_ready_job_reference(self):
+        reference_path = self.project / "references/characters/mira.png"
+        Image.new("RGB", (8, 8), "white").save(reference_path)
+        job = self.valid_generation_job(
+            references=[
+                {
+                    "path": "references/characters/mira.png",
+                    "sha256": sha256_file(reference_path),
+                }
+            ]
+        )
+        job_sha256 = self.write_generation_job(job)
+        self.bind_generation_handoff(job, job_sha256=job_sha256)
+        Image.new("RGB", (8, 8), "black").save(reference_path)
+
+        issues = validate_project(self.project, "plan")
+
+        self.assertTrue(
+            any(
+                issue.path == f"generation/jobs/{job['job_id']}.json"
+                and issue.field == "references[0].sha256"
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_populated_handoff_requires_non_missing_job_artifact(self):
         job = self.valid_generation_job()
@@ -1308,10 +1354,7 @@ class ProjectValidationTests(unittest.TestCase):
         outside = self.root / "outside.txt"
         outside.write_text("private", encoding="utf-8")
         linked = self.project / "plan/linked.txt"
-        try:
-            linked.symlink_to(outside)
-        except OSError as error:
-            self.skipTest(f"symlink unavailable: {error}")
+        make_symlink(self, linked, outside)
         batches_sha256 = self.write_generation_batches()
         handoff = self.valid_handoff_manifest(
             batches_sha256=batches_sha256,
