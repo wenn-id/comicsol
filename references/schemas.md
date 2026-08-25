@@ -196,7 +196,8 @@ or `panel`; panel IDs use `pNN-NN`. Attempt kind is `initial`, `visual_retry`, o
 `transient_repeat`, and retry limit is 0–2. Panel targets are restricted to
 `panels/attempts/<panel-id>/<attempt-kind>-<sequence>.<png|jpg|webp>`; reference
 targets use the equivalent `references/attempts/<reference-id>/` namespace. A job
-cannot name project metadata or another subject's attempt path.
+cannot name project metadata or another subject's attempt path. Populated dimensions
+must not exceed the shared decoded-pixel limit in `scripts/raster_limits.py`.
 
 `job_id` is the full lowercase SHA-256 of compact canonical JSON containing contract
 version `1.0` and all job fields above except `schema_version` and `job_id`. Reference

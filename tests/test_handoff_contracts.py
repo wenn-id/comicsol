@@ -28,6 +28,7 @@ from scripts.handoff import (
     validate_handoff_manifest,
 )
 from scripts.project_io import ProjectLock
+from scripts.raster_limits import MAX_DECODED_PIXELS
 
 
 PROMPT_SHA256 = "a" * 64
@@ -386,6 +387,32 @@ class GenerationContractTests(unittest.TestCase):
                     target_path="panels/attempts/p01-01/initial-001.png",
                 )
                 self.assertEqual([], validate_generation_job(job))
+
+    def test_requested_dimensions_respect_decoded_pixel_limit_boundary(self):
+        def build_job(dimensions):
+            return build_generation_job(
+                subject_kind="panel",
+                subject_id="p01-01",
+                prompt_path="prompts/panels/p01-01.txt",
+                prompt_sha256=PROMPT_SHA256,
+                references=[],
+                requested_dimensions=dimensions,
+                requested_aspect_ratio=None,
+                attempt_kind="initial",
+                retry_limit=2,
+                batch_id="panels-001",
+                target_path="panels/attempts/p01-01/initial-001.png",
+            )
+
+        at_limit = build_job({"width": MAX_DECODED_PIXELS, "height": 1})
+        self.assertEqual([], validate_generation_job(at_limit))
+
+        above_limit = deepcopy(at_limit)
+        above_limit["requested_dimensions"]["width"] += 1
+        self.assert_invalid(validate_generation_job, above_limit, "requested_dimensions")
+
+        without_dimensions = build_job(None)
+        self.assertEqual([], validate_generation_job(without_dimensions))
 
     def test_job_references_are_canonical_local_character_or_scene_pngs(self):
         for path in (

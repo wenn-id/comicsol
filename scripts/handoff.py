@@ -24,6 +24,7 @@ from .project_io import (
     normalized_project_relative_path,
     read_contained_bytes,
 )
+from .raster_limits import MAX_DECODED_PIXELS
 
 HANDOFF_CONTRACT_VERSION = "1.0"
 BATCHES_PATH = "generation/batches.json"
@@ -369,6 +370,18 @@ def validate_generation_job(value: object) -> list[str]:
                 number = item.get(name)
                 if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
                     issues.append(f"requested_dimensions.{name}: must be a positive integer")
+            width = item.get("width")
+            height = item.get("height")
+            if (
+                not isinstance(width, bool)
+                and isinstance(width, int)
+                and width > 0
+                and not isinstance(height, bool)
+                and isinstance(height, int)
+                and height > 0
+                and width * height > MAX_DECODED_PIXELS
+            ):
+                issues.append("requested_dimensions: exceeds the decoded pixel limit")
     aspect_ratio = root.get("requested_aspect_ratio")
     if aspect_ratio is not None and (
         not isinstance(aspect_ratio, str) or _ASPECT_RATIO_PATTERN.fullmatch(aspect_ratio) is None
