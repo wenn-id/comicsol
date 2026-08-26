@@ -957,6 +957,8 @@ class ComfyUIExecutorTests(unittest.TestCase):
                 self._write_profile(workflow_hash)
 
     def test_directory_fsync_failure_removes_owned_publication(self) -> None:
+        if not hasattr(os, "O_DIRECTORY"):
+            self.skipTest("directory fsync is unavailable on this platform")
         real_fsync = os.fsync
         calls = 0
 
