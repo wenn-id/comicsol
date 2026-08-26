@@ -62,6 +62,10 @@ class StaleLockedScopeError(HandoffContractError):
     """Raised when returned work no longer belongs to the locked project scope."""
 
 
+class HandoffResultError(HandoffContractError):
+    """Raised when executor metadata or a submitted result cannot be accepted."""
+
+
 def _object(
     value: object,
     *,
@@ -136,7 +140,7 @@ def _safe_label(
     if not isinstance(value, str) or not value or len(value) > 128:
         issues.append(f"{field}: must be a non-empty string of at most 128 characters")
         return
-    if any(ord(character) < 32 for character in value):
+    if any(ord(character) < 32 or 0x7F <= ord(character) <= 0x9F for character in value):
         issues.append(f"{field}: must not contain control characters")
     if looks_like_secret(value):
         issues.append(f"{field}: must not contain secrets or credentials")
@@ -187,6 +191,18 @@ def _derived_job_id(job: Mapping[str, object]) -> str:
         "job": _job_identity(job),
     }
     return hashlib.sha256(canonical_json_bytes(preimage)).hexdigest()
+
+
+def attempt_id(*, job_id: str, attempt: int) -> str:
+    """Derive the deterministic project-local identifier for one attempt ordinal."""
+    issues: list[str] = []
+    _sha256(job_id, "job_id", issues)
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt <= 0:
+        issues.append("attempt: must be a positive integer")
+    _require_valid(issues)
+    preimage = {"attempt": attempt, "job_id": job_id}
+    digest = hashlib.sha256(canonical_json_bytes(preimage)).hexdigest()
+    return "attempt-" + digest[:40]
 
 
 def _retained_raster_path(value: object, field: str, issues: list[str]) -> None:
@@ -576,6 +592,111 @@ def build_generation_receipt(
     return record
 
 
+def reconcile_job_receipts(
+    *,
+    job: Mapping[str, object] | None,
+    job_sha256: str | None,
+    receipts: Sequence[Mapping[str, object]],
+    declared_status: str,
+    stale: bool,
+) -> dict[str, object]:
+    """Validate receipt bindings and derive authoritative effective job state."""
+    if declared_status not in _JOB_STATUSES:
+        raise HandoffContractError(["declared_status: unknown generation job status"])
+    if job is None:
+        if declared_status != "missing" or job_sha256 is not None or receipts:
+            raise HandoffContractError(
+                ["missing job: must not have an artifact digest or receipts"]
+            )
+        return {
+            "status": "missing",
+            "attempts_used": 0,
+            "attempts_remaining": 0,
+            "next_attempt": None,
+            "receipts": [],
+        }
+
+    _require_valid(validate_generation_job(job))
+    canonical_job_sha256 = generation_job_sha256(job)
+    if job_sha256 != canonical_job_sha256:
+        raise HandoffContractError(["job_sha256: does not match the canonical job artifact"])
+    retry_limit = job.get("retry_limit")
+    if isinstance(retry_limit, bool) or not isinstance(retry_limit, int):
+        raise HandoffContractError(["retry_limit: invalid job execution budget"])
+    budget = 1 + retry_limit
+    job_identifier = job.get("job_id")
+    if not isinstance(job_identifier, str):  # guarded by job validation
+        raise HandoffContractError(["job_id: invalid job binding"])
+
+    by_ordinal: dict[int, Mapping[str, object]] = {}
+    for receipt in receipts:
+        _require_valid(validate_generation_receipt(receipt))
+        if receipt.get("job_id") != job_identifier:
+            raise HandoffContractError(["receipt job_id: does not match the generation job"])
+        if receipt.get("job_sha256") != canonical_job_sha256:
+            raise HandoffContractError(["receipt job_sha256: does not match the generation job"])
+        receipt_identifier = receipt.get("attempt_id")
+        ordinal = next(
+            (
+                candidate
+                for candidate in range(1, budget + 1)
+                if attempt_id(job_id=job_identifier, attempt=candidate) == receipt_identifier
+            ),
+            None,
+        )
+        if ordinal is None:
+            raise HandoffContractError(
+                ["receipt attempt_id: does not match an allowed attempt ordinal"]
+            )
+        existing = by_ordinal.get(ordinal)
+        if existing is not None and dict(existing) != dict(receipt):
+            raise HandoffContractError([f"attempt {ordinal}: conflicting duplicate receipt"])
+        by_ordinal[ordinal] = receipt
+
+    ordinals = sorted(by_ordinal)
+    if ordinals != list(range(1, len(ordinals) + 1)):
+        raise HandoffContractError(["receipt attempts: ordinals must be contiguous from 1"])
+    ordered_receipts = [dict(by_ordinal[ordinal]) for ordinal in ordinals]
+    successful_ordinals = [
+        ordinal for ordinal in ordinals if by_ordinal[ordinal].get("outcome") == "success"
+    ]
+    if len(successful_ordinals) > 1:
+        raise HandoffContractError(
+            ["receipt attempts: multiple successful receipts are not allowed"]
+        )
+    if successful_ordinals:
+        successful_ordinal = successful_ordinals[0]
+        later_ordinals = [ordinal for ordinal in ordinals if ordinal > successful_ordinal]
+        if later_ordinals:
+            raise HandoffContractError(
+                [
+                    f"attempt {later_ordinals[0]}: receipt appears after successful receipt "
+                    f"at attempt {successful_ordinal}"
+                ]
+            )
+    attempts_used = len(ordered_receipts)
+    attempts_remaining = budget - attempts_used
+    if stale:
+        status = "stale"
+        next_attempt: int | None = None
+    elif any(receipt.get("outcome") == "success" for receipt in ordered_receipts):
+        status = "completed"
+        next_attempt = None
+    elif attempts_remaining == 0:
+        status = "failed"
+        next_attempt = None
+    else:
+        status = "ready"
+        next_attempt = attempts_used + 1
+    return {
+        "status": status,
+        "attempts_used": attempts_used,
+        "attempts_remaining": attempts_remaining,
+        "next_attempt": next_attempt,
+        "receipts": ordered_receipts,
+    }
+
+
 def validate_handoff_manifest(value: object) -> list[str]:
     """Validate ``handoff/manifest.json`` against contract version 1.0."""
     issues: list[str] = []
@@ -693,6 +814,35 @@ def build_handoff_manifest(
     return record
 
 
+def locked_scope_sha256_from_content(content_by_path: Mapping[str, bytes]) -> str:
+    """Hash a complete staged locked-scope content map without filesystem writes."""
+    normalized: dict[str, bytes] = {}
+    issues: list[str] = []
+    for relative, payload in content_by_path.items():
+        _relative_path(relative, "content_by_path", issues)
+        if not isinstance(payload, bytes):
+            issues.append(f"content_by_path.{relative}: content must be bytes")
+            continue
+        if relative in normalized:
+            issues.append(f"content_by_path.{relative}: duplicate path")
+            continue
+        if relative.endswith(".json"):
+            value = loads_bounded_json(payload, source=relative)
+            normalized[relative] = canonical_json_bytes(value)
+        else:
+            normalized[relative] = payload
+    missing = sorted(set(LOCKED_SCOPE_FIXED_PATHS) - set(normalized))
+    for relative in missing:
+        issues.append(f"content_by_path.{relative}: locked-scope file is missing")
+    _require_valid(issues)
+    files = [
+        {"path": relative, "sha256": hashlib.sha256(normalized[relative]).hexdigest()}
+        for relative in sorted(normalized)
+    ]
+    preimage = {"contract_version": HANDOFF_CONTRACT_VERSION, "files": files}
+    return hashlib.sha256(canonical_json_bytes(preimage)).hexdigest()
+
+
 def _canonical_scope_bytes(project_dir: Path, relative: str) -> bytes:
     payload = read_contained_bytes(
         project_dir,
@@ -803,17 +953,11 @@ def _locked_scope_sha256(
     reference_paths: Sequence[str],
 ) -> str:
     relative_paths = _complete_scope_paths(project_dir, prompt_paths, reference_paths)
-    files = []
-    for relative in sorted(relative_paths):
-        content = _canonical_scope_bytes(project_dir, relative)
-        files.append(
-            {
-                "path": relative,
-                "sha256": hashlib.sha256(content).hexdigest(),
-            }
-        )
-    preimage = {"contract_version": HANDOFF_CONTRACT_VERSION, "files": files}
-    return hashlib.sha256(canonical_json_bytes(preimage)).hexdigest()
+    content_by_path = {
+        relative: _canonical_scope_bytes(project_dir, relative)
+        for relative in sorted(relative_paths)
+    }
+    return locked_scope_sha256_from_content(content_by_path)
 
 
 def locked_scope_sha256(

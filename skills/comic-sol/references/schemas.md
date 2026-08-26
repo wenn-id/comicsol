@@ -183,6 +183,22 @@ contain project-relative paths, hashes, bounded declarations, and sanitized cate
 only. Unknown fields, absolute or traversing paths, credential-shaped values, and raw
 provider payloads are invalid.
 
+Preparation and result intake generate only the following handoff paths:
+
+- the bound handoff manifest at `handoff/manifest.json`;
+- the batch map at `generation/batches.json`;
+- one job at `generation/jobs/<job-id>.json`;
+- one receipt at `generation/receipts/<attempt-id>.json`;
+- retained reference attempts at
+  `references/attempts/<reference-id>/<attempt-kind>-<sequence>.<png|jpg|webp>`; and
+- retained panel attempts at
+  `panels/attempts/<panel-id>/<attempt-kind>-<sequence>.<png|jpg|webp>`.
+
+An explicitly approved reference result is also activated at its canonical
+`references/characters/<reference-id>.png` or `references/scenes/<reference-id>.png`
+path. A panel result is not activated during handoff intake; the normal promotion flow
+later publishes an accepted attempt at `panels/raw/<panel-id>.png`.
+
 ### Batch map: `generation/batches.json`
 
 The root contains exactly `schema_version` and `batches`. Each ordered batch contains
@@ -225,6 +241,59 @@ provider and model sanitization scans the complete label, so adding an opaque pr
 does not hide an embedded URI, credential URL, or absolute path. Outcome categories
 follow the stable bounded category grammar.
 
+### Attempt identity, budget, and effective state
+
+An attempt ordinal is a positive integer. Its deterministic ID is
+`attempt-<digest-prefix>`, where `digest-prefix` is the first 40 lowercase hexadecimal
+characters of SHA-256 over compact canonical JSON containing exactly `attempt` and
+`job_id`. The preimage is therefore `{"attempt":<ordinal>,"job_id":"<job-id>"}`
+under the common canonical JSON rules. A job has exactly `1 + retry_limit` available
+attempts, including its initial attempt.
+
+Receipts are authoritative for attempt use and effective job state. Each receipt must bind
+the current job ID and canonical job-artifact SHA-256, and its `attempt_id` must equal the
+deterministic ID for one ordinal within that job's budget. Persisted receipt ordinals must
+be contiguous from 1 with no gaps. Two exactly equal receipts for the same ordinal
+reconcile as one receipt. Submitting a receipt exactly equal to the already persisted
+receipt is an idempotent no-op after its retained artifacts are revalidated: it stages no
+file and appends no event. A second receipt for the same attempt ID with any differing
+field is a conflicting duplicate and is rejected.
+
+The five effective states are derived rather than trusted from a caller declaration. An
+absent job is `missing` only when it has no artifact digest or receipts. For an existing
+job, stale locked scope or bindings produce `stale`; otherwise any successful receipt
+produces `completed`; otherwise consuming all `1 + retry_limit` attempts produces
+`failed`; and every remaining executable or retryable job is `ready`. `attempts_used` is
+the contiguous receipt count, `attempts_remaining` is the budget minus that count, and
+only `ready` has a next ordinal, `attempts_used + 1`.
+
+### Two-phase preparation and result activation
+
+Handoff preparation is deterministic and two-phase. If any required canonical character
+or scene reference is absent, the reference phase emits only reference jobs. Panel jobs
+are not prepared until every reference job is receipt-derived `completed` and its
+successful retained raster has been explicitly approved and activated at the canonical
+reference path. Approval is required for a successful reference result, is invalid for a
+panel result, and never overwrites an existing canonical reference. Moving backward from
+the panel phase to the reference phase is stale and rejected.
+
+After reference activation is validated, panel preparation preserves the reference batch,
+jobs, and receipts and adds page-ordered panel batches and jobs whose reference bindings
+name the activated canonical assets. A successful panel result writes its retained attempt
+and receipt only. It remains pending normal promotion and visual QA: handoff intake does
+not write `panels/raw/<panel-id>.png`, and only the existing `promote-attempt` acceptance
+flow may publish that path after the attempt passes review.
+
+Invalidation never deletes a retained attempt, so a newly derived job claims the next free
+target instead of the one its retired predecessor holds. A reference job takes the lowest
+`initial-<sequence>` slot no persisted receipt already accounts for, and a panel whose
+initial attempt is already spent is prepared as the next `visual_retry` within the existing
+per-panel retry budget, which is also what the panel's generation counters record when the
+result arrives. A retained target that no receipt binds — or whose bytes no longer match
+the receipt that did — has no provenance in this project and is still refused as an
+unmanaged collision rather than reused or overwritten. Repreparing an unchanged brief keeps
+the job it already published, so a no-op prepare stays byte-identical.
+
 ### Handoff manifest: `handoff/manifest.json`
 
 The root contains exactly `schema_version`, `project_schema_version`, `project_id`,
@@ -246,6 +315,13 @@ bytes must match the job declaration. Ready reference images must also decode as
 local raster data through the same no-follow boundary and stay within the shared decoded-
 pixel limit. Every required artifact is checked the same way; missing, linked, oversized,
 changed, or undecodable inputs invalidate the handoff.
+
+From the `panels` stage onward, a successful panel receipt additionally requires that the
+panel was promoted and accepted: `panels/raw/<panel-id>.png` must exist and its current
+bytes must match the `bindings.raw_sha256` of an accepting `qa/panels/<panel-id>.json`
+record. Acceptance is proven by the quality record that binds the raster on disk, not by
+the receipt of the first successful attempt, so a panel repaired through the visual-retry
+and promotion flow validates on its own accepted bytes.
 
 The locked-scope digest covers canonical content for `plan/story-plan.json`,
 `plan/character-bible.json`, `plan/storyboard.json`, every generation prompt,

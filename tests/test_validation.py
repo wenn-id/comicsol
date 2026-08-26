@@ -25,9 +25,12 @@ from scripts.comic_sol import (  # noqa: E402
     sha256_file,
 )
 from scripts.handoff import (  # noqa: E402
+    attempt_id,
     build_generation_batches,
     build_generation_job,
+    build_generation_receipt,
     build_handoff_manifest,
+    generation_job_sha256,
     locked_scope_sha256,
 )
 from scripts.project_io import MAX_READ_BYTES, ProjectLock  # noqa: E402
@@ -960,6 +963,100 @@ class ProjectValidationTests(unittest.TestCase):
         return sha256_file(path)
 
     @staticmethod
+    def raster_bytes(color=(20, 30, 40), *, image_format="PNG"):
+        stream = io.BytesIO()
+        Image.new("RGB", (736, 1136), color).save(stream, format=image_format)
+        return stream.getvalue()
+
+    def prepare_generation_handoff(self, *, status="ready", references=()):
+        job = self.valid_generation_job(references=references)
+        job_sha256 = self.write_generation_job(job)
+        self.bind_generation_handoff(job, job_sha256=job_sha256, status=status)
+        self.refresh_locked_scope(reference_paths=[reference["path"] for reference in references])
+        return job, job_sha256
+
+    def clear_generation_receipts(self):
+        receipt_dir = self.project / "generation/receipts"
+        if receipt_dir.exists():
+            shutil.rmtree(receipt_dir)
+        receipt_dir.mkdir(parents=True)
+        return receipt_dir
+
+    def write_generation_receipt(
+        self,
+        job,
+        *,
+        attempt=1,
+        outcome="failure",
+        category=None,
+        raster_sha256=None,
+        updates=None,
+        filename=None,
+    ):
+        success = outcome == "success"
+        if success and raster_sha256 is None:
+            raise ValueError("successful fixture receipts require a raster SHA-256")
+        receipt = build_generation_receipt(
+            attempt_id=attempt_id(job_id=job["job_id"], attempt=attempt),
+            job_id=job["job_id"],
+            job_sha256=generation_job_sha256(job),
+            raster_path=job["target_path"] if success else None,
+            raster_sha256=raster_sha256 if success else None,
+            executor_kind="external-tool",
+            executor_id="fixture-renderer",
+            provider="fixture-provider",
+            model="fixture-model",
+            capabilities_used={
+                "reference_images": bool(job["references"]),
+                "dimensions": job["requested_dimensions"] is not None,
+                "localized_edit": False,
+            },
+            outcome=outcome,
+            category=category or ("accepted" if success else "transient-tool-error"),
+        )
+        if updates:
+            receipt.update(updates)
+        receipt_dir = self.project / "generation/receipts"
+        receipt_dir.mkdir(parents=True, exist_ok=True)
+        receipt_name = filename or f"{receipt['attempt_id']}.json"
+        relative = f"generation/receipts/{receipt_name}"
+        atomic_write_json(self.project / relative, receipt)
+        return receipt, relative
+
+    def add_valid_panel_record_v2(self):
+        self.add_panel_files()
+        clean = normalize_panel(
+            self.project,
+            "p01-01",
+            "panels/raw/p01-01.png",
+            (736, 1136),
+            "exact",
+        )
+        record = valid_panel_record_v2()
+        record["bindings"].update(
+            {
+                "raw_sha256": sha256_file(self.project / record["bindings"]["raw_path"]),
+                "clean_sha256": sha256_file(clean),
+                "normalization_sha256": sha256_file(
+                    self.project / record["bindings"]["normalization_path"]
+                ),
+            }
+        )
+        atomic_write_json(self.project / "qa/panels/p01-01.json", record)
+        return record
+
+    def assert_project_issue(self, issues, path, field, *message_fragments):
+        self.assertTrue(
+            any(
+                issue.path == path
+                and issue.field == field
+                and all(fragment in issue.message for fragment in message_fragments)
+                for issue in issues
+            ),
+            f"expected {path}:{field} containing {message_fragments}; got {issues!r}",
+        )
+
+    @staticmethod
     def handoff_job(job_id, *, sha256="d" * 64, status="ready"):
         return {
             "job_id": job_id,
@@ -1148,6 +1245,336 @@ class ProjectValidationTests(unittest.TestCase):
         self.refresh_locked_scope()
 
         self.assertEqual([], validate_project(self.project, "plan"))
+
+    def test_populated_handoff_rejects_invalid_receipt_inventory_entries(self):
+        job, _ = self.prepare_generation_handoff()
+        valid_attempt_id = attempt_id(job_id=job["job_id"], attempt=1)
+        cases = (
+            (
+                "linked-json",
+                f"generation/receipts/{valid_attempt_id}.json",
+                "file",
+                ("regular JSON file",),
+            ),
+            (
+                "malformed-json",
+                f"generation/receipts/{valid_attempt_id}.json",
+                "file",
+                ("cannot read JSON",),
+            ),
+            (
+                "non-json-entry",
+                "generation/receipts/receipt.txt",
+                "file",
+                ("regular JSON file",),
+            ),
+            (
+                "filename-attempt-mismatch",
+                "generation/receipts/wrong-attempt.json",
+                "attempt_id",
+                ("filename",),
+            ),
+        )
+
+        for label, expected_path, field, fragments in cases:
+            with self.subTest(label=label):
+                self.clear_generation_receipts()
+                if label == "linked-json":
+                    _, relative = self.write_generation_receipt(job)
+                    outside = self.root / "outside-receipt.json"
+                    outside.write_bytes((self.project / relative).read_bytes())
+                    (self.project / relative).unlink()
+                    make_symlink(self, self.project / relative, outside)
+                elif label == "malformed-json":
+                    (self.project / expected_path).write_text("{", encoding="utf-8")
+                elif label == "non-json-entry":
+                    (self.project / expected_path).write_text("not a receipt", encoding="utf-8")
+                else:
+                    self.write_generation_receipt(job, filename="wrong-attempt.json")
+
+                issues = validate_project(self.project, "plan")
+
+                self.assert_project_issue(issues, expected_path, field, *fragments)
+
+    def test_populated_handoff_reconciles_receipt_bindings_ordinals_and_budget(self):
+        job, _ = self.prepare_generation_handoff()
+        cases = (
+            ("unknown-job", 1, "job_id", ("current handoff job",)),
+            ("job-hash-mismatch", 1, "job_sha256", ("generation job",)),
+            ("ordinal-gap", 2, "attempt_id", ("contiguous",)),
+            ("ordinal-conflict", 1, "attempt_id", ("conflicting duplicate",)),
+            ("retry-budget", 4, "attempt_id", ("retry budget",)),
+        )
+
+        for label, ordinal, field, fragments in cases:
+            with self.subTest(label=label):
+                self.clear_generation_receipts()
+                if label == "unknown-job":
+                    _, relative = self.write_generation_receipt(
+                        job,
+                        attempt=ordinal,
+                        updates={"job_id": "f" * 64},
+                    )
+                elif label == "job-hash-mismatch":
+                    _, relative = self.write_generation_receipt(
+                        job,
+                        attempt=ordinal,
+                        updates={"job_sha256": "e" * 64},
+                    )
+                elif label == "ordinal-conflict":
+                    receipt, _ = self.write_generation_receipt(job, attempt=ordinal)
+                    conflicting = deepcopy(receipt)
+                    conflicting["category"] = "provider-refusal"
+                    filename = f"duplicate-{receipt['attempt_id']}.json"
+                    relative = f"generation/receipts/{filename}"
+                    atomic_write_json(self.project / relative, conflicting)
+                else:
+                    _, relative = self.write_generation_receipt(job, attempt=ordinal)
+
+                issues = validate_project(self.project, "plan")
+
+                self.assert_project_issue(issues, relative, field, *fragments)
+
+    def test_populated_handoff_rejects_every_receipt_after_terminal_success(self):
+        job, _ = self.prepare_generation_handoff(status="completed")
+        payload = self.raster_bytes((20, 30, 40))
+        target = self.project / job["target_path"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+        raster_sha256 = hashlib.sha256(payload).hexdigest()
+        cases = (
+            ("failure", "after successful receipt"),
+            ("success", "multiple successful receipts"),
+        )
+
+        for later_outcome, message in cases:
+            with self.subTest(later_outcome=later_outcome):
+                self.clear_generation_receipts()
+                self.write_generation_receipt(
+                    job,
+                    attempt=1,
+                    outcome="success",
+                    raster_sha256=raster_sha256,
+                )
+                _, later_relative = self.write_generation_receipt(
+                    job,
+                    attempt=2,
+                    outcome=later_outcome,
+                    raster_sha256=raster_sha256 if later_outcome == "success" else None,
+                )
+
+                issues = validate_project(self.project, "plan")
+
+                self.assert_project_issue(
+                    issues,
+                    later_relative,
+                    "attempt_id",
+                    message,
+                )
+
+    def test_populated_handoff_binds_success_receipts_to_retained_raster_bytes(self):
+        job, _ = self.prepare_generation_handoff(status="completed")
+        expected_payload = self.raster_bytes((20, 30, 40))
+        expected_sha256 = hashlib.sha256(expected_payload).hexdigest()
+        cases = (
+            ("missing", "file", ("successful receipt",)),
+            ("digest-changed", "sha256", ("successful receipt",)),
+        )
+
+        for label, field, fragments in cases:
+            with self.subTest(label=label):
+                self.clear_generation_receipts()
+                retained = self.project / job["target_path"]
+                retained.unlink(missing_ok=True)
+                self.write_generation_receipt(
+                    job,
+                    outcome="success",
+                    raster_sha256=expected_sha256,
+                )
+                if label == "digest-changed":
+                    retained.parent.mkdir(parents=True, exist_ok=True)
+                    retained.write_bytes(self.raster_bytes((200, 30, 40)))
+
+                issues = validate_project(self.project, "plan")
+
+                self.assert_project_issue(
+                    issues,
+                    job["target_path"],
+                    field,
+                    *fragments,
+                )
+
+    def test_successful_reference_receipt_requires_unambiguous_planning_identity(self):
+        for label, subject_id in (("unknown", "orphan"), ("ambiguous", "mira")):
+            with self.subTest(label=label):
+                self.clear_generation_receipts()
+                if label == "ambiguous":
+                    story = read_json(self.project / "plan/story-plan.json")
+                    story["scenes"][0]["id"] = subject_id
+                    atomic_write_json(self.project / "plan/story-plan.json", story)
+                prompt_relative = f"prompts/references/{subject_id}.txt"
+                prompt = self.project / prompt_relative
+                prompt.write_text("identity reference", encoding="utf-8")
+                job = build_generation_job(
+                    subject_kind="reference",
+                    subject_id=subject_id,
+                    prompt_path=prompt_relative,
+                    prompt_sha256=sha256_file(prompt),
+                    references=[],
+                    requested_dimensions=None,
+                    requested_aspect_ratio=None,
+                    attempt_kind="initial",
+                    retry_limit=2,
+                    batch_id="references-001",
+                    target_path=f"references/attempts/{subject_id}/initial-001.png",
+                )
+                job_sha256 = self.write_generation_job(job)
+                self.bind_generation_handoff(
+                    job,
+                    job_sha256=job_sha256,
+                    status="completed",
+                    batch_id="references-001",
+                    batch_kind="reference",
+                )
+                self.refresh_locked_scope()
+                retained = self.project / job["target_path"]
+                retained.parent.mkdir(parents=True, exist_ok=True)
+                payload = self.raster_bytes()
+                retained.write_bytes(payload)
+                _, receipt_relative = self.write_generation_receipt(
+                    job,
+                    outcome="success",
+                    raster_sha256=hashlib.sha256(payload).hexdigest(),
+                )
+
+                issues = validate_project(self.project, "plan")
+
+                self.assert_project_issue(
+                    issues,
+                    receipt_relative,
+                    "raster_path",
+                    "exactly one",
+                    "canonical",
+                )
+
+    def test_populated_handoff_declared_status_matches_receipt_effective_status(self):
+        job = self.valid_generation_job()
+        job_sha256 = self.write_generation_job(job)
+        payload = self.raster_bytes()
+        payload_sha256 = hashlib.sha256(payload).hexdigest()
+        cases = (
+            ("completed-without-receipt", "completed", None, "ready"),
+            ("ready-with-success", "ready", "success", "completed"),
+            ("failed-with-budget-left", "failed", "failure", "ready"),
+        )
+
+        for label, declared, outcome, effective in cases:
+            with self.subTest(label=label):
+                self.clear_generation_receipts()
+                retained = self.project / job["target_path"]
+                retained.unlink(missing_ok=True)
+                self.bind_generation_handoff(job, job_sha256=job_sha256, status=declared)
+                self.refresh_locked_scope()
+                if outcome == "success":
+                    retained.parent.mkdir(parents=True, exist_ok=True)
+                    retained.write_bytes(payload)
+                    self.write_generation_receipt(
+                        job,
+                        outcome="success",
+                        raster_sha256=payload_sha256,
+                    )
+                elif outcome == "failure":
+                    self.write_generation_receipt(job)
+
+                issues = validate_project(self.project, "plan")
+
+                self.assert_project_issue(
+                    issues,
+                    "handoff/manifest.json",
+                    "jobs[0].status",
+                    declared,
+                    effective,
+                )
+
+    def test_populated_handoff_references_require_exact_png_payloads(self):
+        reference_relative = "references/characters/mira.png"
+        reference_path = self.project / reference_relative
+        for image_format in ("JPEG", "WEBP"):
+            with self.subTest(image_format=image_format):
+                stream = io.BytesIO()
+                Image.new("RGB", (512, 512), "white").save(stream, format=image_format)
+                reference_path.write_bytes(stream.getvalue())
+                references = [
+                    {
+                        "path": reference_relative,
+                        "sha256": sha256_file(reference_path),
+                    }
+                ]
+                job, _ = self.prepare_generation_handoff(references=references)
+
+                issues = validate_project(self.project, "plan")
+
+                self.assert_project_issue(
+                    issues,
+                    f"generation/jobs/{job['job_id']}.json",
+                    "references[0].path",
+                    "PNG",
+                )
+
+    def test_completed_panel_receipt_requires_qa_accepted_raw_not_the_initial_raster(self):
+        self.add_valid_panel_record_v2()
+        self.assertEqual([], validate_project(self.project, "panels"))
+        job, _ = self.prepare_generation_handoff(status="completed")
+        retained_payload = self.raster_bytes((220, 180, 80))
+        retained = self.project / job["target_path"]
+        retained.parent.mkdir(parents=True, exist_ok=True)
+        retained.write_bytes(retained_payload)
+        _, receipt_relative = self.write_generation_receipt(
+            job,
+            outcome="success",
+            raster_sha256=hashlib.sha256(retained_payload).hexdigest(),
+        )
+        record_path = self.project / "qa/panels/p01-01.json"
+        accepted_record = read_json(record_path)
+
+        # The promoted raster is the repaired one, so it deliberately differs
+        # from the initial handoff receipt while its QA record still accepts it.
+        self.assertNotEqual(
+            accepted_record["bindings"]["raw_sha256"],
+            hashlib.sha256(retained_payload).hexdigest(),
+        )
+        self.assertEqual([], validate_project(self.project, "panels"))
+
+        raw_path = self.project / "panels/raw/p01-01.png"
+        accepted_raw = raw_path.read_bytes()
+        cases = {
+            "unpromoted": lambda: raw_path.unlink(),
+            "faulted-review": lambda: atomic_write_json(
+                record_path,
+                {**accepted_record, "decision": "regenerate"},
+            ),
+            "stale-binding": lambda: atomic_write_json(
+                record_path,
+                {
+                    **accepted_record,
+                    "bindings": {**accepted_record["bindings"], "raw_sha256": "0" * 64},
+                },
+            ),
+        }
+        for name, break_acceptance in cases.items():
+            with self.subTest(case=name):
+                break_acceptance()
+                try:
+                    self.assert_project_issue(
+                        validate_project(self.project, "panels"),
+                        receipt_relative,
+                        "raster_path",
+                        "panels/raw/p01-01.png",
+                        "visual QA",
+                    )
+                finally:
+                    raw_path.write_bytes(accepted_raw)
+                    atomic_write_json(record_path, accepted_record)
 
     def test_populated_handoff_holds_project_lock_through_binding_validation(self):
         job = self.valid_generation_job()

@@ -118,6 +118,38 @@ def build_parser() -> argparse.ArgumentParser:
     finalize = subparsers.add_parser("finalize")
     finalize.add_argument("project_dir", type=Path)
 
+    handoff = subparsers.add_parser("handoff")
+    handoff_commands = handoff.add_subparsers(dest="handoff_command", required=True)
+
+    for name in ("prepare", "inspect"):
+        handoff_command = handoff_commands.add_parser(name)
+        handoff_command.add_argument("project_dir", type=Path)
+
+    def add_executor_arguments(handoff_command: argparse.ArgumentParser) -> None:
+        handoff_command.add_argument("project_dir", type=Path)
+        handoff_command.add_argument("--job", required=True, dest="job_id")
+        handoff_command.add_argument("--attempt", required=True, type=int)
+        handoff_command.add_argument(
+            "--executor-kind",
+            required=True,
+            choices=("native-tool", "external-tool"),
+        )
+        handoff_command.add_argument("--executor-id", required=True)
+        handoff_command.add_argument("--provider")
+        handoff_command.add_argument("--model")
+        handoff_command.add_argument("--used-reference-images", action="store_true")
+        handoff_command.add_argument("--used-dimensions", action="store_true")
+        handoff_command.add_argument("--used-localized-edit", action="store_true")
+
+    accept_result = handoff_commands.add_parser("accept-result")
+    add_executor_arguments(accept_result)
+    accept_result.add_argument("--path", required=True, type=Path, dest="raster_path")
+    accept_result.add_argument("--approve-reference", action="store_true")
+
+    record_failure = handoff_commands.add_parser("record-failure")
+    add_executor_arguments(record_failure)
+    record_failure.add_argument("--category", required=True)
+
     mcp = subparsers.add_parser("mcp")
     mcp.add_argument("--root", required=True, type=Path)
 
@@ -286,6 +318,54 @@ def _render_status(arguments: argparse.Namespace) -> str:
         _escape_terminal_controls(summary.get("status")) if isinstance(summary, dict) else "None"
     )
     return f"{project_id}: {status}"
+
+
+def _render_handoff(command: str, data: object) -> str:
+    """Render a compact terminal-safe summary for one handoff operation."""
+    if not isinstance(data, dict):
+        return _escape_terminal_controls(data)
+
+    if command == "handoff.prepare":
+        project_id = _escape_terminal_controls(data.get("project_id"))
+        phase = _escape_terminal_controls(data.get("phase"))
+        lines = [f"{project_id}: handoff prepared for {phase}"]
+        counts = data.get("job_counts")
+        if isinstance(counts, dict):
+            rendered_counts = " ".join(
+                f"{_escape_terminal_controls(key)}={_escape_terminal_controls(value)}"
+                for key, value in counts.items()
+            )
+            if rendered_counts:
+                lines.append(f"Jobs: {rendered_counts}")
+        lines.append(f"Next action: {_escape_terminal_controls(data.get('next_action'))}")
+        return "\n".join(lines)
+
+    if command == "handoff.inspect":
+        prepared = _escape_terminal_controls(data.get("prepared"))
+        phase = _escape_terminal_controls(data.get("phase"))
+        scope = _escape_terminal_controls(data.get("scope_state"))
+        jobs = data.get("jobs")
+        job_count = len(jobs) if isinstance(jobs, list) else 0
+        return "\n".join(
+            (
+                f"Handoff: prepared={prepared} phase={phase} scope={scope} jobs={job_count}",
+                f"Next action: {_escape_terminal_controls(data.get('next_action'))}",
+            )
+        )
+
+    job_id = _escape_terminal_controls(data.get("job_id"))
+    status = _escape_terminal_controls(data.get("status"))
+    duplicate = _escape_terminal_controls(data.get("duplicate"))
+    if command == "handoff.accept-result":
+        return f"{job_id}: {status} (duplicate={duplicate})"
+    if command == "handoff.record-failure":
+        remaining = _escape_terminal_controls(data.get("attempts_remaining"))
+        category = _escape_terminal_controls(data.get("category"))
+        return (
+            f"{job_id}: {status} category={category} "
+            f"attempts_remaining={remaining} duplicate={duplicate}"
+        )
+    return _escape_terminal_controls(data)
 
 
 def _validate_init_arguments(arguments: argparse.Namespace) -> None:
@@ -591,6 +671,39 @@ def _run(
         return service.execute("resume", project_dir=arguments.project_dir, progress=progress)
     if arguments.command == "finalize":
         return service.execute("finalize", project_dir=arguments.project_dir, progress=progress)
+    if arguments.command in {
+        "handoff.prepare",
+        "handoff.inspect",
+        "handoff.accept-result",
+        "handoff.record-failure",
+    }:
+        handoff_arguments: dict[str, Any] = {"project_dir": arguments.project_dir}
+        if arguments.command in {"handoff.accept-result", "handoff.record-failure"}:
+            handoff_arguments.update(
+                {
+                    "job_id": arguments.job_id,
+                    "attempt": arguments.attempt,
+                    "executor_kind": arguments.executor_kind,
+                    "executor_id": arguments.executor_id,
+                    "provider": arguments.provider,
+                    "model": arguments.model,
+                    "capabilities_used": {
+                        "reference_images": arguments.used_reference_images,
+                        "dimensions": arguments.used_dimensions,
+                        "localized_edit": arguments.used_localized_edit,
+                    },
+                }
+            )
+        if arguments.command == "handoff.accept-result":
+            handoff_arguments.update(
+                {
+                    "raster_path": arguments.raster_path,
+                    "approve_reference": arguments.approve_reference,
+                }
+            )
+        elif arguments.command == "handoff.record-failure":
+            handoff_arguments["category"] = arguments.category
+        return service.execute(arguments.command, **handoff_arguments)
     if arguments.command in {"setup", "repair", "uninstall"}:
         from .setup import repair_clients, setup_clients, uninstall_clients
 
@@ -616,6 +729,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         arguments = build_parser().parse_args(raw_arguments)
         _validate_init_arguments(arguments)
+        if arguments.command == "handoff":
+            arguments.command = f"handoff.{arguments.handoff_command}"
     except CliUsageError as error:
         # Parse failures never leak argparse usage text or SystemExit: JSON
         # mode still receives exactly one envelope, human mode the canonical
@@ -696,6 +811,8 @@ def main(argv: list[str] | None = None) -> int:
             print(data["project_id"])
         elif command == "status":
             print(_render_status(arguments))
+        elif command.startswith("handoff."):
+            print(_render_handoff(command, data))
         elif command in {"setup", "repair", "uninstall"}:
             for result in data:
                 print(f"{result['client']}: {result['status']} — {result['message']}")

@@ -1,3 +1,4 @@
+import ast
 import io
 import json
 import shutil
@@ -12,6 +13,7 @@ from comic_sol_product import __version__
 
 from comic_sol_product import cli
 from comic_sol_product.config import default_output_root
+from scripts.handoff import HandoffContractError, HandoffResultError, StaleLockedScopeError
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -753,6 +755,520 @@ class ProductCliTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertNotIn("COMPLETE stage=resume", stderr)
         self.assertIn('"status": "INIT"', stdout)
+
+
+class HandoffProductCliContractTests(unittest.TestCase):
+    """Authoritative WP2 installed-CLI grammar and transport contracts."""
+
+    def invoke(self, argv: list[str]) -> tuple[int, str, str]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = cli.main(argv)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def invoke_with_service(self, argv: list[str], service) -> tuple[int, str, str]:
+        service_module = types.SimpleNamespace(
+            CommandService=mock.Mock(return_value=service),
+        )
+        with (
+            mock.patch.object(cli, "_load_engine", return_value=types.SimpleNamespace()),
+            mock.patch.object(cli, "_load_engine_module", return_value=types.SimpleNamespace()),
+            mock.patch.object(cli, "_load_command_service", return_value=service_module),
+        ):
+            return self.invoke(argv)
+
+    @staticmethod
+    def success_data() -> dict[str, dict[str, object]]:
+        digest = "a" * 64
+        return {
+            "handoff.prepare": {
+                "project_id": "demo",
+                "phase": "reference",
+                "locked_scope_sha256": digest,
+                "changed": True,
+                "migrated": False,
+                "manifest_path": "handoff/manifest.json",
+                "batch_count": 1,
+                "job_counts": {
+                    "missing": 0,
+                    "ready": 1,
+                    "completed": 0,
+                    "failed": 0,
+                    "stale": 0,
+                },
+                "next_action": "render-references",
+            },
+            "handoff.inspect": {
+                "prepared": True,
+                "phase": "reference",
+                "project_stage": "STORYBOARDED",
+                "scope_state": "current",
+                "batches": [],
+                "jobs": [],
+                "next_action": "render-references",
+            },
+            "handoff.accept-result": {
+                "job_id": "job-" + "a" * 40,
+                "attempt_id": "attempt-" + "b" * 40,
+                "receipt_path": "generation/receipts/attempt.json",
+                "raster_path": "references/attempts/mira/initial-001.png",
+                "raster_sha256": digest,
+                "duplicate": False,
+                "status": "completed",
+                "counters": None,
+                "activated_reference_path": "references/characters/mira.png",
+                "activated_reference_sha256": digest,
+            },
+            "handoff.record-failure": {
+                "job_id": "job-" + "b" * 40,
+                "attempt_id": "attempt-" + "c" * 40,
+                "receipt_path": "generation/receipts/attempt.json",
+                "category": "provider-refusal",
+                "duplicate": False,
+                "attempts_used": 1,
+                "attempts_remaining": 2,
+                "next_attempt": 2,
+                "status": "ready",
+            },
+        }
+
+    def test_nested_routes_forward_exactly_and_use_canonical_envelope_names(self):
+        project = Path("/shared/demo")
+        raster = Path("/renderer/result.png")
+        job_a = "job-" + "a" * 40
+        job_b = "job-" + "b" * 40
+        cases = (
+            (
+                ["--json", "handoff", "prepare", str(project)],
+                "handoff.prepare",
+                {"project_dir": project},
+            ),
+            (
+                ["--json", "handoff", "inspect", str(project)],
+                "handoff.inspect",
+                {"project_dir": project},
+            ),
+            (
+                [
+                    "--json",
+                    "handoff",
+                    "accept-result",
+                    str(project),
+                    "--job",
+                    job_a,
+                    "--attempt",
+                    "2",
+                    "--path",
+                    str(raster),
+                    "--executor-kind",
+                    "external-tool",
+                    "--executor-id",
+                    "renderer-a",
+                    "--provider",
+                    "provider-category",
+                    "--model",
+                    "model-category",
+                    "--used-reference-images",
+                    "--used-dimensions",
+                    "--approve-reference",
+                ],
+                "handoff.accept-result",
+                {
+                    "project_dir": project,
+                    "job_id": job_a,
+                    "attempt": 2,
+                    "raster_path": raster,
+                    "executor_kind": "external-tool",
+                    "executor_id": "renderer-a",
+                    "provider": "provider-category",
+                    "model": "model-category",
+                    "capabilities_used": {
+                        "reference_images": True,
+                        "dimensions": True,
+                        "localized_edit": False,
+                    },
+                    "approve_reference": True,
+                },
+            ),
+            (
+                [
+                    "--json",
+                    "handoff",
+                    "record-failure",
+                    str(project),
+                    "--job",
+                    job_b,
+                    "--attempt",
+                    "1",
+                    "--executor-kind",
+                    "native-tool",
+                    "--executor-id",
+                    "renderer-b",
+                    "--category",
+                    "provider-refusal",
+                    "--used-localized-edit",
+                ],
+                "handoff.record-failure",
+                {
+                    "project_dir": project,
+                    "job_id": job_b,
+                    "attempt": 1,
+                    "executor_kind": "native-tool",
+                    "executor_id": "renderer-b",
+                    "category": "provider-refusal",
+                    "provider": None,
+                    "model": None,
+                    "capabilities_used": {
+                        "reference_images": False,
+                        "dimensions": False,
+                        "localized_edit": True,
+                    },
+                },
+            ),
+        )
+        results = self.success_data()
+        for argv, route, expected_arguments in cases:
+            service = types.SimpleNamespace(
+                execute=mock.Mock(return_value=results[route]),
+            )
+            with self.subTest(route=route):
+                code, stdout, stderr = self.invoke_with_service(argv, service)
+
+                self.assertEqual(0, code)
+                self.assertEqual("", stderr)
+                self.assertEqual(1, len(stdout.splitlines()))
+                payload = json.loads(stdout)
+                self.assertEqual({"ok", "command", "data", "error"}, set(payload))
+                self.assertEqual(
+                    {
+                        "ok": True,
+                        "command": route,
+                        "data": results[route],
+                        "error": None,
+                    },
+                    payload,
+                )
+                service.execute.assert_called_once_with(route, **expected_arguments)
+
+    def test_human_summary_stays_on_stdout_and_advisory_stays_on_stderr(self):
+        data = self.success_data()["handoff.prepare"]
+
+        def execute(command, **kwargs):
+            print("WORKING handoff.prepare", file=cli.sys.stderr)
+            return data
+
+        service = types.SimpleNamespace(execute=mock.Mock(side_effect=execute))
+        code, stdout, stderr = self.invoke_with_service(
+            ["handoff", "prepare", "/shared/demo"], service
+        )
+
+        self.assertEqual(0, code)
+        self.assertIn("demo", stdout)
+        self.assertIn("reference", stdout)
+        self.assertIn("ready=1", stdout)
+        self.assertIn("render-references", stdout)
+        self.assertFalse(stdout.lstrip().startswith("{"))
+        self.assertEqual("WORKING handoff.prepare\n", stderr)
+
+    def test_successful_record_failure_is_a_zero_exit_state_transition(self):
+        data = self.success_data()["handoff.record-failure"]
+        service = types.SimpleNamespace(execute=mock.Mock(return_value=data))
+        code, stdout, stderr = self.invoke_with_service(
+            [
+                "--json",
+                "handoff",
+                "record-failure",
+                "/shared/demo",
+                "--job",
+                "job-" + "b" * 40,
+                "--attempt",
+                "1",
+                "--executor-kind",
+                "external-tool",
+                "--executor-id",
+                "renderer-b",
+                "--category",
+                "quota",
+            ],
+            service,
+        )
+
+        self.assertEqual(0, code)
+        self.assertEqual("", stderr)
+        self.assertTrue(json.loads(stdout)["ok"])
+        self.assertEqual("handoff.record-failure", json.loads(stdout)["command"])
+
+    def test_usage_and_invalid_handoff_input_exit_two(self):
+        cases = (
+            ["--json", "handoff"],
+            ["--json", "handoff", "prepare"],
+            [
+                "--json",
+                "handoff",
+                "accept-result",
+                "/shared/demo",
+                "--job",
+                "job-" + "a" * 40,
+                "--attempt",
+                "not-an-integer",
+                "--path",
+                "/renderer/result.png",
+                "--executor-kind",
+                "external-tool",
+                "--executor-id",
+                "renderer-a",
+            ],
+            [
+                "--json",
+                "handoff",
+                "record-failure",
+                "/shared/demo",
+                "--job",
+                "job-" + "b" * 40,
+                "--attempt",
+                "1",
+                "--executor-kind",
+                "unknown-tool",
+                "--executor-id",
+                "renderer-b",
+                "--category",
+                "quota",
+            ],
+        )
+        for argv in cases:
+            with self.subTest(argv=argv):
+                code, stdout, stderr = self.invoke(argv)
+
+                self.assertEqual(2, code)
+                self.assertEqual("", stderr)
+                self.assertEqual(1, len(stdout.splitlines()))
+                payload = json.loads(stdout)
+                self.assertFalse(payload["ok"])
+                self.assertEqual("CS-CLI-001", payload["error"]["code"])
+
+    def test_approve_reference_is_accepted_only_by_accept_result(self):
+        project = "/shared/demo"
+        job = "job-" + "a" * 40
+        base_accept = [
+            "--json",
+            "handoff",
+            "accept-result",
+            project,
+            "--job",
+            job,
+            "--attempt",
+            "1",
+            "--path",
+            "/renderer/result.png",
+            "--executor-kind",
+            "native-tool",
+            "--executor-id",
+            "renderer-a",
+        ]
+        service = types.SimpleNamespace(
+            execute=mock.Mock(return_value=self.success_data()["handoff.accept-result"]),
+        )
+        for approve, expected in (([], False), (["--approve-reference"], True)):
+            service.execute.reset_mock()
+            with self.subTest(approve=expected):
+                code, _, _ = self.invoke_with_service([*base_accept, *approve], service)
+                self.assertEqual(0, code)
+                self.assertEqual(expected, service.execute.call_args.kwargs["approve_reference"])
+
+        invalid_routes = (
+            ["--json", "handoff", "prepare", project, "--approve-reference"],
+            ["--json", "handoff", "inspect", project, "--approve-reference"],
+            [
+                "--json",
+                "handoff",
+                "record-failure",
+                project,
+                "--job",
+                job,
+                "--attempt",
+                "1",
+                "--executor-kind",
+                "native-tool",
+                "--executor-id",
+                "renderer-a",
+                "--category",
+                "quota",
+                "--approve-reference",
+            ],
+        )
+        for argv in invalid_routes:
+            service.execute.reset_mock()
+            with self.subTest(argv=argv):
+                code, stdout, stderr = self.invoke_with_service(argv, service)
+                self.assertEqual(2, code)
+                self.assertEqual("", stderr)
+                self.assertEqual("CS-CLI-001", json.loads(stdout)["error"]["code"])
+                service.execute.assert_not_called()
+
+    def test_contract_scope_and_job_errors_use_typed_handoff_001(self):
+        cases = (
+            HandoffContractError(["contract_version: unsupported"]),
+            StaleLockedScopeError(["locked_scope_sha256: stale"]),
+            HandoffContractError(["job_id: does not name a current job"]),
+        )
+        for error in cases:
+            direct = cli.error_payload(
+                error,
+                command="handoff.inspect",
+                surface="cli",
+            )
+            with self.subTest(error=type(error).__name__):
+                self.assertEqual("CS-HANDOFF-001", direct["code"])
+                service = types.SimpleNamespace(execute=mock.Mock(side_effect=error))
+                code, stdout, stderr = self.invoke_with_service(
+                    ["--json", "handoff", "inspect", "/shared/demo"], service
+                )
+                payload = json.loads(stdout)
+                self.assertEqual(2, code)
+                self.assertEqual("", stderr)
+                self.assertEqual("handoff.inspect", payload["command"])
+                self.assertEqual("CS-HANDOFF-001", payload["error"]["code"])
+
+    def test_result_metadata_ordinal_raster_and_activation_errors_use_typed_handoff_003(self):
+        issues = (
+            "executor metadata is invalid",
+            "attempt ordinal conflicts with the next attempt",
+            "result raster does not match requested dimensions",
+            "reference activation was refused",
+        )
+        argv = [
+            "--json",
+            "handoff",
+            "accept-result",
+            "/shared/demo",
+            "--job",
+            "job-" + "a" * 40,
+            "--attempt",
+            "1",
+            "--path",
+            "/renderer/result.png",
+            "--executor-kind",
+            "native-tool",
+            "--executor-id",
+            "renderer-a",
+        ]
+        for issue in issues:
+            error = HandoffResultError([issue])
+            direct = cli.error_payload(
+                error,
+                command="handoff.accept-result",
+                surface="cli",
+            )
+            with self.subTest(issue=issue):
+                self.assertEqual("CS-HANDOFF-003", direct["code"])
+                service = types.SimpleNamespace(
+                    execute=mock.Mock(side_effect=error),
+                )
+                code, stdout, stderr = self.invoke_with_service(argv, service)
+                payload = json.loads(stdout)
+                self.assertEqual(2, code)
+                self.assertEqual("", stderr)
+                self.assertEqual("handoff.accept-result", payload["command"])
+                self.assertEqual("CS-HANDOFF-003", payload["error"]["code"])
+
+    def test_handoff_error_detail_redacts_paths_and_terminal_controls(self):
+        secret_path = "/var/Comic Sol/private/result.png"
+        issue = f"result raster '{secret_path}' contains control \x1b[31m"
+        typed_error = HandoffResultError([issue])
+        direct_payload = cli._failure(
+            "handoff.accept-result",
+            typed_error,
+            detail=cli.safe_error_detail(typed_error),
+        )
+        direct_serialized = json.dumps(direct_payload, ensure_ascii=False)
+        self.assertNotIn(secret_path, direct_serialized)
+        self.assertNotIn("private", direct_serialized)
+        self.assertNotIn("\x1b", direct_payload["error"].get("detail", ""))
+        direct_human = cli.format_human_error(typed_error, command="handoff.accept-result")
+        self.assertNotIn(secret_path, direct_human)
+        self.assertNotIn("private", direct_human)
+        self.assertNotIn("\x1b", direct_human)
+
+        argv = [
+            "--json",
+            "handoff",
+            "accept-result",
+            "/shared/demo",
+            "--job",
+            "job-" + "a" * 40,
+            "--attempt",
+            "1",
+            "--path",
+            "/renderer/result.png",
+            "--executor-kind",
+            "native-tool",
+            "--executor-id",
+            "renderer-a",
+        ]
+        service = types.SimpleNamespace(
+            execute=mock.Mock(side_effect=HandoffResultError([issue])),
+        )
+        code, stdout, stderr = self.invoke_with_service(argv, service)
+        payload = json.loads(stdout)
+
+        self.assertEqual(2, code)
+        self.assertEqual("", stderr)
+        serialized = json.dumps(payload, ensure_ascii=False)
+        self.assertNotIn(secret_path, serialized)
+        self.assertNotIn("private", serialized)
+        self.assertNotIn("\x1b", payload["error"].get("detail", ""))
+
+        service = types.SimpleNamespace(
+            execute=mock.Mock(side_effect=HandoffResultError([issue])),
+        )
+        code, stdout, stderr = self.invoke_with_service(argv[1:], service)
+        self.assertEqual(2, code)
+        self.assertEqual("", stdout)
+        self.assertNotIn(secret_path, stderr)
+        self.assertNotIn("private", stderr)
+        self.assertNotIn("\x1b", stderr)
+
+    def test_handoff_adds_no_mcp_route_or_tool(self):
+        source = (Path(__file__).resolve().parents[1] / "scripts/mcp_server.py").read_text(
+            encoding="utf-8"
+        )
+        tree = ast.parse(source)
+        registered = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and any(
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and isinstance(decorator.func.value, ast.Name)
+                and decorator.func.value.id == "mcp"
+                and decorator.func.attr == "tool"
+                for decorator in node.decorator_list
+            )
+        }
+        expected = {
+            "comic_doctor",
+            "comic_init",
+            "comic_status",
+            "comic_transition",
+            "comic_validate",
+            "comic_resume_plan",
+            "comic_resume",
+            "comic_invalidate",
+            "comic_record_stage",
+            "comic_record_attempt",
+            "comic_promote_attempt",
+            "comic_override_panel",
+            "comic_letter",
+            "comic_compose",
+            "comic_render_report",
+            "comic_export",
+            "comic_finalize",
+        }
+        self.assertEqual(17, len(registered))
+        self.assertEqual(expected, registered)
+        self.assertFalse(any("handoff" in name for name in registered))
 
 
 class FailClosedContractTests(unittest.TestCase):

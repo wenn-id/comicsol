@@ -37,6 +37,12 @@ from scripts.comic_sol import (  # noqa: E402
     summarize_project_status,
     transition,
 )
+from scripts.handoff import (  # noqa: E402
+    HandoffContractError,
+    HandoffResultError,
+    StaleLockedScopeError,
+)
+from scripts.input_limits import InputResourceLimitError  # noqa: E402
 from scripts.normalize_panels import normalize_panel  # noqa: E402
 from scripts.validate_project import validate_panel_record  # noqa: E402
 
@@ -1640,6 +1646,78 @@ class ResumeFixtureIntegrationTests(unittest.TestCase):
             self.assertEqual("regenerate", panel_actions["p01-01"])
             self.assertEqual("regenerate", panel_actions["p01-02"])
 
+    def test_accepted_handoff_panel_requires_promotion_and_visual_qa_before_resume_reuse(self):
+        from scripts.comic_sol import accept_handoff_result, inspect_handoff
+        from tests.test_handoff_lifecycle import HandoffIntakeFailureTests
+
+        fixture = HandoffIntakeFailureTests(
+            "test_external_absolute_png_intake_retains_only_canonical_result_data"
+        )
+        self.addCleanup(fixture.doCleanups)
+        root, project, panel_job = fixture._prepared_panel()
+        record_stage(project, "planning")
+        record_stage(project, "storyboard")
+
+        dimensions = panel_job["requested_dimensions"]
+        raster = root / "resume-boundary-panel.png"
+        fixture._write_raster(
+            raster,
+            (dimensions["width"], dimensions["height"]),
+            (20, 30, 40),
+        )
+        accepted = accept_handoff_result(
+            project,
+            **fixture._success_arguments(panel_job, raster),
+        )
+
+        attempt = project / panel_job["target_path"]
+        raw = project / "panels/raw/p01-01.png"
+        panel_qa = project / "qa/panels/p01-01.json"
+        self.assertEqual("completed", accepted["status"])
+        self.assertEqual(
+            "panels/attempts/p01-01/initial-001.png",
+            accepted["raster_path"],
+        )
+        self.assertEqual(raster.read_bytes(), attempt.read_bytes())
+        self.assertFalse(raw.exists())
+        self.assertFalse(panel_qa.exists())
+        self.assertEqual("visual-qa", inspect_handoff(project)["next_action"])
+
+        actions = build_resume_plan(project)
+        stage_actions = {
+            action.stage: action.action for action in actions if action.artifact == "stage"
+        }
+        self.assertEqual("reuse", stage_actions["planning"])
+        self.assertEqual("reuse", stage_actions["storyboard"])
+        self.assertEqual("regenerate", stage_actions["generation"])
+        self.assertTrue(
+            all(stage_actions[stage] == "rerun" for stage in ("lettering", "composition", "export"))
+        )
+        self.assertFalse(
+            any(action.artifact == "p01-01" and action.action == "reuse" for action in actions)
+        )
+
+        summary = summarize_project_status(project)
+        generation = next(item for item in summary["stages"] if item["stage"] == "generation")
+        self.assertEqual("stale", generation["state"])
+        self.assertEqual(
+            {"accepted": 0, "failed": 0, "pending": 1, "unreadable": 0},
+            summary["panels"],
+        )
+        self.assertEqual({"agent_required": "generation"}, summary["next_action"])
+
+        resumed = resume_project(project)
+        self.assertEqual("STORYBOARDED", resumed["status"])
+        self.assertEqual(["planning", "storyboard"], resumed["preserved"])
+        self.assertEqual(
+            ["generation", "lettering", "composition", "export"],
+            resumed["invalidated"],
+        )
+        self.assertEqual({"agent_required": "generation"}, resumed["next_action"])
+        self.assertEqual(raster.read_bytes(), attempt.read_bytes())
+        self.assertFalse(raw.exists())
+        self.assertFalse(panel_qa.exists())
+
 
 class BlockedRecoveryTests(unittest.TestCase):
     def setUp(self):
@@ -2515,6 +2593,280 @@ class BlockedRecoveryTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             self.assertEqual(0, main(["resume", os.fspath(self.project)]))
         self.assertIn("agent required: generation", output.getvalue())
+
+
+class SourceHandoffCliContractTests(unittest.TestCase):
+    """The source CLI exposes the same WP2 handoff routes as the product CLI."""
+
+    def invoke(self, argv: list[str]) -> tuple[int, str, str]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                code = main(argv)
+            except SystemExit as error:
+                code = int(error.code)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def invoke_with_service(self, argv: list[str], service) -> tuple[int, str, str]:
+        with patch("scripts.command_service.CommandService", return_value=service):
+            return self.invoke(argv)
+
+    def test_source_handoff_routes_are_nested_and_forward_exactly(self):
+        project = Path("/shared/demo")
+        raster = Path("renderer/result.png")
+        job_a = "job-" + "a" * 40
+        job_b = "job-" + "b" * 40
+        cases = (
+            (
+                ["handoff", "prepare", str(project), "--json"],
+                "handoff.prepare",
+                {"project_dir": project},
+                {"phase": "reference", "project_id": "demo"},
+            ),
+            (
+                ["handoff", "inspect", str(project), "--json"],
+                "handoff.inspect",
+                {"project_dir": project},
+                {"prepared": True, "scope_state": "current"},
+            ),
+            (
+                [
+                    "handoff",
+                    "accept-result",
+                    str(project),
+                    "--job",
+                    job_a,
+                    "--attempt",
+                    "2",
+                    "--path",
+                    str(raster),
+                    "--executor-kind",
+                    "external-tool",
+                    "--executor-id",
+                    "renderer-a",
+                    "--provider",
+                    "provider-category",
+                    "--model",
+                    "model-category",
+                    "--used-reference-images",
+                    "--used-dimensions",
+                    "--approve-reference",
+                    "--json",
+                ],
+                "handoff.accept-result",
+                {
+                    "project_dir": project,
+                    "job_id": job_a,
+                    "attempt": 2,
+                    "raster_path": raster,
+                    "executor_kind": "external-tool",
+                    "executor_id": "renderer-a",
+                    "provider": "provider-category",
+                    "model": "model-category",
+                    "capabilities_used": {
+                        "reference_images": True,
+                        "dimensions": True,
+                        "localized_edit": False,
+                    },
+                    "approve_reference": True,
+                },
+                {"job_id": job_a, "status": "completed"},
+            ),
+            (
+                [
+                    "handoff",
+                    "record-failure",
+                    str(project),
+                    "--job",
+                    job_b,
+                    "--attempt",
+                    "1",
+                    "--executor-kind",
+                    "native-tool",
+                    "--executor-id",
+                    "renderer-b",
+                    "--category",
+                    "provider-refusal",
+                    "--used-localized-edit",
+                    "--json",
+                ],
+                "handoff.record-failure",
+                {
+                    "project_dir": project,
+                    "job_id": job_b,
+                    "attempt": 1,
+                    "executor_kind": "native-tool",
+                    "executor_id": "renderer-b",
+                    "category": "provider-refusal",
+                    "provider": None,
+                    "model": None,
+                    "capabilities_used": {
+                        "reference_images": False,
+                        "dimensions": False,
+                        "localized_edit": True,
+                    },
+                },
+                {"job_id": job_b, "status": "ready"},
+            ),
+        )
+
+        for argv, route, expected_arguments, result in cases:
+
+            class FakeService:
+                def __init__(self):
+                    self.calls = []
+
+                def execute(self, command, **kwargs):
+                    self.calls.append((command, kwargs))
+                    return result
+
+            service = FakeService()
+            with self.subTest(route=route):
+                code, stdout, stderr = self.invoke_with_service(argv, service)
+
+                self.assertEqual(0, code)
+                self.assertEqual("", stderr)
+                self.assertEqual(result, json.loads(stdout))
+                self.assertEqual([(route, expected_arguments)], service.calls)
+
+    def test_source_approve_reference_defaults_false_and_is_accept_only(self):
+        job = "job-" + "a" * 40
+        base = [
+            "handoff",
+            "accept-result",
+            "/shared/demo",
+            "--job",
+            job,
+            "--attempt",
+            "1",
+            "--path",
+            "/renderer/result.png",
+            "--executor-kind",
+            "native-tool",
+            "--executor-id",
+            "renderer-a",
+            "--json",
+        ]
+
+        for flag, expected in (([], False), (["--approve-reference"], True)):
+
+            class FakeService:
+                def __init__(self):
+                    self.approve_reference = None
+
+                def execute(self, command, **kwargs):
+                    self.approve_reference = kwargs["approve_reference"]
+                    return {"status": "completed"}
+
+            service = FakeService()
+            argv = [*base[:-1], *flag, base[-1]]
+            with self.subTest(approve=expected):
+                code, _, stderr = self.invoke_with_service(argv, service)
+                self.assertEqual(0, code)
+                self.assertEqual("", stderr)
+                self.assertEqual(expected, service.approve_reference)
+
+        for argv in (
+            ["handoff", "prepare", "/shared/demo", "--approve-reference"],
+            ["handoff", "inspect", "/shared/demo", "--approve-reference"],
+            [
+                "handoff",
+                "record-failure",
+                "/shared/demo",
+                "--job",
+                job,
+                "--attempt",
+                "1",
+                "--executor-kind",
+                "native-tool",
+                "--executor-id",
+                "renderer-a",
+                "--category",
+                "quota",
+                "--approve-reference",
+            ],
+        ):
+            with self.subTest(argv=argv):
+                code, stdout, stderr = self.invoke(argv)
+                self.assertEqual(2, code)
+                self.assertEqual("", stdout)
+                self.assertTrue(stderr)
+
+    def test_source_handoff_usage_and_invalid_input_exit_two(self):
+        cases = (
+            ["handoff"],
+            ["handoff", "prepare"],
+            [
+                "handoff",
+                "accept-result",
+                "/shared/demo",
+                "--job",
+                "job-" + "a" * 40,
+                "--attempt",
+                "bogus",
+                "--path",
+                "/renderer/result.png",
+                "--executor-kind",
+                "native-tool",
+                "--executor-id",
+                "renderer-a",
+            ],
+        )
+        for argv in cases:
+            with self.subTest(argv=argv):
+                code, stdout, stderr = self.invoke(argv)
+                self.assertEqual(2, code)
+                self.assertEqual("", stdout)
+                self.assertTrue(stderr)
+
+    def test_source_handoff_runtime_invalid_input_errors_exit_two(self):
+        errors = (
+            HandoffContractError(["contract_version: unsupported"]),
+            StaleLockedScopeError(["locked_scope_sha256: stale"]),
+            HandoffResultError(["attempt ordinal conflicts with the next attempt"]),
+            HandoffResultError(["result raster does not match requested dimensions"]),
+            InputResourceLimitError("the encoded raster byte limit"),
+            ValueError("security-error: result raster path must not contain symlinks"),
+        )
+        for error in errors:
+
+            class FailingService:
+                def execute(self, command, **kwargs):
+                    raise error
+
+            with self.subTest(error=type(error).__name__, detail=str(error)):
+                code, stdout, stderr = self.invoke_with_service(
+                    ["handoff", "inspect", "/shared/demo", "--json"],
+                    FailingService(),
+                )
+
+                self.assertEqual(2, code)
+                self.assertEqual("", stdout)
+                self.assertEqual(
+                    f"ERROR {type(error).__name__}: {error}\n",
+                    stderr,
+                )
+
+    def test_source_handoff_unexpected_io_and_internal_errors_remain_exit_one(self):
+        for error in (OSError("injected I/O failure"), RuntimeError("injected internal failure")):
+
+            class FailingService:
+                def execute(self, command, **kwargs):
+                    raise error
+
+            with self.subTest(error=type(error).__name__):
+                code, stdout, stderr = self.invoke_with_service(
+                    ["handoff", "inspect", "/shared/demo", "--json"],
+                    FailingService(),
+                )
+
+                self.assertEqual(1, code)
+                self.assertEqual("", stdout)
+                self.assertEqual(
+                    f"ERROR {type(error).__name__}: {error}\n",
+                    stderr,
+                )
 
 
 if __name__ == "__main__":

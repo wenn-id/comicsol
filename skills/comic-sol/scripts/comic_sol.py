@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import importlib
 import importlib.util
 import io
 import json
+import math
 import os
 import re
 import shlex
@@ -16,6 +18,8 @@ import sys
 import tempfile
 import unicodedata
 import warnings
+from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +47,7 @@ from .project_io import (
     validate_source_bytes,
 )
 from .input_limits import (
+    MAX_JSON_BYTES,
     MAX_OVERRIDE_REASON_CHARS,
     MAX_TITLE_CHARS,
     MAX_WARNING_CHARS,
@@ -51,6 +56,7 @@ from .input_limits import (
     TITLE_LIMIT_MESSAGE,
     WARNING_LIMIT_MESSAGE,
     InputResourceLimitError,
+    loads_bounded_json,
     validate_narrative,
 )
 from .raster_limits import (
@@ -59,7 +65,12 @@ from .raster_limits import (
     MIN_RASTER_DIMENSION,
 )
 from .repair_strategy import REPAIR_STRATEGIES, recorded_panel_plan
-from .schema import read_project_manifest
+from .schema import (
+    CURRENT_PROJECT_SCHEMA_VERSION,
+    LEGACY_PROJECT_SCHEMA_VERSION,
+    migrate_project_manifest_in_memory,
+    read_project_manifest,
+)
 from .sfx_verification import (
     is_generated_sfx,
     normalized_text_material,
@@ -84,6 +95,30 @@ from .core_primitives import (
     canonical_json_bytes,
     rectangles_overlap as _rectangles_overlap,
 )
+from .character_identity import IDENTITY_PACK_PATH, validate_identity_pack
+from .handoff import (
+    BATCHES_PATH,
+    HANDOFF_CONTRACT_VERSION,
+    HANDOFF_MANIFEST_PATH,
+    LOCKED_SCOPE_FIXED_PATHS,
+    HandoffContractError,
+    HandoffResultError,
+    StaleLockedScopeError,
+    assert_current_locked_scope,
+    attempt_id as generation_attempt_id,
+    build_generation_batches,
+    build_generation_job,
+    build_generation_receipt,
+    build_handoff_manifest,
+    generation_job_sha256,
+    locked_scope_sha256_from_content,
+    reconcile_job_receipts,
+    validate_generation_batches,
+    validate_generation_job,
+    validate_generation_receipt,
+    validate_handoff_manifest,
+)
+from .reference_strategy import project_reference_plan, reference_plan_bytes
 
 # Public compatibility exports: sibling engines and downstream callers import
 # layout geometry from this facade.
@@ -118,6 +153,7 @@ GENERATION_COUNTER_NAMES = {
     "visual_retry": "visual_retries",
 }
 GENERATION_LIMITS = {"initial": 1, "transient_repeat": 1, "visual_retry": 2}
+GLOBAL_EXTRA_CALL_LIMIT = 8
 GENERATION_LIMIT_MESSAGES = {
     "initial": "at most one initial attempt is allowed per panel",
     "transient_repeat": "at most one transient repeat is allowed per panel",
@@ -167,12 +203,18 @@ EVENT_DETAIL_KINDS = {
     "project_id": "identifier",
     "panel_id": "identifier",
     "scene_id": "identifier",
+    "job_id": "sha256",
+    "attempt_id": "identifier",
     "text_id": "identifier",
     "source_path": "path",
     "artifact_path": "path",
     "attempt_path": "path",
+    "raster_path": "path",
+    "activated_path": "path",
     "source_sha256": "sha256",
     "artifact_sha256": "sha256",
+    "raster_sha256": "sha256",
+    "activated_sha256": "sha256",
     "count": "count",
     "attempt": "count",
     "attempts": "count",
@@ -554,6 +596,50 @@ def canonical_event_record(event: str, details: dict[str, object]) -> bytes:
     return canonical_json_bytes(event_record) + b"\n"
 
 
+def _refresh_handoff_manifest_stage(
+    project_dir: Path,
+    manifest: dict[str, object],
+    target_status: str,
+    tx: "ProjectTransaction",
+) -> None:
+    """Refresh ``handoff/manifest.json`` so its ``stage`` tracks ``project.json``.
+
+    The handoff binding is the authoritative bridge between project status and
+    handoff state. A normal ``transition()`` rewrites ``project.json`` and would
+    otherwise leave the manifest with the previous stage, which makes
+    ``validate_project`` report a stage mismatch and breaks reprepare. Run this
+    inside the same transaction that publishes ``project.json`` so the bridge
+    stays consistent or rolls back together.
+    """
+    binding = manifest.get("handoff")
+    if not isinstance(binding, dict):
+        return
+    manifest_path = binding.get("manifest_path")
+    locked_scope = binding.get("locked_scope_sha256")
+    if not isinstance(manifest_path, str) or manifest_path != HANDOFF_MANIFEST_PATH:
+        return
+    if not isinstance(locked_scope, str):
+        return
+    handoff_bytes = None
+    try:
+        handoff_bytes = read_contained_bytes(project_dir, manifest_path, max_bytes=MAX_JSON_BYTES)
+    except FileNotFoundError:
+        return
+    try:
+        handoff_manifest = loads_bounded_json(handoff_bytes, source=manifest_path)
+    except (ValueError, TypeError):
+        return
+    if not isinstance(handoff_manifest, dict):
+        return
+    if handoff_manifest.get("stage") == target_status:
+        return
+    handoff_manifest["stage"] = target_status
+    issues = validate_handoff_manifest(handoff_manifest)
+    if issues:
+        raise HandoffContractError(issues)
+    tx.stage_bytes(manifest_path, canonical_artifact_bytes(handoff_manifest))
+
+
 def append_event(
     project_dir: Path,
     event: str,
@@ -613,6 +699,7 @@ def transition(
             ),
             repair_torn_jsonl=True,
         )
+        _refresh_handoff_manifest_stage(project_dir, manifest, target, tx)
         tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
     return manifest
 
@@ -1273,6 +1360,7 @@ def block_project(project_dir: Path, reason: str, warning: str) -> dict[str, obj
             ),
             repair_torn_jsonl=True,
         )
+        _refresh_handoff_manifest_stage(project_dir, manifest, "BLOCKED", transaction)
         transaction.stage_bytes("project.json", canonical_artifact_bytes(manifest))
         return manifest
 
@@ -1591,6 +1679,16 @@ def _resume_project_locked(project_dir: Path, manifest_path: Path) -> dict[str, 
 
             if stale_stage is not None:
                 _invalidate_state_locked(project_dir, stale_stage, manifest, cache)
+                # Resume owns one transaction that rewrites project.json, so the
+                # handoff binding must be released here rather than demanding a
+                # second explicit invalidation the resume plan never mentions.
+                binding = manifest.get("handoff")
+                if isinstance(binding, dict):
+                    manifest["handoff"] = {
+                        "contract_version": HANDOFF_CONTRACT_VERSION,
+                        "locked_scope_sha256": None,
+                        "manifest_path": None,
+                    }
                 recovery_status = _post_invalidation_status(
                     project_dir, stale_stage, str(blocked_from)
                 )
@@ -1629,6 +1727,7 @@ def _resume_project_locked(project_dir: Path, manifest_path: Path) -> dict[str, 
 
             # The manifest is the commit marker and is deliberately staged once,
             # after cache and event targets, in its final non-BLOCKED form.
+            _refresh_handoff_manifest_stage(project_dir, manifest, recovery_status, tx)
             tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
 
         return {
@@ -1714,6 +1813,13 @@ def _invalidate_from_locked(project_dir: Path, stage: str, tx: ProjectTransactio
     cache_path = project_dir / STAGE_CACHE_PATH
     cache, _ = _load_stage_cache(cache_path)
     removed = _invalidate_state_locked(project_dir, stage, manifest, cache)
+    binding = manifest.get("handoff")
+    if isinstance(binding, dict):
+        manifest["handoff"] = {
+            "contract_version": HANDOFF_CONTRACT_VERSION,
+            "locked_scope_sha256": None,
+            "manifest_path": None,
+        }
     if cache_path.is_file():
         tx.stage_bytes(str(STAGE_CACHE_PATH), canonical_artifact_bytes(cache))
     manifest["status"] = _post_invalidation_status(project_dir, stage, str(manifest.get("status")))
@@ -1743,6 +1849,1589 @@ def _contained_project_path(project_dir: Path, path: Path) -> Path:
         except ValueError as error:
             raise ValueError("path escapes the project directory") from error
     return contained_project_path(project_root, path)
+
+
+def _read_handoff_json(project_dir: Path, relative: str) -> dict[str, object]:
+    payload = read_contained_bytes(project_dir, relative, max_bytes=MAX_JSON_BYTES)
+    value = loads_bounded_json(payload, source=relative)
+    if not isinstance(value, dict):
+        raise HandoffContractError([f"{relative}: must contain a JSON object"])
+    return cast(dict[str, object], value)
+
+
+def _prompt_inventory(project_dir: Path, kind: str) -> dict[str, tuple[str, bytes]]:
+    relative_dir = f"prompts/{kind}"
+    directory = contained_project_path(project_dir, relative_dir, must_exist=True)
+    if directory.is_symlink():
+        raise ValueError("security-error: generation prompt directory must not be a symlink")
+    if not directory.is_dir():
+        raise HandoffContractError([f"{relative_dir}: must be a prompt directory"])
+    inventory: dict[str, tuple[str, bytes]] = {}
+    for entry in sorted(directory.iterdir(), key=lambda path: path.name):
+        relative = f"{relative_dir}/{entry.name}"
+        if entry.is_symlink():
+            raise ValueError("security-error: generation prompt must not be a symlink")
+        if not entry.is_file() or entry.suffix != ".txt":
+            raise HandoffContractError(
+                [f"{relative}: generation prompts must be regular .txt files"]
+            )
+        identifier = entry.stem
+        if identifier in inventory:
+            raise HandoffContractError([f"{relative}: duplicate prompt identity"])
+        inventory[identifier] = (relative, read_contained_bytes(project_dir, relative))
+    return inventory
+
+
+def _receipt_inventory(project_dir: Path) -> list[dict[str, object]]:
+    directory = contained_project_path(project_dir, "generation/receipts")
+    if not directory.exists():
+        return []
+    if directory.is_symlink():
+        raise ValueError("security-error: receipt directory must not be a symlink")
+    if not directory.is_dir():
+        raise HandoffContractError(["generation/receipts: must be a directory"])
+    receipts: list[dict[str, object]] = []
+    identifiers: set[str] = set()
+    for entry in sorted(directory.iterdir(), key=lambda path: path.name):
+        relative = f"generation/receipts/{entry.name}"
+        if entry.is_symlink():
+            raise ValueError("security-error: receipt must not be a symlink")
+        if not entry.is_file() or entry.suffix != ".json":
+            raise HandoffContractError([f"{relative}: receipts must be regular JSON files"])
+        receipt = _read_handoff_json(project_dir, relative)
+        issues = validate_generation_receipt(receipt)
+        if issues:
+            raise HandoffContractError(f"{relative}.{issue}" for issue in issues)
+        identifier = receipt.get("attempt_id")
+        if entry.stem != identifier:
+            raise HandoffContractError([f"{relative}: filename must match attempt_id"])
+        if not isinstance(identifier, str) or identifier in identifiers:
+            raise HandoffContractError([f"{relative}: duplicate attempt ID"])
+        identifiers.add(identifier)
+        receipts.append(receipt)
+    return receipts
+
+
+def _prepared_handoff_snapshot(
+    project_dir: Path,
+    project_manifest: dict[str, object],
+) -> dict[str, object] | None:
+    binding = project_manifest.get("handoff")
+    if not isinstance(binding, dict):
+        return None
+    manifest_path = binding.get("manifest_path")
+    locked_scope = binding.get("locked_scope_sha256")
+    if manifest_path is None and locked_scope is None:
+        return None
+    if manifest_path != HANDOFF_MANIFEST_PATH or not isinstance(locked_scope, str):
+        raise HandoffContractError(["project.json.handoff: populated binding is malformed"])
+
+    handoff_manifest = _read_handoff_json(project_dir, HANDOFF_MANIFEST_PATH)
+    issues = validate_handoff_manifest(handoff_manifest)
+    if issues:
+        raise HandoffContractError(f"{HANDOFF_MANIFEST_PATH}.{issue}" for issue in issues)
+    for field, expected in (
+        ("project_id", project_manifest.get("project_id")),
+        ("project_schema_version", project_manifest.get("schema_version")),
+        ("stage", project_manifest.get("status")),
+        ("locked_scope_sha256", locked_scope),
+    ):
+        if handoff_manifest.get(field) != expected:
+            raise HandoffContractError(
+                [f"{HANDOFF_MANIFEST_PATH}.{field}: does not match project.json"]
+            )
+
+    batch_map = _read_handoff_json(project_dir, BATCHES_PATH)
+    issues = validate_generation_batches(batch_map)
+    if issues:
+        raise HandoffContractError(f"{BATCHES_PATH}.{issue}" for issue in issues)
+    batch_bytes = canonical_artifact_bytes(batch_map)
+    batches_descriptor = handoff_manifest.get("batches")
+    if (
+        not isinstance(batches_descriptor, dict)
+        or batches_descriptor.get("sha256") != hashlib.sha256(batch_bytes).hexdigest()
+    ):
+        raise HandoffContractError([f"{BATCHES_PATH}: digest does not match handoff manifest"])
+
+    descriptors = handoff_manifest.get("jobs")
+    if not isinstance(descriptors, list):
+        raise HandoffContractError([f"{HANDOFF_MANIFEST_PATH}.jobs: must be an array"])
+    jobs: dict[str, dict[str, object]] = {}
+    descriptor_by_id: dict[str, dict[str, object]] = {}
+    reference_paths: set[str] = set()
+    for raw_descriptor in descriptors:
+        if not isinstance(raw_descriptor, dict):
+            raise HandoffContractError([f"{HANDOFF_MANIFEST_PATH}.jobs: invalid descriptor"])
+        descriptor = cast(dict[str, object], raw_descriptor)
+        job_id = descriptor.get("job_id")
+        if not isinstance(job_id, str):
+            raise HandoffContractError([f"{HANDOFF_MANIFEST_PATH}.jobs: invalid job ID"])
+        descriptor_by_id[job_id] = descriptor
+        if descriptor.get("status") == "missing":
+            continue
+        relative = descriptor.get("path")
+        if not isinstance(relative, str):
+            raise HandoffContractError([f"{HANDOFF_MANIFEST_PATH}.jobs: invalid path"])
+        job = _read_handoff_json(project_dir, relative)
+        issues = validate_generation_job(job)
+        if issues:
+            raise HandoffContractError(f"{relative}.{issue}" for issue in issues)
+        if job.get("job_id") != job_id:
+            raise HandoffContractError([f"{relative}.job_id: descriptor binding mismatch"])
+        job_bytes = canonical_artifact_bytes(job)
+        if descriptor.get("sha256") != hashlib.sha256(job_bytes).hexdigest():
+            raise HandoffContractError([f"{relative}.sha256: descriptor binding mismatch"])
+        jobs[job_id] = job
+        references = job.get("references")
+        if isinstance(references, list):
+            reference_paths.update(
+                reference["path"]
+                for reference in references
+                if isinstance(reference, dict) and isinstance(reference.get("path"), str)
+            )
+
+    batch_job_ids = {
+        job_id
+        for batch in cast(list[dict[str, object]], batch_map["batches"])
+        for job_id in cast(list[str], batch["job_ids"])
+    }
+    if batch_job_ids != set(descriptor_by_id):
+        raise HandoffContractError(["handoff jobs must exactly match generation batches"])
+
+    stale = False
+    required_artifacts = handoff_manifest.get("required_artifacts")
+    if not isinstance(required_artifacts, list):
+        raise HandoffContractError(["required_artifacts: must be an array"])
+    for artifact in required_artifacts:
+        if not isinstance(artifact, dict):
+            raise HandoffContractError(["required_artifacts: invalid descriptor"])
+        relative = artifact.get("path")
+        expected = artifact.get("sha256")
+        if not isinstance(relative, str) or not isinstance(expected, str):
+            raise HandoffContractError(["required_artifacts: invalid binding"])
+        if relative.startswith(("references/characters/", "references/scenes/")):
+            reference_paths.add(relative)
+        try:
+            payload = read_contained_bytes(project_dir, relative)
+        except FileNotFoundError:
+            stale = True
+        else:
+            stale = stale or hashlib.sha256(payload).hexdigest() != expected
+    try:
+        assert_current_locked_scope(
+            project_dir,
+            locked_scope,
+            reference_paths=sorted(reference_paths),
+        )
+    except (FileNotFoundError, StaleLockedScopeError):
+        stale = True
+
+    receipts = _receipt_inventory(project_dir)
+    receipts_by_job: dict[str, list[dict[str, object]]] = {job_id: [] for job_id in jobs}
+    current_attempt_ids = {
+        generation_attempt_id(job_id=job_id, attempt=ordinal)
+        for job_id, job in jobs.items()
+        for ordinal in range(1, cast(int, job["retry_limit"]) + 2)
+    }
+    for receipt in receipts:
+        receipt_job_id = receipt.get("job_id")
+        if not isinstance(receipt_job_id, str) or receipt_job_id not in receipts_by_job:
+            if receipt.get("attempt_id") in current_attempt_ids:
+                raise HandoffContractError(["receipt job_id: does not name a current handoff job"])
+            continue
+        job = jobs[receipt_job_id]
+        if receipt.get("outcome") == "success":
+            raster_path = receipt.get("raster_path")
+            raster_sha256 = receipt.get("raster_sha256")
+            if raster_path != job.get("target_path"):
+                raise HandoffContractError(
+                    ["successful receipt raster_path: does not match generation job target_path"]
+                )
+            if not isinstance(raster_path, str) or not isinstance(raster_sha256, str):
+                raise HandoffContractError(
+                    ["successful receipt: retained raster binding is malformed"]
+                )
+            try:
+                raster_bytes = read_contained_bytes(
+                    project_dir,
+                    raster_path,
+                    max_bytes=MAX_ENCODED_RASTER_BYTES,
+                )
+            except FileNotFoundError as error:
+                raise HandoffContractError(
+                    [f"{raster_path}: successful receipt retained raster is missing"]
+                ) from error
+            if hashlib.sha256(raster_bytes).hexdigest() != raster_sha256:
+                raise HandoffContractError(
+                    [f"{raster_path}: successful receipt retained raster digest mismatch"]
+                )
+            try:
+                _validate_handoff_raster(raster_bytes, job)
+            except HandoffResultError as error:
+                raise HandoffContractError(
+                    [
+                        f"{raster_path}: successful receipt retained raster violates "
+                        f"the generation job: {issue}"
+                        for issue in error.issues
+                    ]
+                ) from error
+            if job.get("subject_kind") == "reference":
+                try:
+                    canonical_path = _reference_canonical_path(
+                        project_dir, cast(str, job["subject_id"])
+                    )
+                except HandoffResultError:
+                    stale = True
+                else:
+                    try:
+                        canonical_bytes = read_contained_bytes(
+                            project_dir,
+                            canonical_path,
+                            max_bytes=MAX_ENCODED_RASTER_BYTES,
+                        )
+                    except FileNotFoundError:
+                        stale = True
+                    else:
+                        stale = stale or canonical_bytes != raster_bytes
+        receipts_by_job[receipt_job_id].append(receipt)
+
+    effective_jobs: list[dict[str, object]] = []
+    for descriptor in descriptors:
+        descriptor = cast(dict[str, object], descriptor)
+        job_id = cast(str, descriptor["job_id"])
+        job = jobs.get(job_id)
+        state = reconcile_job_receipts(
+            job=job,
+            job_sha256=descriptor.get("sha256") if job is not None else None,
+            receipts=receipts_by_job.get(job_id, []),
+            declared_status=cast(str, descriptor["status"]),
+            stale=stale,
+        )
+        effective_jobs.append(
+            {
+                "attempts_remaining": state["attempts_remaining"],
+                "attempts_used": state["attempts_used"],
+                "job_id": job_id,
+                "next_attempt": state["next_attempt"],
+                "path": descriptor["path"],
+                "status": state["status"],
+                "subject_id": None if job is None else job.get("subject_id"),
+                "subject_kind": None if job is None else job.get("subject_kind"),
+            }
+        )
+    batches = cast(list[dict[str, object]], batch_map["batches"])
+    phase = "panel" if any(batch.get("kind") == "panel" for batch in batches) else "reference"
+    return {
+        "batch_map": batch_map,
+        "effective_jobs": effective_jobs,
+        "handoff_manifest": handoff_manifest,
+        "jobs": jobs,
+        "phase": phase,
+        "receipts": receipts,
+        "scope_state": "stale" if stale else "current",
+    }
+
+
+def _handoff_next_action(phase: str, jobs: Sequence[Mapping[str, object]]) -> str:
+    statuses = {job.get("status") for job in jobs}
+    if "stale" in statuses:
+        return "invalidate"
+    if "failed" in statuses:
+        return "retry-exhausted"
+    if phase == "reference":
+        return "prepare" if statuses == {"completed"} else "render-references"
+    return "visual-qa" if statuses == {"completed"} else "render-panels"
+
+
+def inspect_handoff(project_dir: Path) -> dict[str, object]:
+    """Inspect effective handoff state without migration or project-artifact writes."""
+    project_dir = Path(project_dir)
+    project_manifest = read_project_manifest(project_dir / "project.json")
+    binding = project_manifest.get("handoff")
+    if project_manifest.get("schema_version") == LEGACY_PROJECT_SCHEMA_VERSION or (
+        isinstance(binding, dict)
+        and binding.get("manifest_path") is None
+        and binding.get("locked_scope_sha256") is None
+    ):
+        return {
+            "batches": [],
+            "jobs": [],
+            "next_action": "prepare",
+            "phase": None,
+            "prepared": False,
+            "project_stage": project_manifest.get("status"),
+            "scope_state": "unprepared",
+        }
+    if not isinstance(binding, dict):
+        raise HandoffContractError(["project.json.handoff: required object is missing"])
+    with ProjectLock(project_dir):
+        project_manifest = read_project_manifest(project_dir / "project.json")
+        snapshot = _prepared_handoff_snapshot(project_dir, project_manifest)
+    if snapshot is None:
+        return {
+            "batches": [],
+            "jobs": [],
+            "next_action": "prepare",
+            "phase": None,
+            "prepared": False,
+            "project_stage": project_manifest.get("status"),
+            "scope_state": "unprepared",
+        }
+    jobs = cast(list[dict[str, object]], snapshot["effective_jobs"])
+    batch_map = cast(dict[str, object], snapshot["batch_map"])
+    phase = cast(str, snapshot["phase"])
+    return {
+        "batches": batch_map["batches"],
+        "jobs": jobs,
+        "next_action": _handoff_next_action(phase, jobs),
+        "phase": phase,
+        "prepared": True,
+        "project_stage": project_manifest.get("status"),
+        "scope_state": snapshot["scope_state"],
+    }
+
+
+def _validate_reference_activation(
+    project_dir: Path,
+    snapshot: Mapping[str, object],
+) -> None:
+    jobs = cast(dict[str, dict[str, object]], snapshot["jobs"])
+    effective = {
+        cast(str, item["job_id"]): item
+        for item in cast(list[dict[str, object]], snapshot["effective_jobs"])
+    }
+    receipts = cast(list[dict[str, object]], snapshot["receipts"])
+    for job_id, job in jobs.items():
+        if job.get("subject_kind") != "reference":
+            continue
+        if effective[job_id].get("status") != "completed":
+            raise HandoffContractError(["reference jobs must be completed before panel prepare"])
+        success = next(
+            (
+                receipt
+                for receipt in receipts
+                if receipt.get("job_id") == job_id and receipt.get("outcome") == "success"
+            ),
+            None,
+        )
+        if success is None:
+            raise HandoffContractError(["reference activation requires a successful receipt"])
+        retained_path = success.get("raster_path")
+        retained_sha256 = success.get("raster_sha256")
+        subject_id = job.get("subject_id")
+        prompt_path = job.get("prompt_path")
+        if not isinstance(subject_id, str) or not isinstance(prompt_path, str):
+            raise HandoffContractError(["reference job binding is malformed"])
+        canonical = (
+            f"references/scenes/{subject_id}.png"
+            if subject_id in _story_scene_ids(project_dir)
+            else f"references/characters/{subject_id}.png"
+        )
+        if not isinstance(retained_path, str) or not isinstance(retained_sha256, str):
+            raise HandoffContractError(["successful reference receipt is rasterless"])
+        retained = read_contained_bytes(
+            project_dir, retained_path, max_bytes=MAX_ENCODED_RASTER_BYTES
+        )
+        canonical_bytes = read_contained_bytes(
+            project_dir, canonical, max_bytes=MAX_ENCODED_RASTER_BYTES
+        )
+        if (
+            hashlib.sha256(retained).hexdigest() != retained_sha256
+            or hashlib.sha256(canonical_bytes).hexdigest() != retained_sha256
+            or retained != canonical_bytes
+        ):
+            raise HandoffContractError(
+                ["canonical reference does not match its successful receipt"]
+            )
+
+
+def _story_scene_ids(project_dir: Path) -> set[str]:
+    story = _read_handoff_json(project_dir, "plan/story-plan.json")
+    scenes = story.get("scenes")
+    return {
+        cast(str, scene["id"])
+        for scene in cast(list[dict[str, object]], scenes if isinstance(scenes, list) else [])
+        if isinstance(scene, dict) and isinstance(scene.get("id"), str)
+    }
+
+
+def _retained_attempt_bindings(project_dir: Path) -> dict[str, str]:
+    """Map every retained attempt path this project produced to its receipt digest.
+
+    Invalidation preserves receipts and rasters, so a re-prepared job must be able
+    to tell a retained attempt of its own retired predecessor apart from a file it
+    has no provenance for. Only a persisted receipt proves the former.
+    """
+    bindings: dict[str, str] = {}
+    for receipt in _receipt_inventory(project_dir):
+        raster_path = receipt.get("raster_path")
+        raster_sha256 = receipt.get("raster_sha256")
+        if isinstance(raster_path, str) and isinstance(raster_sha256, str):
+            bindings[raster_path] = raster_sha256
+    return bindings
+
+
+def _reference_activation_provenance(project_dir: Path) -> dict[tuple[str, str], str]:
+    """Map each provably produced reference raster to the prompt that rendered it.
+
+    Invalidation retains receipts, generation jobs, and rasters, so an activated
+    canonical PNG can still be traced back to the job that produced it. That
+    binding is the only honest way to tell whether canonical artwork came from
+    the current prompt or from a retired one.
+    """
+    provenance: dict[tuple[str, str], str] = {}
+    for receipt in _receipt_inventory(project_dir):
+        if receipt.get("outcome") != "success":
+            continue
+        raster_sha256 = receipt.get("raster_sha256")
+        job_id = receipt.get("job_id")
+        if not isinstance(raster_sha256, str) or not isinstance(job_id, str):
+            continue
+        try:
+            job = _read_handoff_json(project_dir, f"generation/jobs/{job_id}.json")
+        except (FileNotFoundError, OSError, ValueError):
+            continue
+        if validate_generation_job(job) or job.get("subject_kind") != "reference":
+            continue
+        subject_id = job.get("subject_id")
+        prompt_sha256 = job.get("prompt_sha256")
+        if isinstance(subject_id, str) and isinstance(prompt_sha256, str):
+            provenance[(subject_id, raster_sha256)] = prompt_sha256
+    return provenance
+
+
+def _reference_is_superseded(
+    project_dir: Path,
+    subject_id: str,
+    canonical_relative: str,
+    prompt_sha256: str,
+    provenance: Mapping[tuple[str, str], str],
+) -> bool:
+    """Report whether an activated canonical reference came from a retired prompt.
+
+    Only a canonical raster this project can prove it produced is ever treated as
+    superseded: artwork with no receipt provenance stays untouched so a
+    hand-placed reference is never silently regenerated over.
+    """
+    try:
+        payload = read_contained_bytes(
+            project_dir, canonical_relative, max_bytes=MAX_ENCODED_RASTER_BYTES
+        )
+    except (OSError, ValueError):
+        return False
+    activated = provenance.get((subject_id, hashlib.sha256(payload).hexdigest()))
+    return activated is not None and activated != prompt_sha256
+
+
+def _reference_can_reactivate(
+    project_dir: Path,
+    subject_id: str,
+    canonical_relative: str,
+    job: Mapping[str, object],
+) -> bool:
+    """Allow canonical replacement only for a proven superseded activation."""
+    prompt_sha256 = job.get("prompt_sha256")
+    if not isinstance(prompt_sha256, str):
+        return False
+    try:
+        canonical = read_contained_bytes(
+            project_dir, canonical_relative, max_bytes=MAX_ENCODED_RASTER_BYTES
+        )
+    except (OSError, ValueError):
+        return False
+    prior_prompt = _reference_activation_provenance(project_dir).get(
+        (subject_id, hashlib.sha256(canonical).hexdigest())
+    )
+    return prior_prompt is not None and prior_prompt != prompt_sha256
+
+
+def _next_reference_attempt_target(
+    project_dir: Path,
+    subject_id: str,
+    bindings: Mapping[str, str],
+) -> str:
+    """Return the retained reference attempt path a newly derived job may claim.
+
+    References carry no generation counters, so the next free sequence is derived
+    from the attempts a receipt already accounts for. A path holding anything this
+    project cannot prove it produced is left alone for the unmanaged-collision
+    check rather than skipped.
+    """
+    sequence = 1
+    while True:
+        relative = f"references/attempts/{subject_id}/initial-{sequence:03d}.png"
+        expected = bindings.get(relative)
+        if expected is None:
+            return relative
+        try:
+            payload = read_contained_bytes(
+                project_dir, relative, max_bytes=MAX_ENCODED_RASTER_BYTES
+            )
+        except (OSError, ValueError):
+            return relative
+        if hashlib.sha256(payload).hexdigest() != expected:
+            return relative
+        sequence += 1
+
+
+def _next_panel_attempt_identity(project_dir: Path, panel_id: str) -> tuple[str, int]:
+    """Return the attempt kind and retained sequence a new panel job may claim.
+
+    The generation counters are authoritative for panel attempt accounting, so a
+    panel that already spent its initial attempt regenerates as a bounded visual
+    retry instead of claiming the initial slot a second time.
+    """
+    panels = _read_generation_counters(project_dir).get("panels")
+    counts = panels.get(panel_id) if isinstance(panels, dict) else None
+    if not isinstance(counts, dict) or not counts.get("initial"):
+        return "initial", 1
+    retries = counts.get("visual_retries", 0)
+    if isinstance(retries, bool) or not isinstance(retries, int) or retries < 0:
+        raise HandoffContractError([f"panel {panel_id}: generation counters are invalid"])
+    if retries >= GENERATION_LIMITS["visual_retry"]:
+        raise HandoffContractError(
+            [f"panel {panel_id}: {GENERATION_LIMIT_MESSAGES['visual_retry']}"]
+        )
+    return "visual_retry", retries + 1
+
+
+_JOB_BRIEF_FIELDS = (
+    "batch_id",
+    "prompt_path",
+    "prompt_sha256",
+    "references",
+    "requested_aspect_ratio",
+    "requested_dimensions",
+    "retry_limit",
+    "subject_id",
+    "subject_kind",
+)
+
+
+def _prepared_job_for_brief(
+    existing_jobs: Mapping[str, Mapping[str, object]],
+    candidate: Mapping[str, object],
+) -> dict[str, object] | None:
+    """Return the already prepared job that renders this exact brief, when one exists.
+
+    A prepared job keeps the retained target it was published with, so repreparing
+    an unchanged brief stays byte-identical even after its attempt was accepted and
+    the counters moved on.
+    """
+    for job in existing_jobs.values():
+        if all(job.get(field) == candidate.get(field) for field in _JOB_BRIEF_FIELDS):
+            return dict(job)
+    return None
+
+
+def _build_handoff_content(
+    project_dir: Path,
+    project_manifest: dict[str, object],
+    existing: Mapping[str, object] | None,
+) -> tuple[str, dict[str, bytes], dict[str, object], list[dict[str, object]]]:
+    from .validate_project import require_valid_project
+
+    if existing is not None and existing.get("scope_state") != "current":
+        raise StaleLockedScopeError(["locked_scope_sha256: stale project scope"])
+    require_valid_project(project_dir, "storyboard")
+    story = _read_handoff_json(project_dir, "plan/story-plan.json")
+    characters = _read_handoff_json(project_dir, "plan/character-bible.json")
+    storyboard = _read_handoff_json(project_dir, "plan/storyboard.json")
+    identity_pack = _read_handoff_json(project_dir, IDENTITY_PACK_PATH)
+    identity_issues = validate_identity_pack(identity_pack, character_bible=characters)
+    if identity_issues:
+        raise HandoffContractError(identity_issues)
+
+    reference_prompts = _prompt_inventory(project_dir, "references")
+    panel_prompts = _prompt_inventory(project_dir, "panels")
+    character_items = characters.get("characters")
+    scene_items = story.get("scenes")
+    pages = storyboard.get("pages")
+    if not isinstance(character_items, list) or not isinstance(scene_items, list):
+        raise HandoffContractError(["planning artifacts do not contain ordered identities"])
+    if not isinstance(pages, list):
+        raise HandoffContractError(["storyboard pages must be an array"])
+    character_ids = [
+        cast(str, item["id"])
+        for item in character_items
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    ]
+    scene_ids = [
+        cast(str, item["id"])
+        for item in scene_items
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    ]
+    ambiguous = sorted(set(character_ids) & set(scene_ids) & set(reference_prompts))
+    unknown = sorted(set(reference_prompts) - set(character_ids) - set(scene_ids))
+    if ambiguous:
+        raise HandoffContractError(
+            [
+                f"prompts/references/{identifier}.txt: character/scene identity is ambiguous"
+                for identifier in ambiguous
+            ]
+        )
+    if unknown:
+        raise HandoffContractError(
+            [
+                f"prompts/references/{identifier}.txt: unknown reference identity"
+                for identifier in unknown
+            ]
+        )
+
+    reference_candidates: list[tuple[str, str, str, bytes]] = []
+    active_reference_paths: set[str] = set()
+    reference_provenance = _reference_activation_provenance(project_dir)
+    for item in character_items:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            continue
+        identifier = cast(str, item["id"])
+        canonical = item.get("reference_path")
+        if canonical != f"references/characters/{identifier}.png":
+            raise HandoffContractError(
+                [f"character {identifier}: canonical reference path is invalid"]
+            )
+        target = contained_project_path(project_dir, cast(str, canonical))
+        prompt = reference_prompts.get(identifier)
+        superseded = (
+            target.exists()
+            and prompt is not None
+            and _reference_is_superseded(
+                project_dir,
+                identifier,
+                cast(str, canonical),
+                hashlib.sha256(prompt[1]).hexdigest(),
+                reference_provenance,
+            )
+        )
+        if target.exists() and not superseded:
+            _verify_raster(target, expected_format="PNG")
+            active_reference_paths.add(cast(str, canonical))
+        else:
+            if prompt is None:
+                raise HandoffContractError(
+                    [f"prompts/references/{identifier}.txt: required prompt is missing"]
+                )
+            reference_candidates.append((identifier, cast(str, canonical), prompt[0], prompt[1]))
+    for identifier in scene_ids:
+        prompt = reference_prompts.get(identifier)
+        canonical = f"references/scenes/{identifier}.png"
+        target = contained_project_path(project_dir, canonical)
+        superseded = (
+            target.exists()
+            and prompt is not None
+            and _reference_is_superseded(
+                project_dir,
+                identifier,
+                canonical,
+                hashlib.sha256(prompt[1]).hexdigest(),
+                reference_provenance,
+            )
+        )
+        if target.exists() and not superseded:
+            _verify_raster(target, expected_format="PNG")
+            active_reference_paths.add(canonical)
+        elif prompt is not None:
+            reference_candidates.append((identifier, canonical, prompt[0], prompt[1]))
+
+    panel_ids: list[str] = []
+    for page in pages:
+        if not isinstance(page, dict) or not isinstance(page.get("panels"), list):
+            continue
+        panel_ids.extend(
+            cast(str, panel["id"])
+            for panel in page["panels"]
+            if isinstance(panel, dict) and isinstance(panel.get("id"), str)
+        )
+    if set(panel_prompts) != set(panel_ids):
+        missing = sorted(set(panel_ids) - set(panel_prompts))
+        orphan = sorted(set(panel_prompts) - set(panel_ids))
+        issues = [
+            f"prompts/panels/{identifier}.txt: required prompt is missing" for identifier in missing
+        ]
+        issues.extend(
+            f"prompts/panels/{identifier}.txt: orphan panel prompt" for identifier in orphan
+        )
+        raise HandoffContractError(issues)
+
+    phase = "reference" if reference_candidates else "panel"
+    if existing is not None:
+        existing_phase = existing.get("phase")
+        if existing.get("scope_state") != "current":
+            raise StaleLockedScopeError(["locked_scope_sha256: stale project scope"])
+        if existing_phase == "panel" and phase != "panel":
+            raise StaleLockedScopeError(["handoff phase cannot move backward"])
+        if existing_phase == "reference" and phase == "panel":
+            _validate_reference_activation(project_dir, existing)
+
+    reference_plan = project_reference_plan(
+        identity_pack,
+        storyboard,
+        reference_budget=0 if phase == "reference" else None,
+    )
+    selection_bytes = reference_plan_bytes(reference_plan)
+    artifacts: dict[str, bytes] = {"logs/reference-selection.json": selection_bytes}
+    jobs: list[dict[str, object]] = []
+    batches: list[dict[str, object]] = []
+
+    existing_jobs = (
+        cast(dict[str, dict[str, object]], existing["jobs"]) if existing is not None else {}
+    )
+    existing_effective = (
+        {
+            cast(str, item["job_id"]): item
+            for item in cast(list[dict[str, object]], existing["effective_jobs"])
+        }
+        if existing is not None
+        else {}
+    )
+    existing_batch_map = (
+        cast(dict[str, object], existing["batch_map"]) if existing is not None else None
+    )
+    retained_bindings = _retained_attempt_bindings(project_dir)
+    if phase == "reference":
+        for identifier, _canonical, prompt_path, prompt_bytes in reference_candidates:
+            brief: dict[str, object] = {
+                "batch_id": "references-001",
+                "prompt_path": prompt_path,
+                "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
+                "references": [],
+                "requested_aspect_ratio": None,
+                "requested_dimensions": None,
+                "retry_limit": 2,
+                "subject_id": identifier,
+                "subject_kind": "reference",
+            }
+            prepared = _prepared_job_for_brief(existing_jobs, brief)
+            job = (
+                prepared
+                if prepared is not None
+                else build_generation_job(
+                    subject_kind="reference",
+                    subject_id=identifier,
+                    prompt_path=prompt_path,
+                    prompt_sha256=cast(str, brief["prompt_sha256"]),
+                    references=[],
+                    requested_dimensions=None,
+                    requested_aspect_ratio=None,
+                    attempt_kind="initial",
+                    retry_limit=2,
+                    batch_id="references-001",
+                    target_path=_next_reference_attempt_target(
+                        project_dir, identifier, retained_bindings
+                    ),
+                )
+            )
+            jobs.append(job)
+        batches.append(
+            {
+                "batch_id": "references-001",
+                "job_ids": [cast(str, job["job_id"]) for job in jobs],
+                "kind": "reference",
+            }
+        )
+    else:
+        if existing_batch_map is not None:
+            for batch in cast(list[dict[str, object]], existing_batch_map["batches"]):
+                if batch.get("kind") == "reference":
+                    batches.append(dict(batch))
+                    for job_id in cast(list[str], batch["job_ids"]):
+                        jobs.append(existing_jobs[job_id])
+        retry_limit = cast(dict[str, object], project_manifest["settings"]).get("max_panel_retries")
+        if isinstance(retry_limit, bool) or not isinstance(retry_limit, int):
+            raise HandoffContractError(["settings.max_panel_retries: invalid retry budget"])
+        counters = _read_generation_counters(project_dir)
+        global_extra_calls = counters.get("global_extra_calls", 0)
+        if (
+            isinstance(global_extra_calls, bool)
+            or not isinstance(global_extra_calls, int)
+            or global_extra_calls < 0
+        ):
+            raise HandoffContractError(["global generation counter must be a non-negative integer"])
+        remaining_global_extras = GLOBAL_EXTRA_CALL_LIMIT - global_extra_calls
+        plan_by_panel = {
+            cast(str, panel["panel_id"]): panel
+            for panel in cast(list[dict[str, object]], reference_plan["panels"])
+        }
+        for page_index, page in enumerate(pages, 1):
+            if not isinstance(page, dict) or not isinstance(page.get("panels"), list):
+                continue
+            batch_id = f"panels-{page_index:03d}"
+            page_jobs: list[dict[str, object]] = []
+            for panel in page["panels"]:
+                if not isinstance(panel, dict) or not isinstance(panel.get("id"), str):
+                    continue
+                panel_id = cast(str, panel["id"])
+                prompt_path, prompt_bytes = panel_prompts[panel_id]
+                selected = plan_by_panel[panel_id].get("selected")
+                references: list[dict[str, object]] = []
+                for selected_item in cast(list[dict[str, object]], selected):
+                    relative = cast(str, selected_item["path"])
+                    payload = read_contained_bytes(
+                        project_dir, relative, max_bytes=MAX_ENCODED_RASTER_BYTES
+                    )
+                    _verify_raster(
+                        contained_project_path(project_dir, relative, must_exist=True),
+                        expected_format="PNG",
+                    )
+                    references.append(
+                        {"path": relative, "sha256": hashlib.sha256(payload).hexdigest()}
+                    )
+                scene_id = panel.get("scene_id")
+                if isinstance(scene_id, str):
+                    scene_relative = f"references/scenes/{scene_id}.png"
+                    scene_path = contained_project_path(project_dir, scene_relative)
+                    if scene_path.exists():
+                        scene_payload = read_contained_bytes(
+                            project_dir,
+                            scene_relative,
+                            max_bytes=MAX_ENCODED_RASTER_BYTES,
+                        )
+                        _verify_raster(scene_path, expected_format="PNG")
+                        if scene_relative not in {item["path"] for item in references}:
+                            references.append(
+                                {
+                                    "path": scene_relative,
+                                    "sha256": hashlib.sha256(scene_payload).hexdigest(),
+                                }
+                            )
+                rect = panel.get("rect")
+                if not isinstance(rect, dict):
+                    raise HandoffContractError([f"panel {panel_id}: rectangle is missing"])
+                width = rect.get("width")
+                height = rect.get("height")
+                if (
+                    isinstance(width, bool)
+                    or not isinstance(width, int)
+                    or isinstance(height, bool)
+                    or not isinstance(height, int)
+                    or width <= 0
+                    or height <= 0
+                ):
+                    raise HandoffContractError([f"panel {panel_id}: rectangle is invalid"])
+                divisor = math.gcd(width, height)
+                brief = {
+                    "batch_id": batch_id,
+                    "prompt_path": prompt_path,
+                    "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
+                    "references": references,
+                    "requested_aspect_ratio": f"{width // divisor}:{height // divisor}",
+                    "requested_dimensions": {"width": width, "height": height},
+                    "retry_limit": retry_limit,
+                    "subject_id": panel_id,
+                    "subject_kind": "panel",
+                }
+                prepared = _prepared_job_for_brief(existing_jobs, brief)
+                if prepared is None:
+                    attempt_kind, sequence = _next_panel_attempt_identity(project_dir, panel_id)
+                    job = build_generation_job(
+                        subject_kind="panel",
+                        subject_id=panel_id,
+                        prompt_path=prompt_path,
+                        prompt_sha256=cast(str, brief["prompt_sha256"]),
+                        references=references,
+                        requested_dimensions={"width": width, "height": height},
+                        requested_aspect_ratio=cast(str, brief["requested_aspect_ratio"]),
+                        attempt_kind=attempt_kind,
+                        retry_limit=retry_limit,
+                        batch_id=batch_id,
+                        target_path=(
+                            f"panels/attempts/{panel_id}/{attempt_kind}-{sequence:03d}.png"
+                        ),
+                    )
+                else:
+                    job = prepared
+                job_id = cast(str, job["job_id"])
+                prior_status = existing_effective.get(job_id, {}).get("status", "ready")
+                if job.get("attempt_kind") != "initial" and prior_status == "ready":
+                    if remaining_global_extras <= 0:
+                        raise HandoffContractError(
+                            ["at most eight extra calls are allowed per project"]
+                        )
+                    remaining_global_extras -= 1
+                jobs.append(job)
+                page_jobs.append(job)
+            batches.append(
+                {
+                    "batch_id": batch_id,
+                    "job_ids": [cast(str, job["job_id"]) for job in page_jobs],
+                    "kind": "panel",
+                }
+            )
+
+    batch_map = build_generation_batches(batches)
+    batch_bytes = canonical_artifact_bytes(batch_map)
+    artifacts[BATCHES_PATH] = batch_bytes
+    preserved_receipts: set[str] = set()
+    for job in jobs:
+        job_id = cast(str, job["job_id"])
+        prior_job_path = f"generation/jobs/{job_id}.json"
+        try:
+            prior_job = _read_handoff_json(project_dir, prior_job_path)
+        except (FileNotFoundError, OSError, ValueError, HandoffContractError):
+            prior_job = None
+        if (
+            isinstance(prior_job, dict)
+            and prior_job.get("job_id") == job_id
+            and not validate_generation_job(prior_job)
+            and generation_job_sha256(prior_job) == generation_job_sha256(job)
+        ):
+            retry_limit = cast(int, job["retry_limit"])
+            for ordinal in range(1, retry_limit + 2):
+                receipt_id = generation_attempt_id(job_id=job_id, attempt=ordinal)
+                receipt_relative = f"generation/receipts/{receipt_id}.json"
+                receipt_path = contained_project_path(project_dir, receipt_relative)
+                if not receipt_path.exists() or receipt_path.is_symlink():
+                    continue
+                receipt = _read_handoff_json(project_dir, receipt_relative)
+                if receipt.get("job_id") == job_id and receipt.get(
+                    "job_sha256"
+                ) == generation_job_sha256(job):
+                    preserved_receipts.add(receipt_id)
+    for job in jobs:
+        relative = f"generation/jobs/{job['job_id']}.json"
+        target = contained_project_path(project_dir, relative)
+        target_path = cast(str, job["target_path"])
+        retained = contained_project_path(project_dir, target_path)
+        managed = cast(str, job["job_id"]) in existing_jobs
+        if retained.exists() and not managed:
+            raise HandoffContractError([f"{target_path}: unmanaged retained target collision"])
+        if not managed:
+            retry_limit = cast(int, job["retry_limit"])
+            for ordinal in range(1, retry_limit + 2):
+                receipt_id = generation_attempt_id(
+                    job_id=cast(str, job["job_id"]),
+                    attempt=ordinal,
+                )
+                receipt_relative = f"generation/receipts/{receipt_id}.json"
+                receipt_path = contained_project_path(project_dir, receipt_relative)
+                if receipt_path.exists() or receipt_path.is_symlink():
+                    if receipt_id in preserved_receipts:
+                        continue
+                    raise HandoffContractError([f"{receipt_relative}: unmanaged receipt collision"])
+        artifacts[relative] = canonical_artifact_bytes(job)
+
+    scope_content: dict[str, bytes] = {
+        BATCHES_PATH: batch_bytes,
+        "logs/reference-selection.json": selection_bytes,
+    }
+    for relative in LOCKED_SCOPE_FIXED_PATHS:
+        if relative not in scope_content:
+            scope_content[relative] = read_contained_bytes(project_dir, relative)
+    for _identifier, (relative, payload) in sorted(reference_prompts.items()):
+        scope_content[relative] = payload
+    for _identifier, (relative, payload) in sorted(panel_prompts.items()):
+        scope_content[relative] = payload
+    for relative in sorted(active_reference_paths):
+        scope_content[relative] = read_contained_bytes(
+            project_dir,
+            relative,
+            max_bytes=MAX_ENCODED_RASTER_BYTES,
+        )
+    for job in jobs:
+        for reference in cast(list[dict[str, object]], job["references"]):
+            relative = cast(str, reference["path"])
+            scope_content[relative] = read_contained_bytes(
+                project_dir, relative, max_bytes=MAX_ENCODED_RASTER_BYTES
+            )
+    locked_scope = locked_scope_sha256_from_content(scope_content)
+
+    descriptor_jobs: list[dict[str, object]] = []
+    for job in jobs:
+        job_id = cast(str, job["job_id"])
+        status = "ready"
+        if job_id in existing_effective:
+            status = cast(str, existing_effective[job_id]["status"])
+        descriptor_jobs.append(
+            {
+                "job_id": job_id,
+                "path": f"generation/jobs/{job_id}.json",
+                "sha256": generation_job_sha256(job),
+                "status": status,
+            }
+        )
+    required_content = dict(scope_content)
+    required_content.pop(BATCHES_PATH, None)
+    required_content[IDENTITY_PACK_PATH] = read_contained_bytes(
+        project_dir, IDENTITY_PACK_PATH, max_bytes=MAX_JSON_BYTES
+    )
+    required_artifacts = [
+        {"path": relative, "sha256": hashlib.sha256(payload).hexdigest()}
+        for relative, payload in sorted(required_content.items())
+    ]
+    handoff_manifest = build_handoff_manifest(
+        project_id=cast(str, project_manifest["project_id"]),
+        project_schema_version=CURRENT_PROJECT_SCHEMA_VERSION,
+        stage=cast(str, project_manifest["status"]),
+        locked_scope_sha256=locked_scope,
+        batches_path=BATCHES_PATH,
+        batches_sha256=hashlib.sha256(batch_bytes).hexdigest(),
+        jobs=descriptor_jobs,
+        required_artifacts=required_artifacts,
+    )
+    artifacts[HANDOFF_MANIFEST_PATH] = canonical_artifact_bytes(handoff_manifest)
+    project_manifest["handoff"] = {
+        "contract_version": HANDOFF_CONTRACT_VERSION,
+        "locked_scope_sha256": locked_scope,
+        "manifest_path": HANDOFF_MANIFEST_PATH,
+    }
+    artifacts["project.json"] = canonical_artifact_bytes(project_manifest)
+    return phase, artifacts, handoff_manifest, descriptor_jobs
+
+
+def prepare_handoff(project_dir: Path) -> dict[str, object]:
+    """Prepare deterministic reference or panel work in one project transaction."""
+    project_dir = Path(project_dir)
+    with ProjectLock(project_dir):
+        ProjectTransaction.recover(project_dir)
+        with ProjectTransaction(project_dir, "handoff-prepare") as transaction:
+            original = read_project_manifest(project_dir / "project.json", normalize_legacy=False)
+            source_version = original.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
+            migrated = source_version != CURRENT_PROJECT_SCHEMA_VERSION
+            project_manifest = (
+                migrate_project_manifest_in_memory(original) if migrated else dict(original)
+            )
+            existing = _prepared_handoff_snapshot(project_dir, project_manifest)
+            phase, artifacts, handoff_manifest, descriptors = _build_handoff_content(
+                project_dir,
+                project_manifest,
+                existing,
+            )
+            changed_paths = []
+            for relative, payload in artifacts.items():
+                try:
+                    current = read_contained_bytes(project_dir, relative)
+                except FileNotFoundError:
+                    current = None
+                if current != payload:
+                    changed_paths.append(relative)
+            if existing is not None and existing.get("phase") == phase and changed_paths:
+                raise StaleLockedScopeError(
+                    ["prepared handoff differs from the complete intended state"]
+                )
+            if not changed_paths:
+                jobs = cast(list[dict[str, object]], existing["effective_jobs"])
+                return {
+                    "batch_count": len(
+                        cast(
+                            list[object], cast(dict[str, object], existing["batch_map"])["batches"]
+                        )
+                    ),
+                    "changed": False,
+                    "job_counts": _handoff_job_counts(jobs),
+                    "locked_scope_sha256": handoff_manifest["locked_scope_sha256"],
+                    "manifest_path": HANDOFF_MANIFEST_PATH,
+                    "migrated": False,
+                    "next_action": _handoff_next_action(phase, jobs),
+                    "phase": phase,
+                    "project_id": project_manifest["project_id"],
+                }
+            for relative in changed_paths:
+                if relative == "project.json":
+                    continue
+                transaction.stage_bytes(relative, artifacts[relative])
+            transaction.append_bytes(
+                "logs/events.jsonl",
+                canonical_event_record(
+                    "handoff.prepared",
+                    {
+                        "count": len(descriptors),
+                        "kind": phase,
+                        "project_id": cast(str, project_manifest["project_id"]),
+                    },
+                ),
+                repair_torn_jsonl=True,
+            )
+            transaction.stage_bytes("project.json", artifacts["project.json"])
+    jobs = [
+        {
+            "status": descriptor["status"],
+        }
+        for descriptor in descriptors
+    ]
+    return {
+        "batch_count": len(
+            cast(list[object], _read_handoff_json(project_dir, BATCHES_PATH)["batches"])
+        ),
+        "changed": True,
+        "job_counts": _handoff_job_counts(jobs),
+        "locked_scope_sha256": handoff_manifest["locked_scope_sha256"],
+        "manifest_path": HANDOFF_MANIFEST_PATH,
+        "migrated": migrated,
+        "next_action": _handoff_next_action(phase, jobs),
+        "phase": phase,
+        "project_id": project_manifest["project_id"],
+    }
+
+
+def _handoff_job_counts(jobs: Sequence[Mapping[str, object]]) -> dict[str, int]:
+    counts = {status: 0 for status in ("missing", "ready", "completed", "failed", "stale")}
+    for job in jobs:
+        status = job.get("status")
+        if isinstance(status, str) and status in counts:
+            counts[status] += 1
+    return counts
+
+
+def _handoff_job_state(
+    snapshot: Mapping[str, object], job_id: str
+) -> tuple[dict[str, object], dict[str, object]]:
+    jobs = cast(dict[str, dict[str, object]], snapshot["jobs"])
+    job = jobs.get(job_id)
+    if job is None:
+        raise HandoffResultError(["job_id: does not name a current handoff job"])
+    state = next(
+        (
+            item
+            for item in cast(list[dict[str, object]], snapshot["effective_jobs"])
+            if item.get("job_id") == job_id
+        ),
+        None,
+    )
+    if state is None:
+        raise HandoffResultError(["job_id: effective handoff state is missing"])
+    if snapshot.get("scope_state") != "current" or state.get("status") == "stale":
+        raise StaleLockedScopeError(["job_id: job or locked scope is stale"])
+    return job, state
+
+
+def _validate_handoff_raster(
+    payload: bytes,
+    job: Mapping[str, object],
+) -> tuple[int, int]:
+    if not payload:
+        raise HandoffResultError(["result raster: must not be empty"])
+    target_path = job.get("target_path")
+    if not isinstance(target_path, str) or not target_path.endswith(".png"):
+        raise HandoffResultError(["result raster: job target format is unsupported"])
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(payload)) as image:
+                if image.format != "PNG":
+                    raise HandoffResultError(["result raster: format must match PNG target"])
+                if image.width * image.height > MAX_DECODED_PIXELS:
+                    raise InputResourceLimitError(
+                        f"the decoded raster pixel limit of {MAX_DECODED_PIXELS} pixels"
+                    )
+                if "A" in image.mode or "transparency" in image.info:
+                    raise HandoffResultError(["result raster: must not contain alpha transparency"])
+                image.load()
+                width, height = image.size
+    except HandoffResultError:
+        raise
+    except InputResourceLimitError:
+        raise
+    except (
+        OSError,
+        SyntaxError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as error:
+        raise HandoffResultError(["result raster: must be a readable PNG"]) from error
+    if width < MIN_RASTER_DIMENSION or height < MIN_RASTER_DIMENSION:
+        raise HandoffResultError(
+            [f"result raster: dimensions must both be at least {MIN_RASTER_DIMENSION}px"]
+        )
+    dimensions = job.get("requested_dimensions")
+    if isinstance(dimensions, Mapping):
+        if (width, height) != (dimensions.get("width"), dimensions.get("height")):
+            raise HandoffResultError(["result raster: dimensions do not match the job"])
+    aspect_ratio = job.get("requested_aspect_ratio")
+    if isinstance(aspect_ratio, str):
+        ratio_width, ratio_height = map(int, aspect_ratio.split(":"))
+        if width * ratio_height != height * ratio_width:
+            raise HandoffResultError(["result raster: aspect ratio does not match the job"])
+    return width, height
+
+
+def _reference_canonical_path(project_dir: Path, subject_id: str) -> str:
+    characters = _read_handoff_json(project_dir, "plan/character-bible.json").get("characters")
+    character_ids = (
+        {
+            item.get("id")
+            for item in characters
+            if isinstance(characters, list) and isinstance(item, dict)
+        }
+        if isinstance(characters, list)
+        else set()
+    )
+    scene_ids = _story_scene_ids(project_dir)
+    if subject_id in character_ids and subject_id in scene_ids:
+        raise HandoffResultError(["reference job identity is character/scene ambiguous"])
+    if subject_id in character_ids:
+        return f"references/characters/{subject_id}.png"
+    if subject_id in scene_ids:
+        return f"references/scenes/{subject_id}.png"
+    raise HandoffResultError(["reference job identity is not present in project planning"])
+
+
+def _updated_handoff_manifest(
+    snapshot: Mapping[str, object],
+    job_id: str,
+    status: str,
+) -> dict[str, object]:
+    manifest = deepcopy(cast(dict[str, object], snapshot["handoff_manifest"]))
+    descriptors = manifest.get("jobs")
+    if not isinstance(descriptors, list):
+        raise HandoffContractError(["handoff manifest jobs are malformed"])
+    found = False
+    for descriptor in descriptors:
+        if isinstance(descriptor, dict) and descriptor.get("job_id") == job_id:
+            descriptor["status"] = status
+            found = True
+    if not found:
+        raise HandoffContractError(["job_id: descriptor is missing"])
+    issues = validate_handoff_manifest(manifest)
+    if issues:
+        raise HandoffContractError(issues)
+    return manifest
+
+
+def _existing_attempt_receipt(
+    snapshot: Mapping[str, object], candidate_attempt_id: str
+) -> dict[str, object] | None:
+    return next(
+        (
+            receipt
+            for receipt in cast(list[dict[str, object]], snapshot["receipts"])
+            if receipt.get("attempt_id") == candidate_attempt_id
+        ),
+        None,
+    )
+
+
+def _duplicate_success_result(
+    project_dir: Path,
+    job: Mapping[str, object],
+    receipt: Mapping[str, object],
+    state: Mapping[str, object],
+) -> dict[str, object]:
+    raster_path = receipt.get("raster_path")
+    raster_sha256 = receipt.get("raster_sha256")
+    if not isinstance(raster_path, str) or not isinstance(raster_sha256, str):
+        raise HandoffResultError(["duplicate success receipt is rasterless"])
+    retained = read_contained_bytes(project_dir, raster_path, max_bytes=MAX_ENCODED_RASTER_BYTES)
+    if hashlib.sha256(retained).hexdigest() != raster_sha256:
+        raise HandoffResultError(["duplicate success raster binding is stale"])
+    activated_path: str | None = None
+    activated_sha256: str | None = None
+    if job.get("subject_kind") == "reference":
+        activated_path = _reference_canonical_path(project_dir, cast(str, job["subject_id"]))
+        activated = read_contained_bytes(
+            project_dir, activated_path, max_bytes=MAX_ENCODED_RASTER_BYTES
+        )
+        if activated != retained:
+            raise HandoffResultError(["duplicate reference activation is stale"])
+        activated_sha256 = raster_sha256
+    counters = (
+        _read_generation_counters(project_dir) if job.get("subject_kind") == "panel" else None
+    )
+    return {
+        "activated_reference_path": activated_path,
+        "activated_reference_sha256": activated_sha256,
+        "attempt_id": receipt["attempt_id"],
+        "counters": counters,
+        "duplicate": True,
+        "job_id": job["job_id"],
+        "raster_path": raster_path,
+        "raster_sha256": raster_sha256,
+        "receipt_path": f"generation/receipts/{receipt['attempt_id']}.json",
+        "status": state["status"],
+    }
+
+
+def accept_handoff_result(
+    project_dir: Path,
+    *,
+    job_id: str,
+    attempt: int,
+    raster_path: Path,
+    executor_kind: str,
+    executor_id: str,
+    provider: str | None = None,
+    model: str | None = None,
+    capabilities_used: Mapping[str, object] | None = None,
+    approve_reference: bool = False,
+) -> dict[str, object]:
+    """Validate and atomically retain one successful executor result."""
+    project_dir = Path(project_dir)
+    capabilities = dict(
+        capabilities_used
+        or {"reference_images": False, "dimensions": False, "localized_edit": False}
+    )
+    with ProjectLock(project_dir):
+        ProjectTransaction.recover(project_dir)
+        with ProjectTransaction(project_dir, "handoff-accept-result") as transaction:
+            project_manifest = read_project_manifest(project_dir / "project.json")
+            snapshot = _prepared_handoff_snapshot(project_dir, project_manifest)
+            if snapshot is None:
+                raise HandoffResultError(["handoff is not prepared"])
+            job, state = _handoff_job_state(snapshot, job_id)
+            is_reference = job.get("subject_kind") == "reference"
+            if is_reference and not approve_reference:
+                raise HandoffResultError(["reference result requires --approve-reference"])
+            if not is_reference and approve_reference:
+                raise HandoffResultError(["--approve-reference is valid only for reference jobs"])
+            try:
+                source_path = Path(raster_path).expanduser().absolute()
+            except (OSError, RuntimeError) as error:
+                raise HandoffResultError(
+                    ["result raster path: cannot be expanded safely"]
+                ) from error
+            try:
+                payload = read_bytes_nofollow(source_path, max_bytes=MAX_ENCODED_RASTER_BYTES)
+            except InputResourceLimitError:
+                raise
+            except ValueError as error:
+                if "symlink" in str(error).lower() or "reparse" in str(error).lower():
+                    raise ValueError(
+                        "security-error: result raster path must not contain symlinks"
+                    ) from error
+                raise HandoffResultError(["result raster: cannot be read safely"]) from error
+            except OSError as error:
+                if error.errno in (errno.ELOOP, errno.EMLINK):
+                    raise ValueError(
+                        "security-error: result raster path must not contain symlinks"
+                    ) from error
+                raise HandoffResultError(["result raster: cannot be read safely"]) from error
+            _validate_handoff_raster(payload, job)
+            raster_sha256 = hashlib.sha256(payload).hexdigest()
+            try:
+                identifier = generation_attempt_id(job_id=job_id, attempt=attempt)
+                receipt = build_generation_receipt(
+                    attempt_id=identifier,
+                    job_id=job_id,
+                    job_sha256=generation_job_sha256(job),
+                    raster_path=cast(str, job["target_path"]),
+                    raster_sha256=raster_sha256,
+                    executor_kind=executor_kind,
+                    executor_id=executor_id,
+                    provider=provider,
+                    model=model,
+                    capabilities_used=capabilities,
+                    outcome="success",
+                    category="accepted",
+                )
+            except HandoffContractError as error:
+                raise HandoffResultError(error.issues) from error
+            existing_receipt = _existing_attempt_receipt(snapshot, identifier)
+            if existing_receipt is not None:
+                if existing_receipt != receipt:
+                    raise HandoffResultError([f"attempt {attempt}: conflicting duplicate receipt"])
+                return _duplicate_success_result(project_dir, job, receipt, state)
+            if state.get("status") == "completed":
+                raise HandoffResultError(["job is completed and rejects another result"])
+            if state.get("status") == "failed":
+                raise HandoffResultError(["job retry budget is exhausted"])
+            if state.get("next_attempt") != attempt:
+                raise HandoffResultError(
+                    [f"attempt ordinal must equal next attempt {state.get('next_attempt')}"]
+                )
+            target_path = cast(str, job["target_path"])
+            if contained_project_path(project_dir, target_path).exists():
+                raise HandoffResultError(["result target already exists without this receipt"])
+
+            activated_path: str | None = None
+            if is_reference:
+                activated_path = _reference_canonical_path(
+                    project_dir, cast(str, job["subject_id"])
+                )
+                if contained_project_path(project_dir, activated_path).exists():
+                    if not _reference_can_reactivate(
+                        project_dir,
+                        cast(str, job["subject_id"]),
+                        activated_path,
+                        job,
+                    ):
+                        raise HandoffResultError(
+                            ["canonical reference exists and must never be overwritten"]
+                        )
+                counters = None
+            else:
+                panel_id = cast(str, job["subject_id"])
+                attempt_kind = cast(
+                    Literal["initial", "visual_retry", "transient_repeat"],
+                    job["attempt_kind"],
+                )
+                counter_name = _generation_counter_name(panel_id, attempt_kind)
+                counter_document, counters, sequence = _advance_generation_counters(
+                    project_dir, panel_id, attempt_kind, counter_name
+                )
+                expected_target = f"panels/attempts/{panel_id}/{attempt_kind}-{sequence:03d}.png"
+                if target_path != expected_target:
+                    raise HandoffResultError(
+                        ["panel job target does not match the next retained counter path"]
+                    )
+
+            prior_receipts = [
+                receipt_item
+                for receipt_item in cast(list[dict[str, object]], snapshot["receipts"])
+                if receipt_item.get("job_id") == job_id
+            ]
+            reconciled = reconcile_job_receipts(
+                job=job,
+                job_sha256=generation_job_sha256(job),
+                receipts=[*prior_receipts, receipt],
+                declared_status=cast(str, state["status"]),
+                stale=False,
+            )
+            handoff_manifest = _updated_handoff_manifest(
+                snapshot, job_id, cast(str, reconciled["status"])
+            )
+            transaction.stage_bytes(target_path, payload)
+            if activated_path is not None:
+                transaction.stage_bytes(activated_path, payload)
+            receipt_relative = f"generation/receipts/{identifier}.json"
+            transaction.stage_bytes(receipt_relative, canonical_artifact_bytes(receipt))
+            if not is_reference:
+                transaction.stage_bytes(
+                    GENERATION_COUNTERS_PATH.as_posix(),
+                    canonical_artifact_bytes(counter_document),
+                )
+            transaction.stage_bytes(
+                HANDOFF_MANIFEST_PATH, canonical_artifact_bytes(handoff_manifest)
+            )
+            event_details: dict[str, object] = {
+                "attempt_id": identifier,
+                "attempt_path": target_path,
+                "job_id": job_id,
+                "kind": "reference" if is_reference else "panel",
+                "raster_sha256": raster_sha256,
+            }
+            if activated_path is not None:
+                event_details["activated_path"] = activated_path
+                event_details["activated_sha256"] = raster_sha256
+            transaction.append_bytes(
+                "logs/events.jsonl",
+                canonical_event_record("handoff.result-accepted", event_details),
+                repair_torn_jsonl=True,
+            )
+    return {
+        "activated_reference_path": activated_path,
+        "activated_reference_sha256": raster_sha256 if activated_path is not None else None,
+        "attempt_id": identifier,
+        "counters": counters,
+        "duplicate": False,
+        "job_id": job_id,
+        "raster_path": target_path,
+        "raster_sha256": raster_sha256,
+        "receipt_path": receipt_relative,
+        "status": reconciled["status"],
+    }
+
+
+def record_handoff_failure(
+    project_dir: Path,
+    *,
+    job_id: str,
+    attempt: int,
+    executor_kind: str,
+    executor_id: str,
+    category: str,
+    provider: str | None = None,
+    model: str | None = None,
+    capabilities_used: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Atomically record one sanitized rasterless executor failure."""
+    project_dir = Path(project_dir)
+    capabilities = dict(
+        capabilities_used
+        or {"reference_images": False, "dimensions": False, "localized_edit": False}
+    )
+    with ProjectLock(project_dir):
+        ProjectTransaction.recover(project_dir)
+        with ProjectTransaction(project_dir, "handoff-record-failure") as transaction:
+            project_manifest = read_project_manifest(project_dir / "project.json")
+            snapshot = _prepared_handoff_snapshot(project_dir, project_manifest)
+            if snapshot is None:
+                raise HandoffResultError(["handoff is not prepared"])
+            job, state = _handoff_job_state(snapshot, job_id)
+            try:
+                identifier = generation_attempt_id(job_id=job_id, attempt=attempt)
+                receipt = build_generation_receipt(
+                    attempt_id=identifier,
+                    job_id=job_id,
+                    job_sha256=generation_job_sha256(job),
+                    raster_path=None,
+                    raster_sha256=None,
+                    executor_kind=executor_kind,
+                    executor_id=executor_id,
+                    provider=provider,
+                    model=model,
+                    capabilities_used=capabilities,
+                    outcome="failure",
+                    category=category,
+                )
+            except HandoffContractError as error:
+                raise HandoffResultError(error.issues) from error
+            existing_receipt = _existing_attempt_receipt(snapshot, identifier)
+            if existing_receipt is not None:
+                if existing_receipt != receipt:
+                    raise HandoffResultError([f"attempt {attempt}: conflicting duplicate receipt"])
+                return {
+                    "attempt_id": identifier,
+                    "attempts_remaining": state["attempts_remaining"],
+                    "attempts_used": state["attempts_used"],
+                    "category": category,
+                    "duplicate": True,
+                    "job_id": job_id,
+                    "next_attempt": state["next_attempt"],
+                    "receipt_path": f"generation/receipts/{identifier}.json",
+                    "status": state["status"],
+                }
+            if state.get("status") == "completed":
+                raise HandoffResultError(["job is completed and rejects a failure"])
+            if state.get("status") == "failed":
+                raise HandoffResultError(["job retry budget is exhausted"])
+            if state.get("next_attempt") != attempt:
+                raise HandoffResultError(
+                    [f"attempt ordinal must equal next attempt {state.get('next_attempt')}"]
+                )
+            prior_receipts = [
+                receipt_item
+                for receipt_item in cast(list[dict[str, object]], snapshot["receipts"])
+                if receipt_item.get("job_id") == job_id
+            ]
+            reconciled = reconcile_job_receipts(
+                job=job,
+                job_sha256=generation_job_sha256(job),
+                receipts=[*prior_receipts, receipt],
+                declared_status=cast(str, state["status"]),
+                stale=False,
+            )
+            handoff_manifest = _updated_handoff_manifest(
+                snapshot, job_id, cast(str, reconciled["status"])
+            )
+            receipt_relative = f"generation/receipts/{identifier}.json"
+            transaction.stage_bytes(receipt_relative, canonical_artifact_bytes(receipt))
+            transaction.stage_bytes(
+                HANDOFF_MANIFEST_PATH, canonical_artifact_bytes(handoff_manifest)
+            )
+            transaction.append_bytes(
+                "logs/events.jsonl",
+                canonical_event_record(
+                    "handoff.failure-recorded",
+                    {
+                        "attempt": attempt,
+                        "attempt_id": identifier,
+                        "category": category,
+                        "job_id": job_id,
+                        "kind": cast(str, job["subject_kind"]),
+                    },
+                ),
+                repair_torn_jsonl=True,
+            )
+    return {
+        "attempt_id": identifier,
+        "attempts_remaining": reconciled["attempts_remaining"],
+        "attempts_used": reconciled["attempts_used"],
+        "category": category,
+        "duplicate": False,
+        "job_id": job_id,
+        "next_attempt": reconciled["next_attempt"],
+        "receipt_path": receipt_relative,
+        "status": reconciled["status"],
+    }
 
 
 def _read_generation_counters(project_dir: Path) -> dict[str, object]:
@@ -1787,7 +3476,7 @@ def _advance_generation_counters(
         raise ValueError("global generation counter must be a non-negative integer")
     if panel[counter_name] >= GENERATION_LIMITS[kind]:
         raise ValueError(GENERATION_LIMIT_MESSAGES[kind])
-    if kind != "initial" and global_extras >= 8:
+    if kind != "initial" and global_extras >= GLOBAL_EXTRA_CALL_LIMIT:
         raise ValueError("at most eight extra calls are allowed per project")
 
     panel[counter_name] += 1
@@ -1920,7 +3609,11 @@ def _verify_raster_payload(payload: bytes, media_type: str, width: int, height: 
     return extension
 
 
-def _verify_raster(path: Path) -> tuple[int, int]:
+def _verify_raster(
+    path: Path,
+    *,
+    expected_format: str | None = None,
+) -> tuple[int, int]:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -1928,6 +3621,8 @@ def _verify_raster(path: Path) -> tuple[int, int]:
             with Image.open(io.BytesIO(payload)) as image:
                 if image.format not in {"PNG", "JPEG", "WEBP"}:
                     raise ValueError("attempt must be a readable raster")
+                if expected_format is not None and image.format != expected_format:
+                    raise ValueError(f"raster format must match {expected_format}")
                 if image.width * image.height > MAX_DECODED_PIXELS:
                     raise ValueError("attempt exceeds the decoded pixel limit")
                 image.load()
@@ -2860,7 +4555,88 @@ def _build_parser() -> argparse.ArgumentParser:
     finalize_parser = subparsers.add_parser("finalize")
     finalize_parser.add_argument("project_dir", type=Path)
     finalize_parser.add_argument("--json", action="store_true", dest="as_json")
+
+    handoff_parser = subparsers.add_parser("handoff")
+    handoff_subparsers = handoff_parser.add_subparsers(dest="handoff_command", required=True)
+
+    for name in ("prepare", "inspect"):
+        handoff_command = handoff_subparsers.add_parser(name)
+        handoff_command.add_argument("project_dir", type=Path)
+        handoff_command.add_argument("--json", action="store_true", dest="as_json")
+
+    def add_executor_arguments(handoff_command: argparse.ArgumentParser) -> None:
+        handoff_command.add_argument("project_dir", type=Path)
+        handoff_command.add_argument("--job", required=True, dest="job_id")
+        handoff_command.add_argument("--attempt", required=True, type=int)
+        handoff_command.add_argument(
+            "--executor-kind",
+            required=True,
+            choices=("native-tool", "external-tool"),
+        )
+        handoff_command.add_argument("--executor-id", required=True)
+        handoff_command.add_argument("--provider")
+        handoff_command.add_argument("--model")
+        handoff_command.add_argument("--used-reference-images", action="store_true")
+        handoff_command.add_argument("--used-dimensions", action="store_true")
+        handoff_command.add_argument("--used-localized-edit", action="store_true")
+        handoff_command.add_argument("--json", action="store_true", dest="as_json")
+
+    accept_result_parser = handoff_subparsers.add_parser("accept-result")
+    add_executor_arguments(accept_result_parser)
+    accept_result_parser.add_argument("--path", required=True, type=Path, dest="raster_path")
+    accept_result_parser.add_argument("--approve-reference", action="store_true")
+
+    record_failure_parser = handoff_subparsers.add_parser("record-failure")
+    add_executor_arguments(record_failure_parser)
+    record_failure_parser.add_argument("--category", required=True)
     return parser
+
+
+def _escape_cli_controls(value: object) -> str:
+    """Render engine-owned values without emitting terminal control bytes."""
+    escaped: list[str] = []
+    for char in str(value):
+        codepoint = ord(char)
+        if codepoint < 0x20 or 0x7F <= codepoint <= 0x9F:
+            escaped.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(char, f"\\x{codepoint:02x}"))
+        else:
+            escaped.append(char)
+    return "".join(escaped)
+
+
+def _render_handoff_cli(command: str, result: object) -> str:
+    """Return a compact terminal-safe source-CLI handoff summary."""
+    if not isinstance(result, dict):
+        return _escape_cli_controls(result)
+    if command == "handoff.prepare":
+        counts = result.get("job_counts")
+        count_text = ""
+        if isinstance(counts, dict):
+            count_text = " ".join(
+                f"{_escape_cli_controls(key)}={_escape_cli_controls(value)}"
+                for key, value in counts.items()
+            )
+        lines = [
+            f"{_escape_cli_controls(result.get('project_id'))}: "
+            f"handoff prepared for {_escape_cli_controls(result.get('phase'))}"
+        ]
+        if count_text:
+            lines.append(f"Jobs: {count_text}")
+        lines.append(f"Next action: {_escape_cli_controls(result.get('next_action'))}")
+        return "\n".join(lines)
+    if command == "handoff.inspect":
+        jobs = result.get("jobs")
+        job_count = len(jobs) if isinstance(jobs, list) else 0
+        return (
+            f"Handoff: prepared={_escape_cli_controls(result.get('prepared'))} "
+            f"phase={_escape_cli_controls(result.get('phase'))} "
+            f"scope={_escape_cli_controls(result.get('scope_state'))} jobs={job_count}\n"
+            f"Next action: {_escape_cli_controls(result.get('next_action'))}"
+        )
+    return (
+        f"{_escape_cli_controls(result.get('job_id'))}: "
+        f"{_escape_cli_controls(result.get('status'))}"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -3010,6 +4786,39 @@ def main(argv: list[str] | None = None) -> int:
                 reason=arguments.reason,
             )
             print(f"{arguments.panel_id}: accepted with warnings")
+        elif arguments.command == "handoff":
+            command = f"handoff.{arguments.handoff_command}"
+            handoff_arguments: dict[str, object] = {"project_dir": arguments.project_dir}
+            if command in {"handoff.accept-result", "handoff.record-failure"}:
+                handoff_arguments.update(
+                    {
+                        "job_id": arguments.job_id,
+                        "attempt": arguments.attempt,
+                        "executor_kind": arguments.executor_kind,
+                        "executor_id": arguments.executor_id,
+                        "provider": arguments.provider,
+                        "model": arguments.model,
+                        "capabilities_used": {
+                            "reference_images": arguments.used_reference_images,
+                            "dimensions": arguments.used_dimensions,
+                            "localized_edit": arguments.used_localized_edit,
+                        },
+                    }
+                )
+            if command == "handoff.accept-result":
+                handoff_arguments.update(
+                    {
+                        "raster_path": arguments.raster_path,
+                        "approve_reference": arguments.approve_reference,
+                    }
+                )
+            elif command == "handoff.record-failure":
+                handoff_arguments["category"] = arguments.category
+            result = service.execute(command, **handoff_arguments)
+            if arguments.as_json:
+                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print(_render_handoff_cli(command, result))
         elif arguments.command == "finalize":
             result = service.execute("finalize", project_dir=arguments.project_dir)
             if arguments.as_json:
@@ -3017,8 +4826,17 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"{result['status']}: {result['pdf']} | {result['report']}")
         return 0
-    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
-        print(f"ERROR {type(error).__name__}: {error}", file=sys.stderr)
+    except ValueError as error:
+        print(
+            f"ERROR {type(error).__name__}: {_escape_cli_controls(error)}",
+            file=sys.stderr,
+        )
+        return 2 if arguments.command == "handoff" else 1
+    except (OSError, TypeError, RuntimeError) as error:
+        print(
+            f"ERROR {type(error).__name__}: {_escape_cli_controls(error)}",
+            file=sys.stderr,
+        )
         return 1
 
 

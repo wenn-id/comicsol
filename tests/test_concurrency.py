@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts import project_io
+from scripts import comic_sol, project_io
 from scripts.comic_sol import (
     atomic_write_json,
     canonical_artifact_bytes,
@@ -445,6 +445,419 @@ class PromotionArchiveRaceTests(unittest.TestCase):
         self.assertEqual(1, len(promoted))
         self.assertEqual("p01-01", promoted[0]["details"]["panel_id"])
         self.assertEqual("panels/raw/p01-01.new.png", promoted[0]["details"]["attempt_path"])
+
+
+class HandoffConcurrencyTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary_directory.name)
+        self.project = self._planner_project()
+
+    def tearDown(self):
+        self.temporary_directory.cleanup()
+
+    def _planner_project(self):
+        from scripts.character_identity import IDENTITY_PACK_PATH, derive_identity_pack
+        from tests.test_validation import (
+            valid_characters,
+            valid_manifest,
+            valid_story,
+            valid_storyboard,
+        )
+
+        project = comic_sol.init_project(
+            self.root,
+            "Sunlight Courier",
+            b"A courier carries the last light.",
+            {"mode": "short_prompt", "language": "en"},
+            page_count=1,
+        )
+        manifest = valid_manifest()
+        manifest["project_id"] = project.name
+        manifest["status"] = "STORYBOARDED"
+        manifest["input"]["source_sha256"] = comic_sol.sha256_file(project / "source/input.txt")
+        comic_sol.atomic_write_json(project / "project.json", manifest)
+        comic_sol.atomic_write_json(project / "plan/story-plan.json", valid_story())
+        comic_sol.atomic_write_json(project / "plan/character-bible.json", valid_characters())
+        comic_sol.atomic_write_json(project / "plan/storyboard.json", valid_storyboard())
+        comic_sol.atomic_write_json(
+            project / IDENTITY_PACK_PATH,
+            derive_identity_pack(valid_characters()),
+        )
+        (project / "prompts/references/mira.txt").write_text(
+            "Mira identity reference, neutral pose, plain background.",
+            encoding="utf-8",
+        )
+        (project / "prompts/panels/p01-01.txt").write_text(
+            "Mira catches the last vial of sunlight in the dispatch hall.",
+            encoding="utf-8",
+        )
+        return project
+
+    @staticmethod
+    def _manifest_jobs(project):
+        manifest = comic_sol.read_json(project / "handoff/manifest.json")
+        jobs = {}
+        for descriptor in manifest["jobs"]:
+            job = comic_sol.read_json(project / descriptor["path"])
+            jobs[job["subject_kind"], job["subject_id"]] = job
+        return manifest, jobs
+
+    @staticmethod
+    def _success_arguments(job, raster_path, *, approve_reference=False):
+        return {
+            "job_id": job["job_id"],
+            "attempt": 1,
+            "raster_path": raster_path,
+            "executor_kind": "external-tool",
+            "executor_id": "fixture-renderer",
+            "provider": "fixture-provider",
+            "model": "fixture-model",
+            "capabilities_used": {
+                "reference_images": job["subject_kind"] == "panel",
+                "dimensions": job["requested_dimensions"] is not None,
+                "localized_edit": False,
+            },
+            "approve_reference": approve_reference,
+        }
+
+    @staticmethod
+    def _events(project):
+        return [
+            json.loads(line)
+            for line in (project / "logs/events.jsonl").read_text("utf-8").splitlines()
+        ]
+
+    @staticmethod
+    def _transaction_entries(project):
+        transactions = project / "logs/transactions"
+        return list(transactions.iterdir()) if transactions.is_dir() else []
+
+    def _prepared_reference(self):
+        comic_sol.prepare_handoff(self.project)
+        _manifest, jobs = self._manifest_jobs(self.project)
+        return jobs["reference", "mira"]
+
+    def _prepared_panel(self):
+        from PIL import Image
+
+        reference_job = self._prepared_reference()
+        reference_raster = self.root / "prepared-reference.png"
+        Image.new("RGB", (512, 512), (220, 180, 80)).save(reference_raster, format="PNG")
+        comic_sol.accept_handoff_result(
+            self.project,
+            **self._success_arguments(
+                reference_job,
+                reference_raster,
+                approve_reference=True,
+            ),
+        )
+        comic_sol.prepare_handoff(self.project)
+        _manifest, jobs = self._manifest_jobs(self.project)
+        return jobs["panel", "p01-01"]
+
+    def test_identical_concurrent_accept_results_publish_one_attempt(self):
+        from PIL import Image
+
+        panel_job = self._prepared_panel()
+        dimensions = panel_job["requested_dimensions"]
+        raster = self.root / "concurrent-panel.png"
+        Image.new(
+            "RGB",
+            (dimensions["width"], dimensions["height"]),
+            (20, 30, 40),
+        ).save(raster, format="PNG")
+        raster_bytes = raster.read_bytes()
+        arguments = self._success_arguments(panel_job, raster)
+        receipts_before = set((self.project / "generation/receipts").glob("*.json"))
+        events_before = self._events(self.project)
+
+        owner_validated = threading.Event()
+        release_owner = threading.Event()
+        contender_attempted = threading.Event()
+        contender_done = threading.Event()
+        results = {}
+        errors = []
+        validate_raster = comic_sol._validate_handoff_raster
+        lock_primitive = project_io.ProjectLock._lock
+        owner_thread = None
+        contender_thread = None
+
+        def pause_owner_after_validation(payload, job):
+            validated = validate_raster(payload, job)
+            if threading.current_thread() is owner_thread:
+                owner_validated.set()
+                if not release_owner.wait(timeout=5):
+                    raise AssertionError("accept-result synchronization timed out")
+            return validated
+
+        def observe_contender_lock(handle):
+            if threading.current_thread() is contender_thread:
+                contender_attempted.set()
+            return lock_primitive(handle)
+
+        def accept(name, done=None):
+            try:
+                results[name] = comic_sol.accept_handoff_result(self.project, **arguments)
+            except BaseException as error:
+                errors.append((name, error))
+            finally:
+                if done is not None:
+                    done.set()
+
+        with (
+            mock.patch(
+                "scripts.comic_sol._validate_handoff_raster",
+                side_effect=pause_owner_after_validation,
+            ),
+            mock.patch.object(
+                project_io.ProjectLock,
+                "_lock",
+                new=staticmethod(observe_contender_lock),
+            ),
+        ):
+            owner_thread = threading.Thread(target=accept, args=("owner",))
+            owner_thread.start()
+            self.assertTrue(
+                owner_validated.wait(timeout=5),
+                "owner did not validate while holding the project lock",
+            )
+            contender_thread = threading.Thread(
+                target=accept,
+                args=("contender", contender_done),
+            )
+            contender_thread.start()
+            try:
+                self.assertTrue(
+                    contender_attempted.wait(timeout=5),
+                    "contender did not attempt the project lock",
+                )
+                self.assertFalse(contender_done.is_set())
+            finally:
+                release_owner.set()
+                owner_thread.join(timeout=5)
+                contender_thread.join(timeout=5)
+
+        self.assertFalse(owner_thread.is_alive())
+        self.assertFalse(contender_thread.is_alive())
+        self.assertEqual([], errors)
+        self.assertEqual({"owner", "contender"}, set(results))
+        self.assertEqual([False, True], sorted(result["duplicate"] for result in results.values()))
+        self.assertEqual(
+            1,
+            len({result["attempt_id"] for result in results.values()}),
+        )
+        self.assertEqual(
+            1,
+            len({result["raster_sha256"] for result in results.values()}),
+        )
+
+        receipts_after = set((self.project / "generation/receipts").glob("*.json"))
+        new_receipts = receipts_after - receipts_before
+        self.assertEqual(1, len(new_receipts))
+        receipt = comic_sol.read_json(new_receipts.pop())
+        self.assertEqual(panel_job["job_id"], receipt["job_id"])
+        self.assertEqual(panel_job["target_path"], receipt["raster_path"])
+
+        retained = self.project / panel_job["target_path"]
+        self.assertEqual(raster_bytes, retained.read_bytes())
+        self.assertEqual(
+            [retained],
+            list(retained.parent.glob("*.png")),
+        )
+        counters = comic_sol.read_json(self.project / "logs/generation-counters.json")
+        self.assertEqual(0, counters["global_extra_calls"])
+        self.assertEqual(
+            {"initial": 1, "transient_repeats": 0, "visual_retries": 0},
+            counters["panels"]["p01-01"],
+        )
+
+        new_events = self._events(self.project)[len(events_before) :]
+        self.assertEqual(
+            ["handoff.result-accepted"],
+            [event["event"] for event in new_events],
+        )
+        accepted_events = [
+            event
+            for event in new_events
+            if event["event"] == "handoff.result-accepted"
+            and event["details"]["job_id"] == panel_job["job_id"]
+        ]
+        self.assertEqual(1, len(accepted_events))
+        self.assertEqual(panel_job["target_path"], accepted_events[0]["details"]["attempt_path"])
+        self.assertEqual([], self._transaction_entries(self.project))
+
+    def test_reference_intake_blocks_prepare_then_prepare_reads_activation(self):
+        from PIL import Image
+
+        reference_job = self._prepared_reference()
+        raster = self.root / "concurrent-reference.png"
+        Image.new("RGB", (512, 512), (220, 180, 80)).save(raster, format="PNG")
+        raster_bytes = raster.read_bytes()
+        arguments = self._success_arguments(
+            reference_job,
+            raster,
+            approve_reference=True,
+        )
+        events_before = self._events(self.project)
+
+        intake_validated = threading.Event()
+        release_intake = threading.Event()
+        prepare_attempted = threading.Event()
+        prepare_done = threading.Event()
+        intake_results = []
+        prepare_results = []
+        prepare_observations = []
+        errors = []
+        validate_raster = comic_sol._validate_handoff_raster
+        validate_activation = comic_sol._validate_reference_activation
+        lock_primitive = project_io.ProjectLock._lock
+        intake_thread = None
+        prepare_thread = None
+
+        def pause_intake_after_validation(payload, job):
+            validated = validate_raster(payload, job)
+            if threading.current_thread() is intake_thread:
+                intake_validated.set()
+                if not release_intake.wait(timeout=5):
+                    raise AssertionError("reference intake synchronization timed out")
+            return validated
+
+        def observe_prepare_lock(handle):
+            if threading.current_thread() is prepare_thread:
+                prepare_attempted.set()
+            return lock_primitive(handle)
+
+        def observe_committed_activation(project_dir, snapshot):
+            if threading.current_thread() is prepare_thread:
+                state = next(
+                    item
+                    for item in snapshot["effective_jobs"]
+                    if item["job_id"] == reference_job["job_id"]
+                )
+                receipts = [
+                    receipt
+                    for receipt in snapshot["receipts"]
+                    if receipt["job_id"] == reference_job["job_id"]
+                    and receipt["outcome"] == "success"
+                ]
+                receipt = receipts[0]
+                receipt_path = self.project / f"generation/receipts/{receipt['attempt_id']}.json"
+                prepare_observations.append(
+                    {
+                        "canonical": (self.project / "references/characters/mira.png").read_bytes(),
+                        "phase": snapshot["phase"],
+                        "receipt_bytes": receipt_path.read_bytes(),
+                        "receipt_count": len(receipts),
+                        "retained": (self.project / receipt["raster_path"]).read_bytes(),
+                        "scope_state": snapshot["scope_state"],
+                        "status": state["status"],
+                    }
+                )
+            return validate_activation(project_dir, snapshot)
+
+        def run_intake():
+            try:
+                intake_results.append(comic_sol.accept_handoff_result(self.project, **arguments))
+            except BaseException as error:
+                errors.append(("intake", error))
+
+        def run_prepare():
+            try:
+                prepare_results.append(comic_sol.prepare_handoff(self.project))
+            except BaseException as error:
+                errors.append(("prepare", error))
+            finally:
+                prepare_done.set()
+
+        with (
+            mock.patch(
+                "scripts.comic_sol._validate_handoff_raster",
+                side_effect=pause_intake_after_validation,
+            ),
+            mock.patch(
+                "scripts.comic_sol._validate_reference_activation",
+                side_effect=observe_committed_activation,
+            ),
+            mock.patch.object(
+                project_io.ProjectLock,
+                "_lock",
+                new=staticmethod(observe_prepare_lock),
+            ),
+        ):
+            intake_thread = threading.Thread(target=run_intake)
+            intake_thread.start()
+            self.assertTrue(
+                intake_validated.wait(timeout=5),
+                "reference intake did not validate while holding the project lock",
+            )
+            prepare_thread = threading.Thread(target=run_prepare)
+            prepare_thread.start()
+            try:
+                self.assertTrue(
+                    prepare_attempted.wait(timeout=5),
+                    "prepare did not attempt the project lock",
+                )
+                self.assertFalse(prepare_done.is_set())
+            finally:
+                release_intake.set()
+                intake_thread.join(timeout=5)
+                prepare_thread.join(timeout=5)
+
+        self.assertFalse(intake_thread.is_alive())
+        self.assertFalse(prepare_thread.is_alive())
+        self.assertEqual([], errors)
+        self.assertEqual(1, len(intake_results))
+        self.assertFalse(intake_results[0]["duplicate"])
+        self.assertEqual(
+            "references/characters/mira.png", intake_results[0]["activated_reference_path"]
+        )
+        self.assertEqual(1, len(prepare_results))
+        self.assertTrue(prepare_results[0]["changed"])
+        self.assertEqual("panel", prepare_results[0]["phase"])
+        self.assertEqual("render-panels", prepare_results[0]["next_action"])
+        self.assertEqual(1, len(prepare_observations))
+        observation = prepare_observations[0]
+        self.assertEqual(raster_bytes, observation["canonical"])
+        self.assertEqual("reference", observation["phase"])
+        self.assertEqual(1, observation["receipt_count"])
+        self.assertEqual(raster_bytes, observation["retained"])
+        self.assertEqual("current", observation["scope_state"])
+        self.assertEqual("completed", observation["status"])
+
+        receipt_path = self.project / intake_results[0]["receipt_path"]
+        self.assertEqual(
+            observation["receipt_bytes"],
+            receipt_path.read_bytes(),
+        )
+        handoff_manifest, jobs = self._manifest_jobs(self.project)
+        self.assertEqual({("reference", "mira"), ("panel", "p01-01")}, set(jobs))
+        panel_job = jobs["panel", "p01-01"]
+        self.assertEqual(
+            [
+                {
+                    "path": "references/characters/mira.png",
+                    "sha256": intake_results[0]["raster_sha256"],
+                }
+            ],
+            panel_job["references"],
+        )
+        inspection = comic_sol.inspect_handoff(self.project)
+        effective = {job["job_id"]: job for job in inspection["jobs"]}
+        self.assertEqual("panel", inspection["phase"])
+        self.assertEqual("completed", effective[reference_job["job_id"]]["status"])
+        self.assertEqual("ready", effective[panel_job["job_id"]]["status"])
+        project_manifest = comic_sol.read_json(self.project / "project.json")
+        self.assertEqual(
+            handoff_manifest["locked_scope_sha256"],
+            project_manifest["handoff"]["locked_scope_sha256"],
+        )
+        self.assertFalse((self.project / "logs/generation-counters.json").exists())
+        self.assertEqual(
+            ["handoff.result-accepted", "handoff.prepared"],
+            [event["event"] for event in self._events(self.project)[len(events_before) :]],
+        )
+        self.assertEqual([], self._transaction_entries(self.project))
 
 
 class FinalizeLockRaceTests(unittest.TestCase):

@@ -9,7 +9,7 @@ from typing import Literal
 
 
 REQUIRED_NAMESPACES = frozenset(
-    {"IMG", "PROJ", "QA", "FONT", "MCP", "INSTALL", "EXPORT", "SEC", "CLI"}
+    {"IMG", "PROJ", "QA", "FONT", "MCP", "INSTALL", "EXPORT", "SEC", "CLI", "HANDOFF"}
 )
 
 
@@ -201,6 +201,20 @@ _DEFINITIONS = (
         "An argument did not satisfy the CLI usage contract.",
         "Check the command usage with --help and retry.",
     ),
+    ErrorDefinition(
+        "CS-HANDOFF-001",
+        "handoff-contract-error",
+        "The generation handoff contract is invalid.",
+        "The handoff data, locked project scope, or current job binding is invalid or stale.",
+        "Inspect or prepare the handoff again, then retry with a current job.",
+    ),
+    ErrorDefinition(
+        "CS-HANDOFF-003",
+        "handoff-result-error",
+        "The generation handoff result was rejected.",
+        "The executor metadata, attempt, raster, or reference activation is invalid.",
+        "Correct the result submission and retry the current handoff job.",
+    ),
 )
 
 ERROR_DEFINITIONS = {definition.code: definition for definition in _DEFINITIONS}
@@ -216,6 +230,9 @@ _BOUNDARY_TYPE_NAMES = {
     "ValidationFailureError": "CS-QA-001",
     "TypographyPreflightError": "CS-FONT-001",
     "CliUsageError": "CS-CLI-001",
+    "HandoffContractError": "CS-HANDOFF-001",
+    "StaleLockedScopeError": "CS-HANDOFF-001",
+    "HandoffResultError": "CS-HANDOFF-003",
     "IntegrationRepairError": "CS-INSTALL-002",
     "IntegrationRollbackError": "CS-INSTALL-003",
 }
@@ -223,6 +240,8 @@ _BOUNDARY_TYPE_NAMES = {
 _BOUNDARY_MESSAGE_PREFIXES = (
     ("security-error: input exceeds", "CS-SEC-002"),
     ("security-error", "CS-SEC-001"),
+    ("project path must not contain symlinks", "CS-SEC-001"),
+    ("path must not contain symlinks or reparse points", "CS-SEC-001"),
     ("page_qa_required:", "CS-QA-001"),
     ("panel is not a readable image", "CS-IMG-001"),
     ("source is not a readable image", "CS-IMG-001"),
@@ -263,7 +282,15 @@ def safe_error_detail(error: Exception) -> str:
         # path separator means segments may have escaped redaction; drop the
         # raw text and keep only the exception type name.
         return type(error).__name__
-    return message
+
+    escaped: list[str] = []
+    for char in message:
+        codepoint = ord(char)
+        if codepoint < 0x20 or 0x7F <= codepoint <= 0x9F:
+            escaped.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}.get(char, f"\\x{codepoint:02x}"))
+        else:
+            escaped.append(char)
+    return "".join(escaped)
 
 
 def classify_exception(
