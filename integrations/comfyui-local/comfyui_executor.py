@@ -899,10 +899,9 @@ def _preflight_workflow(
     references = job["references"]
     if not isinstance(references, list):
         raise ExecutorError("invalid-job")
-    if references:
-        indices = {mapping.get("reference_index") for mapping in reference_mappings}
-        if indices != set(range(len(references))):
-            raise ExecutorError("unsupported-job")
+    indices = {mapping.get("reference_index") for mapping in reference_mappings}
+    if indices != set(range(len(references))):
+        raise ExecutorError("unsupported-job")
 
 
 def _patch_workflow(
