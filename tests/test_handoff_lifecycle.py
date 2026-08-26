@@ -2767,6 +2767,35 @@ class HandoffStep10RegressionTests(unittest.TestCase):
 
         self.assertRegex(str(error), "at most two visual retries are allowed per panel")
 
+    def test_reprepare_exhausting_the_global_retry_budget_is_rejected_without_mutation(self):
+        root, project, panel_job = self._prepared_panel()
+        dimensions = panel_job["requested_dimensions"]
+        raster = root / "accepted-panel.png"
+        self._write_raster(
+            raster,
+            (dimensions["width"], dimensions["height"]),
+            (20, 30, 40),
+        )
+        comic_sol.accept_handoff_result(
+            project,
+            **self._success_arguments(panel_job, raster),
+        )
+        counters_path = project / "logs/generation-counters.json"
+        counters = comic_sol.read_json(counters_path)
+        counters["global_extra_calls"] = 8
+        counters_path.write_bytes(comic_sol.canonical_artifact_bytes(counters))
+        prompt = project / "prompts/panels/p01-01.txt"
+        prompt.write_bytes(prompt.read_bytes() + b" Revise the panel lighting.\n")
+        comic_sol.invalidate_from(project, "generation")
+
+        error = self._assert_rejected_without_mutation(
+            project,
+            lambda: comic_sol.prepare_handoff(project),
+            HandoffContractError,
+        )
+
+        self.assertRegex(str(error), "at most eight extra calls are allowed per project")
+
     def test_reprepared_reference_claims_a_fresh_attempt_and_keeps_the_retired_one(self):
         root, project, reference_job = self._prepared_reference()
         raster = root / "approved-reference.png"

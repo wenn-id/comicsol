@@ -153,6 +153,7 @@ GENERATION_COUNTER_NAMES = {
     "visual_retry": "visual_retries",
 }
 GENERATION_LIMITS = {"initial": 1, "transient_repeat": 1, "visual_retry": 2}
+GLOBAL_EXTRA_CALL_LIMIT = 8
 GENERATION_LIMIT_MESSAGES = {
     "initial": "at most one initial attempt is allowed per panel",
     "transient_repeat": "at most one transient repeat is allowed per panel",
@@ -2638,6 +2639,15 @@ def _build_handoff_content(
         retry_limit = cast(dict[str, object], project_manifest["settings"]).get("max_panel_retries")
         if isinstance(retry_limit, bool) or not isinstance(retry_limit, int):
             raise HandoffContractError(["settings.max_panel_retries: invalid retry budget"])
+        counters = _read_generation_counters(project_dir)
+        global_extra_calls = counters.get("global_extra_calls", 0)
+        if (
+            isinstance(global_extra_calls, bool)
+            or not isinstance(global_extra_calls, int)
+            or global_extra_calls < 0
+        ):
+            raise HandoffContractError(["global generation counter must be a non-negative integer"])
+        remaining_global_extras = GLOBAL_EXTRA_CALL_LIMIT - global_extra_calls
         plan_by_panel = {
             cast(str, panel["panel_id"]): panel
             for panel in cast(list[dict[str, object]], reference_plan["panels"])
@@ -2730,6 +2740,14 @@ def _build_handoff_content(
                     )
                 else:
                     job = prepared
+                job_id = cast(str, job["job_id"])
+                prior_status = existing_effective.get(job_id, {}).get("status", "ready")
+                if job.get("attempt_kind") != "initial" and prior_status == "ready":
+                    if remaining_global_extras <= 0:
+                        raise HandoffContractError(
+                            ["at most eight extra calls are allowed per project"]
+                        )
+                    remaining_global_extras -= 1
                 jobs.append(job)
                 page_jobs.append(job)
             batches.append(
@@ -3458,7 +3476,7 @@ def _advance_generation_counters(
         raise ValueError("global generation counter must be a non-negative integer")
     if panel[counter_name] >= GENERATION_LIMITS[kind]:
         raise ValueError(GENERATION_LIMIT_MESSAGES[kind])
-    if kind != "initial" and global_extras >= 8:
+    if kind != "initial" and global_extras >= GLOBAL_EXTRA_CALL_LIMIT:
         raise ValueError("at most eight extra calls are allowed per project")
 
     panel[counter_name] += 1
