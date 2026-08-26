@@ -284,6 +284,16 @@ and receipt only. It remains pending normal promotion and visual QA: handoff int
 not write `panels/raw/<panel-id>.png`, and only the existing `promote-attempt` acceptance
 flow may publish that path after the attempt passes review.
 
+Invalidation never deletes a retained attempt, so a newly derived job claims the next free
+target instead of the one its retired predecessor holds. A reference job takes the lowest
+`initial-<sequence>` slot no persisted receipt already accounts for, and a panel whose
+initial attempt is already spent is prepared as the next `visual_retry` within the existing
+per-panel retry budget, which is also what the panel's generation counters record when the
+result arrives. A retained target that no receipt binds — or whose bytes no longer match
+the receipt that did — has no provenance in this project and is still refused as an
+unmanaged collision rather than reused or overwritten. Repreparing an unchanged brief keeps
+the job it already published, so a no-op prepare stays byte-identical.
+
 ### Handoff manifest: `handoff/manifest.json`
 
 The root contains exactly `schema_version`, `project_schema_version`, `project_id`,
@@ -305,6 +315,13 @@ bytes must match the job declaration. Ready reference images must also decode as
 local raster data through the same no-follow boundary and stay within the shared decoded-
 pixel limit. Every required artifact is checked the same way; missing, linked, oversized,
 changed, or undecodable inputs invalidate the handoff.
+
+From the `panels` stage onward, a successful panel receipt additionally requires that the
+panel was promoted and accepted: `panels/raw/<panel-id>.png` must exist and its current
+bytes must match the `bindings.raw_sha256` of an accepting `qa/panels/<panel-id>.json`
+record. Acceptance is proven by the quality record that binds the raster on disk, not by
+the receipt of the first successful attempt, so a panel repaired through the visual-retry
+and promotion flow validates on its own accepted bytes.
 
 The locked-scope digest covers canonical content for `plan/story-plan.json`,
 `plan/character-bible.json`, `plan/storyboard.json`, every generation prompt,

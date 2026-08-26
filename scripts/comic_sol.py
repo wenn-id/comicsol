@@ -2197,6 +2197,101 @@ def _story_scene_ids(project_dir: Path) -> set[str]:
     }
 
 
+def _retained_attempt_bindings(project_dir: Path) -> dict[str, str]:
+    """Map every retained attempt path this project produced to its receipt digest.
+
+    Invalidation preserves receipts and rasters, so a re-prepared job must be able
+    to tell a retained attempt of its own retired predecessor apart from a file it
+    has no provenance for. Only a persisted receipt proves the former.
+    """
+    bindings: dict[str, str] = {}
+    for receipt in _receipt_inventory(project_dir):
+        raster_path = receipt.get("raster_path")
+        raster_sha256 = receipt.get("raster_sha256")
+        if isinstance(raster_path, str) and isinstance(raster_sha256, str):
+            bindings[raster_path] = raster_sha256
+    return bindings
+
+
+def _next_reference_attempt_target(
+    project_dir: Path,
+    subject_id: str,
+    bindings: Mapping[str, str],
+) -> str:
+    """Return the retained reference attempt path a newly derived job may claim.
+
+    References carry no generation counters, so the next free sequence is derived
+    from the attempts a receipt already accounts for. A path holding anything this
+    project cannot prove it produced is left alone for the unmanaged-collision
+    check rather than skipped.
+    """
+    sequence = 1
+    while True:
+        relative = f"references/attempts/{subject_id}/initial-{sequence:03d}.png"
+        expected = bindings.get(relative)
+        if expected is None:
+            return relative
+        try:
+            payload = read_contained_bytes(
+                project_dir, relative, max_bytes=MAX_ENCODED_RASTER_BYTES
+            )
+        except (OSError, ValueError):
+            return relative
+        if hashlib.sha256(payload).hexdigest() != expected:
+            return relative
+        sequence += 1
+
+
+def _next_panel_attempt_identity(project_dir: Path, panel_id: str) -> tuple[str, int]:
+    """Return the attempt kind and retained sequence a new panel job may claim.
+
+    The generation counters are authoritative for panel attempt accounting, so a
+    panel that already spent its initial attempt regenerates as a bounded visual
+    retry instead of claiming the initial slot a second time.
+    """
+    panels = _read_generation_counters(project_dir).get("panels")
+    counts = panels.get(panel_id) if isinstance(panels, dict) else None
+    if not isinstance(counts, dict) or not counts.get("initial"):
+        return "initial", 1
+    retries = counts.get("visual_retries", 0)
+    if isinstance(retries, bool) or not isinstance(retries, int) or retries < 0:
+        raise HandoffContractError([f"panel {panel_id}: generation counters are invalid"])
+    if retries >= GENERATION_LIMITS["visual_retry"]:
+        raise HandoffContractError(
+            [f"panel {panel_id}: {GENERATION_LIMIT_MESSAGES['visual_retry']}"]
+        )
+    return "visual_retry", retries + 1
+
+
+_JOB_BRIEF_FIELDS = (
+    "batch_id",
+    "prompt_path",
+    "prompt_sha256",
+    "references",
+    "requested_aspect_ratio",
+    "requested_dimensions",
+    "retry_limit",
+    "subject_id",
+    "subject_kind",
+)
+
+
+def _prepared_job_for_brief(
+    existing_jobs: Mapping[str, Mapping[str, object]],
+    candidate: Mapping[str, object],
+) -> dict[str, object] | None:
+    """Return the already prepared job that renders this exact brief, when one exists.
+
+    A prepared job keeps the retained target it was published with, so repreparing
+    an unchanged brief stays byte-identical even after its attempt was accepted and
+    the counters moved on.
+    """
+    for job in existing_jobs.values():
+        if all(job.get(field) == candidate.get(field) for field in _JOB_BRIEF_FIELDS):
+            return dict(job)
+    return None
+
+
 def _build_handoff_content(
     project_dir: Path,
     project_manifest: dict[str, object],
@@ -2337,20 +2432,39 @@ def _build_handoff_content(
     existing_batch_map = (
         cast(dict[str, object], existing["batch_map"]) if existing is not None else None
     )
+    retained_bindings = _retained_attempt_bindings(project_dir)
     if phase == "reference":
         for identifier, _canonical, prompt_path, prompt_bytes in reference_candidates:
-            job = build_generation_job(
-                subject_kind="reference",
-                subject_id=identifier,
-                prompt_path=prompt_path,
-                prompt_sha256=hashlib.sha256(prompt_bytes).hexdigest(),
-                references=[],
-                requested_dimensions=None,
-                requested_aspect_ratio=None,
-                attempt_kind="initial",
-                retry_limit=2,
-                batch_id="references-001",
-                target_path=f"references/attempts/{identifier}/initial-001.png",
+            brief: dict[str, object] = {
+                "batch_id": "references-001",
+                "prompt_path": prompt_path,
+                "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
+                "references": [],
+                "requested_aspect_ratio": None,
+                "requested_dimensions": None,
+                "retry_limit": 2,
+                "subject_id": identifier,
+                "subject_kind": "reference",
+            }
+            prepared = _prepared_job_for_brief(existing_jobs, brief)
+            job = (
+                prepared
+                if prepared is not None
+                else build_generation_job(
+                    subject_kind="reference",
+                    subject_id=identifier,
+                    prompt_path=prompt_path,
+                    prompt_sha256=cast(str, brief["prompt_sha256"]),
+                    references=[],
+                    requested_dimensions=None,
+                    requested_aspect_ratio=None,
+                    attempt_kind="initial",
+                    retry_limit=2,
+                    batch_id="references-001",
+                    target_path=_next_reference_attempt_target(
+                        project_dir, identifier, retained_bindings
+                    ),
+                )
             )
             jobs.append(job)
         batches.append(
@@ -2431,19 +2545,37 @@ def _build_handoff_content(
                 ):
                     raise HandoffContractError([f"panel {panel_id}: rectangle is invalid"])
                 divisor = math.gcd(width, height)
-                job = build_generation_job(
-                    subject_kind="panel",
-                    subject_id=panel_id,
-                    prompt_path=prompt_path,
-                    prompt_sha256=hashlib.sha256(prompt_bytes).hexdigest(),
-                    references=references,
-                    requested_dimensions={"width": width, "height": height},
-                    requested_aspect_ratio=f"{width // divisor}:{height // divisor}",
-                    attempt_kind="initial",
-                    retry_limit=retry_limit,
-                    batch_id=batch_id,
-                    target_path=f"panels/attempts/{panel_id}/initial-001.png",
-                )
+                brief = {
+                    "batch_id": batch_id,
+                    "prompt_path": prompt_path,
+                    "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
+                    "references": references,
+                    "requested_aspect_ratio": f"{width // divisor}:{height // divisor}",
+                    "requested_dimensions": {"width": width, "height": height},
+                    "retry_limit": retry_limit,
+                    "subject_id": panel_id,
+                    "subject_kind": "panel",
+                }
+                prepared = _prepared_job_for_brief(existing_jobs, brief)
+                if prepared is None:
+                    attempt_kind, sequence = _next_panel_attempt_identity(project_dir, panel_id)
+                    job = build_generation_job(
+                        subject_kind="panel",
+                        subject_id=panel_id,
+                        prompt_path=prompt_path,
+                        prompt_sha256=cast(str, brief["prompt_sha256"]),
+                        references=references,
+                        requested_dimensions={"width": width, "height": height},
+                        requested_aspect_ratio=cast(str, brief["requested_aspect_ratio"]),
+                        attempt_kind=attempt_kind,
+                        retry_limit=retry_limit,
+                        batch_id=batch_id,
+                        target_path=(
+                            f"panels/attempts/{panel_id}/{attempt_kind}-{sequence:03d}.png"
+                        ),
+                    )
+                else:
+                    job = prepared
                 jobs.append(job)
                 page_jobs.append(job)
             batches.append(
@@ -2909,11 +3041,15 @@ def accept_handoff_result(
                 counters = None
             else:
                 panel_id = cast(str, job["subject_id"])
-                counter_name = _generation_counter_name(panel_id, "initial")
-                counter_document, counters, sequence = _advance_generation_counters(
-                    project_dir, panel_id, "initial", counter_name
+                attempt_kind = cast(
+                    Literal["initial", "visual_retry", "transient_repeat"],
+                    job["attempt_kind"],
                 )
-                expected_target = f"panels/attempts/{panel_id}/initial-{sequence:03d}.png"
+                counter_name = _generation_counter_name(panel_id, attempt_kind)
+                counter_document, counters, sequence = _advance_generation_counters(
+                    project_dir, panel_id, attempt_kind, counter_name
+                )
+                expected_target = f"panels/attempts/{panel_id}/{attempt_kind}-{sequence:03d}.png"
                 if target_path != expected_target:
                     raise HandoffResultError(
                         ["panel job target does not match the next retained counter path"]

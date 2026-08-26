@@ -2226,15 +2226,17 @@ def _successful_reference_path(project_dir: Path, subject_id: object) -> str | N
     return None
 
 
-def _successful_panel_is_accepted(
-    project_dir: Path,
-    job: dict[str, object],
-    receipt: dict[str, object],
-) -> bool:
-    """Return whether a successful panel attempt is promoted and visually accepted."""
+def _successful_panel_is_accepted(project_dir: Path, job: dict[str, object]) -> bool:
+    """Return whether the panel's accepted raster carries an accepting QA record.
+
+    A panel that failed review is repaired through the existing promotion flow,
+    so the accepted raster is the repaired one rather than the raster the first
+    successful handoff attempt produced. Acceptance is therefore proven by the
+    quality record that binds the current raw raster; requiring the raw bytes to
+    stay identical to the initial receipt would reject every accepted repair.
+    """
     panel_id = job.get("subject_id")
-    raster_sha256 = receipt.get("raster_sha256")
-    if not isinstance(panel_id, str) or not isinstance(raster_sha256, str):
+    if not isinstance(panel_id, str):
         return False
     raw_relative = f"panels/raw/{panel_id}.png"
     try:
@@ -2251,7 +2253,7 @@ def _successful_panel_is_accepted(
         qa = loads_bounded_json(qa_bytes, source=f"qa/panels/{panel_id}.json")
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         return False
-    if not isinstance(qa, dict) or hashlib.sha256(raw).hexdigest() != raster_sha256:
+    if not isinstance(qa, dict):
         return False
     bindings = qa.get("bindings")
     return (
@@ -2261,7 +2263,7 @@ def _successful_panel_is_accepted(
         and qa.get("decision") in {"accept", "accept-warning"}
         and isinstance(bindings, dict)
         and bindings.get("raw_path") == raw_relative
-        and bindings.get("raw_sha256") == raster_sha256
+        and bindings.get("raw_sha256") == hashlib.sha256(raw).hexdigest()
     )
 
 
@@ -2650,7 +2652,7 @@ def _validate_handoff_binding(
             if (
                 require_panel_acceptance
                 and job.get("subject_kind") == "panel"
-                and not _successful_panel_is_accepted(project_dir, job, receipt)
+                and not _successful_panel_is_accepted(project_dir, job)
             ):
                 panel_id = job.get("subject_id")
                 _add(

@@ -1859,6 +1859,10 @@ class HandoffStep10RegressionTests(unittest.TestCase):
         return HandoffLifecycleGoldenTests._manifest_jobs(project)
 
     @staticmethod
+    def _effective_job(snapshot, job_id):
+        return HandoffLifecycleGoldenTests._effective_job(snapshot, job_id)
+
+    @staticmethod
     def _artifact_snapshot(project):
         return HandoffPrepareInspectTests._artifact_snapshot(project)
 
@@ -2568,6 +2572,209 @@ class HandoffStep10RegressionTests(unittest.TestCase):
                     action,
                     handoff.HandoffResultError,
                 )
+
+    def test_invalidated_successful_panel_reprepares_onto_a_fresh_retained_target(self):
+        root, project, panel_job = self._prepared_panel()
+        dimensions = panel_job["requested_dimensions"]
+        raster = root / "accepted-panel.png"
+        self._write_raster(
+            raster,
+            (dimensions["width"], dimensions["height"]),
+            (20, 30, 40),
+        )
+        accepted = comic_sol.accept_handoff_result(
+            project,
+            **self._success_arguments(panel_job, raster),
+        )
+        self.assertEqual("panels/attempts/p01-01/initial-001.png", accepted["raster_path"])
+        retained_before = (project / accepted["raster_path"]).read_bytes()
+        receipt_before = (project / accepted["receipt_path"]).read_bytes()
+        prompt = project / "prompts/panels/p01-01.txt"
+        prompt.write_bytes(prompt.read_bytes() + b" Rain streaks the dispatch hall windows.\n")
+
+        self.assertEqual("invalidate", comic_sol.inspect_handoff(project)["next_action"])
+        comic_sol.invalidate_from(project, "generation")
+        reprepared = comic_sol.prepare_handoff(project)
+
+        self.assertTrue(reprepared["changed"])
+        self.assertEqual("panel", reprepared["phase"])
+        _manifest, jobs = self._manifest_jobs(project)
+        fresh_job = jobs["panel", "p01-01"]
+        self.assertNotEqual(panel_job["job_id"], fresh_job["job_id"])
+        self.assertEqual("visual_retry", fresh_job["attempt_kind"])
+        self.assertEqual(
+            "panels/attempts/p01-01/visual_retry-001.png",
+            fresh_job["target_path"],
+        )
+        inspection = comic_sol.inspect_handoff(project)
+        self.assertEqual("current", inspection["scope_state"])
+        self.assertEqual("render-panels", inspection["next_action"])
+        self.assertEqual(
+            ("ready", 0, 1),
+            tuple(
+                self._effective_job(inspection, fresh_job["job_id"])[key]
+                for key in ("status", "attempts_used", "next_attempt")
+            ),
+        )
+        self.assertFalse(
+            any(
+                "current handoff job" in issue.message
+                for issue in validate_project(project, "plan")
+            )
+        )
+
+        repaired = root / "repaired-panel.png"
+        self._write_raster(
+            repaired,
+            (dimensions["width"], dimensions["height"]),
+            (90, 10, 10),
+        )
+        repair = comic_sol.accept_handoff_result(
+            project,
+            **self._success_arguments(fresh_job, repaired),
+        )
+
+        self.assertEqual("completed", repair["status"])
+        self.assertEqual("panels/attempts/p01-01/visual_retry-001.png", repair["raster_path"])
+        self.assertEqual(repaired.read_bytes(), (project / repair["raster_path"]).read_bytes())
+        self.assertEqual(retained_before, (project / accepted["raster_path"]).read_bytes())
+        self.assertEqual(receipt_before, (project / accepted["receipt_path"]).read_bytes())
+        self.assertEqual(
+            {"initial": 1, "transient_repeats": 0, "visual_retries": 1},
+            comic_sol.read_json(project / "logs/generation-counters.json")["panels"]["p01-01"],
+        )
+
+    def test_reprepare_exhausting_the_visual_retry_budget_is_rejected_without_mutation(self):
+        root, project, panel_job = self._prepared_panel()
+        dimensions = panel_job["requested_dimensions"]
+        job = panel_job
+        for ordinal in range(3):
+            raster = root / f"budget-panel-{ordinal}.png"
+            self._write_raster(
+                raster,
+                (dimensions["width"], dimensions["height"]),
+                (20 + ordinal, 30, 40),
+            )
+            comic_sol.accept_handoff_result(project, **self._success_arguments(job, raster))
+            prompt = project / "prompts/panels/p01-01.txt"
+            prompt.write_bytes(prompt.read_bytes() + f" Revision {ordinal}.\n".encode())
+            comic_sol.invalidate_from(project, "generation")
+            if ordinal < 2:
+                comic_sol.prepare_handoff(project)
+                _manifest, jobs = self._manifest_jobs(project)
+                job = jobs["panel", "p01-01"]
+                self.assertEqual(
+                    f"panels/attempts/p01-01/visual_retry-{ordinal + 1:03d}.png",
+                    job["target_path"],
+                )
+
+        error = self._assert_rejected_without_mutation(
+            project,
+            lambda: comic_sol.prepare_handoff(project),
+            HandoffContractError,
+        )
+
+        self.assertRegex(str(error), "at most two visual retries are allowed per panel")
+
+    def test_reprepared_reference_claims_a_fresh_attempt_and_keeps_the_retired_one(self):
+        root, project, reference_job = self._prepared_reference()
+        raster = root / "approved-reference.png"
+        self._write_raster(raster, (512, 512), (220, 180, 80))
+        accepted = comic_sol.accept_handoff_result(
+            project,
+            **self._success_arguments(reference_job, raster, approve_reference=True),
+        )
+        self.assertEqual("references/attempts/mira/initial-001.png", accepted["raster_path"])
+        retained_before = (project / accepted["raster_path"]).read_bytes()
+        # Removing the activation is what returns the project to the reference
+        # phase; the retired attempt beside it must not block re-preparation.
+        (project / "references/characters/mira.png").unlink()
+        prompt = project / "prompts/references/mira.txt"
+        prompt.write_bytes(prompt.read_bytes() + b" Preserve the amber scarf.\n")
+        comic_sol.invalidate_from(project, "generation")
+
+        reprepared = comic_sol.prepare_handoff(project)
+
+        self.assertEqual("reference", reprepared["phase"])
+        _manifest, jobs = self._manifest_jobs(project)
+        fresh_job = jobs["reference", "mira"]
+        self.assertNotEqual(reference_job["job_id"], fresh_job["job_id"])
+        self.assertEqual(
+            "references/attempts/mira/initial-002.png",
+            fresh_job["target_path"],
+        )
+        self.assertEqual(retained_before, (project / accepted["raster_path"]).read_bytes())
+
+        replacement = root / "replacement-reference.png"
+        self._write_raster(replacement, (512, 512), (80, 120, 160))
+        repair = comic_sol.accept_handoff_result(
+            project,
+            **self._success_arguments(fresh_job, replacement, approve_reference=True),
+        )
+
+        self.assertEqual("completed", repair["status"])
+        self.assertEqual("references/attempts/mira/initial-002.png", repair["raster_path"])
+        self.assertEqual(
+            replacement.read_bytes(),
+            (project / "references/characters/mira.png").read_bytes(),
+        )
+        self.assertEqual(retained_before, (project / accepted["raster_path"]).read_bytes())
+
+    def test_unmanaged_retained_attempt_without_a_receipt_still_blocks_reprepare(self):
+        root, project, reference_job = self._prepared_reference()
+        raster = root / "approved-reference.png"
+        self._write_raster(raster, (512, 512), (220, 180, 80))
+        comic_sol.accept_handoff_result(
+            project,
+            **self._success_arguments(reference_job, raster, approve_reference=True),
+        )
+        (project / "references/characters/mira.png").unlink()
+        prompt = project / "prompts/references/mira.txt"
+        prompt.write_bytes(prompt.read_bytes() + b" Preserve the amber scarf.\n")
+        comic_sol.invalidate_from(project, "generation")
+        # A raster the project cannot account for occupies the next free
+        # sequence, so preparation must fail closed instead of overwriting it.
+        squatter = self._write_png(
+            project / "references/attempts/mira/initial-002.png",
+            (12, 34, 56),
+        )
+
+        error = self._assert_rejected_without_mutation(
+            project,
+            lambda: comic_sol.prepare_handoff(project),
+            HandoffContractError,
+        )
+
+        self.assertRegex(str(error), "unmanaged retained target collision")
+        self.assertEqual(
+            squatter,
+            (project / "references/attempts/mira/initial-002.png").read_bytes(),
+        )
+
+    def test_tampered_retained_attempt_is_an_unmanaged_collision_on_reprepare(self):
+        root, project, reference_job = self._prepared_reference()
+        raster = root / "approved-reference.png"
+        self._write_raster(raster, (512, 512), (220, 180, 80))
+        accepted = comic_sol.accept_handoff_result(
+            project,
+            **self._success_arguments(reference_job, raster, approve_reference=True),
+        )
+        (project / "references/characters/mira.png").unlink()
+        prompt = project / "prompts/references/mira.txt"
+        prompt.write_bytes(prompt.read_bytes() + b" Preserve the amber scarf.\n")
+        comic_sol.invalidate_from(project, "generation")
+        # The receipt no longer describes these bytes, so the retired attempt
+        # loses its provenance and is treated as unmanaged rather than reused.
+        tampered = self._write_png(project / accepted["raster_path"], (90, 100, 110))
+
+        error = self._assert_rejected_without_mutation(
+            project,
+            lambda: comic_sol.prepare_handoff(project),
+            HandoffContractError,
+        )
+
+        self.assertRegex(str(error), "unmanaged retained target collision")
+        self.assertEqual(tampered, (project / accepted["raster_path"]).read_bytes())
 
 
 if __name__ == "__main__":

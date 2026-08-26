@@ -1521,7 +1521,7 @@ class ProjectValidationTests(unittest.TestCase):
                     "PNG",
                 )
 
-    def test_completed_panel_receipt_must_match_accepted_raw_and_visual_qa(self):
+    def test_completed_panel_receipt_requires_qa_accepted_raw_not_the_initial_raster(self):
         self.add_valid_panel_record_v2()
         self.assertEqual([], validate_project(self.project, "panels"))
         job, _ = self.prepare_generation_handoff(status="completed")
@@ -1534,16 +1534,47 @@ class ProjectValidationTests(unittest.TestCase):
             outcome="success",
             raster_sha256=hashlib.sha256(retained_payload).hexdigest(),
         )
+        record_path = self.project / "qa/panels/p01-01.json"
+        accepted_record = read_json(record_path)
 
-        issues = validate_project(self.project, "panels")
-
-        self.assert_project_issue(
-            issues,
-            receipt_relative,
-            "raster_path",
-            "panels/raw/p01-01.png",
-            "visual QA",
+        # The promoted raster is the repaired one, so it deliberately differs
+        # from the initial handoff receipt while its QA record still accepts it.
+        self.assertNotEqual(
+            accepted_record["bindings"]["raw_sha256"],
+            hashlib.sha256(retained_payload).hexdigest(),
         )
+        self.assertEqual([], validate_project(self.project, "panels"))
+
+        raw_path = self.project / "panels/raw/p01-01.png"
+        accepted_raw = raw_path.read_bytes()
+        cases = {
+            "unpromoted": lambda: raw_path.unlink(),
+            "faulted-review": lambda: atomic_write_json(
+                record_path,
+                {**accepted_record, "decision": "regenerate"},
+            ),
+            "stale-binding": lambda: atomic_write_json(
+                record_path,
+                {
+                    **accepted_record,
+                    "bindings": {**accepted_record["bindings"], "raw_sha256": "0" * 64},
+                },
+            ),
+        }
+        for name, break_acceptance in cases.items():
+            with self.subTest(case=name):
+                break_acceptance()
+                try:
+                    self.assert_project_issue(
+                        validate_project(self.project, "panels"),
+                        receipt_relative,
+                        "raster_path",
+                        "panels/raw/p01-01.png",
+                        "visual QA",
+                    )
+                finally:
+                    raw_path.write_bytes(accepted_raw)
+                    atomic_write_json(record_path, accepted_record)
 
     def test_populated_handoff_holds_project_lock_through_binding_validation(self):
         job = self.valid_generation_job()
