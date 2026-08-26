@@ -7,6 +7,7 @@ import io
 import json
 import os
 import socket
+import sys
 import tempfile
 import threading
 import time
@@ -18,6 +19,8 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 EXECUTOR_PATH = ROOT / "integrations" / "comfyui-local" / "comfyui_executor.py"
 PROFILE_SCHEMA_PATH = ROOT / "integrations" / "comfyui-local" / "profile.schema.json"
 EXAMPLE_PROFILE_PATH = ROOT / "integrations" / "comfyui-local" / "example-profile.json"
