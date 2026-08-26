@@ -14,6 +14,7 @@ Turn one natural-language request into a local, editable comic project. Reason a
 - Read [creative direction](references/creative-direction.md) before authoring plans,
   character fingerprints, storyboards, references, or image prompts.
 - Read [capability detection](references/capability-detection.md) before the first `doctor` call and again only if the exposed tools change.
+- Read [image provider setup](references/image-provider-setup.md) before agent-managed external image tools; its ComfyUI route is reference/experimental and outside the deterministic engine.
 - Read [visual QA](references/visual-qa.md) before accepting, retrying, overriding,
   composing, or exporting any generated panel.
 - Read [safety and IP](references/safety-ip.md) before sending prompts externally and
@@ -31,10 +32,8 @@ Turn one natural-language request into a local, editable comic project. Reason a
 4. Run doctor, initialize or inspect the project, then validate and record every stage.
    Capability warnings allow deterministic planning, but generation stops at `BLOCKED`
    without a usable capability. Deterministic scripts never discover or call providers.
-5. Generate canonical references and panels into attempt paths. Require the image model to
-   draw each exact `generated-visual` storyboard SFX and never a `deterministic-lettering`
-   one, inspect every result visually, record all seven QA checks, and repair only failures
-   within budget. Route a bad effect to lettering with `sfx_repair.py` and follow its
+5. Generate canonical references and panels into attempt paths, including through an explicitly selected agent-managed external adapter; normal intake, retention, review, and promotion gates still apply. Before invoking that adapter, run `handoff inspect` as `comic-sol handoff inspect PROJECT`, select only a reported job whose effective `status` is `ready`, and pass `PROJECT/<jobs[].path>` using the exact `path` returned for that job. After result intake, inspect again before retrying; the new inspection is authoritative for status and the next attempt. Never enumerate or execute retained `generation/jobs/*.json` files directly. Require the image model to draw each exact `generated-visual` storyboard SFX and never a `deterministic-lettering` one.
+   Inspect every result visually, record all seven QA checks, and repair only failures within budget. Route a bad effect to lettering with `sfx_repair.py` and follow its
    `next_action`: ink the model drew needs a `regenerate` review, not re-lettering alone.
 6. Promote accepted attempts; deterministically letter dialogue, captions, and any
    `deterministic-lettering` SFX while validating and counting exact `generated-visual`
@@ -128,6 +127,7 @@ Do not read all references at once. Load only the files needed for the current s
 - Read [workflow](references/workflow.md) immediately after input detection.
 - Read [creative direction](references/creative-direction.md) before writing plans.
 - Read [capability detection](references/capability-detection.md) before the first `doctor` call and again only if exposed tools change.
+- Read [image provider setup](references/image-provider-setup.md) before agent-managed external image tools; its ComfyUI route is reference/experimental and outside the deterministic engine.
 - Read [visual QA](references/visual-qa.md) just before inspecting panels.
 - Read [safety and IP](references/safety-ip.md) before external prompts and whenever
   people, minors, sensitive content, named styles, franchises, or refusals appear.

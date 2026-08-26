@@ -1,0 +1,123 @@
+{
+  "$id": "https://github.com/wenn-id/comicsol/integrations/comfyui-local/profile.schema.json",
+  "title": "Comic Sol ComfyUI local executor profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "profile_sha256",
+    "workflow_sha256",
+    "model",
+    "output_node_id",
+    "inputs"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "profile_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+      "maxLength": 48
+    },
+    "profile_sha256": {"$ref": "#/$defs/sha256"},
+    "workflow_sha256": {"$ref": "#/$defs/sha256"},
+    "model": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,99}$"
+    },
+    "output_node_id": {"$ref": "#/$defs/nodeId"},
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "positive_prompt",
+        "negative_prompt",
+        "seed",
+        "width",
+        "height",
+        "references"
+      ],
+      "properties": {
+        "positive_prompt": {"$ref": "#/$defs/mapping"},
+        "negative_prompt": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/textValueMapping"}
+          ]
+        },
+        "seed": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/integerValueMapping"}
+          ]
+        },
+        "width": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/mapping"}
+          ]
+        },
+        "height": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/mapping"}
+          ]
+        },
+        "references": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/referenceMapping"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nodeId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+    },
+    "mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "input_name"],
+      "properties": {
+        "node_id": {"$ref": "#/$defs/nodeId"},
+        "input_name": {"$ref": "#/$defs/nodeId"}
+      }
+    },
+    "textValueMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "input_name", "value"],
+      "properties": {
+        "node_id": {"$ref": "#/$defs/nodeId"},
+        "input_name": {"$ref": "#/$defs/nodeId"},
+        "value": {"type": "string", "maxLength": 65536}
+      }
+    },
+    "integerValueMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "input_name", "value"],
+      "properties": {
+        "node_id": {"$ref": "#/$defs/nodeId"},
+        "input_name": {"$ref": "#/$defs/nodeId"},
+        "value": {"type": "integer"}
+      }
+    },
+    "referenceMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "input_name", "reference_index"],
+      "properties": {
+        "node_id": {"$ref": "#/$defs/nodeId"},
+        "input_name": {"$ref": "#/$defs/nodeId"},
+        "reference_index": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

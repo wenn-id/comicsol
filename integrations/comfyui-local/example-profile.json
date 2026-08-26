@@ -1,0 +1,27 @@
+{
+  "inputs": {
+    "height": null,
+    "negative_prompt": {
+      "input_name": "text",
+      "node_id": "7",
+      "value": ""
+    },
+    "positive_prompt": {
+      "input_name": "text",
+      "node_id": "6"
+    },
+    "references": [],
+    "seed": {
+      "input_name": "seed",
+      "node_id": "3",
+      "value": 0
+    },
+    "width": null
+  },
+  "model": null,
+  "output_node_id": "9",
+  "profile_id": "example-basic",
+  "profile_sha256": "c4a1dc6e93b829b3ce6463b241b200bc1cc8d5466e031d307d2282d82eaaacde",
+  "schema_version": "1.0",
+  "workflow_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+}
