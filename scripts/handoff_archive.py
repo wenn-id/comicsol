@@ -338,6 +338,7 @@ def export_handoff_archive(project_dir: Path, output_path: Path) -> dict[str, ob
 
     temporary: Path | None = None
     temporary_identity: tuple[int, int] | None = None
+    descriptor = -1
     try:
         descriptor, name = tempfile.mkstemp(
             dir=destination.parent,
@@ -348,7 +349,9 @@ def export_handoff_archive(project_dir: Path, output_path: Path) -> dict[str, ob
         metadata = os.fstat(descriptor)
         temporary_identity = (metadata.st_dev, metadata.st_ino)
         _set_descriptor_mode(descriptor, 0o644)
-        with os.fdopen(descriptor, "w+b") as handle:
+        stream = os.fdopen(descriptor, "w+b")
+        descriptor = -1
+        with stream as handle:
             _write_archive(handle, payloads)
             handle.flush()
             os.fsync(handle.fileno())
@@ -368,8 +371,21 @@ def export_handoff_archive(project_dir: Path, output_path: Path) -> dict[str, ob
     except OSError as error:
         raise HandoffArchiveError(f"archive publish failed after interruption: {error}") from error
     finally:
-        if temporary is not None and temporary_identity is not None:
-            _unlink_owned_file(temporary, temporary_identity)
+        try:
+            if descriptor != -1 and temporary is not None and temporary_identity is None:
+                try:
+                    metadata = os.fstat(descriptor)
+                except OSError:
+                    pass
+                else:
+                    temporary_identity = (metadata.st_dev, metadata.st_ino)
+        finally:
+            try:
+                if descriptor != -1:
+                    os.close(descriptor)
+            finally:
+                if temporary is not None and temporary_identity is not None:
+                    _unlink_owned_file(temporary, temporary_identity)
     return {"project_id": project_id, "archive_path": str(destination)}
 
 

@@ -44,6 +44,7 @@ Both surfaces are fail-closed: every failure path emits exactly one canonical re
 | --- | --- | --- |
 | `CS-CLI-001` | `invalid-request` | The command line is invalid; [check usage and retry](user/troubleshooting.md#cs-cli-001). |
 | `CS-HANDOFF-001` | `handoff-contract-error` | Handoff data, locked scope, or the current job binding is invalid or stale; [inspect or prepare the handoff again](../references/schemas.md#portable-handoff-contracts). |
+| `CS-HANDOFF-002` | `handoff-archive-error` | The portable handoff archive failed a format, integrity, resource, or publication-safety check; use an intact archive from a trusted export and retry. |
 | `CS-HANDOFF-003` | `handoff-result-error` | Executor metadata, attempt identity, raster evidence, or reference activation was rejected; [correct and resubmit the current result](../references/schemas.md#generation-receipt-generationreceiptsattempt-idjson). |
 | `CS-PROJ-001` | `invalid-data` | Project or request data violates the schema; [validate or restore it](user/troubleshooting.md#cs-proj-001). |
 | `CS-PROJ-002` | `not-found` | Required project data is missing; [locate or restore it](user/troubleshooting.md#cs-proj-002). |
@@ -62,13 +63,11 @@ Both surfaces are fail-closed: every failure path emits exactly one canonical re
 | `CS-MCP-001` | `invalid-request` | An MCP tool argument violated the request contract; [correct the request](user/troubleshooting.md#cs-mcp-001). |
 | `CS-MCP-002` | `internal-error` | The MCP tool hit an unexpected failure; [retry once and inspect diagnostics](user/troubleshooting.md#cs-mcp-002). |
 
-`CS-HANDOFF-002` is reserved and deferred for WP3 archive failures. WP2 does not define, emit, or classify that code; preserving the gap prevents a different failure from reusing its future public identifier.
-
 ## Classifier lookup surfaces
 
 `classify_exception()` maps an exception to one definition through exactly two boundary registries plus the type-based fallback chain:
 
-- **Typed boundaries** (`_BOUNDARY_TYPE_NAMES`): the engine's typed exception classes are matched by class name so `comic_sol_product.errors` never imports the engine. `PdfExportError` → `CS-EXPORT-001`; `PdfQualityError`, `PageQualityMigrationError`, `ProjectValidationError`, and `ValidationFailureError` → `CS-QA-001`; `TypographyPreflightError` → `CS-FONT-001`; `HandoffContractError` and `StaleLockedScopeError` → `CS-HANDOFF-001`; `HandoffResultError` → `CS-HANDOFF-003`; `IntegrationRepairError` → `CS-INSTALL-002`; `IntegrationRollbackError` → `CS-INSTALL-003`; `CliUsageError` → `CS-CLI-001`.
+- **Typed boundaries** (`_BOUNDARY_TYPE_NAMES`): the engine's typed exception classes are matched by class name so `comic_sol_product.errors` never imports the engine. `PdfExportError` → `CS-EXPORT-001`; `PdfQualityError`, `PageQualityMigrationError`, `ProjectValidationError`, and `ValidationFailureError` → `CS-QA-001`; `TypographyPreflightError` → `CS-FONT-001`; `HandoffContractError` and `StaleLockedScopeError` → `CS-HANDOFF-001`; `HandoffArchiveError` → `CS-HANDOFF-002`; `HandoffResultError` → `CS-HANDOFF-003`; `IntegrationRepairError` → `CS-INSTALL-002`; `IntegrationRollbackError` → `CS-INSTALL-003`; `CliUsageError` → `CS-CLI-001`.
 - **Message-prefix boundaries** (`_BOUNDARY_MESSAGE_PREFIXES`): stable lowercase prefixes the owning engine module raises — `security-error: input exceeds` → `CS-SEC-002`, `security-error` and the no-follow path messages (`project path must not contain symlinks`, `path must not contain symlinks or reparse points`) → `CS-SEC-001`, `page_qa_required:` → `CS-QA-001`, the raster messages (`panel is not a readable image`, `source is not a readable image`, `source image format must be`, `source image exceeds the decoded pixel limit`, `missing required lettered panel image`) → `CS-IMG-001`, and the font messages (`font policy`, `font script override`, `font is not a readable TrueType/OpenType file`) → `CS-FONT-001`.
 - **Type fallback chain**: `FileNotFoundError`, `PermissionError`, `UnicodeError`, `ValueError`/`TypeError`, `OSError`, then `RuntimeError` (with the missing-extra prefixes → `CS-INSTALL-001`). Request-rejection prefixes (`invalid project ID`, `unknown validation stage`, `attempt path`) classify as `CS-MCP-001` only on the MCP surface or when `request=True`. Anything else is the internal-error definition for the surface (`CS-PROJ-005` on CLI, `CS-MCP-002` on MCP).
 

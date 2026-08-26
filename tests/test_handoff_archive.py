@@ -456,6 +456,90 @@ class HandoffArchiveContractTests(unittest.TestCase):
         self.assertEqual(str(destination.resolve()), result["archive_path"])
         self.assertTrue(inspection["valid"])
 
+    def test_export_closes_and_removes_temporary_when_initial_fstat_fails(self):
+        module = _archive_api(self)
+        project = _prepared_project(self)
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        destination = root / "fstat-failure.comic-sol-handoff"
+        observed = {}
+        real_mkstemp = module.tempfile.mkstemp
+        real_fstat = module.os.fstat
+        failed = False
+
+        def record_mkstemp(*args, **kwargs):
+            descriptor, name = real_mkstemp(*args, **kwargs)
+            observed.update(descriptor=descriptor, path=Path(name))
+            return descriptor, name
+
+        def fail_initial_fstat(descriptor):
+            nonlocal failed
+            if descriptor == observed.get("descriptor") and not failed:
+                failed = True
+                raise OSError("simulated initial temporary identity failure")
+            return real_fstat(descriptor)
+
+        try:
+            with (
+                mock.patch.object(module.tempfile, "mkstemp", side_effect=record_mkstemp),
+                mock.patch.object(module.os, "fstat", side_effect=fail_initial_fstat),
+                self.assertRaisesRegex(module.HandoffArchiveError, "publish|interruption"),
+            ):
+                module.export_handoff_archive(project, destination)
+
+            with self.assertRaises(OSError):
+                real_fstat(observed["descriptor"])
+            self.assertFalse(observed["path"].exists())
+            self.assertEqual([], list(root.iterdir()))
+        finally:
+            if "descriptor" in observed:
+                try:
+                    os.close(observed["descriptor"])
+                except OSError:
+                    pass
+            if "path" in observed:
+                observed["path"].unlink(missing_ok=True)
+
+    def test_export_closes_temporary_descriptor_when_mode_setup_fails(self):
+        module = _archive_api(self)
+        project = _prepared_project(self)
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        destination = root / "mode-failure.comic-sol-handoff"
+        observed = {}
+        real_mkstemp = module.tempfile.mkstemp
+        real_fstat = module.os.fstat
+
+        def record_mkstemp(*args, **kwargs):
+            descriptor, name = real_mkstemp(*args, **kwargs)
+            observed.update(descriptor=descriptor, path=Path(name))
+            return descriptor, name
+
+        try:
+            with (
+                mock.patch.object(module.tempfile, "mkstemp", side_effect=record_mkstemp),
+                mock.patch.object(
+                    module,
+                    "_set_descriptor_mode",
+                    side_effect=OSError("simulated temporary mode failure"),
+                ),
+                self.assertRaisesRegex(module.HandoffArchiveError, "publish|interruption"),
+            ):
+                module.export_handoff_archive(project, destination)
+
+            with self.assertRaises(OSError):
+                real_fstat(observed["descriptor"])
+            self.assertFalse(observed["path"].exists())
+            self.assertEqual([], list(root.iterdir()))
+        finally:
+            if "descriptor" in observed:
+                try:
+                    os.close(observed["descriptor"])
+                except OSError:
+                    pass
+            if "path" in observed:
+                observed["path"].unlink(missing_ok=True)
+
     def test_export_uses_sibling_temporary_and_cleans_it_on_publish_interruption(self):
         module = _archive_api(self)
         project = _prepared_project(self)

@@ -94,6 +94,13 @@ class StructuredErrorContractTests(unittest.TestCase):
         documentation = (Path(__file__).parents[1] / "docs" / "structured-errors.md").read_text()
         for namespace in REQUIRED_NAMESPACES:
             self.assertIn(f"CS-{namespace}", documentation)
+        for code, definition in ERROR_DEFINITIONS.items():
+            with self.subTest(code=code):
+                self.assertIn(
+                    f"| `{code}` | `{definition.category}` |",
+                    documentation,
+                )
+                self.assertNotIn(f"`{code}` is reserved", documentation)
         self.assertIn("Never reuse an old identifier", documentation)
         self.assertIn("ERROR_DEFINITIONS", documentation)
 
