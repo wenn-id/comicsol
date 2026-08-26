@@ -316,6 +316,83 @@ class HandoffArchiveContractTests(unittest.TestCase):
         self.assertTrue(inspection["prepared"])
         self.assertEqual("current", inspection["scope_state"])
 
+    def test_export_accepts_lexically_aliased_output_parent(self):
+        module = _archive_api(self)
+        project = _prepared_project(self)
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        parent = root / "archives"
+        nested = parent / "nested"
+        nested.mkdir(parents=True)
+        requested = nested / ".." / "lexical.comic-sol-handoff"
+
+        result = module.export_handoff_archive(project, requested)
+
+        expected = parent / requested.name
+        self.assertEqual(str(expected.resolve()), result["archive_path"])
+        self.assertTrue(expected.is_file())
+
+    def test_import_accepts_lexically_aliased_output_root(self):
+        module, project, archive, root = self._export_fixture()
+        output_root = root / "imports"
+        nested = output_root / "nested"
+        nested.mkdir(parents=True)
+        requested = nested / ".."
+
+        result = module.import_handoff_archive(archive, requested)
+
+        expected = output_root / project.name
+        self.assertEqual(str(expected.resolve()), result["project_dir"])
+        self.assertEqual(_artifact_snapshot(project), _artifact_snapshot(expected))
+
+    def test_export_and_import_accept_symlinked_ancestor_directories(self):
+        module = _archive_api(self)
+        project = _prepared_project(self)
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        real = root / "real"
+        archive_parent = real / "archives"
+        output_root = real / "imports"
+        archive_parent.mkdir(parents=True)
+        output_root.mkdir()
+        alias = root / "alias"
+        try:
+            alias.symlink_to(real, target_is_directory=True)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f"directory symlinks are unavailable: {error}")
+        archive = alias / "archives" / "ancestor.comic-sol-handoff"
+
+        export_result = module.export_handoff_archive(project, archive)
+        expected_archive = archive_parent / archive.name
+        import_result = module.import_handoff_archive(expected_archive, alias / "imports")
+
+        expected_project = output_root / project.name
+        self.assertEqual(str(expected_archive), export_result["archive_path"])
+        self.assertEqual(str(expected_project), import_result["project_dir"])
+        self.assertEqual(_artifact_snapshot(project), _artifact_snapshot(expected_project))
+
+    def test_exported_repetitive_project_member_remains_safe_and_round_trips(self):
+        module = _archive_api(self)
+        project = _prepared_project(self)
+        repetitive = project / "logs" / "repetitive.txt"
+        repetitive.write_bytes(b"0" * 8192)
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        first = root / "repetitive.comic-sol-handoff"
+
+        module.export_handoff_archive(project, first)
+        inspection = module.inspect_handoff_archive(first)
+        output_root = root / "imports"
+        output_root.mkdir()
+        module.import_handoff_archive(first, output_root)
+        imported = output_root / project.name
+        second = root / "repetitive-round-trip.comic-sol-handoff"
+        module.export_handoff_archive(imported, second)
+
+        self.assertTrue(inspection["valid"])
+        self.assertEqual(repetitive.read_bytes(), (imported / "logs/repetitive.txt").read_bytes())
+        self.assertEqual(first.read_bytes(), second.read_bytes())
+
     def test_nested_import_creates_verified_parents_on_no_nofollow_fallback(self):
         module, project, archive, root = self._export_fixture()
         output_root = root / "fallback-import"

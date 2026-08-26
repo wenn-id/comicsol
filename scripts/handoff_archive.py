@@ -80,13 +80,11 @@ def _require_existing_directory(path: Path, *, label: str) -> Path:
         resolved = directory.resolve(strict=True)
     except OSError as error:
         raise HandoffArchiveError(f"{label} must be an existing directory: {error}") from error
-    if resolved != directory:
-        raise HandoffArchiveError(f"{label} must not contain symlinks")
     if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
         raise HandoffArchiveError(f"{label} must be a regular directory")
     if getattr(metadata, "st_file_attributes", 0) & _WINDOWS_REPARSE_ATTRIBUTE:
         raise HandoffArchiveError(f"{label} must not be a reparse point")
-    return directory
+    return resolved
 
 
 def _safe_project_id(value: object) -> str:
@@ -292,10 +290,10 @@ def _write_archive(handle: BinaryIO, payloads: dict[str, bytes]) -> None:
         handle,
         "w",
         compression=zipfile.ZIP_DEFLATED,
-        compresslevel=9,
+        compresslevel=0,
     ) as writer:
         for name in sorted(payloads):
-            writer.writestr(_regular_zip_info(name), payloads[name])
+            writer.writestr(_regular_zip_info(name), payloads[name], compresslevel=0)
 
 
 def _unlink_owned_file(path: Path, identity: tuple[int, int]) -> None:
