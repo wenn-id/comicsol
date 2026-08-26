@@ -116,6 +116,21 @@ Note the capability's documented maximum number of reference images per request.
 count is the `--budget` value the reference plan spends in stage 5; the engine never
 infers it.
 
+#### Optional ComfyUI external-tool execution (reference/experimental)
+
+When the active agent has explicitly chosen the ComfyUI reference adapter for a current
+prepared handoff job, launch it with the user-supplied API workflow and explicit profile as
+documented in the [integration README](https://github.com/wenn-id/comicsol/blob/main/integrations/comfyui-local/README.md). It reads
+exactly one `generation/jobs/<job-id>.json`, patches only mapped inputs, and returns one
+bounded local raster with sanitized metadata. Submit that raster through normal handoff
+result intake with `executor_kind=external-tool` and `executor_id=comfyui-local`.
+
+The adapter does not replace any engine gate. Normal raster validation, retry accounting,
+receipt publication, and atomic attempt retention remain authoritative. A reference still
+requires the normal explicit approval/activation flow. A panel remains unpromoted until
+normal visual QA passes. Fake-server tests are mechanics-only evidence, so this integration
+remains reference/experimental until issue #244 records a manual local ComfyUI smoke.
+
 ### 5. Generate canonical references
 
 Generate and inspect one canonical reference for each recurring character. Generate a

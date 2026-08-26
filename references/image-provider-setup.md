@@ -113,6 +113,43 @@ If you also want the Comic Sol deterministic pipeline over MCP, register the
 > You can run Comic Sol as a pure Skill (no MCP server, image via native tool)
 > or as a Skill + MCP server (image via native tool, pipeline via MCP tools).
 
+## ComfyUI local reference executor (experimental)
+
+Comic Sol includes an agent-managed ComfyUI adapter as a reference implementation of the
+existing `external-tool` handoff contract. It remains outside `scripts/`,
+`comic_sol_product/`, the deterministic wheel, and the MCP surface. The active agent—not
+the deterministic engine—launches it for one prepared generation job:
+
+```text
+python integrations/comfyui-local/comfyui_executor.py run --job JOB --workflow WORKFLOW --profile PROFILE --output FILE [--endpoint URL] [--allow-non-loopback]
+```
+
+The user supplies an already-running ComfyUI installation, a workflow exported in API
+format, and a versioned profile. Comic Sol does not start or configure ComfyUI and does not
+download models, custom nodes, or workflows. The profile maps the positive prompt,
+optional negative prompt and seed, optional width and height, and optional ordered
+references to exact node IDs and input names. Unmapped features are false; the adapter
+never infers capability from ComfyUI, model, workflow, or node names.
+
+The default endpoint is `http://127.0.0.1:8188` and accepts loopback IPv4/IPv6 only. The
+adapter rejects credentials, fragments, non-loopback resolution, rebinding, and redirects.
+`--allow-non-loopback` is an explicit unsafe override that prints a warning: local ComfyUI
+has no Comic Sol authentication boundary. Workflow/profile/upload/history/raster sizes and
+connection/queue/execution/download times are bounded.
+
+The bounded route uploads declared references through `/upload/image`, submits through
+`POST /prompt`, polls `/history/{prompt_id}`, and retrieves the declared output through
+`/view`. Only the local raster and sanitized result metadata survive. The invoking agent
+then submits it through normal handoff result intake as `executor_kind=external-tool` and
+`executor_id=comfyui-local`; raster validation, retry accounting, receipts, retention,
+visual QA, and promotion remain authoritative.
+
+See the [integration README](https://github.com/wenn-id/comicsol/blob/main/integrations/comfyui-local/README.md) for the profile,
+command, threat boundary, and troubleshooting details. This route is
+**reference/experimental**, not verified: fake-loopback tests prove mechanics only. It must
+not be described as verified until issue #244 records the required manual local ComfyUI
+smoke result.
+
 ## Non-normative vendor pointers
 
 The following pointers are **not normative** and are retained only as dated
