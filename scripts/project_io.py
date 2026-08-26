@@ -645,6 +645,43 @@ def fsync_directory_tree(root: Path) -> None:
         fsync_directory(directory)
 
 
+def quarantine_owned_file(path: Path, identity: tuple[int, int]) -> Path | None:
+    """Move an owned regular file out of its public path without deleting it."""
+    path = Path(path)
+    try:
+        metadata = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    if (metadata.st_dev, metadata.st_ino) != identity:
+        return None
+    if not stat.S_ISREG(metadata.st_mode) or (
+        getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT
+    ):
+        return None
+
+    parent = path.parent
+    for _attempt in range(16):
+        quarantine = parent / f".comic-sol-rollback-{secrets.token_hex(16)}.tmp"
+        try:
+            _atomic_rename_noreplace(path, quarantine)
+        except FileExistsError:
+            continue
+        break
+    else:
+        raise FileExistsError(errno.EEXIST, "could not allocate rollback quarantine")
+
+    moved = quarantine.stat(follow_symlinks=False)
+    if (moved.st_dev, moved.st_ino) != identity or not stat.S_ISREG(moved.st_mode):
+        try:
+            _atomic_rename_noreplace(quarantine, path)
+        except FileExistsError as error:
+            raise RuntimeError("file path changed during rollback") from error
+        return None
+
+    fsync_directory(parent)
+    return quarantine
+
+
 def cleanup_owned_directory(path: Path, identity: tuple[int, int]) -> bool:
     """Remove an owned directory through a random quarantine name.
 

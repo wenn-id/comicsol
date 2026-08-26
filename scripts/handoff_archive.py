@@ -9,6 +9,7 @@ import re
 import stat
 import tempfile
 import zipfile
+import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ from .project_io import (
     ProjectLock,
     _atomic_rename_noreplace,
     cleanup_owned_directory,
+    quarantine_owned_file,
     contained_project_path,
     fsync_directory,
     fsync_directory_tree,
@@ -338,6 +340,7 @@ def export_handoff_archive(project_dir: Path, output_path: Path) -> dict[str, ob
 
     temporary: Path | None = None
     temporary_identity: tuple[int, int] | None = None
+    published_identity: tuple[int, int] | None = None
     descriptor = -1
     try:
         descriptor, name = tempfile.mkstemp(
@@ -363,12 +366,25 @@ def export_handoff_archive(project_dir: Path, output_path: Path) -> dict[str, ob
             raise HandoffArchiveError("archive temporary identity changed before publication")
         _atomic_rename_noreplace(temporary, destination)
         temporary = None
+        published_identity = temporary_identity
         fsync_directory(destination.parent)
+        published_identity = None
     except FileExistsError as error:
         raise HandoffArchiveError("archive destination exists; export would clobber it") from error
     except HandoffArchiveError:
         raise
     except OSError as error:
+        if published_identity is not None and _path_entry_exists(destination):
+            try:
+                quarantine = quarantine_owned_file(destination, published_identity)
+            except OSError as cleanup_error:
+                raise HandoffArchiveError(
+                    "archive publish interruption could not be rolled back"
+                ) from cleanup_error
+            if quarantine is None:
+                raise HandoffArchiveError(
+                    "archive publish interruption changed destination identity"
+                ) from error
         raise HandoffArchiveError(f"archive publish failed after interruption: {error}") from error
     finally:
         try:
@@ -455,9 +471,9 @@ def _pre_scan(bundle: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
         total += info.file_size
         if total > MAX_TOTAL_UNCOMPRESSED_BYTES:
             raise HandoffArchiveError("archive aggregate uncompressed size exceeds the limit")
-        if info.file_size and (
-            info.compress_size <= 0 or info.file_size / info.compress_size > MAX_COMPRESSION_RATIO
-        ):
+        if info.compress_size <= 0:
+            raise HandoffArchiveError("archive member has an invalid compressed size")
+        if info.file_size and info.file_size / info.compress_size > MAX_COMPRESSION_RATIO:
             raise HandoffArchiveError("archive member exceeds the compression ratio limit")
     if [info.filename for info in infos] != sorted(names):
         raise HandoffArchiveError("archive members are not in canonical sorted order")
@@ -653,7 +669,13 @@ def _verified_archive(path: Path) -> Iterator[tuple[zipfile.ZipFile, _VerifiedAr
                 yield bundle, _verify_open_archive(bundle)
         except HandoffArchiveError:
             raise
-        except (OSError, EOFError, zipfile.BadZipFile, zipfile.LargeZipFile) as error:
+        except (
+            OSError,
+            EOFError,
+            zipfile.BadZipFile,
+            zipfile.LargeZipFile,
+            zlib.error,
+        ) as error:
             raise HandoffArchiveError(
                 f"archive ZIP or central directory is corrupt: {error}"
             ) from error
@@ -772,23 +794,63 @@ def _validate_staged_project(staging: Path, verified: _VerifiedArchive) -> None:
     remove_contained(staging, ".comic-sol.lock")
 
 
+def _staging_directory_descriptor(path: Path) -> int:
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    if os.name == "nt" or not nofollow or not directory:
+        return -1
+    return os.open(path, os.O_RDONLY | directory | nofollow)
+
+
+def _staging_directory_identity(path: Path, descriptor: int) -> tuple[int, int]:
+    metadata = os.fstat(descriptor) if descriptor != -1 else path.stat(follow_symlinks=False)
+    if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        raise HandoffArchiveError("archive staging path must be a regular directory")
+    if getattr(metadata, "st_file_attributes", 0) & _WINDOWS_REPARSE_ATTRIBUTE:
+        raise HandoffArchiveError("archive staging path must not be a reparse point")
+    return metadata.st_dev, metadata.st_ino
+
+
+def _retry_staging_directory_identity(path: Path, descriptor: int) -> tuple[int, int] | None:
+    if descriptor == -1:
+        return None
+    try:
+        return _staging_directory_identity(path, descriptor)
+    except (OSError, HandoffArchiveError):
+        return None
+
+
 def _validate_archive_project_without_publication(
     bundle: zipfile.ZipFile,
     verified: _VerifiedArchive,
 ) -> None:
-    staging = Path(tempfile.mkdtemp(prefix=".comic-sol-handoff-inspect-", suffix=".tmp"))
-    metadata = staging.stat(follow_symlinks=False)
-    identity = (metadata.st_dev, metadata.st_ino)
+    staging: Path | None = None
+    identity: tuple[int, int] | None = None
+    descriptor = -1
     try:
+        staging = Path(tempfile.mkdtemp(prefix=".comic-sol-handoff-inspect-", suffix=".tmp"))
+        descriptor = _staging_directory_descriptor(staging)
+        identity = _staging_directory_identity(staging, descriptor)
         _extract_verified_project(bundle, verified, staging)
         _validate_staged_project(staging, verified)
     finally:
         try:
-            removed = cleanup_owned_directory(staging, identity)
-        except OSError as error:
-            raise HandoffArchiveError("archive inspection temporary cleanup failed") from error
-        if not removed:
-            raise HandoffArchiveError("archive inspection temporary identity changed")
+            if staging is not None and identity is None:
+                identity = _retry_staging_directory_identity(staging, descriptor)
+        finally:
+            try:
+                if descriptor != -1:
+                    os.close(descriptor)
+            finally:
+                if staging is not None and identity is not None:
+                    try:
+                        removed = cleanup_owned_directory(staging, identity)
+                    except OSError as error:
+                        raise HandoffArchiveError(
+                            "archive inspection temporary cleanup failed"
+                        ) from error
+                    if not removed:
+                        raise HandoffArchiveError("archive inspection temporary identity changed")
 
 
 def import_handoff_archive(archive_path: Path, output_root: Path) -> dict[str, object]:
@@ -802,11 +864,14 @@ def import_handoff_archive(archive_path: Path, output_root: Path) -> dict[str, o
         destination = root / verified.project_id
         if _path_entry_exists(destination):
             raise HandoffArchiveError("archive destination already exists")
-        staging = Path(tempfile.mkdtemp(dir=root, prefix=".comic-sol-handoff-", suffix=".tmp"))
-        metadata = staging.stat(follow_symlinks=False)
-        identity = (metadata.st_dev, metadata.st_ino)
+        staging: Path | None = None
+        identity: tuple[int, int] | None = None
+        descriptor = -1
         published = False
         try:
+            staging = Path(tempfile.mkdtemp(dir=root, prefix=".comic-sol-handoff-", suffix=".tmp"))
+            descriptor = _staging_directory_descriptor(staging)
+            identity = _staging_directory_identity(staging, descriptor)
             _extract_verified_project(bundle, verified, staging)
             _validate_staged_project(staging, verified)
             fsync_directory_tree(staging)
@@ -837,9 +902,17 @@ def import_handoff_archive(archive_path: Path, output_root: Path) -> dict[str, o
                 ) from error
             published = True
         finally:
-            if not published:
+            try:
+                if staging is not None and identity is None:
+                    identity = _retry_staging_directory_identity(staging, descriptor)
+            finally:
                 try:
-                    cleanup_owned_directory(staging, identity)
-                except OSError:
-                    pass
+                    if descriptor != -1:
+                        os.close(descriptor)
+                finally:
+                    if not published and staging is not None and identity is not None:
+                        try:
+                            cleanup_owned_directory(staging, identity)
+                        except OSError:
+                            pass
         return {"project_id": verified.project_id, "project_dir": str(destination)}

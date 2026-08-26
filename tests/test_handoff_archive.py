@@ -138,6 +138,65 @@ def _write_entries(archive: Path, entries: list[tuple[zipfile.ZipInfo, bytes]]) 
             bundle.writestr(info, payload)
 
 
+def _corrupt_raw_deflate_member(archive: Path, member: str) -> None:
+    with zipfile.ZipFile(archive, "r") as bundle:
+        info = bundle.getinfo(member)
+    payload = bytearray(archive.read_bytes())
+    header = info.header_offset
+    name_size = int.from_bytes(payload[header + 26 : header + 28], "little")
+    extra_size = int.from_bytes(payload[header + 28 : header + 30], "little")
+    compressed_offset = header + 30 + name_size + extra_size
+    if info.compress_size <= 0:
+        raise AssertionError(f"fixture member has no compressed payload: {member}")
+    payload[compressed_offset] = (payload[compressed_offset] & 0xF8) | 0x07
+    archive.write_bytes(payload)
+
+
+def _zero_compressed_deflate_member(archive: Path, member: str) -> None:
+    with zipfile.ZipFile(archive, "r") as bundle:
+        info = bundle.getinfo(member)
+    if info.file_size != 0 or info.compress_size <= 0:
+        raise AssertionError(f"fixture member is not compressed empty data: {member}")
+
+    payload = bytearray(archive.read_bytes())
+    local = info.header_offset
+    name_size = int.from_bytes(payload[local + 26 : local + 28], "little")
+    extra_size = int.from_bytes(payload[local + 28 : local + 30], "little")
+    compressed_offset = local + 30 + name_size + extra_size
+    del payload[compressed_offset : compressed_offset + info.compress_size]
+    payload[local + 18 : local + 22] = (0).to_bytes(4, "little")
+
+    eocd = payload.rfind(b"PK\x05\x06")
+    if eocd < 0:
+        raise AssertionError("fixture archive has no end-of-central-directory record")
+    central_offset = int.from_bytes(payload[eocd + 16 : eocd + 20], "little")
+    central_offset -= info.compress_size
+    payload[eocd + 16 : eocd + 20] = central_offset.to_bytes(4, "little")
+    entry_count = int.from_bytes(payload[eocd + 10 : eocd + 12], "little")
+
+    cursor = central_offset
+    found = False
+    for _index in range(entry_count):
+        if payload[cursor : cursor + 4] != b"PK\x01\x02":
+            raise AssertionError("fixture central directory is malformed")
+        central_name_size = int.from_bytes(payload[cursor + 28 : cursor + 30], "little")
+        central_extra_size = int.from_bytes(payload[cursor + 30 : cursor + 32], "little")
+        comment_size = int.from_bytes(payload[cursor + 32 : cursor + 34], "little")
+        name = bytes(payload[cursor + 46 : cursor + 46 + central_name_size]).decode()
+        if name == member:
+            payload[cursor + 20 : cursor + 24] = (0).to_bytes(4, "little")
+            found = True
+        cursor += 46 + central_name_size + central_extra_size + comment_size
+    if not found:
+        raise AssertionError(f"fixture central directory did not contain {member}")
+
+    archive.write_bytes(payload)
+    with zipfile.ZipFile(archive, "r") as bundle:
+        patched = bundle.getinfo(member)
+        if patched.file_size != 0 or patched.compress_size != 0:
+            raise AssertionError("fixture zero-size metadata patch failed")
+
+
 def _regular_info(name: str, *, payload_mode: int = 0o644) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(name, FIXED_ZIP_DATETIME)
     info.create_system = 3
@@ -441,6 +500,31 @@ class HandoffArchiveContractTests(unittest.TestCase):
         if os.name != "nt":
             self.assertIn("directory", flushed)
             self.assertLess(flushed.index("file"), flushed.index("directory"))
+
+    def test_export_rolls_back_owned_destination_when_parent_fsync_fails(self):
+        module = _archive_api(self)
+        project = _prepared_project(self)
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        destination = root / "fsync-failure.comic-sol-handoff"
+        unrelated = root / "unrelated.txt"
+        unrelated.write_bytes(b"preserve me")
+
+        with (
+            mock.patch.object(
+                module,
+                "fsync_directory",
+                side_effect=OSError("simulated parent fsync failure"),
+            ),
+            self.assertRaisesRegex(module.HandoffArchiveError, "publish|interruption"),
+        ):
+            module.export_handoff_archive(project, destination)
+
+        self.assertFalse(destination.exists())
+        self.assertEqual(b"preserve me", unrelated.read_bytes())
+        quarantines = list(root.glob(".comic-sol-rollback-*.tmp"))
+        self.assertEqual(1, len(quarantines))
+        self.assertTrue(quarantines[0].is_file())
 
     def test_export_supports_platforms_without_descriptor_chmod(self):
         module = _archive_api(self)
@@ -771,6 +855,62 @@ class HandoffArchiveContractTests(unittest.TestCase):
                 malformed.write_bytes(payload)
                 self._assert_import_rejected(module, malformed, "archive|central|corrupt|zip")
 
+    def test_public_routes_classify_malformed_deflate_as_handoff_archive_error(self):
+        from comic_sol_product.errors import classify_exception
+        from scripts.command_service import CommandService
+
+        module, project, archive, root = self._export_fixture()
+        malformed = archive.with_name(f"{archive.stem}-malformed-deflate{archive.suffix}")
+        malformed.write_bytes(archive.read_bytes())
+        _corrupt_raw_deflate_member(malformed, FORMAT_METADATA_MEMBER)
+        output_root = root / "malformed-deflate-output"
+        output_root.mkdir()
+        before = _tree_snapshot(output_root)
+        cases = (
+            ("handoff.inspect", {"archive_path": malformed}),
+            (
+                "handoff.import",
+                {"archive_path": malformed, "output_root": output_root},
+            ),
+        )
+
+        for route, arguments in cases:
+            with self.subTest(route=route):
+                with self.assertRaises(module.HandoffArchiveError) as raised:
+                    CommandService().execute(route, **arguments)
+                self.assertEqual("CS-HANDOFF-002", classify_exception(raised.exception).code)
+                self.assertEqual(before, _tree_snapshot(output_root))
+                self.assertFalse((output_root / project.name).exists())
+
+    def test_public_routes_reject_zero_compressed_size_deflated_member(self):
+        from comic_sol_product.errors import classify_exception
+        from scripts.command_service import CommandService
+
+        module, project, archive, root = self._export_fixture()
+        member = "project/zz-empty.bin"
+        entries = [*_archive_entries(archive), (_regular_info(member), b"")]
+        entries = _refresh_checksums(entries)
+        malformed = self._mutated_archive(archive, entries, "zero-compressed-size")
+        _zero_compressed_deflate_member(malformed, member)
+        output_root = root / "zero-compressed-size-output"
+        output_root.mkdir()
+        before = _tree_snapshot(output_root)
+        cases = (
+            ("handoff.inspect", {"archive_path": malformed}),
+            (
+                "handoff.import",
+                {"archive_path": malformed, "output_root": output_root},
+            ),
+        )
+
+        for route, arguments in cases:
+            with self.subTest(route=route):
+                with self.assertRaises(module.HandoffArchiveError) as raised:
+                    CommandService().execute(route, **arguments)
+                self.assertEqual("CS-HANDOFF-002", classify_exception(raised.exception).code)
+                self.assertEqual(before, _tree_snapshot(output_root))
+                self.assertFalse((output_root / project.name).exists())
+
     @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO creation is unavailable")
     def test_archive_input_must_be_a_nonblocking_verified_regular_file(self):
         module, _project, archive, _root = self._export_fixture()
@@ -956,6 +1096,146 @@ class HandoffArchiveContractTests(unittest.TestCase):
                     pattern,
                 )
                 self._assert_import_rejected(module, malicious, pattern)
+
+    @unittest.skipUnless(
+        os.name != "nt" and getattr(os, "O_NOFOLLOW", 0) and getattr(os, "O_DIRECTORY", 0),
+        "retained no-follow staging descriptors require POSIX support",
+    )
+    def test_inspect_and_import_cleanup_after_initial_staging_identity_failure(self):
+        module, _project, archive, root = self._export_fixture()
+        real_mkdtemp = module.tempfile.mkdtemp
+        real_path_stat = Path.stat
+        real_fstat = module.os.fstat
+
+        cases = (
+            ("inspect", lambda output: module.inspect_handoff_archive(archive)),
+            (
+                "import",
+                lambda output: module.import_handoff_archive(archive, output),
+            ),
+        )
+        for route, invoke in cases:
+            with self.subTest(route=route):
+                output_root = root / f"{route}-identity-failure"
+                output_root.mkdir()
+                observed = {}
+                failed = False
+
+                def record_mkdtemp(*args, **kwargs):
+                    path = Path(real_mkdtemp(*args, **kwargs))
+                    observed["path"] = path
+                    return str(path)
+
+                def fail_initial_path_stat(path, *args, **kwargs):
+                    nonlocal failed
+                    if Path(path) == observed.get("path") and not failed:
+                        failed = True
+                        raise OSError("simulated staging identity failure")
+                    return real_path_stat(path, *args, **kwargs)
+
+                def fail_initial_fstat(descriptor):
+                    nonlocal failed
+                    metadata = real_fstat(descriptor)
+                    if (
+                        observed.get("path") is not None
+                        and stat.S_ISDIR(metadata.st_mode)
+                        and not failed
+                    ):
+                        failed = True
+                        raise OSError("simulated staging identity failure")
+                    return metadata
+
+                try:
+                    with (
+                        mock.patch.object(
+                            module.tempfile,
+                            "mkdtemp",
+                            side_effect=record_mkdtemp,
+                        ),
+                        mock.patch.object(
+                            Path,
+                            "stat",
+                            autospec=True,
+                            side_effect=fail_initial_path_stat,
+                        ),
+                        mock.patch.object(
+                            module.os,
+                            "fstat",
+                            side_effect=fail_initial_fstat,
+                        ),
+                        self.assertRaises(module.HandoffArchiveError),
+                    ):
+                        invoke(output_root)
+
+                    self.assertTrue(failed)
+                    self.assertFalse(observed["path"].exists())
+                    self.assertEqual([], list(output_root.iterdir()))
+                finally:
+                    if "path" in observed:
+                        __import__("shutil").rmtree(observed["path"], ignore_errors=True)
+
+    def test_inspect_and_import_preserve_unverified_staging_without_descriptor(self):
+        module, project, archive, root = self._export_fixture()
+        real_mkdtemp = module.tempfile.mkdtemp
+        real_path_stat = Path.stat
+        cases = (
+            ("inspect", lambda output: module.inspect_handoff_archive(archive)),
+            (
+                "import",
+                lambda output: module.import_handoff_archive(archive, output),
+            ),
+        )
+
+        for route, invoke in cases:
+            with self.subTest(route=route):
+                output_root = root / f"{route}-unverified-staging"
+                output_root.mkdir()
+                observed = {}
+
+                def record_mkdtemp(*args, **kwargs):
+                    path = Path(real_mkdtemp(*args, **kwargs))
+                    observed["path"] = path
+                    return str(path)
+
+                def fail_staging_stat(path, *args, **kwargs):
+                    if Path(path) == observed.get("path"):
+                        raise OSError("simulated unverified staging identity")
+                    return real_path_stat(path, *args, **kwargs)
+
+                cleanup = mock.Mock(wraps=module.cleanup_owned_directory)
+                try:
+                    with (
+                        mock.patch.object(
+                            module.tempfile,
+                            "mkdtemp",
+                            side_effect=record_mkdtemp,
+                        ),
+                        mock.patch.object(
+                            module,
+                            "_staging_directory_descriptor",
+                            return_value=-1,
+                        ),
+                        mock.patch.object(
+                            Path,
+                            "stat",
+                            autospec=True,
+                            side_effect=fail_staging_stat,
+                        ),
+                        mock.patch.object(
+                            module,
+                            "cleanup_owned_directory",
+                            cleanup,
+                        ),
+                        self.assertRaises(module.HandoffArchiveError),
+                    ):
+                        invoke(output_root)
+
+                    cleanup.assert_not_called()
+                    self.assertTrue(observed["path"].is_dir())
+                    self.assertFalse((output_root / project.name).exists())
+                finally:
+                    if "path" in observed:
+                        __import__("shutil").rmtree(observed["path"], ignore_errors=True)
 
     def test_post_rename_base_exception_rolls_back_only_owned_publication(self):
         module, project, archive, root = self._export_fixture()
