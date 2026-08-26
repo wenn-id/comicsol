@@ -16,6 +16,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
+from typing import BinaryIO
 from unittest import mock
 
 
@@ -23,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts import project_io  # noqa: E402
 from scripts.project_io import read_contained_bytes  # noqa: E402
 from tests import support as test_support  # noqa: E402
 from tests.support import make_symlink  # noqa: E402
@@ -243,16 +245,19 @@ class ComfyUIExecutorTests(unittest.TestCase):
         outside_directory.mkdir()
         (outside_directory / "prompt.txt").write_bytes(b"outside")
         parked_directory = self.project / "inputs-original"
-        real_read = self.module._read_file_bounded
+        real_read = project_io._read_bounded_stream
+        swapped = False
 
-        def swap_then_read(path: Path, maximum: int, category: str) -> bytes:
+        def swap_then_read(stream: BinaryIO, *, max_bytes: int) -> bytes:
+            nonlocal swapped
             input_directory.rename(parked_directory)
             make_symlink(self, input_directory, outside_directory, directory=True)
-            return real_read(path, maximum, category)
+            swapped = True
+            return real_read(stream, max_bytes=max_bytes)
 
         with mock.patch.object(
-            self.module,
-            "_read_file_bounded",
+            project_io,
+            "_read_bounded_stream",
             side_effect=swap_then_read,
         ):
             payload = self.module._read_project_file(
@@ -260,6 +265,7 @@ class ComfyUIExecutorTests(unittest.TestCase):
                 "inputs/prompt.txt",
                 64,
             )
+        self.assertTrue(swapped)
         self.assertEqual(payload, b"inside")
 
     def _stop_server(self) -> None:
