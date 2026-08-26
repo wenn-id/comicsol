@@ -1678,6 +1678,16 @@ def _resume_project_locked(project_dir: Path, manifest_path: Path) -> dict[str, 
 
             if stale_stage is not None:
                 _invalidate_state_locked(project_dir, stale_stage, manifest, cache)
+                # Resume owns one transaction that rewrites project.json, so the
+                # handoff binding must be released here rather than demanding a
+                # second explicit invalidation the resume plan never mentions.
+                binding = manifest.get("handoff")
+                if isinstance(binding, dict):
+                    manifest["handoff"] = {
+                        "contract_version": HANDOFF_CONTRACT_VERSION,
+                        "locked_scope_sha256": None,
+                        "manifest_path": None,
+                    }
                 recovery_status = _post_invalidation_status(
                     project_dir, stale_stage, str(blocked_from)
                 )
@@ -2733,6 +2743,32 @@ def _build_handoff_content(
     batch_map = build_generation_batches(batches)
     batch_bytes = canonical_artifact_bytes(batch_map)
     artifacts[BATCHES_PATH] = batch_bytes
+    preserved_receipts: set[str] = set()
+    for job in jobs:
+        job_id = cast(str, job["job_id"])
+        prior_job_path = f"generation/jobs/{job_id}.json"
+        try:
+            prior_job = _read_handoff_json(project_dir, prior_job_path)
+        except (FileNotFoundError, OSError, ValueError, HandoffContractError):
+            prior_job = None
+        if (
+            isinstance(prior_job, dict)
+            and prior_job.get("job_id") == job_id
+            and not validate_generation_job(prior_job)
+            and generation_job_sha256(prior_job) == generation_job_sha256(job)
+        ):
+            retry_limit = cast(int, job["retry_limit"])
+            for ordinal in range(1, retry_limit + 2):
+                receipt_id = generation_attempt_id(job_id=job_id, attempt=ordinal)
+                receipt_relative = f"generation/receipts/{receipt_id}.json"
+                receipt_path = contained_project_path(project_dir, receipt_relative)
+                if not receipt_path.exists() or receipt_path.is_symlink():
+                    continue
+                receipt = _read_handoff_json(project_dir, receipt_relative)
+                if receipt.get("job_id") == job_id and receipt.get(
+                    "job_sha256"
+                ) == generation_job_sha256(job):
+                    preserved_receipts.add(receipt_id)
     for job in jobs:
         relative = f"generation/jobs/{job['job_id']}.json"
         target = contained_project_path(project_dir, relative)
@@ -2751,6 +2787,8 @@ def _build_handoff_content(
                 receipt_relative = f"generation/receipts/{receipt_id}.json"
                 receipt_path = contained_project_path(project_dir, receipt_relative)
                 if receipt_path.exists() or receipt_path.is_symlink():
+                    if receipt_id in preserved_receipts:
+                        continue
                     raise HandoffContractError([f"{receipt_relative}: unmanaged receipt collision"])
         artifacts[relative] = canonical_artifact_bytes(job)
 

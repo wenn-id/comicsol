@@ -2827,6 +2827,83 @@ class HandoffStep10RegressionTests(unittest.TestCase):
         self.assertRegex(str(error), "unmanaged retained target collision")
         self.assertEqual(tampered, (project / accepted["raster_path"]).read_bytes())
 
+    def test_resume_releases_stale_handoff_binding_when_generation_was_invalidated(
+        self,
+    ):
+        """A planning/prompt/reference drift recovered by ``resume_project`` must
+        clear the populated handoff binding in the same transaction so a
+        follow-up ``prepare_handoff`` re-enters the reference phase instead of
+        raising ``StaleLockedScopeError``."""
+        _root, project, _reference_job = self._prepared_reference()
+        prompt = project / "prompts/references/mira.txt"
+        prompt.write_bytes(prompt.read_bytes() + b" Preserve the amber scarf.\n")
+
+        blocked = comic_sol.block_project(
+            project,
+            "image-capability-unavailable",
+            "image capability unavailable",
+        )
+        self.assertEqual("BLOCKED", blocked["status"])
+        manifest = comic_sol.read_json(project / "project.json")
+        manifest["capability"].update(
+            {
+                "detected_at": "2026-07-23T00:01:00Z",
+                "name": "restored-image-tool",
+                "status": "available",
+            }
+        )
+        comic_sol.atomic_write_json(project / "project.json", manifest)
+
+        resumed = comic_sol.resume_project(project)
+
+        self.assertEqual("INIT", resumed["status"])
+        post_binding = comic_sol.read_json(project / "project.json")["handoff"]
+        self.assertIsNone(post_binding["locked_scope_sha256"])
+        self.assertIsNone(post_binding["manifest_path"])
+        inspect = comic_sol.inspect_handoff(project)
+        self.assertNotEqual("stale", inspect["scope_state"])
+        reprepared = comic_sol.prepare_handoff(project)
+        self.assertEqual("reference", reprepared["phase"])
+
+    def test_failure_receipt_is_reconciled_for_an_identical_rederived_job(self):
+        """A failure receipt left on disk by ``record_handoff_failure`` and a
+        re-prepared job that hashes to the same job ID share the same
+        provenance, so reprepare must not treat the preserved receipt as
+        unmanaged just because the prior handoff manifest was invalidated."""
+        root, project, reference_job = self._prepared_reference()
+        failure = comic_sol.record_handoff_failure(
+            project,
+            job_id=reference_job["job_id"],
+            attempt=1,
+            executor_kind="external-tool",
+            executor_id="fixture-renderer",
+            category="transient-tool-error",
+        )
+        receipt_relative = failure["receipt_path"]
+        receipt_before = (project / receipt_relative).read_bytes()
+        # A covered planning change invalidates the handoff but the receipt
+        # for this exact job is preserved.
+        story = comic_sol.read_json(project / "plan/story-plan.json")
+        story["theme"] = "Hope must remain shared."
+        comic_sol.atomic_write_json(project / "plan/story-plan.json", story)
+        comic_sol.invalidate_from(project, "generation")
+
+        reprepared = comic_sol.prepare_handoff(project)
+
+        self.assertEqual("reference", reprepared["phase"])
+        _manifest, jobs = self._manifest_jobs(project)
+        fresh_job = jobs["reference", "mira"]
+        self.assertEqual(reference_job["job_id"], fresh_job["job_id"])
+        self.assertEqual(
+            "references/attempts/mira/initial-001.png",
+            fresh_job["target_path"],
+        )
+        # The preserved receipt must still be on disk untouched and the
+        # journal of staging steps stays consistent.
+        self.assertEqual(receipt_before, (project / receipt_relative).read_bytes())
+        events = (project / "logs/events.jsonl").read_text(encoding="utf-8")
+        self.assertIn("handoff.prepared", events)
+
 
 if __name__ == "__main__":
     unittest.main()
