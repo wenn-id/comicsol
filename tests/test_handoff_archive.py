@@ -441,6 +441,19 @@ class HandoffArchiveContractTests(unittest.TestCase):
         self.assertIn("directory", flushed)
         self.assertLess(flushed.index("file"), flushed.index("directory"))
 
+    def test_export_supports_platforms_without_descriptor_chmod(self):
+        module = _archive_api(self)
+        project = _prepared_project(self)
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        destination = root / "portable.comic-sol-handoff"
+
+        with mock.patch.object(module.os, "fchmod", None):
+            result = module.export_handoff_archive(project, destination)
+
+        self.assertEqual(str(destination.resolve()), result["archive_path"])
+        self.assertTrue(module.inspect_handoff_archive(destination)["valid"])
+
     def test_export_uses_sibling_temporary_and_cleans_it_on_publish_interruption(self):
         module = _archive_api(self)
         project = _prepared_project(self)

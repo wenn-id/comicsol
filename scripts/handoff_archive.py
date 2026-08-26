@@ -341,7 +341,9 @@ def export_handoff_archive(project_dir: Path, output_path: Path) -> dict[str, ob
         temporary = Path(name)
         metadata = os.fstat(descriptor)
         temporary_identity = (metadata.st_dev, metadata.st_ino)
-        os.fchmod(descriptor, 0o644)
+        descriptor_chmod = getattr(os, "fchmod", None)
+        if descriptor_chmod is not None:
+            descriptor_chmod(descriptor, 0o644)
         with os.fdopen(descriptor, "w+b") as handle:
             _write_archive(handle, payloads)
             handle.flush()
