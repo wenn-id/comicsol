@@ -285,6 +285,12 @@ def _archive_payloads(project_id: str, project_payloads: dict[str, bytes]) -> di
     return payloads
 
 
+def _set_descriptor_mode(descriptor: int, mode: int) -> None:
+    descriptor_chmod = getattr(os, "fchmod", None)
+    if callable(descriptor_chmod):
+        descriptor_chmod(descriptor, mode)
+
+
 def _write_archive(handle: BinaryIO, payloads: dict[str, bytes]) -> None:
     with zipfile.ZipFile(
         handle,
@@ -341,9 +347,7 @@ def export_handoff_archive(project_dir: Path, output_path: Path) -> dict[str, ob
         temporary = Path(name)
         metadata = os.fstat(descriptor)
         temporary_identity = (metadata.st_dev, metadata.st_ino)
-        descriptor_chmod = getattr(os, "fchmod", None)
-        if descriptor_chmod is not None:
-            descriptor_chmod(descriptor, 0o644)
+        _set_descriptor_mode(descriptor, 0o644)
         with os.fdopen(descriptor, "w+b") as handle:
             _write_archive(handle, payloads)
             handle.flush()
@@ -710,7 +714,7 @@ def _extract_member(
         if digest.hexdigest() != expected_digest:
             raise HandoffArchiveError("archive checksum changed during extraction")
         target.flush()
-        os.fchmod(target.fileno(), 0o644)
+        _set_descriptor_mode(target.fileno(), 0o644)
         os.fsync(target.fileno())
 
 
