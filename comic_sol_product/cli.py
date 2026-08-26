@@ -121,9 +121,19 @@ def build_parser() -> argparse.ArgumentParser:
     handoff = subparsers.add_parser("handoff")
     handoff_commands = handoff.add_subparsers(dest="handoff_command", required=True)
 
-    for name in ("prepare", "inspect"):
-        handoff_command = handoff_commands.add_parser(name)
-        handoff_command.add_argument("project_dir", type=Path)
+    prepare_handoff = handoff_commands.add_parser("prepare")
+    prepare_handoff.add_argument("project_dir", type=Path)
+
+    inspect_handoff = handoff_commands.add_parser("inspect")
+    inspect_handoff.add_argument("target", type=Path)
+
+    export_handoff = handoff_commands.add_parser("export")
+    export_handoff.add_argument("project_dir", type=Path)
+    export_handoff.add_argument("--output", required=True, type=Path, dest="output_path")
+
+    import_handoff = handoff_commands.add_parser("import")
+    import_handoff.add_argument("archive_path", type=Path)
+    import_handoff.add_argument("--output-root", required=True, type=Path)
 
     def add_executor_arguments(handoff_command: argparse.ArgumentParser) -> None:
         handoff_command.add_argument("project_dir", type=Path)
@@ -341,6 +351,12 @@ def _render_handoff(command: str, data: object) -> str:
         return "\n".join(lines)
 
     if command == "handoff.inspect":
+        if "format_version" in data or "valid" in data:
+            return (
+                f"Handoff archive {_escape_terminal_controls(data.get('project_id'))}: "
+                f"version={_escape_terminal_controls(data.get('format_version'))} "
+                f"valid={_escape_terminal_controls(data.get('valid'))}"
+            )
         prepared = _escape_terminal_controls(data.get("prepared"))
         phase = _escape_terminal_controls(data.get("phase"))
         scope = _escape_terminal_controls(data.get("scope_state"))
@@ -351,6 +367,17 @@ def _render_handoff(command: str, data: object) -> str:
                 f"Handoff: prepared={prepared} phase={phase} scope={scope} jobs={job_count}",
                 f"Next action: {_escape_terminal_controls(data.get('next_action'))}",
             )
+        )
+
+    if command == "handoff.export":
+        return (
+            f"{_escape_terminal_controls(data.get('project_id'))}: handoff archive exported "
+            f"to {_escape_terminal_controls(data.get('archive_path'))}"
+        )
+    if command == "handoff.import":
+        return (
+            f"{_escape_terminal_controls(data.get('project_id'))}: handoff archive imported "
+            f"to {_escape_terminal_controls(data.get('project_dir'))}"
         )
 
     job_id = _escape_terminal_controls(data.get("job_id"))
@@ -674,9 +701,27 @@ def _run(
     if arguments.command in {
         "handoff.prepare",
         "handoff.inspect",
+        "handoff.export",
+        "handoff.import",
         "handoff.accept-result",
         "handoff.record-failure",
     }:
+        if arguments.command == "handoff.export":
+            return service.execute(
+                arguments.command,
+                project_dir=arguments.project_dir,
+                output_path=arguments.output_path,
+            )
+        if arguments.command == "handoff.import":
+            return service.execute(
+                arguments.command,
+                archive_path=arguments.archive_path,
+                output_root=arguments.output_root,
+            )
+        if arguments.command == "handoff.inspect":
+            if arguments.target.name.endswith(".comic-sol-handoff"):
+                return service.execute(arguments.command, archive_path=arguments.target)
+            return service.execute(arguments.command, project_dir=arguments.target)
         handoff_arguments: dict[str, Any] = {"project_dir": arguments.project_dir}
         if arguments.command in {"handoff.accept-result", "handoff.record-failure"}:
             handoff_arguments.update(
@@ -829,9 +874,8 @@ def main(argv: list[str] | None = None) -> int:
             print(format_human_error(error, command=command), file=sys.stderr)
         return 2
     except (ValueError, TypeError, json.JSONDecodeError) as error:
-        payload = _failure(
-            command, error, legacy_category="invalid-input", detail=safe_error_detail(error)
-        )
+        detail = None if type(error).__name__ == "HandoffArchiveError" else safe_error_detail(error)
+        payload = _failure(command, error, legacy_category="invalid-input", detail=detail)
         if arguments.as_json:
             print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
         else:

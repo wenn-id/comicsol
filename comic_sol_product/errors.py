@@ -209,6 +209,13 @@ _DEFINITIONS = (
         "Inspect or prepare the handoff again, then retry with a current job.",
     ),
     ErrorDefinition(
+        "CS-HANDOFF-002",
+        "handoff-archive-error",
+        "The portable handoff archive is invalid.",
+        "The archive failed a format, integrity, resource, or publication safety check.",
+        "Use an intact archive from a trusted export and retry the handoff operation.",
+    ),
+    ErrorDefinition(
         "CS-HANDOFF-003",
         "handoff-result-error",
         "The generation handoff result was rejected.",
@@ -232,6 +239,7 @@ _BOUNDARY_TYPE_NAMES = {
     "CliUsageError": "CS-CLI-001",
     "HandoffContractError": "CS-HANDOFF-001",
     "StaleLockedScopeError": "CS-HANDOFF-001",
+    "HandoffArchiveError": "CS-HANDOFF-002",
     "HandoffResultError": "CS-HANDOFF-003",
     "IntegrationRepairError": "CS-INSTALL-002",
     "IntegrationRollbackError": "CS-INSTALL-003",

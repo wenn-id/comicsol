@@ -35,6 +35,8 @@ class build_py(_build_py):
         (engine_root / "__init__.py").write_text(
             '"""Bundled deterministic Comic Sol engine."""\n', encoding="utf-8"
         )
+        # Runtime modules, including portable handoff archive support, are
+        # discovered from the canonical scripts directory rather than listed.
         for source in sorted((ROOT / "scripts").glob("*.py")):
             if source.name in BUILD_ONLY_SCRIPTS:
                 continue
