@@ -2298,6 +2298,46 @@ class HandoffStep10RegressionTests(unittest.TestCase):
                 self.assertFalse((project / job["target_path"]).exists())
                 self.assertFalse((project / "references/characters/mira.png").exists())
 
+    def test_reference_intake_rejects_transparency_before_recording_success(self):
+        for mode in ("RGBA", "P"):
+            with self.subTest(mode=mode):
+                root, project, job = self._prepared_reference()
+                raster = root / f"transparent-reference-{mode}.png"
+                if mode == "RGBA":
+                    Image.new(mode, (512, 512), (20, 30, 40, 128)).save(raster, format="PNG")
+                else:
+                    image = Image.new(mode, (512, 512), 0)
+                    image.putpalette([20, 30, 40] + [0, 0, 0] * 255)
+                    image.save(raster, format="PNG", transparency=0)
+
+                error = self._assert_rejected_without_mutation(
+                    project,
+                    lambda: comic_sol.accept_handoff_result(
+                        project,
+                        **self._success_arguments(
+                            job,
+                            raster,
+                            approve_reference=True,
+                        ),
+                    ),
+                    HandoffResultError,
+                )
+
+                self.assertRegex(str(error), "alpha transparency")
+                self.assertFalse((project / job["target_path"]).exists())
+
+                corrected = root / f"corrected-reference-{mode}.png"
+                self._write_raster(corrected, (512, 512), (20, 30, 40))
+                accepted = comic_sol.accept_handoff_result(
+                    project,
+                    **self._success_arguments(
+                        job,
+                        corrected,
+                        approve_reference=True,
+                    ),
+                )
+                self.assertEqual("completed", accepted["status"])
+
     def test_executor_metadata_control_characters_reject_all_intake_without_mutation(self):
         cases = (
             ("executor_id", "fixture\nrenderer"),

@@ -2995,6 +2995,8 @@ def _validate_handoff_raster(
                     raise InputResourceLimitError(
                         f"the decoded raster pixel limit of {MAX_DECODED_PIXELS} pixels"
                     )
+                if "A" in image.mode or "transparency" in image.info:
+                    raise HandoffResultError(["result raster: must not contain alpha transparency"])
                 image.load()
                 width, height = image.size
     except HandoffResultError:
