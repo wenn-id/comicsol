@@ -373,7 +373,7 @@ def export_handoff_archive(project_dir: Path, output_path: Path) -> dict[str, ob
         raise HandoffArchiveError("archive destination exists; export would clobber it") from error
     except HandoffArchiveError:
         raise
-    except OSError as error:
+    except BaseException as error:
         if published_identity is not None and _path_entry_exists(destination):
             try:
                 quarantine = quarantine_owned_file(destination, published_identity)
@@ -385,6 +385,8 @@ def export_handoff_archive(project_dir: Path, output_path: Path) -> dict[str, ob
                 raise HandoffArchiveError(
                     "archive publish interruption changed destination identity"
                 ) from error
+        if not isinstance(error, Exception):
+            raise
         raise HandoffArchiveError(f"archive publish failed after interruption: {error}") from error
     finally:
         try:

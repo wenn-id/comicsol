@@ -526,6 +526,31 @@ class HandoffArchiveContractTests(unittest.TestCase):
         self.assertEqual(1, len(quarantines))
         self.assertTrue(quarantines[0].is_file())
 
+    def test_export_rolls_back_owned_destination_on_parent_fsync_base_exception(self):
+        module = _archive_api(self)
+        project = _prepared_project(self)
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        destination = root / "fsync-interruption.comic-sol-handoff"
+        unrelated = root / "unrelated.txt"
+        unrelated.write_bytes(b"preserve me")
+
+        with (
+            mock.patch.object(
+                module,
+                "fsync_directory",
+                side_effect=KeyboardInterrupt("simulated parent fsync interruption"),
+            ),
+            self.assertRaisesRegex(KeyboardInterrupt, "parent fsync interruption"),
+        ):
+            module.export_handoff_archive(project, destination)
+
+        self.assertFalse(destination.exists())
+        self.assertEqual(b"preserve me", unrelated.read_bytes())
+        quarantines = list(root.glob(".comic-sol-rollback-*.tmp"))
+        self.assertEqual(1, len(quarantines))
+        self.assertTrue(quarantines[0].is_file())
+
     def test_export_supports_platforms_without_descriptor_chmod(self):
         module = _archive_api(self)
         project = _prepared_project(self)
@@ -1342,13 +1367,15 @@ class InstalledHandoffArchiveCliTests(unittest.TestCase):
                 service.execute.assert_called_once_with(route, **expected_arguments)
 
     def test_installed_directory_inspect_route_remains_backward_compatible(self):
-        project = Path("/shared/demo")
-        result = {"prepared": True, "scope_state": "current"}
-        service = types.SimpleNamespace(execute=mock.Mock(return_value=result))
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "demo.comic-sol-handoff"
+            project.mkdir()
+            result = {"prepared": True, "scope_state": "current"}
+            service = types.SimpleNamespace(execute=mock.Mock(return_value=result))
 
-        code, _stdout, stderr = self.invoke_with_service(
-            ["--json", "handoff", "inspect", str(project)], service
-        )
+            code, _stdout, stderr = self.invoke_with_service(
+                ["--json", "handoff", "inspect", str(project)], service
+            )
 
         self.assertEqual(0, code)
         self.assertEqual("", stderr)
@@ -1456,13 +1483,15 @@ class SourceHandoffArchiveCliTests(unittest.TestCase):
                 service.execute.assert_called_once_with(route, **expected_arguments)
 
     def test_source_directory_inspect_route_remains_backward_compatible(self):
-        project = Path("/shared/demo")
-        result = {"prepared": True, "scope_state": "current"}
-        service = types.SimpleNamespace(execute=mock.Mock(return_value=result))
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "demo.comic-sol-handoff"
+            project.mkdir()
+            result = {"prepared": True, "scope_state": "current"}
+            service = types.SimpleNamespace(execute=mock.Mock(return_value=result))
 
-        code, _stdout, stderr = self.invoke_with_service(
-            ["handoff", "inspect", str(project), "--json"], service
-        )
+            code, _stdout, stderr = self.invoke_with_service(
+                ["handoff", "inspect", str(project), "--json"], service
+            )
 
         self.assertEqual(0, code)
         self.assertEqual("", stderr)

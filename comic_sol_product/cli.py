@@ -719,7 +719,9 @@ def _run(
                 output_root=arguments.output_root,
             )
         if arguments.command == "handoff.inspect":
-            if arguments.target.name.endswith(".comic-sol-handoff"):
+            if not arguments.target.is_dir() and arguments.target.name.endswith(
+                ".comic-sol-handoff"
+            ):
                 return service.execute(arguments.command, archive_path=arguments.target)
             return service.execute(arguments.command, project_dir=arguments.target)
         handoff_arguments: dict[str, Any] = {"project_dir": arguments.project_dir}

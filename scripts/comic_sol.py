@@ -4828,7 +4828,9 @@ def main(argv: list[str] | None = None) -> int:
                     "output_root": arguments.output_root,
                 }
             elif command == "handoff.inspect":
-                if arguments.target.name.endswith(".comic-sol-handoff"):
+                if not arguments.target.is_dir() and arguments.target.name.endswith(
+                    ".comic-sol-handoff"
+                ):
                     handoff_arguments = {"archive_path": arguments.target}
                 else:
                     handoff_arguments = {"project_dir": arguments.target}
