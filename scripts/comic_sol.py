@@ -595,6 +595,50 @@ def canonical_event_record(event: str, details: dict[str, object]) -> bytes:
     return canonical_json_bytes(event_record) + b"\n"
 
 
+def _refresh_handoff_manifest_stage(
+    project_dir: Path,
+    manifest: dict[str, object],
+    target_status: str,
+    tx: "ProjectTransaction",
+) -> None:
+    """Refresh ``handoff/manifest.json`` so its ``stage`` tracks ``project.json``.
+
+    The handoff binding is the authoritative bridge between project status and
+    handoff state. A normal ``transition()`` rewrites ``project.json`` and would
+    otherwise leave the manifest with the previous stage, which makes
+    ``validate_project`` report a stage mismatch and breaks reprepare. Run this
+    inside the same transaction that publishes ``project.json`` so the bridge
+    stays consistent or rolls back together.
+    """
+    binding = manifest.get("handoff")
+    if not isinstance(binding, dict):
+        return
+    manifest_path = binding.get("manifest_path")
+    locked_scope = binding.get("locked_scope_sha256")
+    if not isinstance(manifest_path, str) or manifest_path != HANDOFF_MANIFEST_PATH:
+        return
+    if not isinstance(locked_scope, str):
+        return
+    handoff_bytes = None
+    try:
+        handoff_bytes = read_contained_bytes(project_dir, manifest_path, max_bytes=MAX_JSON_BYTES)
+    except FileNotFoundError:
+        return
+    try:
+        handoff_manifest = loads_bounded_json(handoff_bytes, source=manifest_path)
+    except (ValueError, TypeError):
+        return
+    if not isinstance(handoff_manifest, dict):
+        return
+    if handoff_manifest.get("stage") == target_status:
+        return
+    handoff_manifest["stage"] = target_status
+    issues = validate_handoff_manifest(handoff_manifest)
+    if issues:
+        raise HandoffContractError(issues)
+    tx.stage_bytes(manifest_path, canonical_artifact_bytes(handoff_manifest))
+
+
 def append_event(
     project_dir: Path,
     event: str,
@@ -654,6 +698,7 @@ def transition(
             ),
             repair_torn_jsonl=True,
         )
+        _refresh_handoff_manifest_stage(project_dir, manifest, target, tx)
         tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
     return manifest
 
@@ -1314,6 +1359,7 @@ def block_project(project_dir: Path, reason: str, warning: str) -> dict[str, obj
             ),
             repair_torn_jsonl=True,
         )
+        _refresh_handoff_manifest_stage(project_dir, manifest, "BLOCKED", transaction)
         transaction.stage_bytes("project.json", canonical_artifact_bytes(manifest))
         return manifest
 
@@ -1670,6 +1716,7 @@ def _resume_project_locked(project_dir: Path, manifest_path: Path) -> dict[str, 
 
             # The manifest is the commit marker and is deliberately staged once,
             # after cache and event targets, in its final non-BLOCKED form.
+            _refresh_handoff_manifest_stage(project_dir, manifest, recovery_status, tx)
             tx.stage_bytes("project.json", canonical_artifact_bytes(manifest))
 
         return {
@@ -2213,6 +2260,80 @@ def _retained_attempt_bindings(project_dir: Path) -> dict[str, str]:
     return bindings
 
 
+def _reference_activation_provenance(project_dir: Path) -> dict[tuple[str, str], str]:
+    """Map each provably produced reference raster to the prompt that rendered it.
+
+    Invalidation retains receipts, generation jobs, and rasters, so an activated
+    canonical PNG can still be traced back to the job that produced it. That
+    binding is the only honest way to tell whether canonical artwork came from
+    the current prompt or from a retired one.
+    """
+    provenance: dict[tuple[str, str], str] = {}
+    for receipt in _receipt_inventory(project_dir):
+        if receipt.get("outcome") != "success":
+            continue
+        raster_sha256 = receipt.get("raster_sha256")
+        job_id = receipt.get("job_id")
+        if not isinstance(raster_sha256, str) or not isinstance(job_id, str):
+            continue
+        try:
+            job = _read_handoff_json(project_dir, f"generation/jobs/{job_id}.json")
+        except (FileNotFoundError, OSError, ValueError):
+            continue
+        if validate_generation_job(job) or job.get("subject_kind") != "reference":
+            continue
+        subject_id = job.get("subject_id")
+        prompt_sha256 = job.get("prompt_sha256")
+        if isinstance(subject_id, str) and isinstance(prompt_sha256, str):
+            provenance[(subject_id, raster_sha256)] = prompt_sha256
+    return provenance
+
+
+def _reference_is_superseded(
+    project_dir: Path,
+    subject_id: str,
+    canonical_relative: str,
+    prompt_sha256: str,
+    provenance: Mapping[tuple[str, str], str],
+) -> bool:
+    """Report whether an activated canonical reference came from a retired prompt.
+
+    Only a canonical raster this project can prove it produced is ever treated as
+    superseded: artwork with no receipt provenance stays untouched so a
+    hand-placed reference is never silently regenerated over.
+    """
+    try:
+        payload = read_contained_bytes(
+            project_dir, canonical_relative, max_bytes=MAX_ENCODED_RASTER_BYTES
+        )
+    except (OSError, ValueError):
+        return False
+    activated = provenance.get((subject_id, hashlib.sha256(payload).hexdigest()))
+    return activated is not None and activated != prompt_sha256
+
+
+def _reference_can_reactivate(
+    project_dir: Path,
+    subject_id: str,
+    canonical_relative: str,
+    job: Mapping[str, object],
+) -> bool:
+    """Allow canonical replacement only for a proven superseded activation."""
+    prompt_sha256 = job.get("prompt_sha256")
+    if not isinstance(prompt_sha256, str):
+        return False
+    try:
+        canonical = read_contained_bytes(
+            project_dir, canonical_relative, max_bytes=MAX_ENCODED_RASTER_BYTES
+        )
+    except (OSError, ValueError):
+        return False
+    prior_prompt = _reference_activation_provenance(project_dir).get(
+        (subject_id, hashlib.sha256(canonical).hexdigest())
+    )
+    return prior_prompt is not None and prior_prompt != prompt_sha256
+
+
 def _next_reference_attempt_target(
     project_dir: Path,
     subject_id: str,
@@ -2348,6 +2469,7 @@ def _build_handoff_content(
 
     reference_candidates: list[tuple[str, str, str, bytes]] = []
     active_reference_paths: set[str] = set()
+    reference_provenance = _reference_activation_provenance(project_dir)
     for item in character_items:
         if not isinstance(item, dict) or not isinstance(item.get("id"), str):
             continue
@@ -2358,11 +2480,22 @@ def _build_handoff_content(
                 [f"character {identifier}: canonical reference path is invalid"]
             )
         target = contained_project_path(project_dir, cast(str, canonical))
-        if target.exists():
+        prompt = reference_prompts.get(identifier)
+        superseded = (
+            target.exists()
+            and prompt is not None
+            and _reference_is_superseded(
+                project_dir,
+                identifier,
+                cast(str, canonical),
+                hashlib.sha256(prompt[1]).hexdigest(),
+                reference_provenance,
+            )
+        )
+        if target.exists() and not superseded:
             _verify_raster(target, expected_format="PNG")
             active_reference_paths.add(cast(str, canonical))
         else:
-            prompt = reference_prompts.get(identifier)
             if prompt is None:
                 raise HandoffContractError(
                     [f"prompts/references/{identifier}.txt: required prompt is missing"]
@@ -2372,7 +2505,18 @@ def _build_handoff_content(
         prompt = reference_prompts.get(identifier)
         canonical = f"references/scenes/{identifier}.png"
         target = contained_project_path(project_dir, canonical)
-        if target.exists():
+        superseded = (
+            target.exists()
+            and prompt is not None
+            and _reference_is_superseded(
+                project_dir,
+                identifier,
+                canonical,
+                hashlib.sha256(prompt[1]).hexdigest(),
+                reference_provenance,
+            )
+        )
+        if target.exists() and not superseded:
             _verify_raster(target, expected_format="PNG")
             active_reference_paths.add(canonical)
         elif prompt is not None:
@@ -3035,9 +3179,15 @@ def accept_handoff_result(
                     project_dir, cast(str, job["subject_id"])
                 )
                 if contained_project_path(project_dir, activated_path).exists():
-                    raise HandoffResultError(
-                        ["canonical reference exists and must never be overwritten"]
-                    )
+                    if not _reference_can_reactivate(
+                        project_dir,
+                        cast(str, job["subject_id"]),
+                        activated_path,
+                        job,
+                    ):
+                        raise HandoffResultError(
+                            ["canonical reference exists and must never be overwritten"]
+                        )
                 counters = None
             else:
                 panel_id = cast(str, job["subject_id"])

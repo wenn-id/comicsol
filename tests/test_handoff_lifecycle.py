@@ -2573,6 +2573,57 @@ class HandoffStep10RegressionTests(unittest.TestCase):
                     handoff.HandoffResultError,
                 )
 
+    def test_project_transition_refreshes_handoff_stage_atomically(self):
+        root, project, reference_job = self._prepared_reference()
+        HandoffPrepareInspectTests._activate_current_reference(self, project, reference_job)
+
+        comic_sol.transition(project, "REFERENCES_READY")
+
+        self.assertEqual(
+            "REFERENCES_READY", comic_sol.read_json(project / "project.json")["status"]
+        )
+        self.assertEqual(
+            "REFERENCES_READY", comic_sol.read_json(project / "handoff/manifest.json")["stage"]
+        )
+        self.assertEqual([], validate_project(project, "plan"))
+
+    def test_changed_activated_reference_requeues_and_replaces_only_provenance_backed_canonical(
+        self,
+    ):
+        root, project, reference_job = self._prepared_reference()
+        initial = root / "initial-reference.png"
+        self._write_raster(initial, (512, 512), (220, 180, 80))
+        accepted = comic_sol.accept_handoff_result(
+            project,
+            **self._success_arguments(reference_job, initial, approve_reference=True),
+        )
+        retired_attempt = (project / accepted["raster_path"]).read_bytes()
+        canonical = project / "references/characters/mira.png"
+        prompt = project / "prompts/references/mira.txt"
+        prompt.write_bytes(prompt.read_bytes() + b" Preserve the amber scarf.\n")
+        comic_sol.invalidate_from(project, "generation")
+
+        reprepared = comic_sol.prepare_handoff(project)
+
+        self.assertEqual("reference", reprepared["phase"])
+        _manifest, jobs = self._manifest_jobs(project)
+        fresh_job = jobs["reference", "mira"]
+        self.assertNotEqual(reference_job["job_id"], fresh_job["job_id"])
+        self.assertEqual("references/attempts/mira/initial-002.png", fresh_job["target_path"])
+        self.assertEqual(retired_attempt, (project / accepted["raster_path"]).read_bytes())
+        replacement = root / "replacement-reference.png"
+        self._write_raster(replacement, (512, 512), (80, 120, 160))
+
+        repair = comic_sol.accept_handoff_result(
+            project,
+            **self._success_arguments(fresh_job, replacement, approve_reference=True),
+        )
+
+        self.assertEqual("completed", repair["status"])
+        self.assertEqual(replacement.read_bytes(), canonical.read_bytes())
+        self.assertEqual(retired_attempt, (project / accepted["raster_path"]).read_bytes())
+        self.assertEqual([], validate_project(project, "plan"))
+
     def test_invalidated_successful_panel_reprepares_onto_a_fresh_retained_target(self):
         root, project, panel_job = self._prepared_panel()
         dimensions = panel_job["requested_dimensions"]
