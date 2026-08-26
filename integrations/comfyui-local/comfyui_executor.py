@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Bounded, agent-managed ComfyUI adapter for Comic Sol generation jobs.
 
-This reference integration intentionally has no imports from ``scripts`` or
-``comic_sol_product``. The deterministic engine remains responsible for result
-intake, raster validation, retry accounting, receipts, review, and promotion.
+This reference integration has no third-party dependencies and reuses Comic
+Sol's first-party filesystem trust-boundary helpers. The deterministic engine
+never imports this adapter and remains responsible for result intake, raster
+validation, retry accounting, receipts, review, and promotion.
 """
 
 from __future__ import annotations
@@ -27,6 +28,13 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import BinaryIO, TextIO
+
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPOSITORY_ROOT))
+
+from scripts.project_io import InputResourceLimitError, read_contained_bytes  # noqa: E402
 
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:8188"
@@ -602,22 +610,18 @@ def _read_project_file(
     maximum: int,
 ) -> bytes:
     normalized = _validate_relative_path(relative)
-    root = project_root.resolve(strict=True)
-    candidate = root.joinpath(*normalized.split("/"))
-    current = root
     try:
-        for part in normalized.split("/"):
-            current = current / part
-            metadata = current.lstat()
-            if stat.S_ISLNK(metadata.st_mode):
-                raise ExecutorError("invalid-job-input")
-        resolved = candidate.resolve(strict=True)
-        resolved.relative_to(root)
-    except ExecutorError:
-        raise
+        return read_contained_bytes(
+            project_root,
+            normalized,
+            max_bytes=maximum,
+        )
+    except InputResourceLimitError as exc:
+        if "file size limit" in str(exc):
+            raise ExecutorError("size-limit") from exc
+        raise ExecutorError("invalid-job-input") from exc
     except (OSError, RuntimeError, ValueError) as exc:
         raise ExecutorError("invalid-job-input") from exc
-    return _read_file_bounded(resolved, maximum, "invalid-job-input")
 
 
 def _validate_job(job_path: Path) -> tuple[dict[str, object], Path, str]:

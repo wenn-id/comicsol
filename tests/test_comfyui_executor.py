@@ -7,6 +7,7 @@ import io
 import json
 import os
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -21,6 +22,11 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from scripts.project_io import read_contained_bytes  # noqa: E402
+from tests import support as test_support  # noqa: E402
+from tests.support import make_symlink  # noqa: E402
+
 EXECUTOR_PATH = ROOT / "integrations" / "comfyui-local" / "comfyui_executor.py"
 PROFILE_SCHEMA_PATH = ROOT / "integrations" / "comfyui-local" / "profile.schema.json"
 EXAMPLE_PROFILE_PATH = ROOT / "integrations" / "comfyui-local" / "example-profile.json"
@@ -216,6 +222,45 @@ class ComfyUIExecutorTests(unittest.TestCase):
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.addCleanup(self._stop_server)
+
+    def test_first_party_trust_boundary_imports_in_supported_contexts(self) -> None:
+        self.assertIs(self.module.read_contained_bytes, read_contained_bytes)
+        completed = subprocess.run(
+            [sys.executable, os.fspath(EXECUTOR_PATH), "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("Run one Comic Sol job with local ComfyUI", completed.stdout)
+
+    def test_project_read_resists_intermediate_directory_swap(self) -> None:
+        input_directory = self.project / "inputs"
+        input_directory.mkdir(parents=True)
+        (input_directory / "prompt.txt").write_bytes(b"inside")
+        outside_directory = self.root / "outside"
+        outside_directory.mkdir()
+        (outside_directory / "prompt.txt").write_bytes(b"outside")
+        parked_directory = self.project / "inputs-original"
+        real_read = self.module._read_file_bounded
+
+        def swap_then_read(path: Path, maximum: int, category: str) -> bytes:
+            input_directory.rename(parked_directory)
+            make_symlink(self, input_directory, outside_directory, directory=True)
+            return real_read(path, maximum, category)
+
+        with mock.patch.object(
+            self.module,
+            "_read_file_bounded",
+            side_effect=swap_then_read,
+        ):
+            payload = self.module._read_project_file(
+                self.project,
+                "inputs/prompt.txt",
+                64,
+            )
+        self.assertEqual(payload, b"inside")
 
     def _stop_server(self) -> None:
         self.server.shutdown()
@@ -1002,11 +1047,20 @@ class ComfyUIExecutorTests(unittest.TestCase):
         outside = self.root / "outside.txt"
         outside.write_text("private", encoding="utf-8")
         prompt_path.unlink()
-        try:
-            prompt_path.symlink_to(outside)
-        except OSError as exc:
-            self.skipTest(f"symlinks unavailable: {exc}")
+        make_symlink(self, prompt_path, outside)
         self.assert_failure(self._run(job_path), "invalid-job-input")
+
+    def test_required_symlink_coverage_failure_is_not_skipped(self) -> None:
+        nested = type(self)("test_traversal_absolute_paths_and_symlinks_are_rejected")
+        result = unittest.TestResult()
+        with (
+            mock.patch.object(test_support, "REQUIRE_SYMLINK_TESTS", True),
+            mock.patch.object(Path, "symlink_to", side_effect=OSError("unavailable")),
+        ):
+            nested.run(result)
+        self.assertEqual(result.skipped, [])
+        self.assertEqual(len(result.failures), 1)
+        self.assertIn("forbids skipping", result.failures[0][1])
 
     def test_schema_and_example_profile_are_strict_and_self_consistent(self) -> None:
         schema = json.loads(PROFILE_SCHEMA_PATH.read_text(encoding="utf-8"))

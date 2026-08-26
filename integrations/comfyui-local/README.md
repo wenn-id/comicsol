@@ -4,13 +4,13 @@
 > behavior, not a live ComfyUI/model run. Do not describe this adapter as verified until a
 > manual local smoke result has been recorded in issue #244.
 
-This standard-library command is an agent-managed reference implementation of Comic Sol's
-existing `external-tool` handoff contract. It is not imported by `scripts/` or
-`comic_sol_product/`, is not an MCP tool, and is not part of the deterministic engine. The
-active agent launches it for one prepared generation job, then submits the resulting local
-raster through normal handoff result intake. Result intake remains responsible for raster
-validation, retry accounting, provenance, receipts, atomic retention, visual QA, and
-promotion.
+This agent-managed command has no third-party dependencies and reuses Comic Sol's
+first-party `scripts.project_io` filesystem trust-boundary helpers. Neither `scripts/` nor
+`comic_sol_product/` imports the adapter; it is not an MCP tool and is not part of the
+deterministic engine. The active agent launches it for one prepared generation job, then
+submits the resulting local raster through normal handoff result intake. Result intake
+remains responsible for raster validation, retry accounting, provenance, receipts, atomic
+retention, visual QA, and promotion.
 
 The adapter does not install, start, update, or configure ComfyUI. It never downloads a
 model, checkpoint, LoRA, VAE, custom node, or workflow. A workflow and its custom nodes are
@@ -18,7 +18,8 @@ user-controlled executable configuration inside the user's ComfyUI trust boundar
 
 ## Prerequisites
 
-- Python 3.11 or newer; the adapter uses only the Python standard library.
+- Python 3.11 or newer; the adapter has no third-party dependencies and reuses only Comic
+  Sol's first-party filesystem trust-boundary helpers.
 - An already-running ComfyUI server.
 - A workflow exported from ComfyUI in **API format**.
 - A profile that maps Comic Sol semantics to exact workflow node IDs and input names.
