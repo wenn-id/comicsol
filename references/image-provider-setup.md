@@ -124,6 +124,13 @@ the deterministic engine—launches it for one prepared generation job:
 python integrations/comfyui-local/comfyui_executor.py run --job JOB --workflow WORKFLOW --profile PROFILE --output FILE [--endpoint URL] [--allow-non-loopback]
 ```
 
+Before invoking it, run `handoff inspect` as `comic-sol handoff inspect PROJECT`, select
+only a reported job whose effective `status` is `ready`, and pass `PROJECT/<jobs[].path>`
+using the exact `path` returned for that job. After result intake, inspect again before
+retrying; the new inspection is authoritative for status and the next attempt. Never
+enumerate or execute retained `generation/jobs/*.json` files directly: retained
+descriptors can represent completed, failed, stale, or superseded work.
+
 The user supplies an already-running ComfyUI installation, a workflow exported in API
 format, and a versioned profile. Comic Sol does not start or configure ComfyUI and does not
 download models, custom nodes, or workflows. The profile maps the positive prompt,

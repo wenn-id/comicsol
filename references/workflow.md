@@ -125,6 +125,13 @@ exactly one `generation/jobs/<job-id>.json`, patches only mapped inputs, and ret
 bounded local raster with sanitized metadata. Submit that raster through normal handoff
 result intake with `executor_kind=external-tool` and `executor_id=comfyui-local`.
 
+Before invoking it, run `handoff inspect` as `comic-sol handoff inspect PROJECT`, select
+only a reported job whose effective `status` is `ready`, and pass `PROJECT/<jobs[].path>`
+using the exact `path` returned for that job. After result intake, inspect again before
+retrying; the new inspection is authoritative for status and the next attempt. Never
+enumerate or execute retained `generation/jobs/*.json` files directly: retained
+descriptors can represent completed, failed, stale, or superseded work.
+
 The adapter does not replace any engine gate. Normal raster validation, retry accounting,
 receipt publication, and atomic attempt retention remain authoritative. A reference still
 requires the normal explicit approval/activation flow. A panel remains unpromoted until

@@ -247,12 +247,21 @@ class ComfyUIExecutorTests(unittest.TestCase):
         parked_directory = self.project / "inputs-original"
         real_read = project_io._read_bounded_stream
         swapped = False
+        swap_blocked = False
 
         def swap_then_read(stream: BinaryIO, *, max_bytes: int) -> bytes:
-            nonlocal swapped
-            input_directory.rename(parked_directory)
-            make_symlink(self, input_directory, outside_directory, directory=True)
-            swapped = True
+            nonlocal swapped, swap_blocked
+            try:
+                input_directory.rename(parked_directory)
+            except PermissionError:
+                if os.name != "nt":
+                    raise
+                # Windows refuses to rename a directory while the contained file
+                # descriptor is open, which blocks this substitution at the OS layer.
+                swap_blocked = True
+            else:
+                make_symlink(self, input_directory, outside_directory, directory=True)
+                swapped = True
             return real_read(stream, max_bytes=max_bytes)
 
         with mock.patch.object(
@@ -265,7 +274,7 @@ class ComfyUIExecutorTests(unittest.TestCase):
                 "inputs/prompt.txt",
                 64,
             )
-        self.assertTrue(swapped)
+        self.assertTrue(swapped or swap_blocked)
         self.assertEqual(payload, b"inside")
 
     def _stop_server(self) -> None:
@@ -932,6 +941,31 @@ class ComfyUIExecutorTests(unittest.TestCase):
         exit_code, envelope, stderr = self._run(job_path)
         self.assertEqual(exit_code, 0, stderr)
         self.assertNotIn("asset", json.dumps(envelope))
+
+    def test_documented_comfyui_job_selection_and_retry_sequence(self) -> None:
+        documents = (
+            ROOT / "integrations" / "comfyui-local" / "README.md",
+            ROOT / "references" / "image-provider-setup.md",
+            ROOT / "references" / "workflow.md",
+            ROOT / "SKILL.md",
+            ROOT / "skills" / "comic-sol" / "SKILL.md",
+            ROOT / "skills" / "comic-sol" / "references" / "image-provider-setup.md",
+            ROOT / "skills" / "comic-sol" / "references" / "workflow.md",
+        )
+        ordered_phrases = (
+            "`comic-sol handoff inspect project`",
+            "select only a reported job whose effective `status` is `ready`",
+            "pass `project/<jobs[].path>` using the exact `path` returned for that job",
+            "inspect again before retrying",
+            "never enumerate or execute retained `generation/jobs/*.json` files directly",
+        )
+        for path in documents:
+            with self.subTest(path=path):
+                text = " ".join(path.read_text(encoding="utf-8").lower().split())
+                cursor = -1
+                for phrase in ordered_phrases:
+                    cursor = text.find(phrase.lower(), cursor + 1)
+                    self.assertNotEqual(-1, cursor, f"{path}: missing {phrase!r}")
 
     def test_skill_bundle_marks_repository_only_route_and_has_valid_links(self) -> None:
         bundled_setup = ROOT / "skills" / "comic-sol" / "references" / "image-provider-setup.md"

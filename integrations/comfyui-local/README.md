@@ -23,13 +23,23 @@ user-controlled executable configuration inside the user's ComfyUI trust boundar
 - An already-running ComfyUI server.
 - A workflow exported from ComfyUI in **API format**.
 - A profile that maps Comic Sol semantics to exact workflow node IDs and input names.
-- A current `generation/jobs/<job-id>.json` produced by `comic-sol handoff prepare`.
+- A Comic Sol project with generation jobs produced by `comic-sol handoff prepare`.
+
+## Select the authoritative job
+
+Before invoking the adapter, run `handoff inspect` as
+`comic-sol handoff inspect PROJECT`, select only a reported job whose effective `status`
+is `ready`, and pass `PROJECT/<jobs[].path>` using the exact `path` returned for that job.
+After result intake, inspect again before retrying; the new inspection is authoritative for
+status and the next attempt. Never enumerate or execute retained
+`generation/jobs/*.json` files directly: retained descriptors can represent completed,
+failed, stale, or superseded work.
 
 ## Run one job
 
 ```text
 python integrations/comfyui-local/comfyui_executor.py run \
-  --job PROJECT/generation/jobs/JOB_ID.json \
+  --job PROJECT/PATH_FROM_INSPECT \
   --workflow /path/to/workflow-api.json \
   --profile /path/to/profile.json \
   --output /path/to/new-output.png

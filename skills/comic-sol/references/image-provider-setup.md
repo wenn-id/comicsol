@@ -33,7 +33,13 @@ can be launched only from a Comic Sol repository checkout that contains
 the deterministic scripts and MCP server never import or invoke it. See the
 [upstream integration README](https://github.com/wenn-id/comicsol/blob/main/integrations/comfyui-local/README.md)
 for its explicit profile, loopback-by-default network boundary, bounded command,
-and mechanics-only verification status. Do not claim it is verified without the
-manual local smoke evidence required by issue #244.
+and mechanics-only verification status. Before invoking it, run `handoff inspect` as
+`comic-sol handoff inspect PROJECT`, select only a reported job whose effective `status`
+is `ready`, and pass `PROJECT/<jobs[].path>` using the exact `path` returned for that job.
+After result intake, inspect again before retrying; the new inspection is authoritative for
+status and the next attempt. Never enumerate or execute retained
+`generation/jobs/*.json` files directly: retained descriptors can represent completed,
+failed, stale, or superseded work. Do not claim it is verified without the manual local
+smoke evidence required by issue #244.
 
 Never paste API keys into prompts, `SKILL.md`, project JSON, or generated logs.
