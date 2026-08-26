@@ -363,10 +363,10 @@ class HandoffArchiveContractTests(unittest.TestCase):
         archive = alias / "archives" / "ancestor.comic-sol-handoff"
 
         export_result = module.export_handoff_archive(project, archive)
-        expected_archive = archive_parent / archive.name
+        expected_archive = (archive_parent / archive.name).resolve()
         import_result = module.import_handoff_archive(expected_archive, alias / "imports")
 
-        expected_project = output_root / project.name
+        expected_project = (output_root / project.name).resolve()
         self.assertEqual(str(expected_archive), export_result["archive_path"])
         self.assertEqual(str(expected_project), import_result["project_dir"])
         self.assertEqual(_artifact_snapshot(project), _artifact_snapshot(expected_project))
@@ -466,9 +466,10 @@ class HandoffArchiveContractTests(unittest.TestCase):
         ):
             module.export_handoff_archive(project, destination)
 
-        self.assertEqual(destination, observed["target"])
-        self.assertEqual(destination.parent, observed["source"].parent)
-        self.assertFalse(destination.exists())
+        expected_destination = destination.parent.resolve() / destination.name
+        self.assertEqual(expected_destination, observed["target"])
+        self.assertEqual(expected_destination.parent, observed["source"].parent)
+        self.assertFalse(expected_destination.exists())
         self.assertEqual([], list(root.iterdir()))
 
     def test_export_never_clobbers_an_existing_archive_or_leaves_temporary_files(self):
@@ -866,6 +867,8 @@ class HandoffArchiveContractTests(unittest.TestCase):
         before = _tree_snapshot(output_root)
         observed = {}
 
+        canonical_output_root = output_root.resolve()
+
         def interrupt(staging, destination, *, expected_identity=None):
             staging = Path(staging)
             destination = Path(destination)
@@ -875,8 +878,8 @@ class HandoffArchiveContractTests(unittest.TestCase):
                 expected_identity=expected_identity,
             )
             metadata = staging.stat(follow_symlinks=False)
-            self.assertEqual(output_root, staging.parent)
-            self.assertEqual(output_root / project.name, destination)
+            self.assertEqual(canonical_output_root, staging.parent)
+            self.assertEqual(canonical_output_root / project.name, destination)
             self.assertEqual((metadata.st_dev, metadata.st_ino), expected_identity)
             os.rename(staging, destination)
             self.assertTrue((destination / "project.json").is_file())
@@ -892,7 +895,7 @@ class HandoffArchiveContractTests(unittest.TestCase):
         ):
             module.import_handoff_archive(archive, output_root)
 
-        self.assertEqual(output_root / project.name, observed["destination"])
+        self.assertEqual(canonical_output_root / project.name, observed["destination"])
         self.assertEqual(before, _tree_snapshot(output_root))
 
 
