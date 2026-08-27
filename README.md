@@ -337,6 +337,28 @@ and raw provider payloads remain outside Comic Sol. Before generation, the Skill
 automatically inspects exposed tool metadata and passes a provider-neutral observation to
 `doctor`; the deterministic engine never discovers or calls a provider itself.
 
+## Cross-agent handoff
+
+When the active agent session has no compatible native image tool, Comic Sol supports
+cross-agent and cross-device workflows through its handoff lifecycle:
+
+- `handoff prepare` creates generation jobs for pending panels.
+- `handoff inspect` reports current job readiness and status.
+- `handoff export` produces a portable archive for transfer across devices or workspaces.
+- `handoff import` resumes a project from a portable archive on another device.
+- `handoff accept-result` intakes a completed raster from any executor.
+- `handoff record-failure` records a generation failure by category.
+
+Executor selection follows declared capability: a compatible native image tool is
+preferred, then a compatible external executor, then handoff preparation for another
+agent. The local [ComfyUI adapter](integrations/comfyui-local/) is a
+reference/experimental external executor that demonstrates the protocol; it is not
+part of the deterministic wheel and its integration has not been verified against a
+live ComfyUI instance. The deterministic engine owns contracts, validation,
+accounting, archive safety, and result intake without owning provider credentials
+or provider SDK integrations. Portable archive export and archive import enable
+durable project transfer that does not depend on chat-only context.
+
 ## Invoke
 
 Open Codex with the skill installed and say, for example:

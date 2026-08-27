@@ -50,6 +50,14 @@ class DistributionContractTests(unittest.TestCase):
         self.assertIn("comic_sol_product/skill/SKILL.md", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/skill/references/workflow.md", REQUIRED_WHEEL_MEMBERS)
 
+    def test_handoff_contract_modules_are_required_wheel_members(self):
+        self.assertIn("comic_sol_product/engine/handoff.py", REQUIRED_WHEEL_MEMBERS)
+        self.assertIn("comic_sol_product/engine/handoff_archive.py", REQUIRED_WHEEL_MEMBERS)
+
+    def test_handoff_scripts_are_required_sdist_members(self):
+        self.assertIn("/scripts/handoff.py", REQUIRED_SDIST_SUFFIXES)
+        self.assertIn("/scripts/handoff_archive.py", REQUIRED_SDIST_SUFFIXES)
+
     def test_distribution_validation_reports_every_missing_member(self):
         present = REQUIRED_WHEEL_MEMBERS - {
             "comic_sol_product/skill/SKILL.md",

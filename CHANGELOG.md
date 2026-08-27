@@ -82,6 +82,18 @@ carries it.
   classifiers) alongside the existing member checks, with offline tests in
   `tests/test_clean_install.py`.
 
+- Completed the cross-agent handoff integration from issue #244 (WP5). The Skill
+  now documents executor selection by declared capability (compatible native image
+  tool, then compatible external executor, then handoff preparation for another
+  agent), and the full handoff lifecycle: prepare, inspect, execute, accept-result
+  or record-failure, visual QA and promotion, portable archive export and import,
+  and resume from durable project artifacts without chat-only context. The bundled
+  wheel and sdist release inventories include both `handoff.py` and
+  `handoff_archive.py`. The local ComfyUI adapter remains reference/experimental
+  and outside the deterministic wheel. README documents the cross-agent workflow,
+  portable archive transfer, and the ComfyUI reference status. No MCP tools were
+  added or removed; the surface remains exactly 17 tools.
+
 ### Security
 
 - Completed the container runtime hardening gap from issue #214. The image now

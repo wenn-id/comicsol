@@ -272,6 +272,85 @@ The success path is:
 
 `INIT → PLANNED → SCRIPTED → STORYBOARDED → REFERENCES_READY → PANELS_READY → QA_READY → LETTERED → COMPOSED → EXPORTED → COMPLETE`
 
+## Cross-agent handoff lifecycle
+
+When the active session cannot generate images directly, the handoff lifecycle enables
+another agent, device, or workspace to complete generation. Use the source launcher below;
+for an installed package, `comic-sol handoff` is equivalent to
+`PYTHON scripts/comic_sol.py handoff`.
+
+1. Run `PYTHON scripts/comic_sol.py handoff prepare PROJECT`. When canonical references
+   are missing, this first pass will prepare reference jobs. Otherwise it creates panel
+   jobs and the reference phase below is skipped.
+2. Run `PYTHON scripts/comic_sol.py handoff inspect PROJECT` to check current readiness.
+3. For cross-workspace or cross-device transfer, export the prepared project:
+   `PYTHON scripts/comic_sol.py handoff export PROJECT --output PROJECT.comic-sol-handoff`.
+   Handoff archives must use the `.comic-sol-handoff` suffix.
+4. Transfer the archive and import at the destination:
+   `PYTHON scripts/comic_sol.py handoff import PROJECT.comic-sol-handoff --output-root ROOT`
+5. In the executing agent, run `PYTHON scripts/comic_sol.py handoff inspect PROJECT`
+   again (installed equivalent: `comic-sol handoff inspect PROJECT`). Select only a
+   reported job whose effective `status` is `ready`, and pass
+   `PROJECT/<jobs[].path>` using the exact `path` returned for that job; never enumerate
+   or execute retained `generation/jobs/*.json` files directly.
+6. Execute via the selected executor. In the reference phase, execute every ready
+   reference job and visually review its returned raster before approving it. In the
+   commands below, replace `EXECUTOR_KIND` with exactly one CLI value: `native-tool` or
+   `external-tool`; do not type or pipe both alternatives.
+7. Accept each approved reference-job result with the required `--approve-reference`:
+
+   ```text
+   PYTHON scripts/comic_sol.py handoff accept-result PROJECT \
+     --job JOB_ID \
+     --attempt N \
+     --executor-kind EXECUTOR_KIND \
+     --executor-id ID \
+     --path PATH \
+     --approve-reference
+   ```
+
+   At either phase, record a sanitized executor failure instead of accepting a result:
+
+   ```text
+   PYTHON scripts/comic_sol.py handoff record-failure PROJECT \
+     --job JOB_ID \
+     --attempt N \
+     --executor-kind EXECUTOR_KIND \
+     --executor-id ID \
+     --category CATEGORY
+   ```
+
+8. Inspect after each reference intake. When all reference jobs are complete and inspect
+   reports that `next_action` is `prepare`, prepare again to create panel jobs:
+   `PYTHON scripts/comic_sol.py handoff prepare PROJECT`.
+9. Inspect the newly created panel jobs, then execute every ready panel job using the exact
+   path returned by inspect.
+10. Accept each panel-job result without `--approve-reference`:
+
+   ```text
+   PYTHON scripts/comic_sol.py handoff accept-result PROJECT \
+     --job JOB_ID \
+     --attempt N \
+     --executor-kind EXECUTOR_KIND \
+     --executor-id ID \
+     --path PATH
+   ```
+
+11. After result intake, inspect again before retrying; the new inspection is authoritative
+    for status and the next attempt. If the project entered handoff as `BLOCKED` for
+    `image-capability-unavailable`, the destination agent must first inspect its exposed
+    tools, record its real provider-neutral capability observation as described in
+    [Image capability detection](capability-detection.md), and run
+    `PYTHON scripts/comic_sol.py resume PROJECT --json`. Never claim availability merely
+    because an archive was imported or fabricate capability metadata. Resume only after
+    the project records an available capability; otherwise preserve `BLOCKED`.
+12. Continue normal visual QA, promotion, and deterministic export. For durable
+    cross-device export after completion, run
+    `PYTHON scripts/comic_sol.py handoff export PROJECT --output PROJECT.comic-sol-handoff`.
+
+The deterministic engine owns contracts, validation, accounting, archive safety, and
+result intake. It does not own provider credentials or provider SDK integrations.
+
 ## Evidence provenance
 
 Deterministic quality fixtures and `quality_sample.py --mode deterministic` prove

@@ -9,6 +9,7 @@ offline.
 """
 
 import re
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -345,6 +346,243 @@ class SupportPrivacyTermsTests(unittest.TestCase):
             ("provider guide", read("references/image-provider-setup.md")),
         ):
             self.assertFalse(fixed_minor.search(document), name)
+
+
+class CrossAgentHandoffDocumentationTests(unittest.TestCase):
+    """WP5: README, SKILL.md, and CHANGELOG document cross-agent handoff integration."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.readme = read("README.md")
+        cls.skill = read("SKILL.md")
+        cls.changelog = read("CHANGELOG.md")
+        cls.workflow = read("references/workflow.md")
+
+    @staticmethod
+    def command_blocks(document: str, command: str) -> list[str]:
+        blocks = re.findall(
+            r"^[ \t]*```text\n(.*?)^[ \t]*```$",
+            document,
+            flags=re.DOTALL | re.MULTILINE,
+        )
+        normalized = [textwrap.dedent(block).rstrip() for block in blocks]
+        return [block for block in normalized if block.startswith(command)]
+
+    def test_readme_documents_cross_agent_handoff_workflow(self):
+        readme = collapsed(self.readme)
+        for phrase in (
+            "handoff prepare",
+            "handoff inspect",
+            "accept-result",
+            "record-failure",
+        ):
+            self.assertIn(phrase, readme, phrase)
+
+    def test_readme_documents_portable_archive_export_import(self):
+        readme = collapsed(self.readme)
+        for phrase in (
+            "archive export",
+            "archive import",
+        ):
+            self.assertIn(phrase, readme, phrase)
+
+    def test_readme_documents_comfyui_as_reference_experimental(self):
+        readme = collapsed(self.readme)
+        self.assertIn("ComfyUI", self.readme)
+        self.assertIn("reference", readme.lower())
+        self.assertIn("experimental", readme.lower())
+        # Must NOT claim ComfyUI is verified or production-ready
+        self.assertNotIn("ComfyUI is verified", self.readme)
+        self.assertNotIn("ComfyUI verified", self.readme)
+
+    def test_skill_documents_capability_ordering(self):
+        """SKILL.md must state the executor selection order explicitly."""
+        skill = collapsed(self.skill)
+        # The ordering must be: native compatible tool, then external executor,
+        # then handoff preparation
+        for phrase in (
+            "compatible native image tool",
+            "external executor",
+            "handoff",
+        ):
+            self.assertIn(phrase, skill, phrase)
+        # Verify the ordering is explicitly stated (native before external before handoff)
+        native_pos = skill.find("compatible native image tool")
+        external_pos = skill.find("external executor")
+        handoff_pos = skill.find("Prepare a handoff")
+        self.assertGreater(native_pos, -1, "native capability not found")
+        self.assertGreater(external_pos, -1, "external executor not found")
+        self.assertGreater(handoff_pos, -1, "handoff prepare not found")
+        self.assertLess(native_pos, external_pos, "native must come before external")
+        self.assertLess(external_pos, handoff_pos, "external must come before handoff")
+
+    def test_skill_documents_no_provider_name_ranking(self):
+        """Capability ordering must not rank by provider name."""
+        skill = collapsed(self.skill)
+        # The ordering section must not contain provider-specific names as ranking logic
+        self.assertNotIn("prefer OpenAI", skill)
+        self.assertNotIn("prefer fal", skill)
+        self.assertNotIn("prefer Stability", skill)
+
+    def test_changelog_has_wp5_handoff_integration_entry(self):
+        changelog = collapsed(self.changelog)
+        self.assertIn("cross-agent", changelog)
+        self.assertIn("handoff", changelog)
+
+    def test_accept_result_command_blocks_match_panel_and_reference_contracts(self):
+        """Panel and reference result intake document their exact, distinct arguments."""
+        panel_command = """PYTHON scripts/comic_sol.py handoff accept-result PROJECT \\
+  --job JOB_ID \\
+  --attempt N \\
+  --executor-kind EXECUTOR_KIND \\
+  --executor-id ID \\
+  --path PATH"""
+        reference_command = f"{panel_command} \\\n  --approve-reference"
+        blocks = self.command_blocks(
+            self.workflow,
+            "PYTHON scripts/comic_sol.py handoff accept-result PROJECT",
+        )
+        self.assertEqual([reference_command, panel_command], blocks)
+        self.assertNotIn("PANEL_ID", panel_command)
+        self.assertNotIn("--reason", panel_command)
+        self.assertNotIn("--approve-reference", panel_command)
+        self.assertNotIn("PANEL_ID", reference_command)
+        self.assertNotIn("--reason", reference_command)
+        self.assertIn("--approve-reference", reference_command)
+
+    def test_record_failure_command_block_matches_contract(self):
+        """Failure intake documents its exact arguments without unsupported options."""
+        expected = """PYTHON scripts/comic_sol.py handoff record-failure PROJECT \\
+  --job JOB_ID \\
+  --attempt N \\
+  --executor-kind EXECUTOR_KIND \\
+  --executor-id ID \\
+  --category CATEGORY"""
+        blocks = self.command_blocks(
+            self.workflow,
+            "PYTHON scripts/comic_sol.py handoff record-failure PROJECT",
+        )
+        self.assertEqual([expected], blocks)
+        self.assertNotIn("PANEL_ID", expected)
+        self.assertNotIn("--reason", expected)
+        self.assertNotIn("--approve-reference", expected)
+
+    def test_handoff_lifecycle_uses_source_launcher(self):
+        """Every handoff lifecycle command runs from source and documents the installed alias."""
+        section = self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :]
+        for command in (
+            "prepare PROJECT",
+            "inspect PROJECT",
+            "export PROJECT --output PROJECT.comic-sol-handoff",
+            "import PROJECT.comic-sol-handoff --output-root ROOT",
+            "accept-result PROJECT",
+            "record-failure PROJECT",
+        ):
+            self.assertIn(f"PYTHON scripts/comic_sol.py handoff {command}", section)
+        self.assertIn(
+            "installed package, `comic-sol handoff` is equivalent",
+            section,
+        )
+
+    def test_reference_jobs_complete_before_second_prepare_and_panel_jobs(self):
+        """Reference-bearing projects document the complete two-phase handoff lifecycle."""
+        section = collapsed(self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :])
+        first_prepare = section.find("prepare reference jobs")
+        reference_execute = section.find("execute every ready reference job")
+        reference_approve = section.find("--approve-reference")
+        next_prepare = section.find("`next_action` is `prepare`")
+        second_prepare = section.find("prepare again to create panel jobs")
+        panel_execute = section.find("execute every ready panel job")
+        visual_qa = section.find("Continue normal visual QA")
+        positions = (
+            first_prepare,
+            reference_execute,
+            reference_approve,
+            next_prepare,
+            second_prepare,
+            panel_execute,
+            visual_qa,
+        )
+        self.assertTrue(all(position >= 0 for position in positions), positions)
+        self.assertEqual(tuple(sorted(positions)), positions)
+
+    def test_fast_mode_allows_documented_handoff_subcommands(self):
+        """Fast Mode keeps engine source unread while permitting the handoff CLI."""
+        fast_mode = self.skill.split("## Fast Mode", 1)[1].split("### Resolve Python once", 1)[0]
+        self.assertIn("Do not read, grep, or open any file under `scripts/`", fast_mode)
+        self.assertIn("documented `handoff` subcommands", fast_mode)
+
+    def test_handoff_inspection_applies_only_to_prepared_handoff_execution(self):
+        """Direct native generation does not require a prepared handoff job."""
+        core_step = next(
+            line for line in self.skill.splitlines() if line.startswith("5. Generate canonical")
+        )
+        self.assertIn("For prepared-handoff execution", core_step)
+        self.assertNotIn("Before invoking any executor", core_step)
+
+    def test_no_contradictory_provider_model_ranking(self):
+        """Declared capability priority must not become provider/model-specific ranking."""
+        selection = self.skill.split("## Executor selection", 1)[1].split("\n## ", 1)[0]
+        normalized = collapsed(selection)
+        self.assertIn("declared capability priority", normalized)
+        native_pos = normalized.find("compatible native image tool")
+        external_pos = normalized.find("compatible declared external executor")
+        handoff_pos = normalized.find("Prepare a handoff")
+        blocked_pos = normalized.find("BLOCKED")
+        self.assertTrue(-1 < native_pos < external_pos < handoff_pos < blocked_pos)
+        self.assertIn(
+            "never by provider name, model name, or provider-specific hard-coded ranking",
+            normalized,
+        )
+
+    def test_archive_export_before_remote_execution(self):
+        """Archive transfer precedes prepared-handoff execution and result intake."""
+        section = self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :]
+        export_pos = section.find("export the prepared project")
+        import_pos = section.find("import at the destination")
+        execute_pos = section.find("Execute via the selected executor")
+        accept_pos = section.find("PYTHON scripts/comic_sol.py handoff accept-result")
+        for name, position in (
+            ("export", export_pos),
+            ("import", import_pos),
+            ("executor execution", execute_pos),
+            ("result intake", accept_pos),
+        ):
+            self.assertGreater(position, -1, f"{name} not found in lifecycle section")
+        self.assertLess(export_pos, import_pos)
+        self.assertLess(import_pos, execute_pos)
+        self.assertLess(execute_pos, accept_pos)
+
+    def test_handoff_examples_use_shell_safe_executor_placeholder(self):
+        """Executor-kind examples cannot be interpreted as shell pipelines."""
+        section = self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :]
+        self.assertNotIn("native-tool|external-tool", section)
+        self.assertEqual(3, section.count("--executor-kind EXECUTOR_KIND"))
+        self.assertIn("replace `EXECUTOR_KIND` with exactly one CLI value", section)
+
+    def test_handoff_archive_examples_use_required_suffix(self):
+        """Every lifecycle archive example uses the enforced portable suffix."""
+        section = self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :]
+        self.assertIn("must use the `.comic-sol-handoff` suffix", section)
+        self.assertEqual(3, section.count("PROJECT.comic-sol-handoff"))
+
+    def test_capability_blocked_handoff_resumes_before_visual_qa(self):
+        """Capability-blocked projects record reality and resume before downstream QA."""
+        section = self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :]
+        capability_pos = section.find("record its real provider-neutral capability observation")
+        resume_pos = section.find("PYTHON scripts/comic_sol.py resume PROJECT --json")
+        qa_pos = section.find("Continue normal visual QA")
+        self.assertTrue(-1 < capability_pos < resume_pos < qa_pos)
+        self.assertIn("otherwise preserve `BLOCKED`", section)
+
+    def test_readme_record_failure_uses_category_not_reason(self):
+        """README handoff section uses --category for record-failure."""
+        readme = collapsed(self.readme)
+        # The README must mention category in connection with record-failure
+        self.assertIn("category", readme)
+        # Must not say "failure with a reason" in the handoff section
+        handoff_section = self.readme.split("## Cross-agent handoff", 1)[1].split("\n## ", 1)[0]
+        self.assertNotIn("with a reason", handoff_section)
 
 
 if __name__ == "__main__":
