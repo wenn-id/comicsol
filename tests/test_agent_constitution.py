@@ -1,3 +1,4 @@
+import ast
 import unittest
 from pathlib import Path
 
@@ -116,6 +117,26 @@ class AgentConstitutionTests(unittest.TestCase):
         ):
             self.assertIn(phrase, self.collapsed)
         self.assertIn("exactly 17", " ".join(self.readme.split()))
+
+    def test_mcp_surface_still_registers_exactly_seventeen_tools(self):
+        source = (self.root / "scripts/mcp_server.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        tool_names = {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and any(
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and isinstance(decorator.func.value, ast.Name)
+                and decorator.func.value.id == "mcp"
+                and decorator.func.attr == "tool"
+                for decorator in node.decorator_list
+            )
+        }
+
+        self.assertEqual(17, len(tool_names), sorted(tool_names))
+        self.assertTrue(all(name.startswith("comic_") for name in tool_names))
 
     def test_verification_gates_match_contributing(self):
         for phrase in (
