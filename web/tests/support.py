@@ -32,7 +32,9 @@ def valid_environment(data_root: Path | None = None) -> dict[str, str]:
     The returned data root is never created; configuration parsing must not
     create application or database state.
     """
-    root = data_root if data_root is not None else Path(os.sep) / "tmp" / "comic-sol-web-tests"
+    root = (
+        data_root if data_root is not None else Path(os.sep) / "tmp" / "comic-sol-web-tests"
+    ).resolve()
     return {
         "COMIC_SOL_WEB_SESSION_SECRET": SESSION_SECRET,
         "COMIC_SOL_WEB_ENCRYPTION_SECRET": ENCRYPTION_SECRET,

@@ -37,15 +37,13 @@ jobs:
       shell: bash
       run: |
         cd web
-        python -m build --no-isolation --wheel
+        python -m build --no-isolation --wheel -o dist
         python -m pip install --no-deps --force-reinstall dist/*.whl
     - name: Verify isolated Web test discovery
+      shell: bash
       run: python -m unittest discover -s web/tests -p "test_app.py" -v
-    - name: Run root isolated-discovery regression
-      run: python -m unittest tests.test_isolated_discovery -v
-    - name: Run root lock-provenance regression
-      run: python -m unittest tests.test_lock_provenance -v
     - name: Get healthz via the test client
+      shell: bash
       env:
         COMIC_SOL_WEB_SESSION_SECRET: 000000000000000000000000000000000000000000000000
         COMIC_SOL_WEB_ENCRYPTION_SECRET: 000000000000000000000000000000000000000000000000
@@ -64,6 +62,27 @@ jobs:
         assert response.json() == {"status": "ok"}, response.json()
         print("healthz ok")
         PYEOF
+
+  Web-root-regression:
+    name: Web root regression (Linux)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Set up Python 3.11
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      with:
+        python-version: "3.11"
+    # The root isolation contract says root isolated test discovery must keep
+    # working without Web dependencies installed. Pillow is a base-lock runtime
+    # dependency (base.in), so this job installs the base lock only.
+    - name: Install base dependencies (for root discovery)
+      run: python -m pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
+    - name: Run root isolated-discovery regression
+      run: python -m unittest tests.test_isolated_discovery -v
+    - name: Run root lock-provenance regression
+      run: python -m unittest tests.test_lock_provenance -v
 
   Web-quality:
     name: Web quality gates
