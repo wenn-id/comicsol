@@ -434,7 +434,7 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         panel_command = """PYTHON scripts/comic_sol.py handoff accept-result PROJECT \\
   --job JOB_ID \\
   --attempt N \\
-  --executor-kind native-tool|external-tool \\
+  --executor-kind EXECUTOR_KIND \\
   --executor-id ID \\
   --path PATH"""
         reference_command = f"{panel_command} \\\n  --approve-reference"
@@ -455,7 +455,7 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         expected = """PYTHON scripts/comic_sol.py handoff record-failure PROJECT \\
   --job JOB_ID \\
   --attempt N \\
-  --executor-kind native-tool|external-tool \\
+  --executor-kind EXECUTOR_KIND \\
   --executor-id ID \\
   --category CATEGORY"""
         blocks = self.command_blocks(
@@ -473,8 +473,8 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         for command in (
             "prepare PROJECT",
             "inspect PROJECT",
-            "export PROJECT --output ARCHIVE",
-            "import ARCHIVE --output-root ROOT",
+            "export PROJECT --output PROJECT.comic-sol-handoff",
+            "import PROJECT.comic-sol-handoff --output-root ROOT",
             "accept-result PROJECT",
             "record-failure PROJECT",
         ):
@@ -552,6 +552,28 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         self.assertLess(export_pos, import_pos)
         self.assertLess(import_pos, execute_pos)
         self.assertLess(execute_pos, accept_pos)
+
+    def test_handoff_examples_use_shell_safe_executor_placeholder(self):
+        """Executor-kind examples cannot be interpreted as shell pipelines."""
+        section = self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :]
+        self.assertNotIn("native-tool|external-tool", section)
+        self.assertEqual(3, section.count("--executor-kind EXECUTOR_KIND"))
+        self.assertIn("replace `EXECUTOR_KIND` with exactly one CLI value", section)
+
+    def test_handoff_archive_examples_use_required_suffix(self):
+        """Every lifecycle archive example uses the enforced portable suffix."""
+        section = self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :]
+        self.assertIn("must use the `.comic-sol-handoff` suffix", section)
+        self.assertEqual(3, section.count("PROJECT.comic-sol-handoff"))
+
+    def test_capability_blocked_handoff_resumes_before_visual_qa(self):
+        """Capability-blocked projects record reality and resume before downstream QA."""
+        section = self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :]
+        capability_pos = section.find("record its real provider-neutral capability observation")
+        resume_pos = section.find("PYTHON scripts/comic_sol.py resume PROJECT --json")
+        qa_pos = section.find("Continue normal visual QA")
+        self.assertTrue(-1 < capability_pos < resume_pos < qa_pos)
+        self.assertIn("otherwise preserve `BLOCKED`", section)
 
     def test_readme_record_failure_uses_category_not_reason(self):
         """README handoff section uses --category for record-failure."""
