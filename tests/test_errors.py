@@ -20,6 +20,7 @@ from scripts.handoff import (  # noqa: E402
     HandoffResultError,
     StaleLockedScopeError,
 )
+from scripts.handoff_archive import HandoffArchiveError  # noqa: E402
 from scripts.page_quality import PageQualityMigrationError  # noqa: E402
 from scripts.pdf_quality import PdfQualityError  # noqa: E402
 from scripts.typography import TypographyPreflightError  # noqa: E402
@@ -93,6 +94,13 @@ class StructuredErrorContractTests(unittest.TestCase):
         documentation = (Path(__file__).parents[1] / "docs" / "structured-errors.md").read_text()
         for namespace in REQUIRED_NAMESPACES:
             self.assertIn(f"CS-{namespace}", documentation)
+        for code, definition in ERROR_DEFINITIONS.items():
+            with self.subTest(code=code):
+                self.assertIn(
+                    f"| `{code}` | `{definition.category}` |",
+                    documentation,
+                )
+                self.assertNotIn(f"`{code}` is reserved", documentation)
         self.assertIn("Never reuse an old identifier", documentation)
         self.assertIn("ERROR_DEFINITIONS", documentation)
 
@@ -101,6 +109,7 @@ class StructuredErrorContractTests(unittest.TestCase):
             ("CS-CLI-001", CliUsageError("the following arguments are required: command"), {}),
             ("CS-HANDOFF-001", HandoffContractError(["invalid handoff"]), {}),
             ("CS-HANDOFF-001", StaleLockedScopeError(["stale scope"]), {}),
+            ("CS-HANDOFF-002", HandoffArchiveError("invalid archive"), {}),
             ("CS-HANDOFF-003", HandoffResultError(["invalid result"]), {}),
             ("CS-PROJ-001", ValueError("invalid project data"), {}),
             ("CS-PROJ-002", FileNotFoundError("/private/project.json"), {}),

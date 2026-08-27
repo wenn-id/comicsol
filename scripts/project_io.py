@@ -46,6 +46,19 @@ def sha256_file(path: Path) -> str:
 
 
 _DRIVE = re.compile(r"^[A-Za-z]:")
+_WINDOWS_FORBIDDEN_NAME_CHARACTERS = frozenset('<>:"|?*')
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        "conin$",
+        "conout$",
+        *(f"com{suffix}" for suffix in "123456789¹²³"),
+        *(f"lpt{suffix}" for suffix in "123456789¹²³"),
+    }
+)
 _LOCK_RETRY_SECONDS = 0.05
 PROJECT_OPERATION_LOCK_TIMEOUT = 300.0
 # Windows byte-range locks are mandatory, so the locked byte must sit past any
@@ -267,6 +280,28 @@ def normalized_project_relative_path(relative: str | Path) -> str:
     parts = path.parts
     if not parts or any(part in {"", ".", ".."} for part in parts) or path.as_posix() != text:
         raise ValueError("path must be a normalized relative project path")
+    return text
+
+
+def normalized_portable_project_relative_path(relative: str | Path) -> str:
+    """Return a normalized project path whose components are Windows-portable."""
+    text = normalized_project_relative_path(relative)
+    for component in PurePosixPath(text).parts:
+        try:
+            utf16_units = len(component.encode("utf-16-le")) // 2
+        except UnicodeEncodeError as error:
+            raise ValueError("path components must be portable to Windows") from error
+        base = component.split(".", 1)[0].rstrip(" ").casefold()
+        if (
+            utf16_units > 255
+            or component.endswith((" ", "."))
+            or any(
+                ord(character) < 32 or character in _WINDOWS_FORBIDDEN_NAME_CHARACTERS
+                for character in component
+            )
+            or base in _WINDOWS_RESERVED_NAMES
+        ):
+            raise ValueError("path components must be portable to Windows")
     return text
 
 
@@ -643,6 +678,43 @@ def fsync_directory_tree(root: Path) -> None:
             directories.append(child)
     for directory in reversed(directories):
         fsync_directory(directory)
+
+
+def quarantine_owned_file(path: Path, identity: tuple[int, int]) -> Path | None:
+    """Move an owned regular file out of its public path without deleting it."""
+    path = Path(path)
+    try:
+        metadata = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    if (metadata.st_dev, metadata.st_ino) != identity:
+        return None
+    if not stat.S_ISREG(metadata.st_mode) or (
+        getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT
+    ):
+        return None
+
+    parent = path.parent
+    for _attempt in range(16):
+        quarantine = parent / f".comic-sol-rollback-{secrets.token_hex(16)}.tmp"
+        try:
+            _atomic_rename_noreplace(path, quarantine)
+        except FileExistsError:
+            continue
+        break
+    else:
+        raise FileExistsError(errno.EEXIST, "could not allocate rollback quarantine")
+
+    moved = quarantine.stat(follow_symlinks=False)
+    if (moved.st_dev, moved.st_ino) != identity or not stat.S_ISREG(moved.st_mode):
+        try:
+            _atomic_rename_noreplace(quarantine, path)
+        except FileExistsError as error:
+            raise RuntimeError("file path changed during rollback") from error
+        return None
+
+    fsync_directory(parent)
+    return quarantine
 
 
 def cleanup_owned_directory(path: Path, identity: tuple[int, int]) -> bool:

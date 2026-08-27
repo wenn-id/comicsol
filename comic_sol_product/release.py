@@ -27,6 +27,7 @@ _PACKAGED_STARTER_FILES = (
 REQUIRED_WHEEL_MEMBERS = frozenset(
     {
         "comic_sol_product/engine/comic_sol.py",
+        "comic_sol_product/engine/handoff_archive.py",
         "comic_sol_product/engine/quality_records.py",
         "comic_sol_product/engine/normalize_panels.py",
         "comic_sol_product/engine/typography.py",
@@ -54,6 +55,7 @@ REQUIRED_SDIST_SUFFIXES = frozenset(
     {
         "/SKILL.md",
         "/scripts/comic_sol.py",
+        "/scripts/handoff_archive.py",
         "/scripts/starter_templates.py",
         "/assets/fonts/ComicNeue-Regular.ttf",
         "/templates/manifest.json",

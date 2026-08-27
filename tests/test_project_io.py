@@ -29,6 +29,28 @@ class ContainedProjectPathTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "relative project path"):
             contained_project_path(self.project, "plan/a\x00b")
 
+    def test_portable_paths_enforce_windows_utf16_component_limit(self):
+        valid = (
+            "a" * 255,
+            "\U0001f600" * 127 + "a",
+        )
+        invalid = (
+            "a" * 256,
+            "\U0001f600" * 128,
+            "\ud800",
+        )
+
+        for component in valid:
+            with self.subTest(valid_utf16_units=len(component.encode("utf-16-le")) // 2):
+                self.assertEqual(
+                    f"logs/{component}",
+                    project_io.normalized_portable_project_relative_path(f"logs/{component}"),
+                )
+        for component in invalid:
+            with self.subTest(invalid_component=repr(component)):
+                with self.assertRaisesRegex(ValueError, "portable.*Windows|Windows.*portable"):
+                    project_io.normalized_portable_project_relative_path(f"logs/{component}")
+
     def test_rejects_absolute_traversal_and_windows_drive_paths(self):
         for bad in (
             "../outside.png",
@@ -402,6 +424,39 @@ class DirectoryPublicationTests(unittest.TestCase):
             self.assertEqual(b"unrelated", (staging / "unrelated.txt").read_bytes())
             self.assertEqual(b"partial", (moved_owned / "partial.txt").read_bytes())
             self.assertEqual([], list(root.glob(".comic-sol-cleanup-*.tmp")))
+
+    def test_file_rollback_restores_a_substituted_unrelated_entry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            published = root / "archive.comic-sol-handoff"
+            moved_owned = root / "moved-owned.comic-sol-handoff"
+            published.write_bytes(b"owned archive")
+            metadata = published.stat(follow_symlinks=False)
+            real_rename = project_io._atomic_rename_noreplace
+            swapped = False
+
+            def substitute_before_quarantine(source, destination):
+                nonlocal swapped
+                if not swapped and Path(source) == published:
+                    swapped = True
+                    os.rename(published, moved_owned)
+                    published.write_bytes(b"unrelated replacement")
+                return real_rename(source, destination)
+
+            with mock.patch.object(
+                project_io,
+                "_atomic_rename_noreplace",
+                side_effect=substitute_before_quarantine,
+            ):
+                quarantine = project_io.quarantine_owned_file(
+                    published,
+                    (metadata.st_dev, metadata.st_ino),
+                )
+
+            self.assertIsNone(quarantine)
+            self.assertEqual(b"unrelated replacement", published.read_bytes())
+            self.assertEqual(b"owned archive", moved_owned.read_bytes())
+            self.assertEqual([], list(root.glob(".comic-sol-rollback-*.tmp")))
 
     def test_windows_uses_rename_without_replace_semantics(self):
         source = Path("staging")

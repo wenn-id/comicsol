@@ -23,6 +23,7 @@ class CommandService:
         composition: Any | None = None,
         export: Any | None = None,
         report: Any | None = None,
+        handoff_archive: Any | None = None,
     ) -> None:
         package = __package__ or "scripts"
 
@@ -35,6 +36,9 @@ class CommandService:
         self.composition = composition if composition is not None else load("compose_pages")
         self.export = export if export is not None else load("export_pdf")
         self.report = report if report is not None else load("render_report")
+        self.handoff_archive = (
+            handoff_archive if handoff_archive is not None else load("handoff_archive")
+        )
 
     def execute(self, command: str, **kwargs: Any) -> Any:
         """Run one transport-neutral command with its canonical arguments."""
@@ -90,6 +94,20 @@ class CommandService:
                 request,
                 image_capability=image_capability,
                 page_count=page_count,
+            )
+        if command == "handoff.export":
+            return self.handoff_archive.export_handoff_archive(
+                self._required(kwargs, "project_dir"),
+                self._required(kwargs, "output_path"),
+            )
+        if command == "handoff.inspect" and kwargs.get("archive_path") is not None:
+            return self.handoff_archive.inspect_handoff_archive(
+                self._required(kwargs, "archive_path")
+            )
+        if command == "handoff.import":
+            return self.handoff_archive.import_handoff_archive(
+                self._required(kwargs, "archive_path"),
+                self._required(kwargs, "output_root"),
             )
         if project_dir is None:
             raise TypeError(f"{command} requires project_dir")

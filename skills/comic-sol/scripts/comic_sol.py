@@ -4559,10 +4559,23 @@ def _build_parser() -> argparse.ArgumentParser:
     handoff_parser = subparsers.add_parser("handoff")
     handoff_subparsers = handoff_parser.add_subparsers(dest="handoff_command", required=True)
 
-    for name in ("prepare", "inspect"):
-        handoff_command = handoff_subparsers.add_parser(name)
-        handoff_command.add_argument("project_dir", type=Path)
-        handoff_command.add_argument("--json", action="store_true", dest="as_json")
+    prepare_handoff_parser = handoff_subparsers.add_parser("prepare")
+    prepare_handoff_parser.add_argument("project_dir", type=Path)
+    prepare_handoff_parser.add_argument("--json", action="store_true", dest="as_json")
+
+    inspect_handoff_parser = handoff_subparsers.add_parser("inspect")
+    inspect_handoff_parser.add_argument("target", type=Path)
+    inspect_handoff_parser.add_argument("--json", action="store_true", dest="as_json")
+
+    export_handoff_parser = handoff_subparsers.add_parser("export")
+    export_handoff_parser.add_argument("project_dir", type=Path)
+    export_handoff_parser.add_argument("--output", required=True, type=Path, dest="output_path")
+    export_handoff_parser.add_argument("--json", action="store_true", dest="as_json")
+
+    import_handoff_parser = handoff_subparsers.add_parser("import")
+    import_handoff_parser.add_argument("archive_path", type=Path)
+    import_handoff_parser.add_argument("--output-root", required=True, type=Path)
+    import_handoff_parser.add_argument("--json", action="store_true", dest="as_json")
 
     def add_executor_arguments(handoff_command: argparse.ArgumentParser) -> None:
         handoff_command.add_argument("project_dir", type=Path)
@@ -4625,6 +4638,12 @@ def _render_handoff_cli(command: str, result: object) -> str:
         lines.append(f"Next action: {_escape_cli_controls(result.get('next_action'))}")
         return "\n".join(lines)
     if command == "handoff.inspect":
+        if "format_version" in result or "valid" in result:
+            return (
+                f"Handoff archive {_escape_cli_controls(result.get('project_id'))}: "
+                f"version={_escape_cli_controls(result.get('format_version'))} "
+                f"valid={_escape_cli_controls(result.get('valid'))}"
+            )
         jobs = result.get("jobs")
         job_count = len(jobs) if isinstance(jobs, list) else 0
         return (
@@ -4632,6 +4651,16 @@ def _render_handoff_cli(command: str, result: object) -> str:
             f"phase={_escape_cli_controls(result.get('phase'))} "
             f"scope={_escape_cli_controls(result.get('scope_state'))} jobs={job_count}\n"
             f"Next action: {_escape_cli_controls(result.get('next_action'))}"
+        )
+    if command == "handoff.export":
+        return (
+            f"{_escape_cli_controls(result.get('project_id'))}: handoff archive exported "
+            f"to {_escape_cli_controls(result.get('archive_path'))}"
+        )
+    if command == "handoff.import":
+        return (
+            f"{_escape_cli_controls(result.get('project_id'))}: handoff archive imported "
+            f"to {_escape_cli_controls(result.get('project_dir'))}"
         )
     return (
         f"{_escape_cli_controls(result.get('job_id'))}: "
@@ -4788,7 +4817,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{arguments.panel_id}: accepted with warnings")
         elif arguments.command == "handoff":
             command = f"handoff.{arguments.handoff_command}"
-            handoff_arguments: dict[str, object] = {"project_dir": arguments.project_dir}
+            if command == "handoff.export":
+                handoff_arguments: dict[str, object] = {
+                    "project_dir": arguments.project_dir,
+                    "output_path": arguments.output_path,
+                }
+            elif command == "handoff.import":
+                handoff_arguments = {
+                    "archive_path": arguments.archive_path,
+                    "output_root": arguments.output_root,
+                }
+            elif command == "handoff.inspect":
+                if not arguments.target.is_dir() and arguments.target.name.endswith(
+                    ".comic-sol-handoff"
+                ):
+                    handoff_arguments = {"archive_path": arguments.target}
+                else:
+                    handoff_arguments = {"project_dir": arguments.target}
+            else:
+                handoff_arguments = {"project_dir": arguments.project_dir}
             if command in {"handoff.accept-result", "handoff.record-failure"}:
                 handoff_arguments.update(
                     {
