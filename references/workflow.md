@@ -287,7 +287,8 @@ another agent, device, or workspace to complete generation:
    job whose effective `status` is `ready` and pass `PROJECT/<jobs[].path>` using the
    exact `path` returned for that job.
 6. Execute via the selected executor (native tool or external adapter).
-7. Intake the result with the real CLI arguments:
+7. Intake a panel-job result with the real CLI arguments; panel jobs must omit
+   `--approve-reference`:
 
    ```text
    comic-sol handoff accept-result PROJECT \
@@ -296,6 +297,19 @@ another agent, device, or workspace to complete generation:
      --executor-kind native-tool|external-tool \
      --executor-id ID \
      --path PATH
+   ```
+
+   For a reference-job result, use the same arguments and add the required
+   `--approve-reference` flag:
+
+   ```text
+   comic-sol handoff accept-result PROJECT \
+     --job JOB_ID \
+     --attempt N \
+     --executor-kind native-tool|external-tool \
+     --executor-id ID \
+     --path PATH \
+     --approve-reference
    ```
 
    Or record a failure:

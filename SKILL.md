@@ -32,7 +32,7 @@ Turn one natural-language request into a local, editable comic project. Reason a
 4. Run doctor, initialize or inspect the project, then validate and record every stage.
    Capability warnings allow deterministic planning, but generation stops at `BLOCKED`
    without a usable capability. Deterministic scripts never discover or call providers.
-5. Generate canonical references and panels into attempt paths, including through an explicitly selected agent-managed external adapter; normal intake, retention, review, and promotion gates still apply. Before invoking any executor, run `handoff inspect` as `comic-sol handoff inspect PROJECT`, select only a reported job whose effective `status` is `ready`, and pass `PROJECT/<jobs[].path>` using the exact `path` returned for that job. After result intake, inspect again before retrying; the new inspection is authoritative for status and the next attempt. Never enumerate or execute retained `generation/jobs/*.json` files directly. See [workflow](references/workflow.md) for the full lifecycle. Require the image model to draw each exact `generated-visual` storyboard SFX and never a `deterministic-lettering` one.
+5. Generate canonical references and panels into attempt paths, including through an explicitly selected agent-managed external adapter; normal intake, retention, review, and promotion gates still apply. For prepared-handoff execution, run `handoff inspect` as `comic-sol handoff inspect PROJECT`, select only a reported job whose effective `status` is `ready`, and pass `PROJECT/<jobs[].path>` using the exact `path` returned for that job. After result intake, inspect again before retrying; the new inspection is authoritative for status and the next attempt. Never enumerate or execute retained `generation/jobs/*.json` files directly. See [workflow](references/workflow.md) for the full lifecycle. Require the image model to draw each exact `generated-visual` storyboard SFX and never a `deterministic-lettering` one.
    Inspect every result visually, record all seven QA checks, and repair only failures within budget. Route a bad effect to lettering with `sfx_repair.py` and follow its
    `next_action`: ink the model drew needs a `regenerate` review, not re-lettering alone.
 6. Promote accepted attempts; deterministically letter dialogue, captions, and any
@@ -44,7 +44,7 @@ Turn one natural-language request into a local, editable comic project. Reason a
 
 ## Executor selection
 
-When generation is needed, select by declared capability priority: (1) compatible native image tool, (2) compatible declared external executor, (3) Prepare a handoff via `comic-sol handoff prepare`. Selection is by capability inspection, never by provider name, model preference, or hard-coded ranking. If no compatible capability is available, transition to `BLOCKED` and preserve all editable intermediates. The full cross-agent handoff lifecycle is in [workflow](references/workflow.md).
+When generation is needed, follow declared capability priority: (1) compatible native image tool, (2) compatible declared external executor, (3) Prepare a handoff for portable transfer via `comic-sol handoff prepare`. Selection ranks only declared capabilities, never by provider name, model name, or provider-specific hard-coded ranking. If none is compatible, transition to an actionable `BLOCKED` state and preserve all editable intermediates. The full cross-agent handoff lifecycle is in [workflow](references/workflow.md).
 
 ## Fast Mode
 

@@ -9,6 +9,7 @@ offline.
 """
 
 import re
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -355,6 +356,17 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         cls.readme = read("README.md")
         cls.skill = read("SKILL.md")
         cls.changelog = read("CHANGELOG.md")
+        cls.workflow = read("references/workflow.md")
+
+    @staticmethod
+    def command_blocks(document: str, command: str) -> list[str]:
+        blocks = re.findall(
+            r"^[ \t]*```text\n(.*?)^[ \t]*```$",
+            document,
+            flags=re.DOTALL | re.MULTILINE,
+        )
+        normalized = [textwrap.dedent(block).rstrip() for block in blocks]
+        return [block for block in normalized if block.startswith(command)]
 
     def test_readme_documents_cross_agent_handoff_workflow(self):
         readme = collapsed(self.readme)
@@ -417,101 +429,85 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         self.assertIn("cross-agent", changelog)
         self.assertIn("handoff", changelog)
 
-    def test_no_positional_panel_id_in_handoff_cli_syntax(self):
-        """Handoff CLI never uses a positional PANEL_ID argument."""
-        for name, document in (
-            ("README", self.readme),
-            ("SKILL", self.skill),
-            ("workflow", read("references/workflow.md")),
-        ):
-            # The handoff accept-result and record-failure commands must not
-            # contain a positional PANEL_ID argument.
-            for line in document.splitlines():
-                if "handoff accept-result" in line or "handoff record-failure" in line:
-                    self.assertNotIn(
-                        "PANEL_ID",
-                        line,
-                        f"{name}: handoff CLI must not use positional PANEL_ID",
-                    )
+    def test_accept_result_command_blocks_match_panel_and_reference_contracts(self):
+        """Panel and reference result intake document their exact, distinct arguments."""
+        panel_command = """comic-sol handoff accept-result PROJECT \\
+  --job JOB_ID \\
+  --attempt N \\
+  --executor-kind native-tool|external-tool \\
+  --executor-id ID \\
+  --path PATH"""
+        reference_command = f"{panel_command} \\\n  --approve-reference"
+        blocks = self.command_blocks(
+            self.workflow,
+            "comic-sol handoff accept-result PROJECT",
+        )
+        self.assertEqual([panel_command, reference_command], blocks)
+        self.assertNotIn("PANEL_ID", panel_command)
+        self.assertNotIn("--reason", panel_command)
+        self.assertNotIn("--approve-reference", panel_command)
+        self.assertNotIn("PANEL_ID", reference_command)
+        self.assertNotIn("--reason", reference_command)
+        self.assertIn("--approve-reference", reference_command)
 
-    def test_no_reason_flag_in_handoff_cli_syntax(self):
-        """Handoff CLI uses --category, never --reason."""
-        for name, document in (
-            ("README", self.readme),
-            ("SKILL", self.skill),
-            ("workflow", read("references/workflow.md")),
-        ):
-            for line in document.splitlines():
-                if "handoff record-failure" in line:
-                    self.assertNotIn(
-                        "--reason",
-                        line,
-                        f"{name}: record-failure uses --category, not --reason",
-                    )
+    def test_record_failure_command_block_matches_contract(self):
+        """Failure intake documents its exact arguments without unsupported options."""
+        expected = """comic-sol handoff record-failure PROJECT \\
+  --job JOB_ID \\
+  --attempt N \\
+  --executor-kind native-tool|external-tool \\
+  --executor-id ID \\
+  --category CATEGORY"""
+        blocks = self.command_blocks(
+            self.workflow,
+            "comic-sol handoff record-failure PROJECT",
+        )
+        self.assertEqual([expected], blocks)
+        self.assertNotIn("PANEL_ID", expected)
+        self.assertNotIn("--reason", expected)
+        self.assertNotIn("--approve-reference", expected)
 
-    def test_handoff_accept_result_documents_required_arguments(self):
-        """accept-result documentation includes --job, --attempt, --executor-kind,
-        --executor-id, and --path as required arguments."""
-        workflow = read("references/workflow.md")
-        for required in ("--job", "--attempt", "--executor-kind", "--executor-id", "--path"):
-            self.assertIn(
-                required,
-                workflow,
-                f"accept-result must document required argument {required}",
-            )
-
-    def test_handoff_record_failure_documents_required_arguments(self):
-        """record-failure documentation includes --job, --attempt, --executor-kind,
-        --executor-id, and --category as required arguments."""
-        workflow = read("references/workflow.md")
-        for required in ("--job", "--attempt", "--executor-kind", "--executor-id", "--category"):
-            self.assertIn(
-                required,
-                workflow,
-                f"record-failure must document required argument {required}",
-            )
+    def test_handoff_inspection_applies_only_to_prepared_handoff_execution(self):
+        """Direct native generation does not require a prepared handoff job."""
+        core_step = next(
+            line for line in self.skill.splitlines() if line.startswith("5. Generate canonical")
+        )
+        self.assertIn("For prepared-handoff execution", core_step)
+        self.assertNotIn("Before invoking any executor", core_step)
 
     def test_no_contradictory_provider_model_ranking(self):
-        """Executor selection must not rank by provider or model name."""
-        for name, document in (
-            ("SKILL", self.skill),
-            ("workflow", read("references/workflow.md")),
-        ):
-            doc = collapsed(document)
-            for forbidden in (
-                "prefer OpenAI",
-                "prefer fal",
-                "prefer Stability",
-                "rank by provider",
-                "rank by model",
-            ):
-                self.assertNotIn(
-                    forbidden,
-                    doc,
-                    f"{name}: must not contain provider/model ranking '{forbidden}'",
-                )
+        """Declared capability priority must not become provider/model-specific ranking."""
+        selection = self.skill.split("## Executor selection", 1)[1].split("\n## ", 1)[0]
+        normalized = collapsed(selection)
+        self.assertIn("declared capability priority", normalized)
+        native_pos = normalized.find("compatible native image tool")
+        external_pos = normalized.find("compatible declared external executor")
+        handoff_pos = normalized.find("Prepare a handoff")
+        blocked_pos = normalized.find("BLOCKED")
+        self.assertTrue(-1 < native_pos < external_pos < handoff_pos < blocked_pos)
+        self.assertIn(
+            "never by provider name, model name, or provider-specific hard-coded ranking",
+            normalized,
+        )
 
     def test_archive_export_before_remote_execution(self):
-        """Workflow documents archive export/import before remote execution and result intake."""
-        workflow = read("references/workflow.md")
-        section = workflow[workflow.find("## Cross-agent handoff lifecycle") :]
-        export_pos = section.find("export")
-        import_pos = section.find("import")
-        accept_pos = section.find("accept-result")
-        # Export and import must appear before accept-result in the lifecycle section
-        self.assertGreater(export_pos, -1, "export not found in lifecycle section")
-        self.assertGreater(import_pos, -1, "import not found in lifecycle section")
-        self.assertGreater(accept_pos, -1, "accept-result not found in lifecycle section")
-        self.assertLess(
-            export_pos,
-            accept_pos,
-            "archive export must be documented before result intake",
-        )
-        self.assertLess(
-            import_pos,
-            accept_pos,
-            "archive import must be documented before result intake",
-        )
+        """Archive transfer precedes prepared-handoff execution and result intake."""
+        section = self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :]
+        export_pos = section.find("export the prepared project")
+        import_pos = section.find("import at the destination")
+        execute_pos = section.find("Execute via the selected executor")
+        accept_pos = section.find("comic-sol handoff accept-result")
+        for name, position in (
+            ("export", export_pos),
+            ("import", import_pos),
+            ("executor execution", execute_pos),
+            ("result intake", accept_pos),
+        ):
+            self.assertGreater(position, -1, f"{name} not found in lifecycle section")
+        self.assertLess(export_pos, import_pos)
+        self.assertLess(import_pos, execute_pos)
+        self.assertLess(export_pos, accept_pos)
+        self.assertLess(import_pos, accept_pos)
 
     def test_readme_record_failure_uses_category_not_reason(self):
         """README handoff section uses --category for record-failure."""
