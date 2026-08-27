@@ -1,0 +1,62 @@
+{
+  "comic_sol_version": "2.0.0rc6",
+  "consent": {
+    "share_report": true
+  },
+  "creator": {
+    "cohort_alias": "creator-cohort-08",
+    "failed_resume_attempts": 1,
+    "first_project_minutes": 30,
+    "friction_categories": [
+      "blocked-recovery",
+      "filesystem"
+    ],
+    "manual_intervention": true,
+    "pdf_minutes": 60,
+    "setup_minutes": 20,
+    "would_use_again": false
+  },
+  "derived": {
+    "blocked_categories": [
+      "provider-refusal"
+    ],
+    "completed_stages": [
+      "planning",
+      "storyboard"
+    ],
+    "executor_capabilities": {
+      "dimensions": false,
+      "localized_edit": false,
+      "reference_images": false
+    },
+    "executor_kinds": [],
+    "final_pdf_verified": false,
+    "generation_attempts": {
+      "initial": 3,
+      "retries": 1,
+      "total": 4
+    },
+    "handoff_completions": 0,
+    "handoff_count": 0,
+    "handoff_routes": [],
+    "manual_override_count": 0,
+    "page_count": 2,
+    "panel_count": 4,
+    "retry_rate": {
+      "denominator": 4,
+      "numerator": 1
+    },
+    "successful_resumes": 0,
+    "terminal_status": "BLOCKED",
+    "unresolved_warning_count": 0
+  },
+  "kind": "comic-sol-dogfood-report",
+  "limitations": [
+    "Local opt-in report; no automatic upload.",
+    "Derived only from persisted allowlisted project evidence.",
+    "Successful resumes count committed project.resumed events; failed attempts are self-reported.",
+    "Handoff route is omitted when persisted evidence cannot distinguish shared-folder from archive."
+  ],
+  "project_schema_version": "1.1",
+  "schema_version": "1.0"
+}
