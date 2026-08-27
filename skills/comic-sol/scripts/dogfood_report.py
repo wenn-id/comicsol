@@ -4,12 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import secrets
-import stat
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -17,13 +12,16 @@ from .core_primitives import canonical_artifact_bytes
 from .input_limits import MAX_JSON_BYTES, loads_bounded_json
 from .project_io import (
     MAX_READ_BYTES,
+    ProjectLock,
     contained_project_path,
+    durable_external_write,
     read_bytes_nofollow,
     read_contained_bytes,
     read_contained_json,
 )
 from .schema import LEGACY_PROJECT_SCHEMA_VERSION, SUPPORTED_PROJECT_SCHEMA_VERSIONS
 from .lifecycle_contracts import ALL_STATUSES
+from .stage_registry import RESUME_STAGES
 
 
 REPORT_KIND = "comic-sol-dogfood-report"
@@ -33,7 +31,7 @@ MAX_FAILED_RESUME_ATTEMPTS = 1_000
 MAX_EVIDENCE_COUNT = 1_000_000
 MAX_EVENT_LINES = 100_000
 MAX_RECEIPTS = 10_000
-STAGES = ("planning", "storyboard", "generation", "lettering", "composition", "export")
+STAGES = RESUME_STAGES
 FRICTION_CATEGORIES = frozenset(
     {
         "installation",
@@ -350,6 +348,7 @@ def _event_metrics(
             if (
                 str(details.get("from", "")).upper() == "BLOCKED"
                 and details.get("to") in ALL_STATUSES
+                and str(details.get("to", "")).upper() != "BLOCKED"
                 and isinstance(details.get("blocked_reason"), str)
                 and CATEGORY.fullmatch(str(details["blocked_reason"]))
             ):
@@ -512,46 +511,6 @@ def _pdf_verified(project_dir: Path, manifest: Mapping[str, object]) -> bool:
     )
 
 
-@contextmanager
-def _read_only_project_lock(project_dir: Path) -> Iterator[None]:
-    """Acquire the lifecycle lock without creating or rewriting project bytes."""
-    lock_path = contained_project_path(project_dir, ".comic-sol.lock", must_exist=True)
-    flags = (os.O_RDWR if os.name == "nt" else os.O_RDONLY) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(lock_path, flags)
-    except OSError as error:
-        raise DogfoodReportError("project lock cannot be opened read-only") from error
-    handle = os.fdopen(descriptor, "r+b" if os.name == "nt" else "rb")
-    acquired = False
-    try:
-        try:
-            if os.name == "nt":
-                import msvcrt
-
-                handle.seek(4096)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            acquired = True
-        except OSError as error:
-            raise DogfoodReportError("project is busy; retry after the active operation") from error
-        yield
-    finally:
-        if acquired:
-            if os.name == "nt":
-                import msvcrt
-
-                handle.seek(4096)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        handle.close()
-
-
 def _reject_incomplete_transactions(project_dir: Path) -> None:
     transactions = contained_project_path(project_dir, "logs/transactions")
     if not transactions.exists():
@@ -615,15 +574,28 @@ def _derive_locked(root: Path) -> tuple[str, dict[str, object]]:
 
 
 def _derive(project_dir: Path) -> tuple[str, dict[str, object]]:
+    supplied = Path(project_dir).expanduser().absolute()
     try:
-        root = Path(project_dir).resolve(strict=True)
+        metadata = supplied.lstat()
+        if supplied.is_symlink() or getattr(metadata, "st_file_attributes", 0) & 0x400:
+            raise DogfoodReportError("project directory must not be a symlink or reparse point")
+        root = supplied.resolve(strict=True)
+    except DogfoodReportError:
+        raise
     except OSError as error:
         raise DogfoodReportError("project directory is not readable") from error
     if not root.is_dir():
         raise DogfoodReportError("project directory is not readable")
-    with _read_only_project_lock(root):
-        _reject_incomplete_transactions(root)
-        return _derive_locked(root)
+    try:
+        with ProjectLock(root, timeout=0, read_only=True):
+            _reject_incomplete_transactions(root)
+            return _derive_locked(root)
+    except TimeoutError as error:
+        raise DogfoodReportError("project is busy; retry after the active operation") from error
+    except DogfoodReportError:
+        raise
+    except (OSError, ValueError) as error:
+        raise DogfoodReportError("project lock cannot be opened safely") from error
 
 
 def derive_project_metrics(project_dir: Path) -> dict[str, object]:
@@ -718,6 +690,11 @@ def validate_report(report: object, *, require_consent: bool = False) -> dict[st
         "manual_override_count",
     ):
         _bounded_integer(derived.get(name), name, MAX_EVIDENCE_COUNT)
+    handoff_completions = derived["handoff_completions"]
+    handoff_count = derived["handoff_count"]
+    assert isinstance(handoff_completions, int) and isinstance(handoff_count, int)
+    if handoff_completions > handoff_count:
+        raise DogfoodReportError("handoff completions cannot exceed prepared handoff units")
     completed = derived.get("completed_stages")
     if not isinstance(completed, list) or completed != [
         stage for stage in STAGES if stage in completed
@@ -767,132 +744,14 @@ def render_preview(report: object) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
-def _external_output_path(output_path: Path, project_dir: Path) -> Path:
-    project_lexical = Path(os.path.abspath(Path(project_dir).expanduser()))
-    project_root = project_lexical.resolve(strict=True)
-    candidate = Path(os.path.abspath(Path(output_path).expanduser()))
-    if candidate == project_lexical or project_lexical in candidate.parents:
-        raise DogfoodReportError(
-            "security-error: dogfood report output must be outside the project"
-        )
-    current = Path(candidate.anchor)
-    for part in candidate.parts[1:]:
-        current /= part
-        try:
-            metadata = current.lstat()
-        except FileNotFoundError:
-            continue
-        attributes = getattr(metadata, "st_file_attributes", 0)
-        if stat.S_ISLNK(metadata.st_mode) or attributes & 0x400:
-            raise DogfoodReportError(
-                "security-error: dogfood report output path must not contain symlinks"
-            )
-    normalized = candidate.resolve(strict=False)
-    if normalized == project_root or project_root in normalized.parents:
-        raise DogfoodReportError(
-            "security-error: dogfood report output must be outside the project"
-        )
-    return normalized
-
-
-def _write_report_posix(target: Path, payload: bytes) -> None:
-    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    parts = target.parent.parts
-    parent_fd = os.open(parts[0], directory_flags)
-    temporary_name: str | None = None
-    try:
-        for part in parts[1:]:
-            try:
-                child_fd = os.open(part, directory_flags, dir_fd=parent_fd)
-            except FileNotFoundError:
-                os.mkdir(part, 0o755, dir_fd=parent_fd)
-                child_fd = os.open(part, directory_flags, dir_fd=parent_fd)
-            os.close(parent_fd)
-            parent_fd = child_fd
-        try:
-            existing = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            existing = None
-        if existing is not None and not stat.S_ISREG(existing.st_mode):
-            raise DogfoodReportError("security-error: dogfood report output must be a regular file")
-        for _ in range(100):
-            candidate = f".{target.name}.{secrets.token_hex(16)}.tmp"
-            try:
-                descriptor = os.open(
-                    candidate,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-                    0o600,
-                    dir_fd=parent_fd,
-                )
-            except FileExistsError:
-                continue
-            temporary_name = candidate
-            break
-        else:
-            raise FileExistsError("could not allocate dogfood report temporary file")
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(
-            temporary_name,
-            target.name,
-            src_dir_fd=parent_fd,
-            dst_dir_fd=parent_fd,
-        )
-        temporary_name = None
-        os.fsync(parent_fd)
-    finally:
-        if temporary_name is not None:
-            try:
-                os.unlink(temporary_name, dir_fd=parent_fd)
-            except FileNotFoundError:
-                pass
-        os.close(parent_fd)
-
-
-def _write_report_portable(target: Path, payload: bytes) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.parent / f".{target.name}.{secrets.token_hex(16)}.tmp"
-    try:
-        descriptor = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        # Recheck all components immediately before publication on platforms
-        # without directory-descriptor replacement.
-        current = Path(target.anchor)
-        for part in target.parts[1:]:
-            current /= part
-            try:
-                metadata = current.lstat()
-            except FileNotFoundError:
-                continue
-            attributes = getattr(metadata, "st_file_attributes", 0)
-            if stat.S_ISLNK(metadata.st_mode) or attributes & 0x400:
-                raise DogfoodReportError(
-                    "security-error: dogfood report output path must not contain symlinks"
-                )
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
 def write_report(output_path: Path, report: object, *, project_dir: Path) -> Path:
     """Atomically persist a consented canonical report outside the project tree."""
     value = validate_report(report, require_consent=True)
-    target = _external_output_path(Path(output_path), Path(project_dir))
     payload = canonical_artifact_bytes(value)
-    if os.name == "posix" and getattr(os, "O_NOFOLLOW", 0):
-        _write_report_posix(target, payload)
-    else:
-        _write_report_portable(target, payload)
-    return target
+    try:
+        return durable_external_write(Path(output_path), payload, project_dir=Path(project_dir))
+    except (OSError, ValueError) as error:
+        raise DogfoodReportError(f"security-error: {error}") from error
 
 
 def validate_report_file(path: Path, *, require_consent: bool = False) -> dict[str, object]:

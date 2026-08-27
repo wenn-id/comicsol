@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import shutil
+import runpy
 from pathlib import Path
 
 from setuptools import setup
 from setuptools.command.build_py import build_py as _build_py
 
-
 ROOT = Path(__file__).resolve().parent
+REQUIRED_RUNTIME_SCRIPTS = runpy.run_path(ROOT / "runtime_contract.py")["REQUIRED_RUNTIME_SCRIPTS"]
 BUILD_ONLY_SCRIPTS = {
     "assemble_release.py",
     "benchmark.py",
@@ -22,7 +23,6 @@ BUILD_ONLY_SCRIPTS = {
     "portable_release_smoke.py",
     "release_identity.py",
 }
-REQUIRED_RUNTIME_SCRIPTS = frozenset({"dogfood_report.py"})
 
 
 class build_py(_build_py):

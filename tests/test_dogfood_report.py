@@ -30,6 +30,15 @@ from scripts.handoff import (
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_REPORT = ROOT / "tests/fixtures/dogfood/valid-report-v1.0.json"
+
+
+def expected_report():
+    """Load the contract fixture with the current release identifier."""
+    value = json.loads(EXPECTED_REPORT.read_text(encoding="utf-8"))
+    value["comic_sol_version"] = VERSION
+    return value
+
+
 PRIVACY_CANARIES = (
     "private-title-canary",
     "mira-private-name",
@@ -309,7 +318,7 @@ class DogfoodReportTests(unittest.TestCase):
 
     def test_exact_valid_report_and_root_contract(self):
         report = self._build()
-        expected = json.loads(EXPECTED_REPORT.read_text(encoding="utf-8"))
+        expected = expected_report()
 
         self.assertEqual(expected, report)
         self.assertEqual(
@@ -393,7 +402,7 @@ class DogfoodReportTests(unittest.TestCase):
             second = canonical_report_bytes(self._build())
         self.assertEqual(first, second)
         self.assertTrue(first.endswith(b"\n"))
-        self.assertEqual(first, EXPECTED_REPORT.read_bytes())
+        self.assertEqual(first, canonical_report_bytes(expected_report()))
 
     def test_legacy_project_is_read_without_migration_or_mutation(self):
         manifest_path = self.project / "project.json"
@@ -445,7 +454,7 @@ class DogfoodReportTests(unittest.TestCase):
                 write_report(output, self._build(), project_dir=self.project)
         output = self.root / "submission/report.json"
         write_report(output, self._build(), project_dir=self.project)
-        self.assertEqual(EXPECTED_REPORT.read_bytes(), output.read_bytes())
+        self.assertEqual(canonical_report_bytes(expected_report()), output.read_bytes())
 
     def test_export_and_validation_are_offline_read_only_and_do_not_mutate_project(self):
         before = {
@@ -582,6 +591,39 @@ class DogfoodReportTests(unittest.TestCase):
         self.assertEqual(0, without_completion["handoff_completions"])
         self.assertEqual(["external-tool", "native-tool"], without_completion["executor_kinds"])
 
+    def test_report_rejects_more_handoff_completions_than_prepared_units(self):
+        report = self._build()
+        report["derived"]["handoff_completions"] = report["derived"]["handoff_count"] + 1
+        with self.assertRaisesRegex(DogfoodReportError, "cannot exceed"):
+            validate_report(report)
+
+    def test_resume_metrics_require_successful_transition_evidence(self):
+        event_path = self.project / "logs/events.jsonl"
+        events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+        for event in events:
+            if event.get("event") == "project.resumed":
+                event["details"]["to"] = "BLOCKED"
+        event_path.write_text(
+            "".join(json.dumps(event, sort_keys=True) + "\n" for event in events),
+            encoding="utf-8",
+        )
+        self.assertEqual(0, derive_project_metrics(self.project)["successful_resumes"])
+
+    def test_symlinked_project_root_is_rejected_before_resolution(self):
+        linked_project = self.root / "linked-project"
+        try:
+            linked_project.symlink_to(self.project, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f"directory symlinks unavailable: {error}")
+        with self.assertRaisesRegex(DogfoodReportError, "project directory"):
+            derive_project_metrics(linked_project)
+
+    def test_unexpected_lock_error_is_not_reported_as_busy(self):
+        with patch("scripts.project_io.ProjectLock._lock", side_effect=OSError(5, "I/O")):
+            with self.assertRaisesRegex(DogfoodReportError, "opened safely") as caught:
+                derive_project_metrics(self.project)
+        self.assertNotIn("busy", str(caught.exception))
+
     def test_blocked_report_has_an_exact_complete_projection(self):
         expected = self._build()
         manifest = json.loads((self.project / "project.json").read_text(encoding="utf-8"))
@@ -630,8 +672,9 @@ class DogfoodReportTests(unittest.TestCase):
     def test_release_inventory_requires_runtime_report_module(self):
         from comic_sol_product.release import REQUIRED_SDIST_SUFFIXES, REQUIRED_WHEEL_MEMBERS
 
-        setup_text = (ROOT / "setup.py").read_text(encoding="utf-8")
-        self.assertIn('REQUIRED_RUNTIME_SCRIPTS = frozenset({"dogfood_report.py"})', setup_text)
+        from runtime_contract import REQUIRED_RUNTIME_SCRIPTS
+
+        self.assertIn("dogfood_report.py", REQUIRED_RUNTIME_SCRIPTS)
         self.assertIn("comic_sol_product/engine/dogfood_report.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("/scripts/dogfood_report.py", REQUIRED_SDIST_SUFFIXES)
 

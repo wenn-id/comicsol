@@ -79,10 +79,17 @@ class ProjectLock:
 
     _thread_state = threading.local()
 
-    def __init__(self, project_dir: Path, timeout: float | None = 10.0):
+    def __init__(
+        self,
+        project_dir: Path,
+        timeout: float | None = 10.0,
+        *,
+        read_only: bool = False,
+    ):
         """Initialize lock state for a project directory."""
         self.project_dir = Path(project_dir)
         self.timeout = timeout
+        self.read_only = read_only
         self._handle: BinaryIO | None = None
         self._lock_key: Path | None = None
         self._acquisition_depth = 0
@@ -97,7 +104,17 @@ class ProjectLock:
 
     def __enter__(self) -> "ProjectLock":
         """Acquire the project lock and return it."""
-        key = self.project_dir.resolve()
+        if self.read_only:
+            try:
+                root_metadata = self.project_dir.lstat()
+            except OSError:
+                raise
+            if (
+                stat.S_ISLNK(root_metadata.st_mode)
+                or getattr(root_metadata, "st_file_attributes", 0) & _REPARSE_POINT
+            ):
+                raise ValueError("project directory must not be a symlink or reparse point")
+        key = self.project_dir.resolve(strict=self.read_only)
         held = self._held_locks()
         existing = held.get(key)
         if existing is not None:
@@ -107,18 +124,24 @@ class ProjectLock:
             return self
         deadline = None if self.timeout is None else time.monotonic() + self.timeout
         path = self.project_dir / ".comic-sol.lock"
+        flags = os.O_RDWR if os.name == "nt" else os.O_RDONLY
+        if not self.read_only:
+            flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
         try:
-            descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+            descriptor = os.open(path, flags | _O_NOFOLLOW, 0o600)
         except FileExistsError:
             handle = self._open_retained(path)
         else:
-            handle = _binary_fdopen(descriptor, "r+b")
-            try:
-                handle.write(b"\0")
-                handle.flush()
-            except BaseException:
-                handle.close()
-                raise
+            handle = _binary_fdopen(
+                descriptor, "r+b" if not self.read_only or os.name == "nt" else "rb"
+            )
+            if not self.read_only:
+                try:
+                    handle.write(b"\0")
+                    handle.flush()
+                except BaseException:
+                    handle.close()
+                    raise
         self._handle = handle
         acquired = False
         try:
@@ -152,10 +175,11 @@ class ProjectLock:
                 else:
                     remaining = max(0.0, deadline - time.monotonic())
                 time.sleep(min(_LOCK_RETRY_SECONDS, remaining))
-            handle.seek(0)
-            handle.truncate()
-            handle.write(f"{os.getpid()}\n".encode("ascii"))
-            handle.flush()
+            if not self.read_only:
+                handle.seek(0)
+                handle.truncate()
+                handle.write(f"{os.getpid()}\n".encode("ascii"))
+                handle.flush()
             held[key] = (handle, 1)
             self._handle = handle
             self._lock_key = key
@@ -509,6 +533,96 @@ def read_contained_json(project_dir: Path, relative: str | Path) -> object:
     """Read and parse one bounded contained JSON document."""
     payload = read_contained_bytes(project_dir, relative, max_bytes=MAX_JSON_BYTES)
     return loads_bounded_json(payload, source=os.fspath(relative).replace("\\", "/"))
+
+
+def external_output_path(output_path: Path, project_dir: Path) -> Path:
+    """Validate a no-follow output path that is outside a non-symlink project root.
+
+    macOS exposes native temporary directories through root-owned aliases such
+    as ``/var`` -> ``/private/var``.  Canonicalize only that platform alias
+    before walking caller-controlled components; all remaining links and
+    reparse points are rejected.
+    """
+    project_input = Path(project_dir).expanduser().absolute()
+    metadata = project_input.lstat()
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT
+    ):
+        raise ValueError("project directory must not be a symlink or reparse point")
+    project_root = project_input.resolve(strict=True)
+    candidate = Path(output_path).expanduser().absolute()
+    if candidate == project_input or project_input in candidate.parents:
+        raise ValueError("output must be outside the project")
+    if sys.platform == "darwin" and candidate.anchor == "/" and len(candidate.parts) > 1:
+        native_alias = Path("/") / candidate.parts[1]
+        if native_alias.name in {"tmp", "var"} and native_alias.is_symlink():
+            candidate = native_alias.resolve(strict=True).joinpath(*candidate.parts[2:])
+    current = Path(candidate.anchor)
+    for part in candidate.parts[1:]:
+        current /= part
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            continue
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT
+        ):
+            raise ValueError("output path must not contain symlinks or reparse points")
+    normalized = candidate.resolve(strict=False)
+    if normalized == project_root or project_root in normalized.parents:
+        raise ValueError("output must be outside the project")
+    return normalized
+
+
+def durable_external_write(output_path: Path, payload: bytes, *, project_dir: Path) -> Path:
+    """Atomically publish bytes outside a project through a no-follow parent walk."""
+    target = external_output_path(output_path, project_dir)
+    if os.name != "posix" or not _HAS_NOFOLLOW:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        external_output_path(target, project_dir)
+        durable_atomic_write(target, payload)
+        external_output_path(target, project_dir)
+        return target
+    parent_fd, name = _open_parent_fd(Path(target.anchor), target.parts[1:], create=True)
+    temporary_name: str | None = None
+    try:
+        try:
+            existing = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None and not stat.S_ISREG(existing.st_mode):
+            raise ValueError("output must be a regular file")
+        for _ in range(100):
+            temporary_name = f".{name}.{secrets.token_hex(16)}.tmp"
+            try:
+                descriptor = os.open(
+                    temporary_name,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW,
+                    0o600,
+                    dir_fd=parent_fd,
+                )
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise FileExistsError("could not allocate temporary output file")
+        with _binary_fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        temporary_name = None
+        os.fsync(parent_fd)
+    finally:
+        if temporary_name is not None:
+            try:
+                os.unlink(temporary_name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+        os.close(parent_fd)
+    return target
 
 
 def remove_contained(project_dir: Path, relative: str | Path) -> None:

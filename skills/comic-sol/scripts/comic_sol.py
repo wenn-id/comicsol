@@ -4910,7 +4910,7 @@ def main(argv: list[str] | None = None) -> int:
             if command == "dogfood.validate":
                 dogfood_arguments: dict[str, object] = {"report_path": arguments.report_path}
             else:
-                from comic_sol_product.version import VERSION as comic_sol_version
+                from .version import VERSION as comic_sol_version
 
                 dogfood_arguments = {
                     "project_dir": arguments.project_dir,

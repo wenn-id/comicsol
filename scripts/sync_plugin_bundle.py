@@ -67,6 +67,7 @@ BUNDLED_SCRIPTS = (
     "page_quality.py",
     "pdf_quality.py",
     "project_io.py",
+    "version.py",
     "quality_records.py",
     "quality_sample.py",
     "raster_limits.py",

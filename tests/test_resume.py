@@ -3100,3 +3100,118 @@ class DogfoodSourceCliContractTests(unittest.TestCase):
                 self.assertEqual("", stderr)
                 self.assertEqual("comic-sol-dogfood-report", json.loads(stdout)["kind"])
                 self.assertEqual([(route, expected)], service.calls)
+
+    def test_source_dogfood_invalid_creator_inputs_never_dispatch(self):
+        class FakeService:
+            calls = []
+
+            def execute(self, command, **kwargs):
+                self.calls.append((command, kwargs))
+
+        base = [
+            "dogfood",
+            "preview",
+            "project",
+            "--setup-minutes",
+            "1",
+            "--first-project-minutes",
+            "2",
+            "--pdf-minutes",
+            "3",
+            "--manual-intervention",
+            "no",
+            "--would-use-again",
+            "yes",
+        ]
+        invalid_cases = (
+            [*base[:-1], "maybe"],
+            [*base[:4], "-1", *base[5:]],
+            ["dogfood", "report", "project", *base[3:]],
+        )
+        for argv in invalid_cases:
+            service = FakeService()
+            service.calls = []
+            with self.subTest(argv=argv):
+                code, _stdout, _stderr = self.invoke_with_service(argv, service)
+                self.assertEqual(2, code)
+                self.assertEqual([], service.calls)
+
+
+class DogfoodCommandServiceTests(unittest.TestCase):
+    """Dogfood routes dispatch exact persistence and validation arguments."""
+
+    def test_direct_dogfood_dispatch(self):
+        from scripts.command_service import CommandService
+
+        class FakeDogfood:
+            def __init__(self):
+                self.calls = []
+
+            def build_report(self, project, **kwargs):
+                self.calls.append(("build", project, kwargs))
+                return {"report": True}
+
+            def write_report(self, output, report, **kwargs):
+                self.calls.append(("write", output, report, kwargs))
+
+            def validate_report_file(self, path, **kwargs):
+                self.calls.append(("validate", path, kwargs))
+                return {"valid": True}
+
+        dogfood = FakeDogfood()
+        inert = object()
+        service = CommandService(
+            engine=inert,
+            validation=inert,
+            lettering=inert,
+            composition=inert,
+            export=inert,
+            report=inert,
+            handoff_archive=inert,
+            dogfood=dogfood,
+        )
+        project = Path("project")
+        creator = {"setup_minutes": 1}
+        preview = service.execute(
+            "dogfood.preview",
+            project_dir=project,
+            comic_sol_version="2.0",
+            creator_inputs=creator,
+            consent_to_share=False,
+        )
+        self.assertEqual({"report": True}, preview)
+        output = Path("report.json")
+        service.execute(
+            "dogfood.report",
+            project_dir=project,
+            comic_sol_version="2.0",
+            creator_inputs=creator,
+            consent_to_share=True,
+            output_path=output,
+        )
+        service.execute("dogfood.validate", report_path=output)
+        self.assertEqual(
+            [
+                (
+                    "build",
+                    project,
+                    {
+                        "comic_sol_version": "2.0",
+                        "creator_inputs": creator,
+                        "consent_to_share": False,
+                    },
+                ),
+                (
+                    "build",
+                    project,
+                    {
+                        "comic_sol_version": "2.0",
+                        "creator_inputs": creator,
+                        "consent_to_share": True,
+                    },
+                ),
+                ("write", output, {"report": True}, {"project_dir": project}),
+                ("validate", output, {"require_consent": True}),
+            ],
+            dogfood.calls,
+        )
