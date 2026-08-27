@@ -5,10 +5,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import os
 import statistics
 import sys
-import tempfile
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +22,7 @@ from scripts.dogfood_report import (
     canonical_report_bytes,
     validate_report_file,
 )
+from scripts.project_io import durable_atomic_write, fsync_directory
 
 
 SUMMARY_KIND = "comic-sol-dogfood-summary"
@@ -463,21 +462,31 @@ def render_markdown(summary: Mapping[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _atomic_write(path: Path, payload: bytes) -> None:
-    destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
-    )
-    temporary = Path(temporary_name)
+def _restore_output(path: Path, original: bytes | None) -> None:
+    """Durably restore one output to its state before paired publication."""
+    if original is not None:
+        durable_atomic_write(path, original)
+        return
+    path.unlink(missing_ok=True)
+    fsync_directory(path.parent)
+
+
+def _publish_outputs(outputs: Sequence[tuple[Path, bytes]]) -> None:
+    """Publish a batch of outputs, rolling back every destination on failure."""
+    originals: list[bytes | None] = []
+    published = 0
+    for path, _payload in outputs:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        originals.append(path.read_bytes() if path.is_file() else None)
     try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(payload)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, destination)
+        for path, payload in outputs:
+            # Count the destination before entering the helper: a directory fsync
+            # can fail after the replacement itself has already happened.
+            published += 1
+            durable_atomic_write(path, payload)
     except BaseException:
-        temporary.unlink(missing_ok=True)
+        for index in range(published - 1, -1, -1):
+            _restore_output(outputs[index][0], originals[index])
         raise
 
 
@@ -485,12 +494,18 @@ def write_summary(
     report_paths: Sequence[Path], *, json_output: Path, markdown_output: Path
 ) -> dict[str, object]:
     """Write canonical JSON and Markdown from the same validated offline aggregate."""
-    if Path(json_output).absolute() == Path(markdown_output).absolute():
+    json_path = Path(json_output)
+    markdown_path = Path(markdown_output)
+    if json_path.resolve() == markdown_path.resolve():
         raise DogfoodSummaryError("JSON and Markdown outputs must be different files")
     summary = aggregate_reports(report_paths)
     try:
-        _atomic_write(Path(json_output), canonical_summary_bytes(summary))
-        _atomic_write(Path(markdown_output), render_markdown(summary).encode("utf-8"))
+        _publish_outputs(
+            (
+                (json_path, canonical_summary_bytes(summary)),
+                (markdown_path, render_markdown(summary).encode("utf-8")),
+            )
+        )
     except OSError as error:
         raise DogfoodSummaryError("dogfood summary output cannot be written safely") from error
     return summary

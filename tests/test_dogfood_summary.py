@@ -25,6 +25,7 @@ from scripts.dogfood_summary import (
     render_markdown,
     write_summary,
 )
+from scripts.project_io import durable_atomic_write
 from scripts.input_limits import MAX_JSON_BYTES
 
 
@@ -282,6 +283,58 @@ class DogfoodSummaryContractTests(unittest.TestCase):
         write_summary(FIXTURES, json_output=json_output, markdown_output=markdown_output)
         self.assertEqual(canonical_artifact_bytes(EXPECTED_SUMMARY), json_output.read_bytes())
         self.assertEqual(EXPECTED_MARKDOWN.encode("utf-8"), markdown_output.read_bytes())
+
+    def test_output_publication_restores_both_originals_when_second_write_fails(self) -> None:
+        json_output = self.root / "dogfood-summary.json"
+        markdown_output = self.root / "dogfood-summary.md"
+        json_output.write_bytes(b"original json\n")
+        markdown_output.write_bytes(b"original markdown\n")
+        calls = 0
+
+        def fail_second_write(path: Path, payload: bytes) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("injected second-output failure")
+            durable_atomic_write(path, payload)
+
+        with (
+            patch("scripts.dogfood_summary.durable_atomic_write", side_effect=fail_second_write),
+            self.assertRaisesRegex(DogfoodSummaryError, "cannot be written safely"),
+        ):
+            write_summary(
+                FIXTURES,
+                json_output=json_output,
+                markdown_output=markdown_output,
+            )
+
+        self.assertEqual(b"original json\n", json_output.read_bytes())
+        self.assertEqual(b"original markdown\n", markdown_output.read_bytes())
+
+    def test_output_publication_removes_new_first_output_when_second_write_fails(self) -> None:
+        json_output = self.root / "dogfood-summary.json"
+        markdown_output = self.root / "dogfood-summary.md"
+        calls = 0
+
+        def fail_second_write(path: Path, payload: bytes) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("injected second-output failure")
+            durable_atomic_write(path, payload)
+
+        with (
+            patch("scripts.dogfood_summary.durable_atomic_write", side_effect=fail_second_write),
+            self.assertRaisesRegex(DogfoodSummaryError, "cannot be written safely"),
+        ):
+            write_summary(
+                FIXTURES,
+                json_output=json_output,
+                markdown_output=markdown_output,
+            )
+
+        self.assertFalse(json_output.exists())
+        self.assertFalse(markdown_output.exists())
 
     def test_every_rate_exposes_numerator_denominator_missing_and_value(self) -> None:
         metrics = aggregate_reports(FIXTURES)["metrics"]
