@@ -98,7 +98,12 @@ class WebApplicationTests(unittest.TestCase):
         }
         self.assertEqual(set(), forbidden)
 
-        with patch("socket.socket.connect", side_effect=AssertionError("network access")):
+        # The /healthz handler must not resolve names. Patch getaddrinfo (DNS),
+        # which is what any external connect would need, rather than
+        # socket.socket.connect: on Windows ProactorEventLoop opens an internal
+        # socketpair during TestClient setup, so a blanket connect mock would
+        # assert even though the handler itself never connects.
+        with patch("socket.getaddrinfo", side_effect=AssertionError("network access")):
             from fastapi.testclient import TestClient
 
             with TestClient(app) as client:

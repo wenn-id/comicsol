@@ -45,8 +45,9 @@ jobs:
     - name: Get healthz via the test client
       shell: bash
       env:
-        COMIC_SOL_WEB_SESSION_SECRET: 000000000000000000000000000000000000000000000000
-        COMIC_SOL_WEB_ENCRYPTION_SECRET: 000000000000000000000000000000000000000000000000
+        # Quoted so YAML does not parse the all-digit strings as octal/numbers.
+        COMIC_SOL_WEB_SESSION_SECRET: "comic-sol-web-session-secret-0000000000000000"
+        COMIC_SOL_WEB_ENCRYPTION_SECRET: "comic-sol-web-encryption-secret-00000000"
         COMIC_SOL_WEB_DATA_ROOT: ${{ runner.temp }}/comic-sol-web-data
       run: |
         python - <<'PYEOF'
