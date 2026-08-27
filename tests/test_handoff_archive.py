@@ -41,7 +41,10 @@ EXPECTED_LIMIT_CONSTANTS = (
     "MAX_ARCHIVE_MEMBERS",
     "MAX_MEMBER_BYTES",
     "MAX_TOTAL_UNCOMPRESSED_BYTES",
+    "MAX_MEMBER_COMPRESSED_BYTES",
+    "MAX_TOTAL_COMPRESSED_BYTES",
     "MAX_COMPRESSION_RATIO",
+    "MAX_ARCHIVE_PATH_DEPTH",
 )
 FORMAT_METADATA_MEMBER = EXPECTED_ARCHIVE_CONSTANTS["FORMAT_METADATA_MEMBER"]
 CHECKSUM_MANIFEST_MEMBER = EXPECTED_ARCHIVE_CONSTANTS["CHECKSUM_MANIFEST_MEMBER"]
@@ -922,6 +925,22 @@ class HandoffArchiveContractTests(unittest.TestCase):
         within_budget_entry.stat.assert_not_called()
         over_budget_entry.stat.assert_not_called()
 
+    def test_source_traversal_rejects_excessive_depth_without_recursion(self):
+        module = _archive_api(self)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "deep-source"
+            current = root
+            current.mkdir()
+            for _index in range(9):
+                current /= "d"
+                current.mkdir()
+
+            with (
+                mock.patch.object(module, "MAX_ARCHIVE_PATH_DEPTH", 8),
+                self.assertRaisesRegex(module.HandoffArchiveError, "nesting.*limit"),
+            ):
+                list(module._iter_project_entries(root))
+
     def test_rejects_unsupported_archive_version(self):
         module, _project, archive, _root = self._export_fixture()
         entries = _archive_entries(archive)
@@ -1219,6 +1238,17 @@ class HandoffArchiveContractTests(unittest.TestCase):
                     "portable.*Windows|Windows.*portable",
                 )
 
+    def test_inspect_and_import_reject_excessively_nested_member_before_extraction(self):
+        module, _project, archive, _root = self._export_fixture()
+        member = "project/" + "/".join(["d"] * module.MAX_ARCHIVE_PATH_DEPTH) + "/file.txt"
+        entries = [*_archive_entries(archive), (_regular_info(member), b"nested")]
+        entries = _refresh_checksums(entries)
+        entries.sort(key=lambda item: item[0].filename)
+        malicious = self._mutated_archive(archive, entries, "excessive-path-depth")
+
+        self._assert_inspect_rejected_without_residue(module, malicious, "nesting.*limit")
+        self._assert_import_rejected(module, malicious, "nesting.*limit")
+
     def test_rejects_absolute_drive_unc_and_traversal_member_paths(self):
         module, _project, archive, _root = self._export_fixture()
         cases = {
@@ -1263,6 +1293,9 @@ class HandoffArchiveContractTests(unittest.TestCase):
         entries = _archive_entries(archive)
         member_count = len(entries)
         sizes = [info.file_size for info, _payload in entries]
+        compressed_sizes = []
+        with zipfile.ZipFile(archive, "r") as bundle:
+            compressed_sizes = [info.compress_size for info in bundle.infolist()]
         output_root = root / "central-directory-preflight-output"
         output_root.mkdir()
         before = _tree_snapshot(output_root)
@@ -1274,6 +1307,16 @@ class HandoffArchiveContractTests(unittest.TestCase):
                 "MAX_TOTAL_UNCOMPRESSED_BYTES",
                 sum(sizes) - 1,
                 "aggregate.*uncompressed|total.*limit",
+            ),
+            (
+                "MAX_MEMBER_COMPRESSED_BYTES",
+                max(compressed_sizes) - 1,
+                "member.*compressed|compressed.*limit",
+            ),
+            (
+                "MAX_TOTAL_COMPRESSED_BYTES",
+                sum(compressed_sizes) - 1,
+                "aggregate.*compressed|compressed.*limit",
             ),
             ("MAX_COMPRESSION_RATIO", 0.5, "compression.*ratio"),
         )

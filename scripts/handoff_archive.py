@@ -48,7 +48,10 @@ FIXED_ZIP_DATETIME = (1980, 1, 1, 0, 0, 0)
 MAX_ARCHIVE_MEMBERS = 4096
 MAX_MEMBER_BYTES = 64 * 1024 * 1024
 MAX_TOTAL_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
+MAX_MEMBER_COMPRESSED_BYTES = 64 * 1024 * 1024
+MAX_TOTAL_COMPRESSED_BYTES = 1024 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 200.0
+MAX_ARCHIVE_PATH_DEPTH = 128
 _CONTROL_MEMBER_BYTES = 4 * 1024 * 1024
 _MAX_CENTRAL_DIRECTORY_BYTES = MAX_MEMBER_BYTES
 _EOCD_SIGNATURE = b"PK\x05\x06"
@@ -121,6 +124,7 @@ def _regular_zip_info(name: str) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(name, FIXED_ZIP_DATETIME)
     info.create_system = 3
     info.compress_type = zipfile.ZIP_DEFLATED
+    info._compresslevel = 0
     info.external_attr = (stat.S_IFREG | 0o644) << 16
     return info
 
@@ -133,10 +137,10 @@ def _iter_project_entries(project_dir: Path) -> Iterator[tuple[str, os.stat_resu
     """Yield a deterministic walk bounded by the archive member limit."""
     remaining_entries = MAX_ARCHIVE_MEMBERS
 
-    def walk(relative_dir: str) -> Iterator[tuple[str, os.stat_result]]:
+    def scan(relative_dir: str) -> list[os.DirEntry[str]]:
         nonlocal remaining_entries
         directory = project_dir if not relative_dir else project_dir / relative_dir
-        entries = []
+        entries: list[os.DirEntry[str]] = []
         try:
             with os.scandir(directory) as scanner:
                 for entry in scanner:
@@ -151,17 +155,26 @@ def _iter_project_entries(project_dir: Path) -> Iterator[tuple[str, os.stat_resu
             raise
         except OSError as error:
             raise HandoffArchiveError(f"handoff project cannot be scanned: {error}") from error
-        for entry in entries:
-            relative = f"{relative_dir}/{entry.name}" if relative_dir else entry.name
-            try:
-                metadata = entry.stat(follow_symlinks=False)
-            except OSError as error:
-                raise HandoffArchiveError(f"handoff project cannot be scanned: {error}") from error
-            yield relative, metadata
-            if stat.S_ISDIR(metadata.st_mode) and relative != "logs/transactions":
-                yield from walk(relative)
+        return entries
 
-    yield from walk("")
+    stack: list[tuple[str, Iterator[os.DirEntry[str]]]] = [("", iter(scan("")))]
+    while stack:
+        relative_dir, entries = stack[-1]
+        try:
+            entry = next(entries)
+        except StopIteration:
+            stack.pop()
+            continue
+        relative = f"{relative_dir}/{entry.name}" if relative_dir else entry.name
+        try:
+            metadata = entry.stat(follow_symlinks=False)
+        except OSError as error:
+            raise HandoffArchiveError(f"handoff project cannot be scanned: {error}") from error
+        yield relative, metadata
+        if stat.S_ISDIR(metadata.st_mode) and relative != "logs/transactions":
+            if len(relative.split("/")) > MAX_ARCHIVE_PATH_DEPTH:
+                raise HandoffArchiveError("archive source path nesting exceeds the limit")
+            stack.append((relative, iter(scan(relative))))
 
 
 def _format_metadata_payload(project_id: str) -> bytes:
@@ -352,6 +365,7 @@ def _preflight_central_directory(handle: BinaryIO) -> None:
     cursor = central_start
     actual_members = 0
     total_uncompressed = 0
+    total_compressed = 0
     while cursor < central_end:
         if actual_members >= MAX_ARCHIVE_MEMBERS:
             raise HandoffArchiveError("archive member count exceeds the limit")
@@ -381,6 +395,11 @@ def _preflight_central_directory(handle: BinaryIO) -> None:
             raise HandoffArchiveError("archive aggregate uncompressed size exceeds the limit")
         if compressed_size <= 0:
             raise HandoffArchiveError("archive member has an invalid compressed size")
+        if compressed_size > MAX_MEMBER_COMPRESSED_BYTES:
+            raise HandoffArchiveError("archive member exceeds the compressed-byte limit")
+        total_compressed += compressed_size
+        if total_compressed > MAX_TOTAL_COMPRESSED_BYTES:
+            raise HandoffArchiveError("archive aggregate compressed size exceeds the limit")
         if uncompressed_size and uncompressed_size / compressed_size > MAX_COMPRESSION_RATIO:
             raise HandoffArchiveError("archive member exceeds the compression ratio limit")
         variable_size = sum(
@@ -546,6 +565,8 @@ def _validated_member_name(name: str) -> str:
         normalized = normalized_project_relative_path(name)
     except ValueError as error:
         raise HandoffArchiveError("archive contains an unsafe traversal member path") from error
+    if len(normalized.split("/")) > MAX_ARCHIVE_PATH_DEPTH:
+        raise HandoffArchiveError("archive member path nesting exceeds the limit")
     try:
         normalized_portable_project_relative_path(normalized)
     except ValueError as error:
@@ -589,6 +610,7 @@ def _pre_scan(bundle: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
     folded: dict[str, str] = {}
     by_name: dict[str, zipfile.ZipInfo] = {}
     total = 0
+    total_compressed = 0
     for info in infos:
         name = _validated_member_name(info.filename)
         if name in names:
@@ -611,6 +633,11 @@ def _pre_scan(bundle: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
             raise HandoffArchiveError("archive aggregate uncompressed size exceeds the limit")
         if info.compress_size <= 0:
             raise HandoffArchiveError("archive member has an invalid compressed size")
+        if info.compress_size > MAX_MEMBER_COMPRESSED_BYTES:
+            raise HandoffArchiveError("archive member exceeds the compressed-byte limit")
+        total_compressed += info.compress_size
+        if total_compressed > MAX_TOTAL_COMPRESSED_BYTES:
+            raise HandoffArchiveError("archive aggregate compressed size exceeds the limit")
         if info.file_size and info.file_size / info.compress_size > MAX_COMPRESSION_RATIO:
             raise HandoffArchiveError("archive member exceeds the compression ratio limit")
     if [info.filename for info in infos] != sorted(names):
