@@ -85,3 +85,8 @@ The same registry and classifier serve both surfaces, so one failure class carri
 6. Update this document only when the public contract or namespace set changes, then run the full test suite and package build.
 
 Codes are append-only public API. Renaming a category, message, reason, or recovery may affect consumers; prefer additive fields or a new code when semantics change.
+
+
+## Dogfood report routes
+
+`comic-sol dogfood report`, `dogfood preview`, and `dogfood validate` keep the installed CLI's unchanged `ok`/`command`/`data`/`error` envelope. The report validator raises a bounded `DogfoodReportError`; invalid schema, creator bounds, consent, or persisted evidence uses the existing `CS-PROJ-001` invalid-data contract. An output that is outside the project or crosses a symlink boundary begins with the existing `security-error` boundary and is classified as `CS-SEC-001`. No new error namespace is introduced. Error details remain subject to the normal absolute-path redaction rules.

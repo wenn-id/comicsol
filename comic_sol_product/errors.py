@@ -246,6 +246,7 @@ _BOUNDARY_TYPE_NAMES = {
 }
 
 _BOUNDARY_MESSAGE_PREFIXES = (
+    ("security-error: dogfood report output", "CS-SEC-001"),
     ("security-error: input exceeds", "CS-SEC-002"),
     ("security-error", "CS-SEC-001"),
     ("project path must not contain symlinks", "CS-SEC-001"),

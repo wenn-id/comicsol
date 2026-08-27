@@ -83,6 +83,12 @@ class DockerfileIdentityContractTests(unittest.TestCase):
         self.assertIn('VOLUME ["/data"]', self.dockerfile)
         self.assertIn('CMD ["mcp", "--root", "/data"]', self.dockerfile)
 
+    def test_builder_copy_includes_runtime_contract(self):
+        self.assertIn(
+            "COPY pyproject.toml setup.py MANIFEST.in README.md LICENSE SKILL.md runtime_contract.py ./",
+            self.dockerfile,
+        )
+
 
 class WorkflowContractTests(unittest.TestCase):
     def test_release_workflow_has_no_base_digest_build_argument(self):

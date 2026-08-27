@@ -154,6 +154,22 @@ GENERATION_COUNTER_NAMES = {
 }
 GENERATION_LIMITS = {"initial": 1, "transient_repeat": 1, "visual_retry": 2}
 GLOBAL_EXTRA_CALL_LIMIT = 8
+PUBLIC_BLOCKED_REASON_CATEGORIES = frozenset(
+    {
+        "artifact-missing",
+        "executor-failure",
+        "image-capability-unavailable",
+        "input-invalid",
+        "io-error",
+        "permission-denied",
+        "project-blocked",
+        "provider-refusal",
+        "quality-failure",
+        "resource-limit",
+        "validation-failure",
+        "other",
+    }
+)
 GENERATION_LIMIT_MESSAGES = {
     "initial": "at most one initial attempt is allowed per panel",
     "transient_repeat": "at most one transient repeat is allowed per panel",
@@ -221,6 +237,7 @@ EVENT_DETAIL_KINDS = {
     "page_count": "count",
     "panel_count": "count",
     "category": "category",
+    "blocked_reason": "category",
     "action": "category",
     "kind": "category",
     "status": "category",
@@ -1352,12 +1369,16 @@ def block_project(project_dir: Path, reason: str, warning: str) -> dict[str, obj
                 "updated_at": _utc_now(),
             }
         )
+        event_details: dict[str, object] = {
+            "from": current,
+            "to": "BLOCKED",
+            "warning_present": True,
+        }
+        if reason in PUBLIC_BLOCKED_REASON_CATEGORIES:
+            event_details["blocked_reason"] = reason
         transaction.append_bytes(
             "logs/events.jsonl",
-            canonical_event_record(
-                "project.transitioned",
-                {"from": current, "to": "BLOCKED", "warning_present": True},
-            ),
+            canonical_event_record("project.transitioned", event_details),
             repair_torn_jsonl=True,
         )
         _refresh_handoff_manifest_stage(project_dir, manifest, "BLOCKED", transaction)
@@ -1642,7 +1663,6 @@ def _resume_project_locked(project_dir: Path, manifest_path: Path) -> dict[str, 
             reason = "legacy-blocked"
             manifest["blocked_reason"] = reason
         if not _resolved_block(manifest, reason):
-            atomic_write_json(manifest_path, manifest)
             return {
                 "status": "BLOCKED",
                 "preserved": preserved,
@@ -1724,6 +1744,20 @@ def _resume_project_locked(project_dir: Path, manifest_path: Path) -> dict[str, 
                     ),
                     repair_torn_jsonl=True,
                 )
+            tx.append_bytes(
+                "logs/events.jsonl",
+                canonical_event_record(
+                    "project.resumed",
+                    {
+                        "blocked_reason": (
+                            reason if reason in PUBLIC_BLOCKED_REASON_CATEGORIES else "other"
+                        ),
+                        "from": "BLOCKED",
+                        "to": recovery_status,
+                    },
+                ),
+                repair_torn_jsonl=True,
+            )
 
             # The manifest is the commit marker and is deliberately staged once,
             # after cache and event targets, in its final non-BLOCKED form.
@@ -4492,6 +4526,34 @@ def _finalize_project_locked(
     }
 
 
+def _dogfood_cli_minutes(value: str) -> int:
+    try:
+        result = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an integer from 0 through 10080") from error
+    if not 0 <= result <= 10_080:
+        raise argparse.ArgumentTypeError("must be an integer from 0 through 10080")
+    return result
+
+
+def _dogfood_cli_failed_attempts(value: str) -> int:
+    try:
+        result = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an integer from 0 through 1000") from error
+    if not 0 <= result <= 1_000:
+        raise argparse.ArgumentTypeError("must be an integer from 0 through 1000")
+    return result
+
+
+def _dogfood_cli_yes_no(value: str) -> bool:
+    if value == "yes":
+        return True
+    if value == "no":
+        return False
+    raise argparse.ArgumentTypeError("must be yes or no")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="comic_sol.py")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -4555,6 +4617,34 @@ def _build_parser() -> argparse.ArgumentParser:
     finalize_parser = subparsers.add_parser("finalize")
     finalize_parser.add_argument("project_dir", type=Path)
     finalize_parser.add_argument("--json", action="store_true", dest="as_json")
+
+    dogfood_parser = subparsers.add_parser("dogfood")
+    dogfood_subparsers = dogfood_parser.add_subparsers(dest="dogfood_command", required=True)
+
+    def add_dogfood_creator_arguments(command: argparse.ArgumentParser) -> None:
+        command.add_argument("project_dir", type=Path)
+        command.add_argument("--setup-minutes", required=True, type=_dogfood_cli_minutes)
+        command.add_argument("--first-project-minutes", required=True, type=_dogfood_cli_minutes)
+        command.add_argument("--pdf-minutes", required=True, type=_dogfood_cli_minutes)
+        command.add_argument("--manual-intervention", required=True, type=_dogfood_cli_yes_no)
+        command.add_argument("--would-use-again", required=True, type=_dogfood_cli_yes_no)
+        command.add_argument("--failed-resume-attempts", type=_dogfood_cli_failed_attempts)
+        command.add_argument("--friction", action="append", default=[])
+        command.add_argument("--cohort-alias")
+        command.add_argument("--json", action="store_true", dest="as_json")
+
+    dogfood_report_parser = dogfood_subparsers.add_parser("report")
+    add_dogfood_creator_arguments(dogfood_report_parser)
+    dogfood_report_parser.add_argument("--consent-to-share", required=True, action="store_true")
+    dogfood_report_parser.add_argument("--output", required=True, type=Path, dest="output_path")
+
+    dogfood_preview_parser = dogfood_subparsers.add_parser("preview")
+    add_dogfood_creator_arguments(dogfood_preview_parser)
+    dogfood_preview_parser.add_argument("--consent-to-share", action="store_true")
+
+    dogfood_validate_parser = dogfood_subparsers.add_parser("validate")
+    dogfood_validate_parser.add_argument("report_path", type=Path)
+    dogfood_validate_parser.add_argument("--json", action="store_true", dest="as_json")
 
     handoff_parser = subparsers.add_parser("handoff")
     handoff_subparsers = handoff_parser.add_subparsers(dest="handoff_command", required=True)
@@ -4815,6 +4905,37 @@ def main(argv: list[str] | None = None) -> int:
                 reason=arguments.reason,
             )
             print(f"{arguments.panel_id}: accepted with warnings")
+        elif arguments.command == "dogfood":
+            command = f"dogfood.{arguments.dogfood_command}"
+            if command == "dogfood.validate":
+                dogfood_arguments: dict[str, object] = {"report_path": arguments.report_path}
+            else:
+                from .version import VERSION as comic_sol_version
+
+                dogfood_arguments = {
+                    "project_dir": arguments.project_dir,
+                    "comic_sol_version": comic_sol_version,
+                    "creator_inputs": {
+                        "setup_minutes": arguments.setup_minutes,
+                        "first_project_minutes": arguments.first_project_minutes,
+                        "pdf_minutes": arguments.pdf_minutes,
+                        "manual_intervention": arguments.manual_intervention,
+                        "would_use_again": arguments.would_use_again,
+                        "failed_resume_attempts": arguments.failed_resume_attempts,
+                        "friction_categories": arguments.friction,
+                        "cohort_alias": arguments.cohort_alias,
+                    },
+                    "consent_to_share": arguments.consent_to_share,
+                }
+                if command == "dogfood.report":
+                    dogfood_arguments["output_path"] = arguments.output_path
+            result = service.execute(command, **dogfood_arguments)
+            if arguments.as_json or command == "dogfood.validate":
+                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                from .dogfood_report import render_preview
+
+                print(render_preview(result), end="")
         elif arguments.command == "handoff":
             command = f"handoff.{arguments.handoff_command}"
             if command == "handoff.export":

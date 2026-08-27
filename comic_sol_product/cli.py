@@ -63,6 +63,34 @@ def _load_engine() -> Any:
     return _load_engine_module("comic_sol")
 
 
+def _dogfood_minutes(value: str) -> int:
+    try:
+        minutes = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an integer from 0 through 10080") from error
+    if not 0 <= minutes <= 10_080:
+        raise argparse.ArgumentTypeError("must be an integer from 0 through 10080")
+    return minutes
+
+
+def _dogfood_failed_attempts(value: str) -> int:
+    try:
+        attempts = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an integer from 0 through 1000") from error
+    if not 0 <= attempts <= 1_000:
+        raise argparse.ArgumentTypeError("must be an integer from 0 through 1000")
+    return attempts
+
+
+def _dogfood_yes_no(value: str) -> bool:
+    if value == "yes":
+        return True
+    if value == "no":
+        return False
+    raise argparse.ArgumentTypeError("must be yes or no")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _ArgumentParser(prog="comic-sol")
     parser.add_argument("--version", action="version", version=f"comic-sol {__version__}")
@@ -117,6 +145,32 @@ def build_parser() -> argparse.ArgumentParser:
 
     finalize = subparsers.add_parser("finalize")
     finalize.add_argument("project_dir", type=Path)
+
+    dogfood = subparsers.add_parser("dogfood")
+    dogfood_commands = dogfood.add_subparsers(dest="dogfood_command", required=True)
+
+    def add_dogfood_creator_arguments(command: argparse.ArgumentParser) -> None:
+        command.add_argument("project_dir", type=Path)
+        command.add_argument("--setup-minutes", required=True, type=_dogfood_minutes)
+        command.add_argument("--first-project-minutes", required=True, type=_dogfood_minutes)
+        command.add_argument("--pdf-minutes", required=True, type=_dogfood_minutes)
+        command.add_argument("--manual-intervention", required=True, type=_dogfood_yes_no)
+        command.add_argument("--would-use-again", required=True, type=_dogfood_yes_no)
+        command.add_argument("--failed-resume-attempts", type=_dogfood_failed_attempts)
+        command.add_argument("--friction", action="append", default=[])
+        command.add_argument("--cohort-alias")
+
+    dogfood_report = dogfood_commands.add_parser("report")
+    add_dogfood_creator_arguments(dogfood_report)
+    dogfood_report.add_argument("--consent-to-share", required=True, action="store_true")
+    dogfood_report.add_argument("--output", required=True, type=Path, dest="output_path")
+
+    dogfood_preview = dogfood_commands.add_parser("preview")
+    add_dogfood_creator_arguments(dogfood_preview)
+    dogfood_preview.add_argument("--consent-to-share", action="store_true")
+
+    dogfood_validate = dogfood_commands.add_parser("validate")
+    dogfood_validate.add_argument("report_path", type=Path)
 
     handoff = subparsers.add_parser("handoff")
     handoff_commands = handoff.add_subparsers(dest="handoff_command", required=True)
@@ -616,6 +670,7 @@ def _run(
         composition=_load_engine_module("compose_pages"),
         export=_load_engine_module("export_pdf"),
         report=_load_engine_module("render_report"),
+        dogfood=_load_engine_module("dogfood_report"),
     )
     if arguments.command == "doctor":
         image_capability = None
@@ -698,6 +753,28 @@ def _run(
         return service.execute("resume", project_dir=arguments.project_dir, progress=progress)
     if arguments.command == "finalize":
         return service.execute("finalize", project_dir=arguments.project_dir, progress=progress)
+    if arguments.command == "dogfood.validate":
+        return service.execute("dogfood.validate", report_path=arguments.report_path)
+    if arguments.command in {"dogfood.report", "dogfood.preview"}:
+        creator_inputs = {
+            "setup_minutes": arguments.setup_minutes,
+            "first_project_minutes": arguments.first_project_minutes,
+            "pdf_minutes": arguments.pdf_minutes,
+            "manual_intervention": arguments.manual_intervention,
+            "would_use_again": arguments.would_use_again,
+            "failed_resume_attempts": arguments.failed_resume_attempts,
+            "friction_categories": arguments.friction,
+            "cohort_alias": arguments.cohort_alias,
+        }
+        dogfood_arguments: dict[str, Any] = {
+            "project_dir": arguments.project_dir,
+            "creator_inputs": creator_inputs,
+            "consent_to_share": arguments.consent_to_share,
+            "comic_sol_version": __version__,
+        }
+        if arguments.command == "dogfood.report":
+            dogfood_arguments["output_path"] = arguments.output_path
+        return service.execute(arguments.command, **dogfood_arguments)
     if arguments.command in {
         "handoff.prepare",
         "handoff.inspect",
@@ -778,6 +855,8 @@ def main(argv: list[str] | None = None) -> int:
         _validate_init_arguments(arguments)
         if arguments.command == "handoff":
             arguments.command = f"handoff.{arguments.handoff_command}"
+        elif arguments.command == "dogfood":
+            arguments.command = f"dogfood.{arguments.dogfood_command}"
     except CliUsageError as error:
         # Parse failures never leak argparse usage text or SystemExit: JSON
         # mode still receives exactly one envelope, human mode the canonical
@@ -858,6 +937,10 @@ def main(argv: list[str] | None = None) -> int:
             print(data["project_id"])
         elif command == "status":
             print(_render_status(arguments))
+        elif command in {"dogfood.report", "dogfood.preview"}:
+            print(_load_engine_module("dogfood_report").render_preview(data), end="")
+        elif command == "dogfood.validate":
+            print(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
         elif command.startswith("handoff."):
             print(_render_handoff(command, data))
         elif command in {"setup", "repair", "uninstall"}:

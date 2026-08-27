@@ -24,6 +24,7 @@ class CommandService:
         export: Any | None = None,
         report: Any | None = None,
         handoff_archive: Any | None = None,
+        dogfood: Any | None = None,
     ) -> None:
         package = __package__ or "scripts"
 
@@ -36,6 +37,7 @@ class CommandService:
         self.composition = composition if composition is not None else load("compose_pages")
         self.export = export if export is not None else load("export_pdf")
         self.report = report if report is not None else load("render_report")
+        self.dogfood = dogfood if dogfood is not None else load("dogfood_report")
         self.handoff_archive = (
             handoff_archive if handoff_archive is not None else load("handoff_archive")
         )
@@ -95,6 +97,25 @@ class CommandService:
                 image_capability=image_capability,
                 page_count=page_count,
             )
+        if command == "dogfood.validate":
+            return self.dogfood.validate_report_file(
+                self._required(kwargs, "report_path"), require_consent=True
+            )
+        if command in {"dogfood.report", "dogfood.preview"}:
+            project = self._required(kwargs, "project_dir")
+            report_value = self.dogfood.build_report(
+                project,
+                comic_sol_version=self._required(kwargs, "comic_sol_version"),
+                creator_inputs=self._required(kwargs, "creator_inputs"),
+                consent_to_share=kwargs.get("consent_to_share", False),
+            )
+            if command == "dogfood.report":
+                self.dogfood.write_report(
+                    self._required(kwargs, "output_path"),
+                    report_value,
+                    project_dir=project,
+                )
+            return report_value
         if command == "handoff.export":
             return self.handoff_archive.export_handoff_archive(
                 self._required(kwargs, "project_dir"),

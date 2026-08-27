@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import shutil
+import runpy
 from pathlib import Path
 
 from setuptools import setup
 from setuptools.command.build_py import build_py as _build_py
 
-
 ROOT = Path(__file__).resolve().parent
+REQUIRED_RUNTIME_SCRIPTS = runpy.run_path(ROOT / "runtime_contract.py")["REQUIRED_RUNTIME_SCRIPTS"]
 BUILD_ONLY_SCRIPTS = {
     "assemble_release.py",
     "benchmark.py",
@@ -35,8 +36,14 @@ class build_py(_build_py):
         (engine_root / "__init__.py").write_text(
             '"""Bundled deterministic Comic Sol engine."""\n', encoding="utf-8"
         )
-        # Runtime modules, including portable handoff archive support, are
-        # discovered from the canonical scripts directory rather than listed.
+        # Runtime modules, including portable handoff and local dogfood report
+        # support, are discovered from canonical scripts rather than duplicated.
+        script_names = {source.name for source in (ROOT / "scripts").glob("*.py")}
+        missing_runtime = sorted(REQUIRED_RUNTIME_SCRIPTS - script_names)
+        if missing_runtime:
+            raise FileNotFoundError(
+                "required runtime scripts are missing: " + ", ".join(missing_runtime)
+            )
         for source in sorted((ROOT / "scripts").glob("*.py")):
             if source.name in BUILD_ONLY_SCRIPTS:
                 continue

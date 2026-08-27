@@ -1,4 +1,4 @@
-include LICENSE README.md SKILL.md
+include LICENSE README.md SKILL.md runtime_contract.py
 recursive-include scripts *.py
 recursive-include assets *
 recursive-include templates *
