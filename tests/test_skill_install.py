@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import tempfile
@@ -12,6 +13,7 @@ from comic_sol_product.errors import CliUsageError
 
 class SkillInstallTests(unittest.TestCase):
     def setUp(self):
+        self.maxDiff = None
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -138,14 +140,57 @@ class SkillInstallTests(unittest.TestCase):
         self.assertTrue((compiled / "tool.cpython-311.pyc").is_file())
         self.assertFalse((destination / "SKILL.md").exists())
 
+    def test_binary_payload_survives_text_mode_hazards_verbatim(self):
+        """Binary members must round-trip exactly, including CRLF and Ctrl-Z.
+
+        Windows `os.open` defaults to text mode without `O_BINARY`: reads stop at
+        0x1A (Ctrl-Z) and writes expand LF to CRLF, which silently corrupts or
+        truncates binary Skill assets such as the bundled fonts.
+        """
+        hazardous = b"\x00\x01\r\n\x1amid-file ctrl-z\r\nGPOS\x00\x92\x8chead\x16\rg\xfc\n\x1a\x00"
+        (self.bundle / "assets/fonts/font.txt").write_bytes(hazardous)
+        (self.bundle / "assets/fonts/Hazard-Regular.ttf").write_bytes(hazardous * 64)
+
+        result = self.install("claude", "user")
+        destination = Path(result.destination)
+
+        self.assertEqual(hazardous, (destination / "assets/fonts/font.txt").read_bytes())
+        self.assertEqual(
+            hazardous * 64, (destination / "assets/fonts/Hazard-Regular.ttf").read_bytes()
+        )
+        marker = json.loads((destination / skill_install.MARKER_NAME).read_text())
+        self.assertEqual(
+            hashlib.sha256(hazardous).hexdigest(),
+            marker["managed_paths"]["assets/fonts/font.txt"],
+        )
+        # A same-digest reinstall must still be a no-op, which only holds if the
+        # persisted bytes hash to the recorded digest.
+        self.assertEqual("unchanged", self.install("claude", "user").status)
+
+    def test_no_payload_open_bypasses_the_binary_helper(self):
+        """One helper owns binary mode, so a new call site cannot forget it."""
+        source = Path(skill_install.__file__).read_text(encoding="utf-8")
+        bare = [
+            line.strip()
+            for line in source.splitlines()
+            if "os.open(" in line and "_BINARY_FLAG" not in line and "_DIRECTORY_FLAG" not in line
+        ]
+        self.assertEqual(
+            [], bare, "every descriptor must declare binary payload or directory intent"
+        )
+        self.assertIn('_BINARY_FLAG = getattr(os, "O_BINARY", 0)', source)
+
     def test_installed_payload_is_byte_equal_to_complete_canonical_bundle(self):
         canonical = Path(__file__).resolve().parents[1] / "skills/comic-sol"
         result = self.install("claude", "user", bundle_root=canonical)
         destination = Path(result.destination)
 
-        def managed(root: Path) -> dict[str, bytes]:
-            # Running the suite byte-compiles the bundled scripts in place, so
-            # both sides must apply the same environment-generated exclusion.
+        def managed(root: Path) -> dict[str, str]:
+            # Compare names and digests, never raw bytes: a byte-level diff of
+            # fonts is megabytes long and tells you nothing about which file
+            # drifted. Running the suite byte-compiles the bundled scripts in
+            # place, so both sides apply the same environment-generated
+            # exclusion.
             payload = {}
             for path in root.rglob("*"):
                 relative = path.relative_to(root).as_posix()
@@ -153,12 +198,13 @@ class SkillInstallTests(unittest.TestCase):
                     continue
                 if relative == skill_install.MARKER_NAME:
                     continue
-                payload[relative] = path.read_bytes()
+                payload[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
             return payload
 
         expected = managed(canonical)
         actual = managed(destination)
         self.assertIn("SKILL.md", expected)
+        self.assertEqual(sorted(expected), sorted(actual))
         self.assertEqual(expected, actual)
         self.assertEqual(skill_install.bundle_digest(canonical), result.bundle_digest)
 

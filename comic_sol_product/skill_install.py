@@ -31,6 +31,11 @@ _MARKER_FIELDS = frozenset({"target", "scope", "version", "bundle_digest", "mana
 # are never scanned, copied, managed, verified, or removed.
 _UNMANAGED_DIRECTORIES = frozenset({"__pycache__"})
 _UNMANAGED_SUFFIXES = (".pyc", ".pyo")
+# Binary mode is mandatory on Windows; no-follow is mandatory everywhere it
+# exists. Both are absent on some platforms, so resolve them once.
+_BINARY_FLAG = getattr(os, "O_BINARY", 0)
+_NOFOLLOW_FLAG = getattr(os, "O_NOFOLLOW", 0)
+_DIRECTORY_FLAG = getattr(os, "O_DIRECTORY", 0)
 _SUPPORTED = frozenset(
     {
         ("codex", "user"),
@@ -102,6 +107,17 @@ def _validate_relative(value: str) -> str:
     if normalized != value:
         raise UnsafeSkillPathError("managed paths must use canonical POSIX separators")
     return normalized
+
+
+def _open_binary(path: Path, flags: int, mode: int = 0o600) -> int:
+    """Open one payload descriptor in binary, no-follow mode.
+
+    Windows `os.open` defaults to text mode: reads stop at 0x1A (Ctrl-Z) and
+    writes expand LF to CRLF, which silently truncates or corrupts binary Skill
+    assets such as the bundled fonts. Every payload descriptor is opened here so
+    no call site can omit either flag.
+    """
+    return os.open(path, flags | _BINARY_FLAG | _NOFOLLOW_FLAG, mode)
 
 
 def _is_unmanaged(relative: str) -> bool:
@@ -197,7 +213,7 @@ def _mkdir_verified(path: Path) -> None:
 def _fsync_directory(path: Path) -> None:
     if os.name == "nt":
         return
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    descriptor = os.open(path, os.O_RDONLY | _DIRECTORY_FLAG)
     try:
         try:
             os.fsync(descriptor)
@@ -210,8 +226,7 @@ def _fsync_directory(path: Path) -> None:
 
 def _read_regular(path: Path, *, maximum: int = MAX_PAYLOAD_FILE_BYTES) -> bytes:
     _assert_safe_components(path)
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
+    descriptor = _open_binary(path, os.O_RDONLY)
     try:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode) or _is_reparse_point(before):
@@ -389,8 +404,7 @@ def _auto_target(
 
 def _copy_file(source: Path, destination: Path) -> None:
     data = _read_regular(source)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(destination, flags, 0o644)
+    descriptor = _open_binary(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     try:
         with os.fdopen(descriptor, "wb") as stream:
             descriptor = -1
@@ -479,11 +493,7 @@ def _write_marker(
     managed: dict[str, str],
 ) -> None:
     marker = destination / MARKER_NAME
-    descriptor = os.open(
-        marker,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-        0o600,
-    )
+    descriptor = _open_binary(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(descriptor, "wb") as stream:
             descriptor = -1
