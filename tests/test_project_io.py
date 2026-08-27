@@ -184,6 +184,20 @@ class ContainedProjectPathTests(unittest.TestCase):
                     pass
         self.assertEqual(errno.EINVAL, raised.exception.errno)
 
+    def test_read_only_lock_rejects_link_when_nofollow_is_unavailable(self):
+        (self.project / ".comic-sol.lock").write_bytes(b"holder\n")
+        with (
+            mock.patch.object(project_io, "_HAS_NOFOLLOW", False),
+            mock.patch.object(
+                Path,
+                "is_symlink",
+                lambda path: path.name == ".comic-sol.lock",
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "symlink|reparse"):
+                with project_io.ProjectLock(self.project, timeout=0, read_only=True):
+                    pass
+
 
 class DurableWriteTests(unittest.TestCase):
     def test_orders_write_flush_file_fsync_replace_and_directory_fsync(self):

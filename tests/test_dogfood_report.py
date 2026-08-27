@@ -26,6 +26,7 @@ from scripts.handoff import (
     build_generation_receipt,
     generation_job_sha256,
 )
+from scripts.input_limits import MAX_JSON_DEPTH, MAX_JSON_ENTRIES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -571,6 +572,23 @@ class DogfoodReportTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.assertEqual([], derive_project_metrics(self.project)["completed_stages"])
+
+    def test_event_lines_enforce_shared_json_structure_limits(self):
+        nested = '{"event":"nested","details":' + "[" * (MAX_JSON_DEPTH + 1)
+        nested += "0" + "]" * (MAX_JSON_DEPTH + 1) + "}"
+        wide = json.dumps(
+            {
+                "event": "wide",
+                "details": {f"key-{index}": index for index in range(MAX_JSON_ENTRIES + 1)},
+            }
+        )
+        event_path = self.project / "logs/events.jsonl"
+
+        for kind, line in (("nested", nested), ("wide", wide)):
+            with self.subTest(kind=kind):
+                event_path.write_text(line + "\n", encoding="utf-8")
+                with self.assertRaisesRegex(DogfoodReportError, "invalid JSON"):
+                    derive_project_metrics(self.project)
 
     def test_handoff_counts_use_prepared_units_and_committed_completion_events(self):
         derived = derive_project_metrics(self.project)

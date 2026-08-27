@@ -127,15 +127,15 @@ class ProjectLock:
         flags = os.O_RDWR if os.name == "nt" else os.O_RDONLY
         if not self.read_only:
             flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
-        try:
-            descriptor = os.open(path, flags | _O_NOFOLLOW, 0o600)
-        except FileExistsError:
-            handle = self._open_retained(path)
+        if self.read_only:
+            handle = open_path_nofollow(path.absolute(), flags=flags)
         else:
-            handle = _binary_fdopen(
-                descriptor, "r+b" if not self.read_only or os.name == "nt" else "rb"
-            )
-            if not self.read_only:
+            try:
+                descriptor = os.open(path, flags | _O_NOFOLLOW, 0o600)
+            except FileExistsError:
+                handle = self._open_retained(path)
+            else:
+                handle = _binary_fdopen(descriptor, "r+b")
                 try:
                     handle.write(b"\0")
                     handle.flush()

@@ -313,8 +313,8 @@ def _events(project_dir: Path) -> list[dict[str, object]]:
         if not line:
             continue
         try:
-            value = json.loads(line)
-        except json.JSONDecodeError as error:
+            value = loads_bounded_json(line, source="events.jsonl event")
+        except ValueError as error:
             raise DogfoodReportError("event evidence contains invalid JSON") from error
         if not isinstance(value, dict):
             raise DogfoodReportError("event evidence must contain objects")
