@@ -46,6 +46,19 @@ def sha256_file(path: Path) -> str:
 
 
 _DRIVE = re.compile(r"^[A-Za-z]:")
+_WINDOWS_FORBIDDEN_NAME_CHARACTERS = frozenset('<>:"|?*')
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        "conin$",
+        "conout$",
+        *(f"com{suffix}" for suffix in "123456789¹²³"),
+        *(f"lpt{suffix}" for suffix in "123456789¹²³"),
+    }
+)
 _LOCK_RETRY_SECONDS = 0.05
 PROJECT_OPERATION_LOCK_TIMEOUT = 300.0
 # Windows byte-range locks are mandatory, so the locked byte must sit past any
@@ -267,6 +280,28 @@ def normalized_project_relative_path(relative: str | Path) -> str:
     parts = path.parts
     if not parts or any(part in {"", ".", ".."} for part in parts) or path.as_posix() != text:
         raise ValueError("path must be a normalized relative project path")
+    return text
+
+
+def normalized_portable_project_relative_path(relative: str | Path) -> str:
+    """Return a normalized project path whose components are Windows-portable."""
+    text = normalized_project_relative_path(relative)
+    for component in PurePosixPath(text).parts:
+        try:
+            utf16_units = len(component.encode("utf-16-le")) // 2
+        except UnicodeEncodeError as error:
+            raise ValueError("path components must be portable to Windows") from error
+        base = component.split(".", 1)[0].rstrip(" ").casefold()
+        if (
+            utf16_units > 255
+            or component.endswith((" ", "."))
+            or any(
+                ord(character) < 32 or character in _WINDOWS_FORBIDDEN_NAME_CHARACTERS
+                for character in component
+            )
+            or base in _WINDOWS_RESERVED_NAMES
+        ):
+            raise ValueError("path components must be portable to Windows")
     return text
 
 

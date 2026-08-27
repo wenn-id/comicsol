@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import stat
+import struct
 import tempfile
 import zipfile
 import zlib
@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import BinaryIO, Iterator
 
 from .core_primitives import canonical_json_bytes
+from .input_limits import MAX_JSON_BYTES, loads_bounded_json
 from .project_io import (
     ProjectLock,
     _atomic_rename_noreplace,
@@ -24,6 +25,7 @@ from .project_io import (
     contained_project_path,
     fsync_directory,
     fsync_directory_tree,
+    normalized_portable_project_relative_path,
     normalized_project_relative_path,
     open_contained,
     open_path_nofollow,
@@ -48,6 +50,12 @@ MAX_MEMBER_BYTES = 64 * 1024 * 1024
 MAX_TOTAL_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 200.0
 _CONTROL_MEMBER_BYTES = 4 * 1024 * 1024
+_MAX_CENTRAL_DIRECTORY_BYTES = MAX_MEMBER_BYTES
+_EOCD_SIGNATURE = b"PK\x05\x06"
+_CENTRAL_DIRECTORY_SIGNATURE = b"PK\x01\x02"
+_EOCD_FIXED_BYTES = 22
+_MAX_ZIP_COMMENT_BYTES = 65535
+_CENTRAL_DIRECTORY_FIXED_BYTES = 46
 _WINDOWS_REPARSE_ATTRIBUTE = 0x0400
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -93,7 +101,7 @@ def _safe_project_id(value: object) -> str:
     if not isinstance(value, str):
         raise HandoffArchiveError("archive project ID must be a string")
     try:
-        normalized = normalized_project_relative_path(value)
+        normalized = normalized_portable_project_relative_path(value)
     except ValueError as error:
         raise HandoffArchiveError("archive project ID is unsafe") from error
     if "/" in normalized:
@@ -234,6 +242,7 @@ def _collect_project_payloads(project_dir: Path) -> tuple[str, dict[str, bytes]]
                 continue
 
             name = PROJECT_MEMBER_PREFIX + relative
+            _validated_member_name(name)
             if len(payloads) + 3 > MAX_ARCHIVE_MEMBERS:
                 raise HandoffArchiveError("archive member count exceeds the limit")
             if metadata.st_size < 0 or metadata.st_size > MAX_MEMBER_BYTES:
@@ -291,6 +300,104 @@ def _set_descriptor_mode(descriptor: int, mode: int) -> None:
     descriptor_chmod = getattr(os, "fchmod", None)
     if callable(descriptor_chmod):
         descriptor_chmod(descriptor, mode)
+
+
+def _preflight_central_directory(handle: BinaryIO) -> None:
+    """Bound ZIP metadata before ``ZipFile`` materializes its directory."""
+    file_size = os.fstat(handle.fileno()).st_size
+    tail_size = min(file_size, _EOCD_FIXED_BYTES + _MAX_ZIP_COMMENT_BYTES)
+    if tail_size < _EOCD_FIXED_BYTES:
+        raise HandoffArchiveError("archive ZIP or central directory is corrupt")
+    tail_start = file_size - tail_size
+    handle.seek(tail_start)
+    tail = handle.read(tail_size)
+    if len(tail) != tail_size:
+        raise HandoffArchiveError("archive ZIP or central directory is corrupt")
+
+    eocd_index = tail.rfind(_EOCD_SIGNATURE)
+    while eocd_index >= 0:
+        if eocd_index + _EOCD_FIXED_BYTES <= len(tail):
+            comment_size = int.from_bytes(tail[eocd_index + 20 : eocd_index + 22], "little")
+            if tail_start + eocd_index + _EOCD_FIXED_BYTES + comment_size == file_size:
+                break
+        eocd_index = tail.rfind(_EOCD_SIGNATURE, 0, eocd_index)
+    if eocd_index < 0:
+        raise HandoffArchiveError("archive ZIP or central directory is corrupt")
+
+    (
+        signature,
+        disk_number,
+        central_disk,
+        disk_members,
+        total_members,
+        central_size,
+        central_offset,
+        _comment_size,
+    ) = struct.unpack(
+        "<4s4H2LH",
+        tail[eocd_index : eocd_index + _EOCD_FIXED_BYTES],
+    )
+    if signature != _EOCD_SIGNATURE or disk_number or central_disk or disk_members != total_members:
+        raise HandoffArchiveError("archive multi-disk central directory is unsupported")
+    if total_members == 0xFFFF or central_size == 0xFFFFFFFF or central_offset == 0xFFFFFFFF:
+        raise HandoffArchiveError("archive ZIP64 central directory is unsupported")
+    if total_members > MAX_ARCHIVE_MEMBERS:
+        raise HandoffArchiveError("archive member count exceeds the limit")
+    if central_size > _MAX_CENTRAL_DIRECTORY_BYTES:
+        raise HandoffArchiveError("archive central directory exceeds the metadata limit")
+
+    central_end = tail_start + eocd_index
+    central_start = central_end - central_size
+    if central_start < 0 or central_offset > central_start:
+        raise HandoffArchiveError("archive ZIP or central directory is corrupt")
+
+    handle.seek(central_start)
+    cursor = central_start
+    actual_members = 0
+    total_uncompressed = 0
+    while cursor < central_end:
+        if actual_members >= MAX_ARCHIVE_MEMBERS:
+            raise HandoffArchiveError("archive member count exceeds the limit")
+        fixed = handle.read(_CENTRAL_DIRECTORY_FIXED_BYTES)
+        if (
+            len(fixed) != _CENTRAL_DIRECTORY_FIXED_BYTES
+            or fixed[:4] != _CENTRAL_DIRECTORY_SIGNATURE
+        ):
+            raise HandoffArchiveError("archive ZIP or central directory is corrupt")
+        compressed_size = int.from_bytes(fixed[20:24], "little")
+        uncompressed_size = int.from_bytes(fixed[24:28], "little")
+        member_disk = int.from_bytes(fixed[34:36], "little")
+        local_header_offset = int.from_bytes(fixed[42:46], "little")
+        if (
+            compressed_size == 0xFFFFFFFF
+            or uncompressed_size == 0xFFFFFFFF
+            or member_disk == 0xFFFF
+            or local_header_offset == 0xFFFFFFFF
+        ):
+            raise HandoffArchiveError("archive ZIP64 central directory is unsupported")
+        if member_disk:
+            raise HandoffArchiveError("archive multi-disk central directory is unsupported")
+        if uncompressed_size > MAX_MEMBER_BYTES:
+            raise HandoffArchiveError("archive member exceeds the member limit")
+        total_uncompressed += uncompressed_size
+        if total_uncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES:
+            raise HandoffArchiveError("archive aggregate uncompressed size exceeds the limit")
+        if compressed_size <= 0:
+            raise HandoffArchiveError("archive member has an invalid compressed size")
+        if uncompressed_size and uncompressed_size / compressed_size > MAX_COMPRESSION_RATIO:
+            raise HandoffArchiveError("archive member exceeds the compression ratio limit")
+        variable_size = sum(
+            int.from_bytes(fixed[offset : offset + 2], "little") for offset in (28, 30, 32)
+        )
+        record_size = _CENTRAL_DIRECTORY_FIXED_BYTES + variable_size
+        if cursor + record_size > central_end:
+            raise HandoffArchiveError("archive ZIP or central directory is corrupt")
+        handle.seek(variable_size, os.SEEK_CUR)
+        cursor += record_size
+        actual_members += 1
+    if cursor != central_end or actual_members != total_members:
+        raise HandoffArchiveError("archive central directory member count is inconsistent")
+    handle.seek(0)
 
 
 def _write_archive(handle: BinaryIO, payloads: dict[str, bytes]) -> None:
@@ -359,6 +466,7 @@ def export_handoff_archive(project_dir: Path, output_path: Path) -> dict[str, ob
             handle.flush()
             os.fsync(handle.fileno())
             handle.seek(0)
+            _preflight_central_directory(handle)
             with zipfile.ZipFile(handle, "r") as written:
                 _verify_open_archive(written)
         current = temporary.stat(follow_symlinks=False)
@@ -416,6 +524,12 @@ def _validated_member_name(name: str) -> str:
         normalized = normalized_project_relative_path(name)
     except ValueError as error:
         raise HandoffArchiveError("archive contains an unsafe traversal member path") from error
+    try:
+        normalized_portable_project_relative_path(normalized)
+    except ValueError as error:
+        raise HandoffArchiveError(
+            "archive contains a member path that is not portable to Windows"
+        ) from error
     if normalized not in {
         FORMAT_METADATA_MEMBER,
         CHECKSUM_MANIFEST_MEMBER,
@@ -501,18 +615,30 @@ def _read_member(bundle: zipfile.ZipFile, info: zipfile.ZipInfo, *, limit: int) 
     return bytes(payload)
 
 
+def _load_archive_json(payload: bytes, *, label: str) -> object:
+    try:
+        return loads_bounded_json(payload, source=f"archive {label}")
+    except (UnicodeDecodeError, ValueError, RecursionError) as error:
+        raise HandoffArchiveError(f"archive {label} is not valid JSON") from error
+
+
 def _canonical_json_member(
     bundle: zipfile.ZipFile,
     info: zipfile.ZipInfo,
     *,
     label: str,
 ) -> dict[str, object]:
-    payload = _read_member(bundle, info, limit=min(MAX_MEMBER_BYTES, _CONTROL_MEMBER_BYTES))
+    payload = _read_member(
+        bundle,
+        info,
+        limit=min(MAX_MEMBER_BYTES, _CONTROL_MEMBER_BYTES, MAX_JSON_BYTES),
+    )
+    value = _load_archive_json(payload, label=label)
     try:
-        value = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise HandoffArchiveError(f"archive {label} is not valid JSON") from error
-    if not isinstance(value, dict) or canonical_json_bytes(value) != payload:
+        canonical_payload = canonical_json_bytes(value)
+    except (TypeError, ValueError, RecursionError) as error:
+        raise HandoffArchiveError(f"archive {label} is not canonical JSON") from error
+    if not isinstance(value, dict) or canonical_payload != payload:
         raise HandoffArchiveError(f"archive {label} is not canonical JSON")
     return value
 
@@ -617,24 +743,18 @@ def _verify_open_archive(bundle: zipfile.ZipFile) -> _VerifiedArchive:
     project_payload = _read_member(
         bundle,
         members[PROJECT_MEMBER_PREFIX + "project.json"],
-        limit=MAX_MEMBER_BYTES,
+        limit=min(MAX_MEMBER_BYTES, MAX_JSON_BYTES),
     )
-    try:
-        project_manifest = json.loads(project_payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise HandoffArchiveError("archive project manifest is invalid") from error
+    project_manifest = _load_archive_json(project_payload, label="project manifest")
     if not isinstance(project_manifest, dict) or project_manifest.get("project_id") != project_id:
         raise HandoffArchiveError("archive project ID does not match the project manifest identity")
 
     handoff_payload = _read_member(
         bundle,
         members[PROJECT_MEMBER_PREFIX + "handoff/manifest.json"],
-        limit=MAX_MEMBER_BYTES,
+        limit=min(MAX_MEMBER_BYTES, MAX_JSON_BYTES),
     )
-    try:
-        handoff_manifest = json.loads(handoff_payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise HandoffArchiveError("archive handoff manifest is invalid") from error
+    handoff_manifest = _load_archive_json(handoff_payload, label="handoff manifest")
     from .handoff import validate_handoff_manifest
 
     handoff_issues = validate_handoff_manifest(handoff_manifest)
@@ -667,6 +787,7 @@ def _verified_archive(path: Path) -> Iterator[tuple[zipfile.ZipFile, _VerifiedAr
         if not stat.S_ISREG(metadata.st_mode):
             raise HandoffArchiveError("archive input must be a regular file")
         try:
+            _preflight_central_directory(source)
             with zipfile.ZipFile(source, "r") as bundle:
                 yield bundle, _verify_open_archive(bundle)
         except HandoffArchiveError:

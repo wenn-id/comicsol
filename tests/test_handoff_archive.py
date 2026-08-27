@@ -197,6 +197,26 @@ def _zero_compressed_deflate_member(archive: Path, member: str) -> None:
             raise AssertionError("fixture zero-size metadata patch failed")
 
 
+def _patch_first_central_field(
+    archive: Path,
+    *,
+    offset: int,
+    size: int,
+    value: int,
+) -> None:
+    payload = bytearray(archive.read_bytes())
+    eocd = payload.rfind(b"PK\x05\x06")
+    if eocd < 0:
+        raise AssertionError("fixture archive has no end-of-central-directory record")
+    central_offset = int.from_bytes(payload[eocd + 16 : eocd + 20], "little")
+    if payload[central_offset : central_offset + 4] != b"PK\x01\x02":
+        raise AssertionError("fixture central directory is malformed")
+    payload[central_offset + offset : central_offset + offset + size] = value.to_bytes(
+        size, "little"
+    )
+    archive.write_bytes(payload)
+
+
 def _regular_info(name: str, *, payload_mode: int = 0o644) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(name, FIXED_ZIP_DATETIME)
     info.create_system = 3
@@ -880,6 +900,113 @@ class HandoffArchiveContractTests(unittest.TestCase):
                 malformed.write_bytes(payload)
                 self._assert_import_rejected(module, malformed, "archive|central|corrupt|zip")
 
+    def test_public_routes_classify_deeply_nested_control_json_as_handoff_archive_error(
+        self,
+    ):
+        from comic_sol_product.errors import classify_exception
+        from scripts.command_service import CommandService
+
+        module, project, archive, root = self._export_fixture()
+        deeply_nested = b"[" * 10_000 + b"0" + b"]" * 10_000
+        members = (
+            FORMAT_METADATA_MEMBER,
+            CHECKSUM_MANIFEST_MEMBER,
+            PROJECT_MEMBER_PREFIX + "project.json",
+            PROJECT_MEMBER_PREFIX + "handoff/manifest.json",
+        )
+
+        for member in members:
+            with self.subTest(member=member):
+                entries = _replace_entry(_archive_entries(archive), member, deeply_nested)
+                if member.startswith(PROJECT_MEMBER_PREFIX):
+                    entries = _refresh_checksums(entries)
+                malformed = self._mutated_archive(
+                    archive,
+                    entries,
+                    "deep-" + member.replace("/", "-"),
+                )
+                output_root = root / ("deep-output-" + member.replace("/", "-"))
+                output_root.mkdir()
+                before = _tree_snapshot(output_root)
+                cases = (
+                    ("handoff.inspect", {"archive_path": malformed}),
+                    (
+                        "handoff.import",
+                        {"archive_path": malformed, "output_root": output_root},
+                    ),
+                )
+
+                for route, arguments in cases:
+                    with (
+                        self.subTest(member=member, route=route),
+                        mock.patch.object(
+                            module,
+                            "MAX_COMPRESSION_RATIO",
+                            float("inf"),
+                        ),
+                    ):
+                        with self.assertRaises(module.HandoffArchiveError) as raised:
+                            CommandService().execute(route, **arguments)
+                        self.assertEqual(
+                            "CS-HANDOFF-002",
+                            classify_exception(raised.exception).code,
+                        )
+                        self.assertEqual(before, _tree_snapshot(output_root))
+                        self.assertFalse((output_root / project.name).exists())
+
+    def test_public_routes_classify_noncanonical_unicode_control_json_as_archive_error(
+        self,
+    ):
+        from comic_sol_product.errors import classify_exception
+        from scripts.command_service import CommandService
+
+        module, project, archive, root = self._export_fixture()
+        payloads = {
+            FORMAT_METADATA_MEMBER: (
+                b'{"format":"comic-sol-handoff","project_id":"\\ud800","version":"1.0"}\n'
+            ),
+            CHECKSUM_MANIFEST_MEMBER: (
+                b'{"algorithm":"sha256","files":[],"format_version":"\\ud800"}\n'
+            ),
+        }
+
+        for member, payload in payloads.items():
+            with self.subTest(member=member):
+                entries = _replace_entry(_archive_entries(archive), member, payload)
+                malformed = self._mutated_archive(
+                    archive,
+                    entries,
+                    "surrogate-" + member,
+                )
+                output_root = root / ("surrogate-output-" + member)
+                output_root.mkdir()
+                before = _tree_snapshot(output_root)
+                cases = (
+                    ("handoff.inspect", {"archive_path": malformed}),
+                    (
+                        "handoff.import",
+                        {"archive_path": malformed, "output_root": output_root},
+                    ),
+                )
+
+                for route, arguments in cases:
+                    with (
+                        self.subTest(member=member, route=route),
+                        mock.patch.object(
+                            module,
+                            "MAX_COMPRESSION_RATIO",
+                            float("inf"),
+                        ),
+                    ):
+                        with self.assertRaises(module.HandoffArchiveError) as raised:
+                            CommandService().execute(route, **arguments)
+                        self.assertEqual(
+                            "CS-HANDOFF-002",
+                            classify_exception(raised.exception).code,
+                        )
+                        self.assertEqual(before, _tree_snapshot(output_root))
+                        self.assertFalse((output_root / project.name).exists())
+
     def test_public_routes_classify_malformed_deflate_as_handoff_archive_error(self):
         from comic_sol_product.errors import classify_exception
         from scripts.command_service import CommandService
@@ -973,6 +1100,80 @@ class HandoffArchiveContractTests(unittest.TestCase):
                     "duplicate" if label == "duplicate" else "case.*collid|collision",
                 )
 
+    def test_export_rejects_windows_nonportable_member_components_before_read(self):
+        module = _archive_api(self)
+        project = _prepared_project(self)
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        metadata = types.SimpleNamespace(
+            st_mode=stat.S_IFREG | 0o644,
+            st_file_attributes=0,
+            st_size=1,
+        )
+        invalid = (
+            "logs/NUL.txt",
+            "logs/COM1.portable",
+            "logs/value:stream",
+            "logs/trailing.",
+            "logs/trailing ",
+            "logs/bad?.txt",
+            "logs/control-\x1f.txt",
+            "logs/" + "a" * 256,
+            "logs/" + "\U0001f600" * 128,
+        )
+
+        for index, relative in enumerate(invalid):
+            with self.subTest(relative=relative):
+                destination = root / f"portable-{index}.comic-sol-handoff"
+                read = mock.Mock(side_effect=AssertionError("unsafe member was read"))
+                with (
+                    mock.patch.object(
+                        module,
+                        "_iter_project_entries",
+                        return_value=iter(((relative, metadata),)),
+                    ),
+                    mock.patch.object(module, "read_contained_bytes", read),
+                    self.assertRaisesRegex(
+                        module.HandoffArchiveError,
+                        "portable.*Windows|Windows.*portable",
+                    ),
+                ):
+                    module.export_handoff_archive(project, destination)
+                read.assert_not_called()
+                self.assertFalse(destination.exists())
+                self.assertEqual([], list(root.glob(f".{destination.name}.*.tmp")))
+
+    def test_inspect_and_import_reject_windows_nonportable_member_components(self):
+        module, _project, archive, _root = self._export_fixture()
+        invalid = (
+            "project/logs/NUL.txt",
+            "project/logs/COM1.portable",
+            "project/logs/value:stream",
+            "project/logs/trailing.",
+            "project/logs/trailing ",
+            "project/logs/bad?.txt",
+            "project/logs/control-\x1f.txt",
+            "project/logs/" + "a" * 256,
+            "project/logs/" + "\U0001f600" * 128,
+        )
+
+        for index, member in enumerate(invalid):
+            with self.subTest(member=member):
+                entries = [*_archive_entries(archive), (_regular_info(member), b"unsafe")]
+                entries = _refresh_checksums(entries)
+                entries.sort(key=lambda item: item[0].filename)
+                malicious = self._mutated_archive(archive, entries, f"nonportable-{index}")
+                self._assert_inspect_rejected_without_residue(
+                    module,
+                    malicious,
+                    "portable.*Windows|Windows.*portable",
+                )
+                self._assert_import_rejected(
+                    module,
+                    malicious,
+                    "portable.*Windows|Windows.*portable",
+                )
+
     def test_rejects_absolute_drive_unc_and_traversal_member_paths(self):
         module, _project, archive, _root = self._export_fixture()
         cases = {
@@ -1011,6 +1212,84 @@ class HandoffArchiveContractTests(unittest.TestCase):
                 entries = [*_archive_entries(archive), (info, payload)]
                 malicious = self._mutated_archive(archive, entries, label)
                 self._assert_import_rejected(module, malicious, pattern)
+
+    def test_rejects_central_directory_limits_before_constructing_zipfile(self):
+        module, project, archive, root = self._export_fixture()
+        entries = _archive_entries(archive)
+        member_count = len(entries)
+        sizes = [info.file_size for info, _payload in entries]
+        output_root = root / "central-directory-preflight-output"
+        output_root.mkdir()
+        before = _tree_snapshot(output_root)
+        cases = (
+            ("MAX_ARCHIVE_MEMBERS", member_count - 1, "member.*count"),
+            ("_MAX_CENTRAL_DIRECTORY_BYTES", 1, "central.*directory|metadata.*limit"),
+            ("MAX_MEMBER_BYTES", max(sizes) - 1, "member.*limit"),
+            (
+                "MAX_TOTAL_UNCOMPRESSED_BYTES",
+                sum(sizes) - 1,
+                "aggregate.*uncompressed|total.*limit",
+            ),
+            ("MAX_COMPRESSION_RATIO", 0.5, "compression.*ratio"),
+        )
+
+        for constant, limit, pattern in cases:
+            for route in ("inspect", "import"):
+                with self.subTest(limit=constant, route=route):
+                    constructor = mock.Mock(
+                        side_effect=AssertionError("ZipFile constructed before preflight")
+                    )
+                    with (
+                        mock.patch.object(module, constant, limit, create=True),
+                        mock.patch.object(module.zipfile, "ZipFile", constructor),
+                        self.assertRaisesRegex(module.HandoffArchiveError, pattern),
+                    ):
+                        if route == "inspect":
+                            module.inspect_handoff_archive(archive)
+                        else:
+                            module.import_handoff_archive(archive, output_root)
+                    constructor.assert_not_called()
+                    self.assertEqual(before, _tree_snapshot(output_root))
+                    self.assertFalse((output_root / project.name).exists())
+
+    def test_rejects_per_entry_zip64_sentinels_before_constructing_zipfile(self):
+        module, project, archive, root = self._export_fixture()
+        output_root = root / "central-directory-zip64-output"
+        output_root.mkdir()
+        before = _tree_snapshot(output_root)
+        cases = (
+            ("disk-start", 34, 2, 0xFFFF),
+            ("local-header-offset", 42, 4, 0xFFFFFFFF),
+        )
+
+        for label, offset, size, value in cases:
+            malformed = archive.with_name(f"{archive.stem}-{label}{archive.suffix}")
+            malformed.write_bytes(archive.read_bytes())
+            _patch_first_central_field(
+                malformed,
+                offset=offset,
+                size=size,
+                value=value,
+            )
+            for route in ("inspect", "import"):
+                with self.subTest(field=label, route=route):
+                    constructor = mock.Mock(
+                        side_effect=AssertionError("ZipFile constructed before preflight")
+                    )
+                    with (
+                        mock.patch.object(module.zipfile, "ZipFile", constructor),
+                        self.assertRaisesRegex(
+                            module.HandoffArchiveError,
+                            "ZIP64.*unsupported|unsupported.*ZIP64",
+                        ),
+                    ):
+                        if route == "inspect":
+                            module.inspect_handoff_archive(malformed)
+                        else:
+                            module.import_handoff_archive(malformed, output_root)
+                    constructor.assert_not_called()
+                    self.assertEqual(before, _tree_snapshot(output_root))
+                    self.assertFalse((output_root / project.name).exists())
 
     def test_rejects_excessive_member_count(self):
         module, _project, archive, _root = self._export_fixture()

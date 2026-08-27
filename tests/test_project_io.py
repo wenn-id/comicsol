@@ -29,6 +29,28 @@ class ContainedProjectPathTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "relative project path"):
             contained_project_path(self.project, "plan/a\x00b")
 
+    def test_portable_paths_enforce_windows_utf16_component_limit(self):
+        valid = (
+            "a" * 255,
+            "\U0001f600" * 127 + "a",
+        )
+        invalid = (
+            "a" * 256,
+            "\U0001f600" * 128,
+            "\ud800",
+        )
+
+        for component in valid:
+            with self.subTest(valid_utf16_units=len(component.encode("utf-16-le")) // 2):
+                self.assertEqual(
+                    f"logs/{component}",
+                    project_io.normalized_portable_project_relative_path(f"logs/{component}"),
+                )
+        for component in invalid:
+            with self.subTest(invalid_component=repr(component)):
+                with self.assertRaisesRegex(ValueError, "portable.*Windows|Windows.*portable"):
+                    project_io.normalized_portable_project_relative_path(f"logs/{component}")
+
     def test_rejects_absolute_traversal_and_windows_drive_paths(self):
         for bad in (
             "../outside.png",
