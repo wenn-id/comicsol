@@ -52,18 +52,21 @@ class WebConfigTests(unittest.TestCase):
         # only secrets must reject whitespace and control characters.
         from comic_sol_web.config import WebConfig
 
-        environment = valid_environment(Path("/tmp/Comic Sol projects"))
-        environment["COMIC_SOL_WEB_DATA_ROOT"] = "/tmp/Comic Sol projects"
+        data_root_arg = Path("/tmp/Comic Sol projects")
+        expected_root = data_root_arg.resolve()
+        # Secrets reject whitespace and control characters even when the
+        # data-root path legitimately contains spaces.
         for variable in (
             "COMIC_SOL_WEB_SESSION_SECRET",
             "COMIC_SOL_WEB_ENCRYPTION_SECRET",
         ):
             with self.subTest(variable=variable):
+                environment = valid_environment(data_root_arg)
                 environment[variable] = "has space-secret-value-000000000000000000000"
                 with self.assertRaises(ValueError):
                     WebConfig.from_env(environment)
-        config = WebConfig.from_env(valid_environment(Path("/tmp/Comic Sol projects")))
-        self.assertEqual(Path("/tmp/Comic Sol projects"), config.data_root)
+        config = WebConfig.from_env(valid_environment(data_root_arg))
+        self.assertEqual(expected_root, config.data_root)
 
     def test_configuration_is_immutable_and_does_not_create_data_root(self):
         from comic_sol_web.config import WebConfig
