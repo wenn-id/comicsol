@@ -1513,3 +1513,208 @@ class FailClosedContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DogfoodProductCliContractTests(unittest.TestCase):
+    def invoke(self, argv):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = cli.main(argv)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def invoke_with_service(self, argv, service):
+        service_module = types.SimpleNamespace(CommandService=mock.Mock(return_value=service))
+        with (
+            mock.patch.object(cli, "_load_engine", return_value=types.SimpleNamespace()),
+            mock.patch.object(cli, "_load_engine_module", return_value=types.SimpleNamespace()),
+            mock.patch.object(cli, "_load_command_service", return_value=service_module),
+        ):
+            return self.invoke(argv)
+
+    def test_dogfood_report_preview_and_validate_preserve_json_envelope_and_route_arguments(self):
+        project = Path("/shared/private-project")
+        output = Path("/shared/reports/report.json")
+        report_data = {
+            "kind": "comic-sol-dogfood-report",
+            "schema_version": "1.0",
+            "consent": {"share_report": True},
+        }
+        cases = (
+            (
+                [
+                    "--json",
+                    "dogfood",
+                    "report",
+                    str(project),
+                    "--setup-minutes",
+                    "12",
+                    "--first-project-minutes",
+                    "19",
+                    "--pdf-minutes",
+                    "47",
+                    "--manual-intervention",
+                    "no",
+                    "--would-use-again",
+                    "yes",
+                    "--failed-resume-attempts",
+                    "2",
+                    "--friction",
+                    "installation",
+                    "--friction",
+                    "handoff",
+                    "--cohort-alias",
+                    "cohort-7",
+                    "--consent-to-share",
+                    "--output",
+                    str(output),
+                ],
+                "dogfood.report",
+                {
+                    "project_dir": project,
+                    "output_path": output,
+                    "creator_inputs": {
+                        "setup_minutes": 12,
+                        "first_project_minutes": 19,
+                        "pdf_minutes": 47,
+                        "manual_intervention": False,
+                        "would_use_again": True,
+                        "failed_resume_attempts": 2,
+                        "friction_categories": ["installation", "handoff"],
+                        "cohort_alias": "cohort-7",
+                    },
+                    "consent_to_share": True,
+                    "comic_sol_version": __version__,
+                },
+            ),
+            (
+                [
+                    "--json",
+                    "dogfood",
+                    "preview",
+                    str(project),
+                    "--setup-minutes",
+                    "12",
+                    "--first-project-minutes",
+                    "19",
+                    "--pdf-minutes",
+                    "47",
+                    "--manual-intervention",
+                    "no",
+                    "--would-use-again",
+                    "yes",
+                ],
+                "dogfood.preview",
+                {
+                    "project_dir": project,
+                    "creator_inputs": {
+                        "setup_minutes": 12,
+                        "first_project_minutes": 19,
+                        "pdf_minutes": 47,
+                        "manual_intervention": False,
+                        "would_use_again": True,
+                        "failed_resume_attempts": None,
+                        "friction_categories": [],
+                        "cohort_alias": None,
+                    },
+                    "consent_to_share": False,
+                    "comic_sol_version": __version__,
+                },
+            ),
+            (
+                ["--json", "dogfood", "validate", str(output)],
+                "dogfood.validate",
+                {"report_path": output},
+            ),
+        )
+        for argv, route, expected in cases:
+            service = types.SimpleNamespace(execute=mock.Mock(return_value=report_data))
+            with self.subTest(route=route):
+                code, stdout, stderr = self.invoke_with_service(argv, service)
+                self.assertEqual(0, code)
+                self.assertEqual("", stderr)
+                payload = json.loads(stdout)
+                self.assertEqual({"ok", "command", "data", "error"}, set(payload))
+                self.assertEqual(route, payload["command"])
+                self.assertEqual(report_data, payload["data"])
+                service.execute.assert_called_once_with(route, **expected)
+
+    def test_persisted_report_requires_consent_and_output_at_parse_boundary(self):
+        base = [
+            "--json",
+            "dogfood",
+            "report",
+            "/shared/private-project",
+            "--setup-minutes",
+            "1",
+            "--first-project-minutes",
+            "2",
+            "--pdf-minutes",
+            "3",
+            "--manual-intervention",
+            "no",
+            "--would-use-again",
+            "yes",
+        ]
+        for omitted in ("--consent-to-share", "--output"):
+            argv = [*base]
+            if omitted != "--consent-to-share":
+                argv.append("--consent-to-share")
+            if omitted != "--output":
+                argv.extend(["--output", "/shared/report.json"])
+            with self.subTest(omitted=omitted):
+                code, stdout, stderr = self.invoke(argv)
+                self.assertEqual(2, code)
+                self.assertEqual("", stderr)
+                payload = json.loads(stdout)
+                self.assertFalse(payload["ok"])
+                self.assertEqual("CS-CLI-001", payload["error"]["code"])
+
+    def test_dogfood_boolean_and_bounded_values_fail_closed(self):
+        cases = (
+            ("--manual-intervention", "maybe"),
+            ("--would-use-again", "true"),
+            ("--setup-minutes", "-1"),
+        )
+        for flag, value in cases:
+            argv = [
+                "--json",
+                "dogfood",
+                "preview",
+                "/shared/private-project",
+                "--setup-minutes",
+                "1",
+                "--first-project-minutes",
+                "2",
+                "--pdf-minutes",
+                "3",
+                "--manual-intervention",
+                "no",
+                "--would-use-again",
+                "yes",
+            ]
+            index = argv.index(flag)
+            argv[index + 1] = value
+            with self.subTest(flag=flag, value=value):
+                code, stdout, stderr = self.invoke(argv)
+                self.assertEqual(2, code)
+                self.assertEqual("", stderr)
+                self.assertEqual("CS-CLI-001", json.loads(stdout)["error"]["code"])
+
+    def test_dogfood_validate_rejects_persisted_report_without_share_consent(self):
+        fixture = Path(__file__).resolve().parent / "fixtures/dogfood/valid-report-v1.0.json"
+        report = json.loads(fixture.read_text(encoding="utf-8"))
+        report["consent"]["share_report"] = False
+        with tempfile.TemporaryDirectory() as raw:
+            report_path = Path(raw) / "report.json"
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            before = report_path.read_bytes()
+
+            code, stdout, stderr = self.invoke(["--json", "dogfood", "validate", str(report_path)])
+
+            self.assertEqual(2, code)
+            self.assertEqual("", stderr)
+            payload = json.loads(stdout)
+            self.assertFalse(payload["ok"])
+            self.assertEqual("CS-PROJ-001", payload["error"]["code"])
+            self.assertEqual(before, report_path.read_bytes())

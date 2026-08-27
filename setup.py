@@ -22,6 +22,7 @@ BUILD_ONLY_SCRIPTS = {
     "portable_release_smoke.py",
     "release_identity.py",
 }
+REQUIRED_RUNTIME_SCRIPTS = frozenset({"dogfood_report.py"})
 
 
 class build_py(_build_py):
@@ -35,8 +36,14 @@ class build_py(_build_py):
         (engine_root / "__init__.py").write_text(
             '"""Bundled deterministic Comic Sol engine."""\n', encoding="utf-8"
         )
-        # Runtime modules, including portable handoff archive support, are
-        # discovered from the canonical scripts directory rather than listed.
+        # Runtime modules, including portable handoff and local dogfood report
+        # support, are discovered from canonical scripts rather than duplicated.
+        script_names = {source.name for source in (ROOT / "scripts").glob("*.py")}
+        missing_runtime = sorted(REQUIRED_RUNTIME_SCRIPTS - script_names)
+        if missing_runtime:
+            raise FileNotFoundError(
+                "required runtime scripts are missing: " + ", ".join(missing_runtime)
+            )
         for source in sorted((ROOT / "scripts").glob("*.py")):
             if source.name in BUILD_ONLY_SCRIPTS:
                 continue

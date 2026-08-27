@@ -53,6 +53,7 @@ BUNDLED_SCRIPTS = (
     "compose_pages.py",
     "command_service.py",
     "core_primitives.py",
+    "dogfood_report.py",
     "export_pdf.py",
     "font_cmap.py",
     "font_coverage.py",

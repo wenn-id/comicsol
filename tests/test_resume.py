@@ -1998,7 +1998,7 @@ class BlockedRecoveryTests(unittest.TestCase):
         self.assertCountEqual(cached_paths, reused_paths)
         self.assertEqual(len(reused_paths), len(set(reused_paths)))
         self.assertTrue(all(event["details"]["reused"] is True for event in reused))
-        self.assertEqual(len(baseline_records) + len(cached_paths), len(events))
+        self.assertEqual(len(baseline_records) + len(cached_paths) + 1, len(events))
 
     def test_status_summary_reports_blocked_stage_and_reason(self):
         block_project(
@@ -2871,3 +2871,232 @@ class SourceHandoffCliContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DogfoodResumeEvidenceTests(unittest.TestCase):
+    """WP1 evidence is committed atomically with successful recovery only."""
+
+    def setUp(self):
+        self.fixture = BlockedRecoveryTests(
+            methodName="test_status_summary_reports_blocked_stage_and_reason"
+        )
+        self.fixture.setUp()
+        self.project = self.fixture.project
+
+    def tearDown(self):
+        self.fixture.tearDown()
+
+    def _events(self):
+        return [
+            json.loads(line)
+            for line in (self.project / "logs/events.jsonl").read_text("utf-8").splitlines()
+        ]
+
+    def test_future_blocked_transition_records_bounded_reason_without_rewriting_history(self):
+        before = (self.project / "logs/events.jsonl").read_bytes()
+        block_project(self.project, "image-capability-unavailable", "private free-form warning")
+        after = (self.project / "logs/events.jsonl").read_bytes()
+        self.assertTrue(after.startswith(before))
+        event = json.loads(after[len(before) :])
+        self.assertEqual("project.transitioned", event["event"])
+        self.assertEqual("image-capability-unavailable", event["details"]["blocked_reason"])
+        self.assertNotIn("private free-form warning", after.decode("utf-8"))
+
+    def test_successful_resume_commits_one_sanitized_event_and_second_resume_is_read_only(self):
+        block_project(self.project, "image-capability-unavailable", "image capability unavailable")
+        manifest = read_json(self.project / "project.json")
+        manifest["capability"].update(
+            {
+                "detected_at": "2026-08-24T00:00:00Z",
+                "name": "restored-image-tool",
+                "status": "available",
+            }
+        )
+        atomic_write_json(self.project / "project.json", manifest)
+
+        resume_project(self.project)
+        first_events = (self.project / "logs/events.jsonl").read_bytes()
+        resumed = [event for event in self._events() if event["event"] == "project.resumed"]
+        self.assertEqual(1, len(resumed))
+        self.assertEqual(
+            {
+                "blocked_reason": "image-capability-unavailable",
+                "from": "BLOCKED",
+                "to": "STORYBOARDED",
+            },
+            resumed[0]["details"],
+        )
+
+        resume_project(self.project)
+        self.assertEqual(first_events, (self.project / "logs/events.jsonl").read_bytes())
+
+    def test_unresolved_and_failed_resume_preserve_every_project_byte(self):
+        block_project(self.project, "image-capability-unavailable", "image capability unavailable")
+        before = {
+            path.relative_to(self.project): path.read_bytes()
+            for path in self.project.rglob("*")
+            if path.is_file()
+        }
+
+        result = resume_project(self.project)
+
+        after = {
+            path.relative_to(self.project): path.read_bytes()
+            for path in self.project.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual("BLOCKED", result["status"])
+        self.assertEqual(before, after)
+        self.assertFalse(any(event["event"] == "project.resumed" for event in self._events()))
+
+        real_stage = project_io.ProjectTransaction.stage_bytes
+
+        def fail_manifest(transaction, relative, payload):
+            if relative == "project.json":
+                raise OSError("injected resume publication failure")
+            return real_stage(transaction, relative, payload)
+
+        manifest = read_json(self.project / "project.json")
+        manifest["capability"].update(
+            {
+                "detected_at": "2026-08-24T00:01:00Z",
+                "name": "restored-image-tool",
+                "status": "available",
+            }
+        )
+        atomic_write_json(self.project / "project.json", manifest)
+        before_failure = {
+            path.relative_to(self.project): path.read_bytes()
+            for path in self.project.rglob("*")
+            if path.is_file()
+        }
+        with patch(
+            "scripts.comic_sol.ProjectTransaction.stage_bytes",
+            side_effect=fail_manifest,
+            autospec=True,
+        ):
+            with self.assertRaisesRegex(OSError, "injected resume publication failure"):
+                resume_project(self.project)
+        after_failure = {
+            path.relative_to(self.project): path.read_bytes()
+            for path in self.project.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(before_failure, after_failure)
+        self.assertFalse(any(event["event"] == "project.resumed" for event in self._events()))
+
+
+class DogfoodSourceCliContractTests(unittest.TestCase):
+    """The bundled source CLI exposes the same WP1 dogfood service routes."""
+
+    def invoke_with_service(self, argv: list[str], service) -> tuple[int, str, str]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch("scripts.command_service.CommandService", return_value=service),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            try:
+                code = main(argv)
+            except SystemExit as error:
+                code = int(error.code)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_source_dogfood_routes_are_nested_and_forward_exactly(self):
+        from comic_sol_product.version import VERSION
+
+        project = Path("/shared/private-project")
+        output = Path("/shared/report.json")
+        creator = {
+            "setup_minutes": 12,
+            "first_project_minutes": 19,
+            "pdf_minutes": 47,
+            "manual_intervention": False,
+            "would_use_again": True,
+            "failed_resume_attempts": None,
+            "friction_categories": ["handoff"],
+            "cohort_alias": None,
+        }
+        cases = (
+            (
+                [
+                    "dogfood",
+                    "report",
+                    str(project),
+                    "--setup-minutes",
+                    "12",
+                    "--first-project-minutes",
+                    "19",
+                    "--pdf-minutes",
+                    "47",
+                    "--manual-intervention",
+                    "no",
+                    "--would-use-again",
+                    "yes",
+                    "--friction",
+                    "handoff",
+                    "--consent-to-share",
+                    "--output",
+                    str(output),
+                    "--json",
+                ],
+                "dogfood.report",
+                {
+                    "project_dir": project,
+                    "comic_sol_version": VERSION,
+                    "creator_inputs": creator,
+                    "consent_to_share": True,
+                    "output_path": output,
+                },
+            ),
+            (
+                [
+                    "dogfood",
+                    "preview",
+                    str(project),
+                    "--setup-minutes",
+                    "12",
+                    "--first-project-minutes",
+                    "19",
+                    "--pdf-minutes",
+                    "47",
+                    "--manual-intervention",
+                    "no",
+                    "--would-use-again",
+                    "yes",
+                    "--friction",
+                    "handoff",
+                    "--json",
+                ],
+                "dogfood.preview",
+                {
+                    "project_dir": project,
+                    "comic_sol_version": VERSION,
+                    "creator_inputs": creator,
+                    "consent_to_share": False,
+                },
+            ),
+            (
+                ["dogfood", "validate", str(output), "--json"],
+                "dogfood.validate",
+                {"report_path": output},
+            ),
+        )
+        for argv, route, expected in cases:
+
+            class FakeService:
+                def __init__(self):
+                    self.calls = []
+
+                def execute(self, command, **kwargs):
+                    self.calls.append((command, kwargs))
+                    return {"kind": "comic-sol-dogfood-report", "schema_version": "1.0"}
+
+            service = FakeService()
+            with self.subTest(route=route):
+                code, stdout, stderr = self.invoke_with_service(argv, service)
+                self.assertEqual(0, code)
+                self.assertEqual("", stderr)
+                self.assertEqual("comic-sol-dogfood-report", json.loads(stdout)["kind"])
+                self.assertEqual([(route, expected)], service.calls)

@@ -1084,3 +1084,22 @@ These records are the integrity gate on finalization. `comic_sol.py finalize` an
 - A project with an unresolved error-level panel is `BLOCKED` and cannot be composed/exported unless an allowed explicit override converts it to a warning.
 - Page PNGs are opaque RGB 1600 × 2400, use exact storyboard rectangles, LANCZOS resizing, inward 6 px black panel borders, white background, and numeric order.
 - The PDF contains the same RGB pages in numeric order at 150 DPI metadata and no additional margins.
+
+
+## Opt-in dogfood report: `comic-sol-dogfood-report` schema `1.0`
+
+The dogfood report is a separate, local evidence artifact; it is never part of the canonical project artifact set. Its root contains **exactly** `kind`, `schema_version`, `comic_sol_version`, `project_schema_version`, `derived`, `creator`, `consent`, and `limitations`. `kind` is `comic-sol-dogfood-report` and `schema_version` is `1.0`. It has no timestamp or report identifier. Canonical UTF-8 bytes use the common sorted/two-space/newline JSON rules, so identical persisted project evidence and identical explicit inputs produce identical bytes.
+
+`derived` is an explicit constructor, not a filtered project/log serialization. It contains only:
+
+- engine-derived `terminal_status`, completed-stage categories, initial/retry/total generation attempt counts, retry numerator/denominator, blocked categories from future committed blocked transitions, committed successful-resume count, handoff count/completions, and manual-override count. Lifecycle statuses use the product enum; blocked reasons use an explicit public allowlist and every unknown category becomes `other` rather than exposing a title- or identity-derived slug;
+- artifact-derived page/panel counts, executor-kind/capability categories from schema-valid job-bound receipts, the verified-PDF boolean from the canonical full-content verification contract, and unresolved-warning count; and
+- an empty handoff-route list when persisted project evidence cannot honestly distinguish shared-folder use from archive use. A report must not infer that unavailable value.
+
+`creator` contains only self-reported bounded integer `setup_minutes`, `first_project_minutes`, `pdf_minutes`, optional `failed_resume_attempts`, boolean `manual_intervention` and `would_use_again`, a de-duplicated bounded friction-category list, and an optional lowercase slug-like `cohort_alias`. Unsuccessful resume attempts are self-reported; they are never presented as engine-derived. `consent.share_report` must be `true` before canonical report bytes may be persisted. An in-memory preview may set it to `false` and cannot write a submission report.
+
+The fixed `limitations` text identifies the local opt-in boundary, persisted-evidence boundary, resume provenance, and unavailable handoff-route evidence. Unknown fields and free-form creator text are rejected.
+
+Reports never include story/title/source, project IDs, prompts, negative prompts, character identity, project or home paths, raster bytes or hashes, provider/model/endpoint/account data, credentials, raw responses, exceptions, logs, or conversation text. `comic-sol dogfood report` writes only to an explicitly chosen path outside the project directory; `comic-sol dogfood preview` does not write; and `comic-sol dogfood validate` is read-only. Report and preview acquire the existing project lock nonblocking and without rewriting it so all evidence comes from one committed snapshot; they reject a busy project or incomplete transaction rather than recovering it. Validation-only does not open a project or acquire its lock. These routes do not migrate, recover, mutate, contact a network, or read the current clock.
+
+A future blocked transition may add the bounded `blocked_reason` category to its new `project.transitioned` event. A successful recovery adds exactly one sanitized `project.resumed` event inside the existing recovery transaction. Historical events are not rewritten, and a failed or unresolved recovery appends no attempt event and preserves project bytes.
