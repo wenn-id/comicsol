@@ -347,5 +347,76 @@ class SupportPrivacyTermsTests(unittest.TestCase):
             self.assertFalse(fixed_minor.search(document), name)
 
 
+class CrossAgentHandoffDocumentationTests(unittest.TestCase):
+    """WP5: README, SKILL.md, and CHANGELOG document cross-agent handoff integration."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.readme = read("README.md")
+        cls.skill = read("SKILL.md")
+        cls.changelog = read("CHANGELOG.md")
+
+    def test_readme_documents_cross_agent_handoff_workflow(self):
+        readme = collapsed(self.readme)
+        for phrase in (
+            "handoff prepare",
+            "handoff inspect",
+            "accept-result",
+            "record-failure",
+        ):
+            self.assertIn(phrase, readme, phrase)
+
+    def test_readme_documents_portable_archive_export_import(self):
+        readme = collapsed(self.readme)
+        for phrase in (
+            "archive export",
+            "archive import",
+        ):
+            self.assertIn(phrase, readme, phrase)
+
+    def test_readme_documents_comfyui_as_reference_experimental(self):
+        readme = collapsed(self.readme)
+        self.assertIn("ComfyUI", self.readme)
+        self.assertIn("reference", readme.lower())
+        self.assertIn("experimental", readme.lower())
+        # Must NOT claim ComfyUI is verified or production-ready
+        self.assertNotIn("ComfyUI is verified", self.readme)
+        self.assertNotIn("ComfyUI verified", self.readme)
+
+    def test_skill_documents_capability_ordering(self):
+        """SKILL.md must state the executor selection order explicitly."""
+        skill = collapsed(self.skill)
+        # The ordering must be: native compatible tool, then external executor,
+        # then handoff preparation
+        for phrase in (
+            "compatible native image tool",
+            "external executor",
+            "handoff",
+        ):
+            self.assertIn(phrase, skill, phrase)
+        # Verify the ordering is explicitly stated (native before external before handoff)
+        native_pos = skill.find("compatible native image tool")
+        external_pos = skill.find("external executor")
+        handoff_pos = skill.find("Prepare a handoff")
+        self.assertGreater(native_pos, -1, "native capability not found")
+        self.assertGreater(external_pos, -1, "external executor not found")
+        self.assertGreater(handoff_pos, -1, "handoff prepare not found")
+        self.assertLess(native_pos, external_pos, "native must come before external")
+        self.assertLess(external_pos, handoff_pos, "external must come before handoff")
+
+    def test_skill_documents_no_provider_name_ranking(self):
+        """Capability ordering must not rank by provider name."""
+        skill = collapsed(self.skill)
+        # The ordering section must not contain provider-specific names as ranking logic
+        self.assertNotIn("prefer OpenAI", skill)
+        self.assertNotIn("prefer fal", skill)
+        self.assertNotIn("prefer Stability", skill)
+
+    def test_changelog_has_wp5_handoff_integration_entry(self):
+        changelog = collapsed(self.changelog)
+        self.assertIn("cross-agent", changelog)
+        self.assertIn("handoff", changelog)
+
+
 if __name__ == "__main__":
     unittest.main()
