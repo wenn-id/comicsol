@@ -44,12 +44,10 @@ Turn one natural-language request into a local, editable comic project. Reason a
 7. Return status, counts, warnings, and clickable project output paths.
 
 ## Executor selection
-
 When generation is needed, a compatible native image tool is eligible only when declared; follow this declared capability priority: (1) a compatible declared native image tool; (2) a compatible declared external adapter (the compatible declared external executor route); (3) Prepare a handoff for portable transfer with `PYTHON scripts/comic_sol.py handoff prepare PROJECT`; (4) an actionable `BLOCKED` state that preserves all editable intermediates while the handoff awaits a destination with a usable declared capability. Use the first compatible executor in that order. Handoff preparation creates job descriptors, not an executor: after preparing it, transition to `BLOCKED` until a destination declares a usable capability. Selection ranks only declared capabilities, never by provider name, model name, or provider-specific hard-coded ranking. Never infer capability availability or features from provider, model, or tool names.
 The full cross-agent handoff lifecycle is in [workflow](references/workflow.md).
 
 ## Fast Mode
-
 Fast Mode keeps all quality gates while removing the specific waste that turns a
 pilot into a 4+ hour run. Apply it to every new production by default.
 
