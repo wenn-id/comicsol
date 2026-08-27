@@ -26,9 +26,11 @@ and, to get the most from it:
 - the ability to render **authored SFX text** into the artwork.
 
 An editing-only image tool (crop, resize, retouch) is not sufficient — the first
-panel of a new comic must be drawable from the prompt alone. If no compatible
-capability is exposed, Comic Sol preserves the project, marks it `BLOCKED`, and
-reports exactly what is missing; it never fabricates a placeholder image.
+panel of a new comic must be drawable from the prompt alone. If no compatible direct
+capability is exposed, try a compatible declared external adapter and then prepare the
+portable handoff. Prepare portable handoff before transitioning to `BLOCKED`; enter
+`BLOCKED` only when the handoff route also cannot proceed. Preserve the project and report
+what is missing rather than fabricating a placeholder image.
 
 ## Credential safety
 
@@ -41,7 +43,8 @@ Comic Sol stores no provider credentials, and none belong in its files:
   records keep sanitized paths, hashes, and categories precisely so a credential
   that never entered the pipeline can never leak back out of it.
 - If a credential may have been exposed, revoke it before filing any report, and
-  use the private reporting route in [`SUPPORT.md`](../SUPPORT.md) rather than a
+  use the private reporting route in
+  [`SUPPORT.md`](https://github.com/wenn-id/comicsol/blob/main/SUPPORT.md) rather than a
   public issue.
 
 ## Clearly labeled host examples
@@ -102,7 +105,7 @@ metadata declares compatible text-to-image and local-raster behavior; the
 
 If you also want the Comic Sol deterministic pipeline over MCP, register the
 `comic_*` server separately (see
-[`docs/surfaces.md` → MCP server](../docs/surfaces.md#mcp-server)).
+[`docs/surfaces.md` → MCP server](https://github.com/wenn-id/comicsol/blob/main/docs/surfaces.md#mcp-server)).
 
 ## Example route summary
 

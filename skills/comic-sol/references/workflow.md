@@ -111,13 +111,16 @@ When generation is needed, use this declared capability priority: (1) a compatib
  declared native image tool; (2) a compatible declared external adapter; (3) a portable
  handoff prepared with `PYTHON scripts/comic_sol.py handoff prepare PROJECT`; (4) an
  actionable `BLOCKED` state that preserves all editable intermediates. Use the first
- compatible route in that order. Never infer capability availability or features from
- provider, model, or tool names.
+ compatible route in that order. Prepare portable handoff before transitioning to
+ `BLOCKED`; enter `BLOCKED` only when the handoff route also cannot proceed. Never infer
+ capability availability or features from provider, model, or tool names.
 
 Reuse the provider-neutral observation supplied to `doctor`, unless the active session's
 tool inventory changed; in that case inspect it again as described in the capability
-reference. Record the same neutral feature flags in `project.json`. If none is available,
-transition to `BLOCKED` with the exact preservation error. Do not create empty image files.
+reference. Record the same neutral feature flags in `project.json`. If no declared native
+or external route is available, run `PYTHON scripts/comic_sol.py handoff prepare PROJECT`
+instead of blocking. Only if handoff preparation also cannot proceed, transition to
+`BLOCKED` with the exact preservation error. Do not create empty image files.
 
 Note the capability's documented maximum number of reference images per request. That
 count is the `--budget` value the reference plan spends in stage 5; the engine never
@@ -374,8 +377,9 @@ closed. The QA report reads `qa/evidence.json` and displays the claim boundary.
 
 - Invalid input: stop before initialization and name the path, encoding, or size issue.
 - Invalid semantic artifact: retain earlier stages, identify file/field, and revise it.
-- Capability unavailable: preserve plans, transition `BLOCKED`, and give enable/resume
-  instructions.
+- Capability unavailable: try a compatible declared external adapter, prepare portable
+  handoff, and transition to `BLOCKED` with enable/resume instructions only if handoff also
+  cannot proceed.
 - Safety refusal: do not evade; record only a sanitized category and transition `BLOCKED`.
 - Quota/transient failure: permit one bounded repeat, then preserve and block.
 - Invalid image: retain the attempt and selectively retry within budget.

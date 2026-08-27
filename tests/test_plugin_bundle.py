@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -97,6 +98,40 @@ class PluginBundleTests(unittest.TestCase):
                 positions = [text.find(phrase) for phrase in priority]
                 self.assertTrue(all(position >= 0 for position in positions), root / relative)
                 self.assertEqual(sorted(positions), positions, root / relative)
+
+    def test_portable_handoff_is_attempted_before_blocked(self):
+        contract = (
+            "Prepare portable handoff before transitioning to `BLOCKED`; enter `BLOCKED` "
+            "only when the handoff route also cannot proceed."
+        )
+        normative_paths = (
+            Path("SKILL.md"),
+            Path("references/image-provider-setup.md"),
+            Path("references/workflow.md"),
+        )
+
+        for relative in normative_paths:
+            for root in (ROOT, sync_plugin_bundle.BUNDLE):
+                text = " ".join((root / relative).read_text(encoding="utf-8").split())
+                self.assertIn(contract, text, str(root / relative))
+
+    def test_synchronized_provider_setup_links_resolve_from_the_bundle(self):
+        relative = Path("references/image-provider-setup.md")
+        repository_prefix = "https://github.com/wenn-id/comicsol/blob/main/"
+
+        for root in (ROOT, sync_plugin_bundle.BUNDLE):
+            document = root / relative
+            targets = re.findall(r"\[[^]]+\]\(([^)]+)\)", document.read_text(encoding="utf-8"))
+            self.assertTrue(targets, document)
+            for target in targets:
+                if target.startswith("https://"):
+                    self.assertTrue(target.startswith(repository_prefix), f"{document}: {target}")
+                    continue
+                local_target = target.split("#", 1)[0]
+                self.assertTrue(
+                    (document.parent / local_target).is_file(),
+                    f"{document}: unresolved link {target}",
+                )
 
     def test_handoff_contract_module_is_a_managed_bundle_path(self):
         self.assertIn(Path("scripts/handoff.py"), sync_plugin_bundle.synchronized_paths())
