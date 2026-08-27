@@ -107,6 +107,13 @@ exactness. Transition through `SCRIPTED`, validate with
 
 ### 4. Confirm and record image capability
 
+When generation is needed, use this declared capability priority: (1) a compatible
+ declared native image tool; (2) a compatible declared external adapter; (3) a portable
+ handoff prepared with `PYTHON scripts/comic_sol.py handoff prepare PROJECT`; (4) an
+ actionable `BLOCKED` state that preserves all editable intermediates. Use the first
+ compatible route in that order. Never infer capability availability or features from
+ provider, model, or tool names.
+
 Reuse the provider-neutral observation supplied to `doctor`, unless the active session's
 tool inventory changed; in that case inspect it again as described in the capability
 reference. Record the same neutral feature flags in `project.json`. If none is available,

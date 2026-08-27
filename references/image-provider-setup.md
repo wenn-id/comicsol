@@ -1,13 +1,16 @@
-# Image provider setup by platform
+# Image capability setup by host
 
 Comic Sol is provider-agnostic — it never embeds credentials or vendor client
 libraries, and the deterministic engine never calls a network service. The
-agent session must expose a compatible text-to-image capability; Comic Sol
-detects it automatically (see [capability-detection.md](capability-detection.md)).
+active agent session must declare a compatible text-to-image capability; Comic
+Sol detects only declared metadata (see
+[capability-detection.md](capability-detection.md)). Never infer capability
+availability or features from provider, model, or tool names.
 
-This platform-specific document describes the capability Comic Sol needs and
-how to wire one into the most common agent platforms, without prescribing a
-vendor, endpoint, or credential mechanism.
+This host-neutral document describes the capability Comic Sol needs. Its clearly
+labeled, platform-specific host examples show possible wiring patterns without
+prescribing a vendor, endpoint, credential mechanism, or capability claim for every
+session of that host.
 
 ## The capability, not a vendor
 
@@ -41,19 +44,20 @@ Comic Sol stores no provider credentials, and none belong in its files:
   use the private reporting route in [`SUPPORT.md`](../SUPPORT.md) rather than a
   public issue.
 
-## Wiring a capability by platform
+## Clearly labeled host examples
 
-### Codex
+### Codex-specific example
 
-Codex may expose a native image-generation capability. When the active session
-has one, Comic Sol detects and records it with no extra setup. If the tool
-cannot be found, confirm the session's configured model exposes image
-generation; Comic Sol only sees the tools the session actually offers.
+Some Codex sessions may declare a native image-generation capability. Inspect the active
+session's exposed tool metadata; the Codex host name, configured model name, and tool name
+alone prove no capability or feature. When a compatible capability is declared, Comic Sol
+records it with no extra setup. Otherwise configure a compatible external adapter or use
+portable handoff.
 
-### Claude Desktop / Claude Code
+### Claude Desktop / Claude Code external-adapter example
 
-Neither ships a native image-generation tool. Provide one through a separate
-stdio MCP server of your choosing, registered in the client's MCP
+If an active Claude session declares no compatible native image capability, provide one
+through a separate stdio MCP server of your choosing, registered in the client's MCP
 configuration (for Claude Desktop, `claude_desktop_config.json`):
 
 ```json
@@ -89,25 +93,29 @@ of a reviewed tool. If you use it, keep credentials in environment variables
 read by the command — never inline keys in the prompt — and prefer an MCP
 server for reliability.
 
-### Hermes Agent
+### Hermes Agent example
 
-Hermes has a built-in `image_generate` tool driven by whatever provider is
-configured under `image_gen` in its `config.yaml`; no MCP server is needed for
-image generation.
+A configured Hermes session may declare a built-in image capability backed by its
+`image_gen` configuration. Treat it as available only when the active session's tool
+metadata declares compatible text-to-image and local-raster behavior; the
+`image_generate` name alone is not evidence.
 
 If you also want the Comic Sol deterministic pipeline over MCP, register the
 `comic_*` server separately (see
 [`docs/surfaces.md` → MCP server](../docs/surfaces.md#mcp-server)).
 
-## Summary table
+## Example route summary
 
-| Platform | Native image gen | Extra setup | MCP deterministic server |
-|---|---|---|---|
-| Codex | ✅ when the session's model exposes it | None | Optional (for MCP tools) |
-| Claude Desktop | ❌ | any image MCP server, or direct API | Optional |
-| Claude Code | ❌ | any image MCP server, or direct API | Optional |
-| Cline / Continue / Roo Code | ❌ | image MCP server config | Optional |
-| Hermes Agent | ✅ built-in `image_generate` | provider configured in `config.yaml` | Optional |
+These are setup examples, not capability assertions. Every active session still proves
+availability and features through declared tool metadata.
+
+| Host example | Possible image route | Deterministic server |
+|---|---|---|
+| Codex | declared native tool, external adapter, or portable handoff | Optional |
+| Claude Desktop | declared external adapter or portable handoff | Optional |
+| Claude Code | declared external adapter or portable handoff | Optional |
+| Cline / Continue / Roo Code | declared external adapter or portable handoff | Optional |
+| Hermes Agent | declared native tool, external adapter, or portable handoff | Optional |
 
 > The `comic_*` deterministic MCP server is separate from image generation.
 > You can run Comic Sol as a pure Skill (no MCP server, image via native tool)
@@ -115,10 +123,11 @@ If you also want the Comic Sol deterministic pipeline over MCP, register the
 
 ## ComfyUI local reference executor (experimental)
 
-Comic Sol includes an agent-managed ComfyUI adapter as a reference implementation of the
-existing `external-tool` handoff contract. It remains outside `scripts/`,
-`comic_sol_product/`, the deterministic wheel, and the MCP surface. The active agent—not
-the deterministic engine—launches it for one prepared generation job:
+This route is available only from a Comic Sol repository checkout; it is not a bundled
+host engine. Comic Sol includes the agent-managed ComfyUI adapter as a reference
+implementation of the existing `external-tool` handoff contract. It remains outside
+`scripts/`, `comic_sol_product/`, the deterministic wheel, and the MCP surface. The active
+agent—not the deterministic engine—launches it for one prepared generation job:
 
 ```text
 python integrations/comfyui-local/comfyui_executor.py run --job JOB --workflow WORKFLOW --profile PROFILE --output FILE [--endpoint URL] [--allow-non-loopback]
@@ -166,10 +175,8 @@ against its own current documentation before relying on it:
 
 - MCP server directories and registries published by the MCP project and by
   each agent client (search for "image generation" MCP servers).
-- `fal.ai` publishes `mcp-fal`, an MCP server wrapping its image models
-  (checked 2026-08; see its repository for current terms).
-- Community MCP servers that wrap multiple image providers exist on GitHub;
-  review any server's code and network behavior before granting it a credential.
+- Dated community MCP servers may wrap one or more image providers; review any
+  server's code, current terms, and network behavior before granting it a credential.
 
 Nothing in Comic Sol depends on these services, and a report about one of them
 belongs with that vendor, not in this repository's issue tracker.

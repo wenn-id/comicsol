@@ -1,6 +1,6 @@
 ---
 name: comic-sol
-description: Create, storyboard, render, resume, repair, and export finished original manga/anime comics from a short prompt, prose story, pasted narrative, or local .txt/.md source. Use when Codex should produce editable plans, consistent panel PNGs, composed page PNGs, a PDF, manifest, and transparent QA report without building a web app.
+description: Create, storyboard, render, resume, repair, and export finished original manga/anime comics from a short prompt, prose story, pasted narrative, or local .txt/.md source. Use when the active agent should produce editable plans, consistent panel PNGs, composed page PNGs, a PDF, manifest, and transparent QA report without building a web app.
 ---
 
 # Comic Sol
@@ -25,10 +25,9 @@ Turn one natural-language request into a local, editable comic project. Reason a
 
 1. Detect resume/source-file/pasted-story/short-prompt mode in the normative order.
 2. Ask only a materially required workflow question; otherwise apply defaults.
-3. Inspect exposed tool metadata without invoking tools. Pass the best usable image tool as
-   `agent-image-generation` with its declared features to `doctor`; pass `unavailable` for
-   an inspectable inventory with no usable tool, and no flags if inspection is unavailable
-   or fails. Never infer features from a provider, model, or tool name.
+3. Inspect exposed tool metadata without invoking tools. Pass the best usable image tool as `agent-image-generation` with its declared features to `doctor`; pass
+   `unavailable` for an inspectable inventory with no usable tool, and no flags if inspection is unavailable or fails.
+   Never infer capability availability or features from provider, model, or tool names.
 4. Run doctor, initialize or inspect the project, then validate and record every stage.
    Capability warnings allow deterministic planning, but generation stops at `BLOCKED`
    without a usable capability. Deterministic scripts never discover or call providers.
@@ -44,7 +43,8 @@ Turn one natural-language request into a local, editable comic project. Reason a
 
 ## Executor selection
 
-When generation is needed, follow declared capability priority: (1) compatible native image tool, (2) compatible declared external executor, (3) Prepare a handoff for portable transfer via `PYTHON scripts/comic_sol.py handoff prepare PROJECT`. Selection ranks only declared capabilities, never by provider name, model name, or provider-specific hard-coded ranking. If none is compatible, transition to an actionable `BLOCKED` state and preserve all editable intermediates. The full cross-agent handoff lifecycle is in [workflow](references/workflow.md).
+When generation is needed, a compatible native image tool is eligible only when declared; follow this declared capability priority: (1) a compatible declared native image tool; (2) a compatible declared external adapter (the compatible declared external executor route); (3) Prepare a handoff for portable transfer with `PYTHON scripts/comic_sol.py handoff prepare PROJECT`—this portable handoff is the fallback execution route; (4) an actionable `BLOCKED` state that preserves all editable intermediates. Use the first compatible route in that order. Selection ranks only declared capabilities, never by provider name, model name, or provider-specific hard-coded ranking. Never infer capability availability or features from provider, model, or tool names.
+The full cross-agent handoff lifecycle is in [workflow](references/workflow.md).
 
 ## Fast Mode
 

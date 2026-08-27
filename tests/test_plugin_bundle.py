@@ -30,6 +30,74 @@ class PluginBundleTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
+    def test_every_managed_bundle_file_is_a_byte_equal_canonical_copy(self):
+        synchronized = set(sync_plugin_bundle.synchronized_paths())
+
+        self.assertFalse(hasattr(sync_plugin_bundle, "HOST_SPECIFIC_REFERENCES"))
+        self.assertEqual(synchronized, sync_plugin_bundle.expected_bundle_paths())
+        for relative in sorted(synchronized, key=Path.as_posix):
+            canonical = ROOT / relative
+            bundled = sync_plugin_bundle.BUNDLE / relative
+            self.assertTrue(canonical.is_file(), relative.as_posix())
+            self.assertTrue(bundled.is_file(), relative.as_posix())
+            self.assertEqual(
+                canonical.read_bytes(),
+                bundled.read_bytes(),
+                relative.as_posix(),
+            )
+
+    def test_normative_root_and_bundle_workflow_does_not_require_codex(self):
+        normative_paths = (
+            Path("SKILL.md"),
+            Path("references/capability-detection.md"),
+            Path("references/image-provider-setup.md"),
+            Path("references/workflow.md"),
+        )
+        banned_requirements = (
+            "use when codex",
+            "current codex session",
+            "codex must",
+            "requires codex",
+            "pure codex skill run",
+        )
+
+        for relative in normative_paths:
+            for root in (ROOT, sync_plugin_bundle.BUNDLE):
+                text = (root / relative).read_text(encoding="utf-8").lower()
+                for phrase in banned_requirements:
+                    self.assertNotIn(phrase, text, f"{root / relative}: {phrase}")
+
+    def test_capability_availability_and_features_are_never_inferred_from_names(self):
+        contract = (
+            "Never infer capability availability or features from provider, model, or tool names."
+        )
+        normative_paths = (
+            Path("SKILL.md"),
+            Path("references/capability-detection.md"),
+            Path("references/image-provider-setup.md"),
+            Path("references/workflow.md"),
+        )
+
+        for relative in normative_paths:
+            for root in (ROOT, sync_plugin_bundle.BUNDLE):
+                text = (root / relative).read_text(encoding="utf-8")
+                self.assertIn(contract, " ".join(text.split()), str(root / relative))
+
+    def test_executor_priority_is_identical_in_canonical_and_bundled_workflow(self):
+        priority = (
+            "compatible declared native image tool",
+            "compatible declared external adapter",
+            "portable handoff",
+            "actionable `blocked` state",
+        )
+
+        for relative in (Path("SKILL.md"), Path("references/workflow.md")):
+            for root in (ROOT, sync_plugin_bundle.BUNDLE):
+                text = " ".join((root / relative).read_text(encoding="utf-8").split()).lower()
+                positions = [text.find(phrase) for phrase in priority]
+                self.assertTrue(all(position >= 0 for position in positions), root / relative)
+                self.assertEqual(sorted(positions), positions, root / relative)
+
     def test_handoff_contract_module_is_a_managed_bundle_path(self):
         self.assertIn(Path("scripts/handoff.py"), sync_plugin_bundle.synchronized_paths())
 
