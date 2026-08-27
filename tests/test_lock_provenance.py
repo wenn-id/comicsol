@@ -33,6 +33,7 @@ FAMILY_INPUTS = {
     "release": "release.in",
     "quality": "quality.in",
     "audit": "audit.in",
+    "web": "web.in",
 }
 
 # Marker-gated transitive packages each platform may add to the release lock
@@ -46,6 +47,14 @@ RUNTIME_MARKER_PACKAGES = {
     "linux": frozenset(),
     "macos": frozenset(),
     "windows": frozenset({"colorama", "pywin32"}),
+}
+# The isolated Web distribution (web/pyproject.toml) is fully portable except
+# that its quality tool chain pulls `colorama` on Windows as a click/typer
+# dependency. Every Web lock must agree on the same package set and versions.
+WEB_MARKER_PACKAGES = {
+    "linux": frozenset(),
+    "macos": frozenset(),
+    "windows": frozenset({"colorama"}),
 }
 
 
@@ -96,7 +105,9 @@ def assert_family_agrees(
         reference = body_pins(locks[0])
         for index, lock in enumerate(locks[1:], start=1):
             pins = body_pins(lock)
-            platform = PLATFORMS[index] if family in {"base", "runtime", "release"} else "linux"
+            platform = (
+                PLATFORMS[index] if family in {"base", "runtime", "release", "web"} else "linux"
+            )
             allowed = (marker_packages or {}).get(platform, frozenset())
             surplus = set(pins) - set(reference) - allowed
             test.assertFalse(
@@ -203,6 +214,9 @@ class LockProvenanceTests(unittest.TestCase):
 
     def test_release_locks_differ_only_by_environment_marker_packages(self):
         assert_family_agrees(self, "release", RELEASE_MARKER_PACKAGES)
+
+    def test_web_locks_differ_only_by_documented_windows_marker(self):
+        assert_family_agrees(self, "web", WEB_MARKER_PACKAGES)
 
     def test_single_platform_families_exist(self):
         for family in ("quality", "audit"):
