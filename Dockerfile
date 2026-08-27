@@ -4,7 +4,7 @@
 ARG PYTHON_BASE="python:3.11.15-slim@sha256:90744cff8f32887f075c47d747a173ff333e9e98801667af93c357fa9f5e28ff"
 FROM ${PYTHON_BASE} AS builder
 WORKDIR /src
-COPY pyproject.toml setup.py MANIFEST.in README.md LICENSE SKILL.md ./
+COPY pyproject.toml setup.py MANIFEST.in README.md LICENSE SKILL.md runtime_contract.py ./
 COPY requirements/locks ./requirements/locks
 COPY comic_sol_product ./comic_sol_product
 COPY scripts ./scripts
