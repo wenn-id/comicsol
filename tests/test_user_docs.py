@@ -417,6 +417,111 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         self.assertIn("cross-agent", changelog)
         self.assertIn("handoff", changelog)
 
+    def test_no_positional_panel_id_in_handoff_cli_syntax(self):
+        """Handoff CLI never uses a positional PANEL_ID argument."""
+        for name, document in (
+            ("README", self.readme),
+            ("SKILL", self.skill),
+            ("workflow", read("references/workflow.md")),
+        ):
+            # The handoff accept-result and record-failure commands must not
+            # contain a positional PANEL_ID argument.
+            for line in document.splitlines():
+                if "handoff accept-result" in line or "handoff record-failure" in line:
+                    self.assertNotIn(
+                        "PANEL_ID",
+                        line,
+                        f"{name}: handoff CLI must not use positional PANEL_ID",
+                    )
+
+    def test_no_reason_flag_in_handoff_cli_syntax(self):
+        """Handoff CLI uses --category, never --reason."""
+        for name, document in (
+            ("README", self.readme),
+            ("SKILL", self.skill),
+            ("workflow", read("references/workflow.md")),
+        ):
+            for line in document.splitlines():
+                if "handoff record-failure" in line:
+                    self.assertNotIn(
+                        "--reason",
+                        line,
+                        f"{name}: record-failure uses --category, not --reason",
+                    )
+
+    def test_handoff_accept_result_documents_required_arguments(self):
+        """accept-result documentation includes --job, --attempt, --executor-kind,
+        --executor-id, and --path as required arguments."""
+        workflow = read("references/workflow.md")
+        for required in ("--job", "--attempt", "--executor-kind", "--executor-id", "--path"):
+            self.assertIn(
+                required,
+                workflow,
+                f"accept-result must document required argument {required}",
+            )
+
+    def test_handoff_record_failure_documents_required_arguments(self):
+        """record-failure documentation includes --job, --attempt, --executor-kind,
+        --executor-id, and --category as required arguments."""
+        workflow = read("references/workflow.md")
+        for required in ("--job", "--attempt", "--executor-kind", "--executor-id", "--category"):
+            self.assertIn(
+                required,
+                workflow,
+                f"record-failure must document required argument {required}",
+            )
+
+    def test_no_contradictory_provider_model_ranking(self):
+        """Executor selection must not rank by provider or model name."""
+        for name, document in (
+            ("SKILL", self.skill),
+            ("workflow", read("references/workflow.md")),
+        ):
+            doc = collapsed(document)
+            for forbidden in (
+                "prefer OpenAI",
+                "prefer fal",
+                "prefer Stability",
+                "rank by provider",
+                "rank by model",
+            ):
+                self.assertNotIn(
+                    forbidden,
+                    doc,
+                    f"{name}: must not contain provider/model ranking '{forbidden}'",
+                )
+
+    def test_archive_export_before_remote_execution(self):
+        """Workflow documents archive export/import before remote execution and result intake."""
+        workflow = read("references/workflow.md")
+        section = workflow[workflow.find("## Cross-agent handoff lifecycle") :]
+        export_pos = section.find("export")
+        import_pos = section.find("import")
+        accept_pos = section.find("accept-result")
+        # Export and import must appear before accept-result in the lifecycle section
+        self.assertGreater(export_pos, -1, "export not found in lifecycle section")
+        self.assertGreater(import_pos, -1, "import not found in lifecycle section")
+        self.assertGreater(accept_pos, -1, "accept-result not found in lifecycle section")
+        self.assertLess(
+            export_pos,
+            accept_pos,
+            "archive export must be documented before result intake",
+        )
+        self.assertLess(
+            import_pos,
+            accept_pos,
+            "archive import must be documented before result intake",
+        )
+
+    def test_readme_record_failure_uses_category_not_reason(self):
+        """README handoff section uses --category for record-failure."""
+        readme = collapsed(self.readme)
+        # The README must mention category in connection with record-failure
+        self.assertIn("category", readme)
+        # Must not say "failure with a reason" in the handoff section
+        handoff_section = self.readme.split("## Cross-agent handoff", 1)[1].split("\n## ", 1)[0]
+        self.assertNotIn("with a reason", handoff_section)
+
 
 if __name__ == "__main__":
     unittest.main()

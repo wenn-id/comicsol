@@ -344,10 +344,10 @@ cross-agent and cross-device workflows through its handoff lifecycle:
 
 - `handoff prepare` creates generation jobs for pending panels.
 - `handoff inspect` reports current job readiness and status.
-- `handoff accept-result` intakes a completed raster from any executor.
-- `handoff record-failure` records a generation failure with a reason.
 - `handoff export` produces a portable archive for transfer across devices or workspaces.
 - `handoff import` resumes a project from a portable archive on another device.
+- `handoff accept-result` intakes a completed raster from any executor.
+- `handoff record-failure` records a generation failure by category.
 
 Executor selection follows declared capability: a compatible native image tool is
 preferred, then a compatible external executor, then handoff preparation for another

@@ -272,6 +272,52 @@ The success path is:
 
 `INIT → PLANNED → SCRIPTED → STORYBOARDED → REFERENCES_READY → PANELS_READY → QA_READY → LETTERED → COMPOSED → EXPORTED → COMPLETE`
 
+## Cross-agent handoff lifecycle
+
+When the active session cannot generate images directly, the handoff lifecycle enables
+another agent, device, or workspace to complete generation:
+
+1. `comic-sol handoff prepare PROJECT` -- create generation jobs for pending panels.
+2. `comic-sol handoff inspect PROJECT` -- check job readiness and current status.
+3. For cross-workspace or cross-device transfer, export the prepared project:
+   `comic-sol handoff export PROJECT --output ARCHIVE`
+4. Transfer the archive and import at the destination:
+   `comic-sol handoff import ARCHIVE --output-root ROOT`
+5. In the executing agent, run `comic-sol handoff inspect PROJECT` again; select only a
+   job whose effective `status` is `ready` and pass `PROJECT/<jobs[].path>` using the
+   exact `path` returned for that job.
+6. Execute via the selected executor (native tool or external adapter).
+7. Intake the result with the real CLI arguments:
+
+   ```text
+   comic-sol handoff accept-result PROJECT \
+     --job JOB_ID \
+     --attempt N \
+     --executor-kind native-tool|external-tool \
+     --executor-id ID \
+     --path PATH
+   ```
+
+   Or record a failure:
+
+   ```text
+   comic-sol handoff record-failure PROJECT \
+     --job JOB_ID \
+     --attempt N \
+     --executor-kind native-tool|external-tool \
+     --executor-id ID \
+     --category CATEGORY
+   ```
+
+8. After result intake, inspect again before retrying; the new inspection is authoritative
+   for status and the next attempt. Never enumerate or execute retained
+   `generation/jobs/*.json` files directly.
+9. Normal visual QA, promotion, and deterministic pipeline continue.
+10. For durable cross-device export after completion, use `comic-sol handoff export`.
+
+The deterministic engine owns contracts, validation, accounting, archive safety, and
+result intake. It does not own provider credentials or provider SDK integrations.
+
 ## Evidence provenance
 
 Deterministic quality fixtures and `quality_sample.py --mode deterministic` prove

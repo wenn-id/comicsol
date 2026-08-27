@@ -32,7 +32,7 @@ Turn one natural-language request into a local, editable comic project. Reason a
 4. Run doctor, initialize or inspect the project, then validate and record every stage.
    Capability warnings allow deterministic planning, but generation stops at `BLOCKED`
    without a usable capability. Deterministic scripts never discover or call providers.
-5. Generate canonical references and panels into attempt paths, including through an explicitly selected agent-managed external adapter; normal intake, retention, review, and promotion gates still apply. Before invoking that adapter, run `handoff inspect` as `comic-sol handoff inspect PROJECT`, select only a reported job whose effective `status` is `ready`, and pass `PROJECT/<jobs[].path>` using the exact `path` returned for that job. After result intake, inspect again before retrying; the new inspection is authoritative for status and the next attempt. Never enumerate or execute retained `generation/jobs/*.json` files directly. Require the image model to draw each exact `generated-visual` storyboard SFX and never a `deterministic-lettering` one.
+5. Generate canonical references and panels into attempt paths, including through an explicitly selected agent-managed external adapter; normal intake, retention, review, and promotion gates still apply. Before invoking any executor, run `handoff inspect` as `comic-sol handoff inspect PROJECT`, select only a reported job whose effective `status` is `ready`, and pass `PROJECT/<jobs[].path>` using the exact `path` returned for that job. After result intake, inspect again before retrying; the new inspection is authoritative for status and the next attempt. Never enumerate or execute retained `generation/jobs/*.json` files directly. See [workflow](references/workflow.md) for the full lifecycle. Require the image model to draw each exact `generated-visual` storyboard SFX and never a `deterministic-lettering` one.
    Inspect every result visually, record all seven QA checks, and repair only failures within budget. Route a bad effect to lettering with `sfx_repair.py` and follow its
    `next_action`: ink the model drew needs a `regenerate` review, not re-lettering alone.
 6. Promote accepted attempts; deterministically letter dialogue, captions, and any
@@ -44,38 +44,7 @@ Turn one natural-language request into a local, editable comic project. Reason a
 
 ## Executor selection
 
-When generation is needed, select the executor by declared capability in this order:
-
-1. A compatible native image tool exposed in the active agent session.
-2. A compatible declared external executor (e.g. the reference/experimental ComfyUI adapter).
-3. Prepare a handoff for another agent or executor using `comic-sol handoff prepare`.
-
-Selection is by capability inspection, never by provider name, model preference, or
-hard-coded ranking. If no compatible capability is available at any level, transition to
-`BLOCKED` and preserve all editable intermediates for later resumption.
-
-## Cross-agent handoff lifecycle
-
-When the active session cannot generate images directly, the handoff lifecycle enables
-another agent, device, or workspace to complete generation:
-
-1. `comic-sol handoff prepare PROJECT` -- create generation jobs for pending panels.
-2. `comic-sol handoff inspect PROJECT` -- check job readiness and current status.
-3. Execute via native tool, external executor, or transfer to another agent.
-4. `comic-sol handoff accept-result PROJECT PANEL_ID PATH` -- intake a completed raster.
-5. `comic-sol handoff record-failure PROJECT PANEL_ID --reason TEXT` -- record a failure.
-6. Normal visual QA, promotion, and deterministic pipeline continue.
-7. `comic-sol handoff export PROJECT --output ARCHIVE` -- portable archive export for
-   cross-device or cross-workspace transfer.
-8. `comic-sol handoff import ARCHIVE --output-root ROOT` -- import and resume from a
-   portable archive on another device or workspace.
-
-The deterministic engine owns contracts, validation, accounting, archive safety, and
-result intake. It does not own provider credentials or provider SDK integrations.
-
-## Token budget rules
-
-Apply these rules in every session to reduce token waste without reducing output quality.
+When generation is needed, select by declared capability priority: (1) compatible native image tool, (2) compatible declared external executor, (3) Prepare a handoff via `comic-sol handoff prepare`. Selection is by capability inspection, never by provider name, model preference, or hard-coded ranking. If no compatible capability is available, transition to `BLOCKED` and preserve all editable intermediates. The full cross-agent handoff lifecycle is in [workflow](references/workflow.md).
 
 ## Fast Mode
 
