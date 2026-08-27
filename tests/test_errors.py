@@ -8,6 +8,7 @@ from comic_sol_product.errors import (
     CliUsageError,
     IntegrationRepairError,
     IntegrationRollbackError,
+    UnsupportedSkillPlacementError,
     ValidationFailureError,
     classify_exception,
     error_payload,
@@ -84,6 +85,12 @@ class StructuredErrorContractTests(unittest.TestCase):
         )
         self.assertEqual("CS-INSTALL-001", classified.code)
 
+    def test_typed_unsupported_skill_placement_is_a_cli_usage_error(self):
+        error = UnsupportedSkillPlacementError("codex", "project")
+        classified = classify_exception(error, command="skill-install", surface="cli")
+        self.assertEqual("CS-CLI-001", classified.code)
+        self.assertIn("Supported", str(error))
+
     def test_mcp_request_errors_use_mcp_namespace(self):
         error = ValueError("invalid project ID")
         classified = classify_exception(error, command="comic_status", surface="mcp", request=True)
@@ -107,6 +114,7 @@ class StructuredErrorContractTests(unittest.TestCase):
     def test_every_registered_code_is_reachable_through_the_classifier(self):
         cases = (
             ("CS-CLI-001", CliUsageError("the following arguments are required: command"), {}),
+            ("CS-CLI-001", UnsupportedSkillPlacementError("codex", "project"), {}),
             ("CS-HANDOFF-001", HandoffContractError(["invalid handoff"]), {}),
             ("CS-HANDOFF-001", StaleLockedScopeError(["stale scope"]), {}),
             ("CS-HANDOFF-002", HandoffArchiveError("invalid archive"), {}),

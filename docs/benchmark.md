@@ -21,6 +21,23 @@ geometry, and provenance mechanics only**. They never claim visual quality:
 
 Visual-quality scoring for arbitrary art styles is deliberately out of scope.
 
+## Evidence planes stay separate
+
+Comic Sol publishes evidence in three visibly separate planes:
+
+1. **Deterministic mechanics** — this benchmark's reproducible pipeline,
+   geometry, provenance, resume, and export checks.
+2. **Retained live visual evidence** — separately retained renders with explicit
+   provenance and bounded human review; these are not deterministic results.
+3. **Opt-in creator adoption evidence** — consented local dogfood reports
+   summarized by the build-only offline aggregator; anonymous cohort aliases are
+   not verified creator identities.
+
+These planes **must never be merged** into one score or evidence set. In
+particular, dogfood report data is never folded into deterministic benchmark
+results, and deterministic fixtures never establish creator adoption or broad
+visual quality.
+
 ## Benchmark project contract
 
 A benchmark case is a JSON contract in `benchmarks/cases/<case-id>.json`. It names

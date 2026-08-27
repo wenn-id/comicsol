@@ -1718,3 +1718,139 @@ class DogfoodProductCliContractTests(unittest.TestCase):
             self.assertFalse(payload["ok"])
             self.assertEqual("CS-PROJ-001", payload["error"]["code"])
             self.assertEqual(before, report_path.read_bytes())
+
+
+class SkillInstallProductCliTests(unittest.TestCase):
+    def invoke(self, argv):
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = cli.main(argv)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_skill_install_and_uninstall_route_exact_public_arguments(self):
+        from comic_sol_product.skill_install import SkillOperationResult
+
+        result = SkillOperationResult(
+            target="claude",
+            scope="project",
+            status="installed",
+            destination="/workspace/.claude/skills/comic-sol",
+            bundle_digest="a" * 64,
+            managed_paths=5,
+            message="Skill installed.",
+        )
+        cases = (
+            (
+                [
+                    "--json",
+                    "skill-install",
+                    "--target",
+                    "claude",
+                    "--scope",
+                    "project",
+                    "--project-root",
+                    "/workspace",
+                ],
+                "comic_sol_product.skill_install.install_skill",
+                {
+                    "target": "claude",
+                    "scope": "project",
+                    "project_root": Path("/workspace"),
+                },
+            ),
+            (
+                [
+                    "--json",
+                    "skill-uninstall",
+                    "--target",
+                    "claude",
+                    "--scope",
+                    "project",
+                    "--project-root",
+                    "/workspace",
+                ],
+                "comic_sol_product.skill_install.uninstall_skill",
+                {
+                    "target": "claude",
+                    "scope": "project",
+                    "project_root": Path("/workspace"),
+                },
+            ),
+        )
+        for argv, patched, expected in cases:
+            with (
+                self.subTest(command=argv[1]),
+                mock.patch(patched, return_value=result) as operation,
+            ):
+                code, stdout, stderr = self.invoke(argv)
+            self.assertEqual(0, code)
+            self.assertEqual("", stderr)
+            payload = json.loads(stdout)
+            self.assertEqual(argv[1], payload["command"])
+            self.assertEqual("claude", payload["data"]["target"])
+            self.assertEqual("project", payload["data"]["scope"])
+            operation.assert_called_once_with(**expected)
+
+    def test_skill_install_auto_is_supported_but_uninstall_auto_is_rejected(self):
+        install = cli.build_parser().parse_args(
+            ["skill-install", "--target", "auto", "--scope", "user"]
+        )
+        self.assertEqual("auto", install.target)
+        code, stdout, stderr = self.invoke(
+            ["--json", "skill-uninstall", "--target", "auto", "--scope", "user"]
+        )
+        self.assertEqual(2, code)
+        self.assertEqual("", stderr)
+        self.assertEqual("CS-CLI-001", json.loads(stdout)["error"]["code"])
+
+    def test_unsupported_skill_scope_uses_existing_json_and_human_error_envelopes(self):
+        from comic_sol_product.skill_install import UnsupportedSkillPlacementError
+
+        error = UnsupportedSkillPlacementError("codex", "project")
+        for as_json in (False, True):
+            argv = [
+                *(["--json"] if as_json else []),
+                "skill-install",
+                "--target",
+                "codex",
+                "--scope",
+                "project",
+                "--project-root",
+                "/workspace",
+            ]
+            with mock.patch("comic_sol_product.skill_install.install_skill", side_effect=error):
+                code, stdout, stderr = self.invoke(argv)
+            self.assertEqual(2, code)
+            if as_json:
+                self.assertEqual("", stderr)
+                payload = json.loads(stdout)
+                self.assertFalse(payload["ok"])
+                self.assertEqual("skill-install", payload["command"])
+                self.assertEqual("CS-CLI-001", payload["error"]["code"])
+                self.assertIn("codex", payload["error"]["detail"])
+            else:
+                self.assertEqual("", stdout)
+                self.assertIn("CS-CLI-001", stderr)
+                self.assertIn("codex", stderr)
+
+    def test_skill_human_success_is_actionable(self):
+        from comic_sol_product.skill_install import SkillOperationResult
+
+        result = SkillOperationResult(
+            target="zcode",
+            scope="user",
+            status="unchanged",
+            destination="/home/example/.zcode/skills/comic-sol",
+            bundle_digest="b" * 64,
+            managed_paths=73,
+            message="Skill already matches the packaged bundle.",
+        )
+        with mock.patch("comic_sol_product.skill_install.install_skill", return_value=result):
+            code, stdout, stderr = self.invoke(
+                ["skill-install", "--target", "zcode", "--scope", "user"]
+            )
+        self.assertEqual(0, code)
+        self.assertEqual("", stderr)
+        self.assertIn("zcode user: unchanged", stdout)
+        self.assertIn("Skill already matches", stdout)

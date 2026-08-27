@@ -742,6 +742,20 @@ class SummaryIntegrationTests(unittest.TestCase):
             with self.subTest(token=token, source="workflow"):
                 self.assertIn(token, workflow)
 
+    def test_docs_keep_all_three_evidence_planes_separate(self):
+        documentation = (ROOT / "docs/benchmark.md").read_text(encoding="utf-8")
+        for plane in (
+            "deterministic mechanics",
+            "retained live visual evidence",
+            "opt-in creator adoption evidence",
+        ):
+            with self.subTest(plane=plane):
+                self.assertIn(plane, documentation.lower())
+        self.assertIn("must never be merged", documentation.lower())
+        self.assertNotIn(
+            "dogfood", (ROOT / "scripts/benchmark_summary.py").read_text(encoding="utf-8")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
