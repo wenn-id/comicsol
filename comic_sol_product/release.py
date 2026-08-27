@@ -23,6 +23,40 @@ _PACKAGED_STARTER_FILES = (
     "plan/storyboard.json",
 )
 
+CANONICAL_SKILL_ROOT = Path(__file__).resolve().parents[1] / "skills" / "comic-sol"
+PACKAGED_SKILL_PREFIX = "comic_sol_product/skill/"
+SDIST_SKILL_PREFIX = "skills/comic-sol/"
+
+
+def _canonical_skill_files(canonical_root: Path | None = None) -> dict[str, bytes]:
+    """Read the one synchronized bundle that every artifact must carry verbatim."""
+    root = canonical_root or CANONICAL_SKILL_ROOT
+    if not root.is_dir():
+        raise ValueError(f"canonical Skill bundle is missing: {root.name}")
+    payload: dict[str, bytes] = {}
+    for source in sorted(root.rglob("*")):
+        if source.is_symlink():
+            raise ValueError("canonical Skill bundle contains a link")
+        if source.is_file():
+            payload[source.relative_to(root).as_posix()] = source.read_bytes()
+    if "SKILL.md" not in payload:
+        raise ValueError("canonical Skill bundle is missing SKILL.md")
+    return payload
+
+
+def canonical_skill_members(canonical_root: Path | None = None) -> frozenset[str]:
+    """Return every wheel member name for the complete synchronized bundle."""
+    return frozenset(
+        f"{PACKAGED_SKILL_PREFIX}{relative}" for relative in _canonical_skill_files(canonical_root)
+    )
+
+
+def _skill_inventory() -> frozenset[str]:
+    """Inventory the whole bundle from a checkout; fall back when installed."""
+    if CANONICAL_SKILL_ROOT.is_dir():
+        return canonical_skill_members()
+    return frozenset()
+
 
 REQUIRED_WHEEL_MEMBERS = frozenset(
     {
@@ -51,6 +85,7 @@ REQUIRED_WHEEL_MEMBERS = frozenset(
         for starter_id in _PACKAGED_STARTER_IDS
         for relative in _PACKAGED_STARTER_FILES
     }
+    | _skill_inventory()
 )
 
 REQUIRED_SDIST_SUFFIXES = frozenset(
@@ -107,6 +142,59 @@ REQUIRED_METADATA_CLASSIFIER_PREFIXES = (
     "Programming Language :: Python ::",
     "Topic ::",
 )
+
+
+def _compare_payload(packaged: dict[str, bytes], canonical: dict[str, bytes], *, kind: str) -> None:
+    if packaged == canonical:
+        return
+    missing = sorted(set(canonical) - set(packaged))
+    extra = sorted(set(packaged) - set(canonical))
+    differing = sorted(
+        relative
+        for relative in set(canonical) & set(packaged)
+        if canonical[relative] != packaged[relative]
+    )
+    problems = []
+    if missing:
+        problems.append("missing: " + ", ".join(missing))
+    if extra:
+        problems.append("unexpected: " + ", ".join(extra))
+    if differing:
+        problems.append("differing bytes: " + ", ".join(differing))
+    raise ValueError(
+        f"{kind} Skill payload does not match the synchronized bundle: " + "; ".join(problems)
+    )
+
+
+def validate_wheel_skill_payload(
+    archive: zipfile.ZipFile, *, canonical_root: Path | None = None
+) -> None:
+    """Prove the wheel carries exactly the synchronized bundle, byte for byte."""
+    canonical = _canonical_skill_files(canonical_root)
+    packaged: dict[str, bytes] = {}
+    for name in archive.namelist():
+        if name.startswith(PACKAGED_SKILL_PREFIX) and not name.endswith("/"):
+            packaged[name[len(PACKAGED_SKILL_PREFIX) :]] = archive.read(name)
+    _compare_payload(packaged, canonical, kind="wheel")
+
+
+def validate_sdist_skill_payload(
+    archive: tarfile.TarFile, *, canonical_root: Path | None = None
+) -> None:
+    """Prove the sdist carries exactly the synchronized bundle, byte for byte."""
+    canonical = _canonical_skill_files(canonical_root)
+    packaged: dict[str, bytes] = {}
+    for member in archive.getmembers():
+        if not member.isfile():
+            continue
+        _, separator, relative = member.name.partition(SDIST_SKILL_PREFIX)
+        if not separator or not relative:
+            continue
+        stream = archive.extractfile(member)
+        if stream is None:
+            continue
+        packaged[relative] = stream.read()
+    _compare_payload(packaged, canonical, kind="sdist")
 
 
 def validate_wheel_members(members: Iterable[str]) -> None:
@@ -188,6 +276,8 @@ def validate_wheel(path: Path) -> None:
         validate_wheel_members(archive.namelist())
         metadata_member = wheel_metadata_member(archive.namelist())
         validate_wheel_metadata(archive.read(metadata_member).decode("utf-8"))
+        if CANONICAL_SKILL_ROOT.is_dir():
+            validate_wheel_skill_payload(archive)
 
 
 def validate_sdist_members(members: Iterable[str]) -> None:
@@ -204,6 +294,8 @@ def validate_sdist_members(members: Iterable[str]) -> None:
 def validate_sdist(path: Path) -> None:
     with tarfile.open(path, "r:gz") as archive:
         validate_sdist_members(archive.getnames())
+        if CANONICAL_SKILL_ROOT.is_dir():
+            validate_sdist_skill_payload(archive)
 
 
 def main(argv: list[str] | None = None) -> int:

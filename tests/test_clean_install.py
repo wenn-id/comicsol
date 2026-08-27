@@ -338,3 +338,67 @@ class CleanInstallSmokeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PackagedSkillPayloadContractTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(__file__).resolve().parents[1]
+        self.canonical = self.root / "skills/comic-sol"
+
+    def test_required_wheel_inventory_covers_complete_synchronized_bundle(self):
+        from comic_sol_product.release import canonical_skill_members
+
+        expected = {
+            f"comic_sol_product/skill/{path.relative_to(self.canonical).as_posix()}"
+            for path in self.canonical.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(expected, canonical_skill_members(self.canonical))
+        self.assertTrue(expected <= REQUIRED_WHEEL_MEMBERS)
+
+    def test_wheel_payload_equality_is_verified_byte_for_byte(self):
+        import zipfile
+
+        from comic_sol_product.release import validate_wheel_skill_payload
+
+        with tempfile.TemporaryDirectory() as raw:
+            wheel = Path(raw) / "payload.whl"
+            with zipfile.ZipFile(wheel, "w") as archive:
+                for source in sorted(self.canonical.rglob("*")):
+                    if source.is_file():
+                        relative = source.relative_to(self.canonical).as_posix()
+                        archive.writestr(f"comic_sol_product/skill/{relative}", source.read_bytes())
+            with zipfile.ZipFile(wheel) as archive:
+                validate_wheel_skill_payload(archive, canonical_root=self.canonical)
+
+            tampered = Path(raw) / "tampered.whl"
+            with zipfile.ZipFile(tampered, "w") as archive:
+                for source in sorted(self.canonical.rglob("*")):
+                    if not source.is_file():
+                        continue
+                    relative = source.relative_to(self.canonical).as_posix()
+                    payload = b"tampered" if relative == "SKILL.md" else source.read_bytes()
+                    archive.writestr(f"comic_sol_product/skill/{relative}", payload)
+            with zipfile.ZipFile(tampered) as archive:
+                with self.assertRaisesRegex(ValueError, "payload.*does not match"):
+                    validate_wheel_skill_payload(archive, canonical_root=self.canonical)
+
+    def test_sdist_payload_equality_is_verified_byte_for_byte(self):
+        import io
+        import tarfile
+
+        from comic_sol_product.release import validate_sdist_skill_payload
+
+        with tempfile.TemporaryDirectory() as raw:
+            archive_path = Path(raw) / "comic-sol.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                for source in sorted(self.canonical.rglob("*")):
+                    if not source.is_file():
+                        continue
+                    payload = source.read_bytes()
+                    relative = source.relative_to(self.canonical).as_posix()
+                    info = tarfile.TarInfo(f"comic-sol-test/skills/comic-sol/{relative}")
+                    info.size = len(payload)
+                    archive.addfile(info, io.BytesIO(payload))
+            with tarfile.open(archive_path, "r:gz") as archive:
+                validate_sdist_skill_payload(archive, canonical_root=self.canonical)
