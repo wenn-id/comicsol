@@ -275,35 +275,29 @@ The success path is:
 ## Cross-agent handoff lifecycle
 
 When the active session cannot generate images directly, the handoff lifecycle enables
-another agent, device, or workspace to complete generation:
+another agent, device, or workspace to complete generation. Use the source launcher below;
+for an installed package, `comic-sol handoff` is equivalent to
+`PYTHON scripts/comic_sol.py handoff`.
 
-1. `comic-sol handoff prepare PROJECT` -- create generation jobs for pending panels.
-2. `comic-sol handoff inspect PROJECT` -- check job readiness and current status.
+1. Run `PYTHON scripts/comic_sol.py handoff prepare PROJECT`. When canonical references
+   are missing, this first pass will prepare reference jobs. Otherwise it creates panel
+   jobs and the reference phase below is skipped.
+2. Run `PYTHON scripts/comic_sol.py handoff inspect PROJECT` to check current readiness.
 3. For cross-workspace or cross-device transfer, export the prepared project:
-   `comic-sol handoff export PROJECT --output ARCHIVE`
+   `PYTHON scripts/comic_sol.py handoff export PROJECT --output ARCHIVE`
 4. Transfer the archive and import at the destination:
-   `comic-sol handoff import ARCHIVE --output-root ROOT`
-5. In the executing agent, run `comic-sol handoff inspect PROJECT` again; select only a
-   job whose effective `status` is `ready` and pass `PROJECT/<jobs[].path>` using the
-   exact `path` returned for that job.
-6. Execute via the selected executor (native tool or external adapter).
-7. Intake a panel-job result with the real CLI arguments; panel jobs must omit
-   `--approve-reference`:
+   `PYTHON scripts/comic_sol.py handoff import ARCHIVE --output-root ROOT`
+5. In the executing agent, run `PYTHON scripts/comic_sol.py handoff inspect PROJECT`
+   again (installed equivalent: `comic-sol handoff inspect PROJECT`). Select only a
+   reported job whose effective `status` is `ready`, and pass
+   `PROJECT/<jobs[].path>` using the exact `path` returned for that job; never enumerate
+   or execute retained `generation/jobs/*.json` files directly.
+6. Execute via the selected executor. In the reference phase, execute every ready
+   reference job and visually review its returned raster before approving it.
+7. Accept each approved reference-job result with the required `--approve-reference`:
 
    ```text
-   comic-sol handoff accept-result PROJECT \
-     --job JOB_ID \
-     --attempt N \
-     --executor-kind native-tool|external-tool \
-     --executor-id ID \
-     --path PATH
-   ```
-
-   For a reference-job result, use the same arguments and add the required
-   `--approve-reference` flag:
-
-   ```text
-   comic-sol handoff accept-result PROJECT \
+   PYTHON scripts/comic_sol.py handoff accept-result PROJECT \
      --job JOB_ID \
      --attempt N \
      --executor-kind native-tool|external-tool \
@@ -312,10 +306,10 @@ another agent, device, or workspace to complete generation:
      --approve-reference
    ```
 
-   Or record a failure:
+   At either phase, record a sanitized executor failure instead of accepting a result:
 
    ```text
-   comic-sol handoff record-failure PROJECT \
+   PYTHON scripts/comic_sol.py handoff record-failure PROJECT \
      --job JOB_ID \
      --attempt N \
      --executor-kind native-tool|external-tool \
@@ -323,11 +317,26 @@ another agent, device, or workspace to complete generation:
      --category CATEGORY
    ```
 
-8. After result intake, inspect again before retrying; the new inspection is authoritative
-   for status and the next attempt. Never enumerate or execute retained
-   `generation/jobs/*.json` files directly.
-9. Normal visual QA, promotion, and deterministic pipeline continue.
-10. For durable cross-device export after completion, use `comic-sol handoff export`.
+8. Inspect after each reference intake. When all reference jobs are complete and inspect
+   reports that `next_action` is `prepare`, prepare again to create panel jobs:
+   `PYTHON scripts/comic_sol.py handoff prepare PROJECT`.
+9. Inspect the newly created panel jobs, then execute every ready panel job using the exact
+   path returned by inspect.
+10. Accept each panel-job result without `--approve-reference`:
+
+   ```text
+   PYTHON scripts/comic_sol.py handoff accept-result PROJECT \
+     --job JOB_ID \
+     --attempt N \
+     --executor-kind native-tool|external-tool \
+     --executor-id ID \
+     --path PATH
+   ```
+
+11. After result intake, inspect again before retrying; the new inspection is authoritative
+    for status and the next attempt. Continue normal visual QA, promotion, and deterministic
+    export. For durable cross-device export after completion, run
+    `PYTHON scripts/comic_sol.py handoff export PROJECT --output ARCHIVE`.
 
 The deterministic engine owns contracts, validation, accounting, archive safety, and
 result intake. It does not own provider credentials or provider SDK integrations.

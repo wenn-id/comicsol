@@ -431,7 +431,7 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
 
     def test_accept_result_command_blocks_match_panel_and_reference_contracts(self):
         """Panel and reference result intake document their exact, distinct arguments."""
-        panel_command = """comic-sol handoff accept-result PROJECT \\
+        panel_command = """PYTHON scripts/comic_sol.py handoff accept-result PROJECT \\
   --job JOB_ID \\
   --attempt N \\
   --executor-kind native-tool|external-tool \\
@@ -440,9 +440,9 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         reference_command = f"{panel_command} \\\n  --approve-reference"
         blocks = self.command_blocks(
             self.workflow,
-            "comic-sol handoff accept-result PROJECT",
+            "PYTHON scripts/comic_sol.py handoff accept-result PROJECT",
         )
-        self.assertEqual([panel_command, reference_command], blocks)
+        self.assertEqual([reference_command, panel_command], blocks)
         self.assertNotIn("PANEL_ID", panel_command)
         self.assertNotIn("--reason", panel_command)
         self.assertNotIn("--approve-reference", panel_command)
@@ -452,7 +452,7 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
 
     def test_record_failure_command_block_matches_contract(self):
         """Failure intake documents its exact arguments without unsupported options."""
-        expected = """comic-sol handoff record-failure PROJECT \\
+        expected = """PYTHON scripts/comic_sol.py handoff record-failure PROJECT \\
   --job JOB_ID \\
   --attempt N \\
   --executor-kind native-tool|external-tool \\
@@ -460,12 +460,57 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
   --category CATEGORY"""
         blocks = self.command_blocks(
             self.workflow,
-            "comic-sol handoff record-failure PROJECT",
+            "PYTHON scripts/comic_sol.py handoff record-failure PROJECT",
         )
         self.assertEqual([expected], blocks)
         self.assertNotIn("PANEL_ID", expected)
         self.assertNotIn("--reason", expected)
         self.assertNotIn("--approve-reference", expected)
+
+    def test_handoff_lifecycle_uses_source_launcher(self):
+        """Every handoff lifecycle command runs from source and documents the installed alias."""
+        section = self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :]
+        for command in (
+            "prepare PROJECT",
+            "inspect PROJECT",
+            "export PROJECT --output ARCHIVE",
+            "import ARCHIVE --output-root ROOT",
+            "accept-result PROJECT",
+            "record-failure PROJECT",
+        ):
+            self.assertIn(f"PYTHON scripts/comic_sol.py handoff {command}", section)
+        self.assertIn(
+            "installed package, `comic-sol handoff` is equivalent",
+            section,
+        )
+
+    def test_reference_jobs_complete_before_second_prepare_and_panel_jobs(self):
+        """Reference-bearing projects document the complete two-phase handoff lifecycle."""
+        section = collapsed(self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :])
+        first_prepare = section.find("prepare reference jobs")
+        reference_execute = section.find("execute every ready reference job")
+        reference_approve = section.find("--approve-reference")
+        next_prepare = section.find("`next_action` is `prepare`")
+        second_prepare = section.find("prepare again to create panel jobs")
+        panel_execute = section.find("execute every ready panel job")
+        visual_qa = section.find("Continue normal visual QA")
+        positions = (
+            first_prepare,
+            reference_execute,
+            reference_approve,
+            next_prepare,
+            second_prepare,
+            panel_execute,
+            visual_qa,
+        )
+        self.assertTrue(all(position >= 0 for position in positions), positions)
+        self.assertEqual(tuple(sorted(positions)), positions)
+
+    def test_fast_mode_allows_documented_handoff_subcommands(self):
+        """Fast Mode keeps engine source unread while permitting the handoff CLI."""
+        fast_mode = self.skill.split("## Fast Mode", 1)[1].split("### Resolve Python once", 1)[0]
+        self.assertIn("Do not read, grep, or open any file under `scripts/`", fast_mode)
+        self.assertIn("documented `handoff` subcommands", fast_mode)
 
     def test_handoff_inspection_applies_only_to_prepared_handoff_execution(self):
         """Direct native generation does not require a prepared handoff job."""
@@ -496,7 +541,7 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         export_pos = section.find("export the prepared project")
         import_pos = section.find("import at the destination")
         execute_pos = section.find("Execute via the selected executor")
-        accept_pos = section.find("comic-sol handoff accept-result")
+        accept_pos = section.find("PYTHON scripts/comic_sol.py handoff accept-result")
         for name, position in (
             ("export", export_pos),
             ("import", import_pos),
@@ -506,8 +551,7 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
             self.assertGreater(position, -1, f"{name} not found in lifecycle section")
         self.assertLess(export_pos, import_pos)
         self.assertLess(import_pos, execute_pos)
-        self.assertLess(export_pos, accept_pos)
-        self.assertLess(import_pos, accept_pos)
+        self.assertLess(execute_pos, accept_pos)
 
     def test_readme_record_failure_uses_category_not_reason(self):
         """README handoff section uses --category for record-failure."""
