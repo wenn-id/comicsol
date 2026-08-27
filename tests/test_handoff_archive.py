@@ -472,6 +472,51 @@ class HandoffArchiveContractTests(unittest.TestCase):
         self.assertEqual(repetitive.read_bytes(), (imported / "logs/repetitive.txt").read_bytes())
         self.assertEqual(first.read_bytes(), second.read_bytes())
 
+    def test_archive_writer_streams_project_members_in_bounded_chunks(self):
+        module = _archive_api(self)
+        payload = b"streamed payload" * 200_000
+        reads = []
+
+        class ObservedBytesIO(io.BytesIO):
+            def read(self, size=-1):
+                reads.append(size)
+                return super().read(size)
+
+        member = module._ProjectMember(
+            "large.bin",
+            PROJECT_MEMBER_PREFIX + "large.bin",
+            len(payload),
+            hashlib.sha256(payload).hexdigest(),
+        )
+        output = io.BytesIO()
+        with mock.patch.object(
+            module,
+            "open_contained",
+            return_value=ObservedBytesIO(payload),
+        ):
+            module._write_archive(output, Path("/project"), (member,), {})
+
+        self.assertGreater(len(reads), 2)
+        self.assertTrue(all(size == 1024 * 1024 for size in reads))
+        with zipfile.ZipFile(output, "r") as bundle:
+            self.assertEqual(payload, bundle.read(member.name))
+
+    def test_inspect_and_import_reject_nonobject_handoff_manifest(self):
+        module, _project, archive, _root = self._export_fixture()
+        entries = _replace_entry(
+            _archive_entries(archive),
+            PROJECT_MEMBER_PREFIX + "handoff/manifest.json",
+            b"[]\n",
+        )
+        malformed = self._mutated_archive(
+            archive,
+            _refresh_checksums(entries),
+            "handoff-array",
+        )
+
+        self._assert_inspect_rejected_without_residue(module, malformed, "must be an object")
+        self._assert_import_rejected(module, malformed, "must be an object")
+
     def test_nested_import_creates_verified_parents_on_no_nofollow_fallback(self):
         module, project, archive, root = self._export_fixture()
         output_root = root / "fallback-import"

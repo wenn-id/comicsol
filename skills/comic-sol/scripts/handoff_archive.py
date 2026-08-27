@@ -75,6 +75,14 @@ class _VerifiedArchive:
         return len(self.project_members)
 
 
+@dataclass(frozen=True)
+class _ProjectMember:
+    relative: str
+    name: str
+    size: int
+    sha256: str
+
+
 def _path_entry_exists(path: Path) -> bool:
     try:
         path.lstat()
@@ -188,7 +196,7 @@ def _enforce_export_total(
         raise HandoffArchiveError("archive aggregate uncompressed size exceeds the limit")
 
 
-def _collect_project_payloads(project_dir: Path) -> tuple[str, dict[str, bytes]]:
+def _collect_project_members(project_dir: Path) -> tuple[str, tuple[_ProjectMember, ...]]:
     project_dir = Path(project_dir).expanduser().absolute()
     try:
         root_metadata = project_dir.lstat()
@@ -201,99 +209,88 @@ def _collect_project_payloads(project_dir: Path) -> tuple[str, dict[str, bytes]]
 
     from .validate_project import require_valid_project
 
-    payloads: dict[str, bytes] = {}
+    members: list[_ProjectMember] = []
     checksums: list[dict[str, str]] = []
     project_bytes = 0
-    with ProjectLock(project_dir):
-        try:
-            require_valid_project(project_dir, "storyboard")
-            manifest = read_contained_json(project_dir, "project.json")
-        except Exception as error:
-            raise HandoffArchiveError(f"handoff project is not valid: {error}") from error
-        if not isinstance(manifest, dict):
-            raise HandoffArchiveError("handoff project manifest must be an object")
-        project_id = _safe_project_id(manifest.get("project_id"))
-        if project_id != project_dir.name:
-            raise HandoffArchiveError("handoff project ID does not match its directory")
-        handoff = manifest.get("handoff")
-        if not isinstance(handoff, dict) or handoff.get("manifest_path") != "handoff/manifest.json":
-            raise HandoffArchiveError("handoff project is not completely prepared")
+    try:
+        require_valid_project(project_dir, "storyboard")
+        manifest = read_contained_json(project_dir, "project.json")
+    except Exception as error:
+        raise HandoffArchiveError(f"handoff project is not valid: {error}") from error
+    if not isinstance(manifest, dict):
+        raise HandoffArchiveError("handoff project manifest must be an object")
+    project_id = _safe_project_id(manifest.get("project_id"))
+    if project_id != project_dir.name:
+        raise HandoffArchiveError("handoff project ID does not match its directory")
+    handoff = manifest.get("handoff")
+    if not isinstance(handoff, dict) or handoff.get("manifest_path") != "handoff/manifest.json":
+        raise HandoffArchiveError("handoff project is not completely prepared")
 
-        format_payload = _format_metadata_payload(project_id)
-        if MAX_ARCHIVE_MEMBERS < 2:
+    format_payload = _format_metadata_payload(project_id)
+    _enforce_export_total(
+        project_bytes,
+        format_payload,
+        _checksum_manifest_payload(checksums),
+    )
+    for relative, metadata in _iter_project_entries(project_dir):
+        if relative == "logs/transactions" or relative.startswith("logs/transactions/"):
+            continue
+        if stat.S_ISLNK(metadata.st_mode) or (
+            getattr(metadata, "st_file_attributes", 0) & _WINDOWS_REPARSE_ATTRIBUTE
+        ):
+            raise HandoffArchiveError("handoff project contains a symlink or reparse point")
+        if stat.S_ISDIR(metadata.st_mode):
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise HandoffArchiveError("handoff project contains a non-regular file")
+        if _is_excluded_project_path(relative):
+            continue
+
+        name = PROJECT_MEMBER_PREFIX + relative
+        _validated_member_name(name)
+        if len(members) + 3 > MAX_ARCHIVE_MEMBERS:
             raise HandoffArchiveError("archive member count exceeds the limit")
+        if metadata.st_size < 0 or metadata.st_size > MAX_MEMBER_BYTES:
+            raise HandoffArchiveError("archive member exceeds the member limit")
+        predicted_checksums = [
+            *checksums,
+            {"path": name, "sha256": "0" * 64},
+        ]
         _enforce_export_total(
-            project_bytes,
+            project_bytes + metadata.st_size,
             format_payload,
-            _checksum_manifest_payload(checksums),
+            _checksum_manifest_payload(predicted_checksums),
         )
-        for relative, metadata in _iter_project_entries(project_dir):
-            if relative == "logs/transactions" or relative.startswith("logs/transactions/"):
-                continue
-            if stat.S_ISLNK(metadata.st_mode) or (
-                getattr(metadata, "st_file_attributes", 0) & _WINDOWS_REPARSE_ATTRIBUTE
-            ):
-                raise HandoffArchiveError("handoff project contains a symlink or reparse point")
-            if stat.S_ISDIR(metadata.st_mode):
-                continue
-            if not stat.S_ISREG(metadata.st_mode):
-                raise HandoffArchiveError("handoff project contains a non-regular file")
-            if _is_excluded_project_path(relative):
-                continue
 
-            name = PROJECT_MEMBER_PREFIX + relative
-            _validated_member_name(name)
-            if len(payloads) + 3 > MAX_ARCHIVE_MEMBERS:
-                raise HandoffArchiveError("archive member count exceeds the limit")
-            if metadata.st_size < 0 or metadata.st_size > MAX_MEMBER_BYTES:
-                raise HandoffArchiveError("archive member exceeds the member limit")
-            predicted_checksums = [
-                *checksums,
-                {"path": name, "sha256": "0" * 64},
-            ]
-            _enforce_export_total(
-                project_bytes + metadata.st_size,
-                format_payload,
-                _checksum_manifest_payload(predicted_checksums),
-            )
+        payload = read_contained_bytes(
+            project_dir,
+            relative,
+            max_bytes=MAX_MEMBER_BYTES,
+        )
+        digest = hashlib.sha256(payload).hexdigest()
+        next_checksums = [*checksums, {"path": name, "sha256": digest}]
+        _enforce_export_total(
+            project_bytes + len(payload),
+            format_payload,
+            _checksum_manifest_payload(next_checksums),
+        )
+        members.append(_ProjectMember(relative, name, len(payload), digest))
+        checksums = next_checksums
+        project_bytes += len(payload)
 
-            payload = read_contained_bytes(
-                project_dir,
-                relative,
-                max_bytes=MAX_MEMBER_BYTES,
-            )
-            digest = hashlib.sha256(payload).hexdigest()
-            next_checksums = [*checksums, {"path": name, "sha256": digest}]
-            _enforce_export_total(
-                project_bytes + len(payload),
-                format_payload,
-                _checksum_manifest_payload(next_checksums),
-            )
-            payloads[name] = payload
-            checksums = next_checksums
-            project_bytes += len(payload)
-
-    if PROJECT_MEMBER_PREFIX + "handoff/manifest.json" not in payloads:
+    if PROJECT_MEMBER_PREFIX + "handoff/manifest.json" not in {item.name for item in members}:
         raise HandoffArchiveError("handoff project is missing its handoff manifest")
-    return project_id, payloads
+    return project_id, tuple(members)
 
 
-def _archive_payloads(project_id: str, project_payloads: dict[str, bytes]) -> dict[str, bytes]:
-    checksums = [
-        {"path": name, "sha256": hashlib.sha256(payload).hexdigest()}
-        for name, payload in sorted(project_payloads.items())
-    ]
-    payloads = dict(project_payloads)
-    payloads[FORMAT_METADATA_MEMBER] = _format_metadata_payload(project_id)
-    payloads[CHECKSUM_MANIFEST_MEMBER] = _checksum_manifest_payload(checksums)
-    if len(payloads) > MAX_ARCHIVE_MEMBERS:
-        raise HandoffArchiveError("archive member count exceeds the limit")
-    total = sum(len(payload) for payload in payloads.values())
-    if any(len(payload) > MAX_MEMBER_BYTES for payload in payloads.values()):
-        raise HandoffArchiveError("archive member exceeds the member limit")
-    if total > MAX_TOTAL_UNCOMPRESSED_BYTES:
-        raise HandoffArchiveError("archive aggregate uncompressed size exceeds the limit")
-    return payloads
+def _archive_control_payloads(
+    project_id: str, project_members: tuple[_ProjectMember, ...]
+) -> dict[str, bytes]:
+    checksums = [{"path": member.name, "sha256": member.sha256} for member in project_members]
+    return {
+        FORMAT_METADATA_MEMBER: _format_metadata_payload(project_id),
+        CHECKSUM_MANIFEST_MEMBER: _checksum_manifest_payload(checksums),
+    }
 
 
 def _set_descriptor_mode(descriptor: int, mode: int) -> None:
@@ -400,15 +397,35 @@ def _preflight_central_directory(handle: BinaryIO) -> None:
     handle.seek(0)
 
 
-def _write_archive(handle: BinaryIO, payloads: dict[str, bytes]) -> None:
+def _write_archive(
+    handle: BinaryIO,
+    project_dir: Path,
+    project_members: tuple[_ProjectMember, ...],
+    control_payloads: dict[str, bytes],
+) -> None:
     with zipfile.ZipFile(
         handle,
         "w",
         compression=zipfile.ZIP_DEFLATED,
         compresslevel=0,
     ) as writer:
-        for name in sorted(payloads):
-            writer.writestr(_regular_zip_info(name), payloads[name], compresslevel=0)
+        for name in sorted(control_payloads):
+            writer.writestr(_regular_zip_info(name), control_payloads[name], compresslevel=0)
+        for member in project_members:
+            digest = hashlib.sha256()
+            size = 0
+            with (
+                open_contained(project_dir, member.relative) as source,
+                writer.open(_regular_zip_info(member.name), "w", force_zip64=False) as target,
+            ):
+                while chunk := source.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > member.size or size > MAX_MEMBER_BYTES:
+                        raise HandoffArchiveError("handoff project changed during export")
+                    digest.update(chunk)
+                    target.write(chunk)
+            if size != member.size or digest.hexdigest() != member.sha256:
+                raise HandoffArchiveError("handoff project changed during export")
 
 
 def _unlink_owned_file(path: Path, identity: tuple[int, int]) -> None:
@@ -442,77 +459,82 @@ def export_handoff_archive(project_dir: Path, output_path: Path) -> dict[str, ob
     if _path_entry_exists(destination):
         raise HandoffArchiveError("archive destination exists; export would clobber it")
 
-    project_id, project_payloads = _collect_project_payloads(source)
-    payloads = _archive_payloads(project_id, project_payloads)
+    with ProjectLock(source):
+        project_id, project_members = _collect_project_members(source)
+        control_payloads = _archive_control_payloads(project_id, project_members)
 
-    temporary: Path | None = None
-    temporary_identity: tuple[int, int] | None = None
-    published_identity: tuple[int, int] | None = None
-    descriptor = -1
-    try:
-        descriptor, name = tempfile.mkstemp(
-            dir=destination.parent,
-            prefix=f".{destination.name}.",
-            suffix=".tmp",
-        )
-        temporary = Path(name)
-        metadata = os.fstat(descriptor)
-        temporary_identity = (metadata.st_dev, metadata.st_ino)
-        _set_descriptor_mode(descriptor, 0o644)
-        stream = os.fdopen(descriptor, "w+b")
+        temporary: Path | None = None
+        temporary_identity: tuple[int, int] | None = None
+        published_identity: tuple[int, int] | None = None
         descriptor = -1
-        with stream as handle:
-            _write_archive(handle, payloads)
-            handle.flush()
-            os.fsync(handle.fileno())
-            handle.seek(0)
-            _preflight_central_directory(handle)
-            with zipfile.ZipFile(handle, "r") as written:
-                _verify_open_archive(written)
-        current = temporary.stat(follow_symlinks=False)
-        if (current.st_dev, current.st_ino) != temporary_identity:
-            raise HandoffArchiveError("archive temporary identity changed before publication")
-        _atomic_rename_noreplace(temporary, destination)
-        temporary = None
-        published_identity = temporary_identity
-        fsync_directory(destination.parent)
-        published_identity = None
-    except FileExistsError as error:
-        raise HandoffArchiveError("archive destination exists; export would clobber it") from error
-    except HandoffArchiveError:
-        raise
-    except BaseException as error:
-        if published_identity is not None and _path_entry_exists(destination):
-            try:
-                quarantine = quarantine_owned_file(destination, published_identity)
-            except OSError as cleanup_error:
-                raise HandoffArchiveError(
-                    "archive publish interruption could not be rolled back"
-                ) from cleanup_error
-            if quarantine is None:
-                raise HandoffArchiveError(
-                    "archive publish interruption changed destination identity"
-                ) from error
-        if not isinstance(error, Exception):
-            raise
-        raise HandoffArchiveError(f"archive publish failed after interruption: {error}") from error
-    finally:
         try:
-            if descriptor != -1 and temporary is not None and temporary_identity is None:
+            descriptor, name = tempfile.mkstemp(
+                dir=destination.parent,
+                prefix=f".{destination.name}.",
+                suffix=".tmp",
+            )
+            temporary = Path(name)
+            metadata = os.fstat(descriptor)
+            temporary_identity = (metadata.st_dev, metadata.st_ino)
+            _set_descriptor_mode(descriptor, 0o644)
+            stream = os.fdopen(descriptor, "w+b")
+            descriptor = -1
+            with stream as handle:
+                _write_archive(handle, source, project_members, control_payloads)
+                handle.flush()
+                os.fsync(handle.fileno())
+                handle.seek(0)
+                _preflight_central_directory(handle)
+                with zipfile.ZipFile(handle, "r") as written:
+                    _verify_open_archive(written)
+            current = temporary.stat(follow_symlinks=False)
+            if (current.st_dev, current.st_ino) != temporary_identity:
+                raise HandoffArchiveError("archive temporary identity changed before publication")
+            _atomic_rename_noreplace(temporary, destination)
+            temporary = None
+            published_identity = temporary_identity
+            fsync_directory(destination.parent)
+            published_identity = None
+        except FileExistsError as error:
+            raise HandoffArchiveError(
+                "archive destination exists; export would clobber it"
+            ) from error
+        except HandoffArchiveError:
+            raise
+        except BaseException as error:
+            if published_identity is not None and _path_entry_exists(destination):
                 try:
-                    metadata = os.fstat(descriptor)
-                except OSError:
-                    pass
-                else:
-                    temporary_identity = (metadata.st_dev, metadata.st_ino)
+                    quarantine = quarantine_owned_file(destination, published_identity)
+                except OSError as cleanup_error:
+                    raise HandoffArchiveError(
+                        "archive publish interruption could not be rolled back"
+                    ) from cleanup_error
+                if quarantine is None:
+                    raise HandoffArchiveError(
+                        "archive publish interruption changed destination identity"
+                    ) from error
+            if not isinstance(error, Exception):
+                raise
+            raise HandoffArchiveError(
+                f"archive publish failed after interruption: {error}"
+            ) from error
         finally:
             try:
-                if descriptor != -1:
-                    os.close(descriptor)
+                if descriptor != -1 and temporary is not None and temporary_identity is None:
+                    try:
+                        metadata = os.fstat(descriptor)
+                    except OSError:
+                        pass
+                    else:
+                        temporary_identity = (metadata.st_dev, metadata.st_ino)
             finally:
-                if temporary is not None and temporary_identity is not None:
-                    _unlink_owned_file(temporary, temporary_identity)
-    return {"project_id": project_id, "archive_path": str(destination)}
+                try:
+                    if descriptor != -1:
+                        os.close(descriptor)
+                finally:
+                    if temporary is not None and temporary_identity is not None:
+                        _unlink_owned_file(temporary, temporary_identity)
+        return {"project_id": project_id, "archive_path": str(destination)}
 
 
 def _validated_member_name(name: str) -> str:
@@ -755,6 +777,8 @@ def _verify_open_archive(bundle: zipfile.ZipFile) -> _VerifiedArchive:
         limit=min(MAX_MEMBER_BYTES, MAX_JSON_BYTES),
     )
     handoff_manifest = _load_archive_json(handoff_payload, label="handoff manifest")
+    if not isinstance(handoff_manifest, dict):
+        raise HandoffArchiveError("archive handoff manifest must be an object")
     from .handoff import validate_handoff_manifest
 
     handoff_issues = validate_handoff_manifest(handoff_manifest)
@@ -764,8 +788,7 @@ def _verify_open_archive(bundle: zipfile.ZipFile) -> _VerifiedArchive:
         )
     project_binding = project_manifest.get("handoff")
     if (
-        not isinstance(handoff_manifest, dict)
-        or handoff_manifest.get("project_id") != project_id
+        handoff_manifest.get("project_id") != project_id
         or not isinstance(project_binding, dict)
         or project_binding.get("manifest_path") != "handoff/manifest.json"
         or project_binding.get("locked_scope_sha256") != handoff_manifest.get("locked_scope_sha256")
