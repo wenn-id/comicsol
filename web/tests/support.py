@@ -10,8 +10,8 @@ working in a plain checkout without an editable install.
 from __future__ import annotations
 
 import importlib.util
-import os
 import sys
+import tempfile
 from pathlib import Path
 
 WEB_ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +33,7 @@ def valid_environment(data_root: Path | None = None) -> dict[str, str]:
     create application or database state.
     """
     root = (
-        data_root if data_root is not None else Path(os.sep) / "tmp" / "comic-sol-web-tests"
+        data_root if data_root is not None else Path(tempfile.gettempdir()) / "comic-sol-web-tests"
     ).resolve()
     return {
         "COMIC_SOL_WEB_SESSION_SECRET": SESSION_SECRET,
