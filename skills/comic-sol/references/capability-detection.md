@@ -1,7 +1,7 @@
 # Image capability detection
 
 > **Provider setup:** See [`image-provider-setup.md`](image-provider-setup.md) for
-> provider-neutral setup guidance.
+> host-neutral setup guidance and clearly labeled host examples.
 
 Capability detection belongs to the agent plane, not deterministic Python. The agent
 performs a metadata-only inspection before `doctor`; detection never invokes an image
@@ -9,12 +9,13 @@ tool, probes a provider, reads credentials, or makes a network request.
 
 ## Inspect the active session
 
-1. Inspect only the tools exposed in the current session. A usable capability must both
-   create an image from text alone and return or write a local raster that Comic Sol can
-   retain. An editing-only tool is insufficient.
+1. Inspect only the tools exposed to the active agent in the active session. A usable
+   capability must both create an image from text alone and return or write a local raster
+   that Comic Sol can retain. An editing-only tool is insufficient.
 2. Choose one best usable capability. Prefer declared reference-image support, then exact
    dimensions or aspect-ratio support. Use the fixed neutral capability name
-   `agent-image-generation`; do not infer features from a provider, model, or tool name.
+   `agent-image-generation`. Never infer capability availability or features from
+   provider, model, or tool names.
 3. Include an optional feature only when the exposed tool description or schema declares
    it. Unknown and unsupported features both use the safe degraded behavior: omit the
    matching flag.

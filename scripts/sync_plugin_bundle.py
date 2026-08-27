@@ -7,9 +7,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = ROOT / "skills/comic-sol"
-HOST_SPECIFIC_REFERENCES = {"capability-detection.md", "image-provider-setup.md"}
 SYNCHRONIZED_REFERENCES = (
+    "capability-detection.md",
     "creative-direction.md",
+    "image-provider-setup.md",
     "safety-ip.md",
     "schemas.md",
     "starter-templates.md",
@@ -101,9 +102,7 @@ def synchronized_paths() -> list[Path]:
 
 
 def expected_bundle_paths() -> set[Path]:
-    return set(synchronized_paths()) | {
-        Path("references") / name for name in HOST_SPECIFIC_REFERENCES
-    }
+    return set(synchronized_paths())
 
 
 def actual_bundle_paths() -> set[Path]:
