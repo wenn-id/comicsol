@@ -8,6 +8,7 @@ from pathlib import Path
 
 from setuptools import setup
 from setuptools.command.build_py import build_py as _build_py
+from setuptools.command.sdist import sdist as _sdist
 
 ROOT = Path(__file__).resolve().parent
 REQUIRED_RUNTIME_SCRIPTS = runpy.run_path(ROOT / "runtime_contract.py")["REQUIRED_RUNTIME_SCRIPTS"]
@@ -23,6 +24,9 @@ BUILD_ONLY_SCRIPTS = {
     "portable_release_smoke.py",
     "release_identity.py",
 }
+# Byte-compilation output is environment-generated and must never enter the
+# packaged Skill payload, or the packaged bundle stops matching its source.
+_IGNORE_GENERATED = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
 
 
 class build_py(_build_py):
@@ -54,13 +58,35 @@ class build_py(_build_py):
                 shutil.rmtree(destination)
             shutil.copytree(ROOT / directory, destination)
 
+        # The Skill payload is the one already-synchronized canonical bundle,
+        # copied verbatim. Never reassemble a second payload from independently
+        # selected root files: that is how the two copies drift apart.
         skill_root = package_root / "skill"
-        skill_root.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / "SKILL.md", skill_root / "SKILL.md")
-        references = skill_root / "references"
-        if references.exists():
-            shutil.rmtree(references)
-        shutil.copytree(ROOT / "references", references)
+        if skill_root.exists():
+            shutil.rmtree(skill_root)
+        canonical_skill = ROOT / "skills" / "comic-sol"
+        if not (canonical_skill / "SKILL.md").is_file():
+            raise FileNotFoundError(
+                "canonical Agent Skill bundle is missing: skills/comic-sol/SKILL.md"
+            )
+        shutil.copytree(canonical_skill, skill_root, ignore=_IGNORE_GENERATED)
 
 
-setup(cmdclass={"build_py": build_py})
+class sdist(_sdist):
+    """Ship the canonical Skill bundle in the source distribution unchanged."""
+
+    def make_release_tree(self, base_dir, files) -> None:
+        super().make_release_tree(base_dir, files)
+        canonical_skill = ROOT / "skills" / "comic-sol"
+        if not (canonical_skill / "SKILL.md").is_file():
+            raise FileNotFoundError(
+                "canonical Agent Skill bundle is missing: skills/comic-sol/SKILL.md"
+            )
+        destination = Path(base_dir) / "skills" / "comic-sol"
+        if destination.exists():
+            shutil.rmtree(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(canonical_skill, destination, ignore=_IGNORE_GENERATED)
+
+
+setup(cmdclass={"build_py": build_py, "sdist": sdist})

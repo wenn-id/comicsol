@@ -37,6 +37,23 @@ class CliUsageError(Exception):
         self.message = message
 
 
+class UnsupportedSkillPlacementError(CliUsageError):
+    """Raised when a host does not support the requested explicit scope."""
+
+    def __init__(self, target: str, scope: str) -> None:
+        supported = {
+            "codex": "user",
+            "claude": "user or project",
+            "antigravity": "project",
+            "zcode": "user",
+        }.get(target, "codex user, claude user/project, antigravity project, or zcode user")
+        super().__init__(
+            f"{target} does not support {scope} Skill scope. Supported placement: {supported}."
+        )
+        self.target = target
+        self.scope = scope
+
+
 class ValidationFailureError(ValueError):
     """Signal that a completed project inspection reported validation issues."""
 
@@ -322,7 +339,9 @@ def classify_exception(
             if raw.startswith(prefix):
                 boundary_code = code
                 break
-    if boundary_code is not None:
+    if isinstance(error, CliUsageError):
+        definition = ERROR_DEFINITIONS["CS-CLI-001"]
+    elif boundary_code is not None:
         definition = ERROR_DEFINITIONS[boundary_code]
     elif request or (
         surface == "mcp"

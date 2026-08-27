@@ -217,6 +217,18 @@ def build_parser() -> argparse.ArgumentParser:
     mcp = subparsers.add_parser("mcp")
     mcp.add_argument("--root", required=True, type=Path)
 
+    for skill_command, skill_targets in (
+        ("skill-install", ("codex", "claude", "antigravity", "zcode", "auto")),
+        ("skill-uninstall", ("codex", "claude", "antigravity", "zcode")),
+    ):
+        skill = subparsers.add_parser(
+            skill_command,
+            description="Place or remove the canonical Comic Sol Agent Skill bundle.",
+        )
+        skill.add_argument("--target", required=True, choices=skill_targets)
+        skill.add_argument("--scope", required=True, choices=("user", "project"))
+        skill.add_argument("--project-root", type=Path, dest="project_root")
+
     for command in ("setup", "repair", "uninstall"):
         integration = subparsers.add_parser(command)
         integration.add_argument("--output-root", type=Path, default=default_output_root())
@@ -828,6 +840,17 @@ def _run(
         elif arguments.command == "handoff.record-failure":
             handoff_arguments["category"] = arguments.category
         return service.execute(arguments.command, **handoff_arguments)
+    if arguments.command in {"skill-install", "skill-uninstall"}:
+        from .skill_install import install_skill, uninstall_skill
+
+        operation = install_skill if arguments.command == "skill-install" else uninstall_skill
+        return asdict(
+            operation(
+                target=arguments.target,
+                scope=arguments.scope,
+                project_root=arguments.project_root,
+            )
+        )
     if arguments.command in {"setup", "repair", "uninstall"}:
         from .setup import repair_clients, setup_clients, uninstall_clients
 
@@ -946,6 +969,13 @@ def main(argv: list[str] | None = None) -> int:
         elif command in {"setup", "repair", "uninstall"}:
             for result in data:
                 print(f"{result['client']}: {result['status']} — {result['message']}")
+        elif command in {"skill-install", "skill-uninstall"}:
+            print(
+                f"{_escape_terminal_controls(data['target'])} "
+                f"{_escape_terminal_controls(data['scope'])}: "
+                f"{_escape_terminal_controls(data['status'])} — "
+                f"{_escape_terminal_controls(data['message'])}"
+            )
         else:
             print(json.dumps(data, ensure_ascii=False, sort_keys=True))
         if command == "doctor" and not data["healthy"]:

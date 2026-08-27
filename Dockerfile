@@ -11,6 +11,7 @@ COPY scripts ./scripts
 COPY assets ./assets
 COPY templates ./templates
 COPY references ./references
+COPY skills ./skills
 RUN python -m pip install --no-cache-dir --require-hashes -r requirements/locks/release-linux-x86_64.txt \
     && python -m build --wheel --no-isolation
 
