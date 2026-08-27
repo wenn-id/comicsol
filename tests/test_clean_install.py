@@ -346,13 +346,20 @@ class PackagedSkillPayloadContractTests(unittest.TestCase):
         self.canonical = self.root / "skills/comic-sol"
 
     def test_required_wheel_inventory_covers_complete_synchronized_bundle(self):
-        from comic_sol_product.release import canonical_skill_members
+        from comic_sol_product.release import _is_generated_bytecode, canonical_skill_members
 
+        # Running the suite byte-compiles the bundled scripts in place, so the
+        # expectation applies the same environment-generated exclusion.
         expected = {
-            f"comic_sol_product/skill/{path.relative_to(self.canonical).as_posix()}"
-            for path in self.canonical.rglob("*")
-            if path.is_file()
+            f"comic_sol_product/skill/{relative}"
+            for relative in (
+                path.relative_to(self.canonical).as_posix()
+                for path in self.canonical.rglob("*")
+                if path.is_file()
+            )
+            if not _is_generated_bytecode(relative)
         }
+        self.assertIn("comic_sol_product/skill/SKILL.md", expected)
         self.assertEqual(expected, canonical_skill_members(self.canonical))
         self.assertTrue(expected <= REQUIRED_WHEEL_MEMBERS)
 

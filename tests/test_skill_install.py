@@ -142,16 +142,23 @@ class SkillInstallTests(unittest.TestCase):
         canonical = Path(__file__).resolve().parents[1] / "skills/comic-sol"
         result = self.install("claude", "user", bundle_root=canonical)
         destination = Path(result.destination)
-        expected = {
-            path.relative_to(canonical).as_posix(): path.read_bytes()
-            for path in canonical.rglob("*")
-            if path.is_file()
-        }
-        actual = {
-            path.relative_to(destination).as_posix(): path.read_bytes()
-            for path in destination.rglob("*")
-            if path.is_file() and path.name != skill_install.MARKER_NAME
-        }
+
+        def managed(root: Path) -> dict[str, bytes]:
+            # Running the suite byte-compiles the bundled scripts in place, so
+            # both sides must apply the same environment-generated exclusion.
+            payload = {}
+            for path in root.rglob("*"):
+                relative = path.relative_to(root).as_posix()
+                if not path.is_file() or skill_install._is_unmanaged(relative):
+                    continue
+                if relative == skill_install.MARKER_NAME:
+                    continue
+                payload[relative] = path.read_bytes()
+            return payload
+
+        expected = managed(canonical)
+        actual = managed(destination)
+        self.assertIn("SKILL.md", expected)
         self.assertEqual(expected, actual)
         self.assertEqual(skill_install.bundle_digest(canonical), result.bundle_digest)
 
@@ -219,6 +226,10 @@ class SkillInstallTests(unittest.TestCase):
         unknown.write_text("preserve me\n", encoding="utf-8")
         result = self.uninstall("zcode", "user")
         self.assertEqual("preserved", result.status)
+        # The result must echo the requested host and scope verbatim.
+        self.assertEqual("zcode", result.target)
+        self.assertEqual("user", result.scope)
+        self.assertEqual(os.fspath(destination), result.destination)
         self.assertEqual("user-modified\n", modified.read_text())
         self.assertEqual("preserve me\n", unknown.read_text())
         self.assertFalse((destination / "references/workflow.md").exists())
@@ -280,8 +291,9 @@ class SkillInstallTests(unittest.TestCase):
                 self.assertIn(scope, str(context.exception))
                 self.assertIn("Supported", str(context.exception))
 
-    def test_project_scope_requires_project_root_and_user_scope_rejects_it(self):
-        with self.assertRaises(skill_install.UnsafeSkillPathError):
+    def test_project_root_flag_misuse_is_a_usage_error_not_a_security_error(self):
+        """Flag misuse must not borrow the security-boundary recovery text."""
+        with self.assertRaises(CliUsageError) as missing:
             skill_install.install_skill(
                 target="claude",
                 scope="project",
@@ -289,8 +301,12 @@ class SkillInstallTests(unittest.TestCase):
                 home=self.home,
                 codex_home=self.codex_home,
             )
-        with self.assertRaises(skill_install.UnsafeSkillPathError):
+        with self.assertRaises(CliUsageError) as unexpected:
             self.install("claude", "user", project_root=self.project)
+        for context in (missing, unexpected):
+            self.assertNotIsInstance(context.exception, skill_install.UnsafeSkillPathError)
+            self.assertNotIn("security-error", str(context.exception))
+            self.assertIn("--project-root", str(context.exception))
 
     def test_traversal_and_alias_paths_are_rejected_before_writing(self):
         for unsafe in (
@@ -409,20 +425,78 @@ class SkillInstallTests(unittest.TestCase):
         self.assertEqual(original, restored)
         self.assertEqual([], list(destination.parent.glob(".comic-sol.stage-*")))
 
-    def test_uninstall_requires_valid_matching_marker_before_changes(self):
+    def test_uninstall_never_removes_files_without_a_valid_matching_marker(self):
         destination = self.home / ".claude/skills/comic-sol"
         destination.mkdir(parents=True)
         protected = destination / "SKILL.md"
         protected.write_text("not managed\n")
-        for marker in (None, {"target": "claude"}, {"target": "zcode"}):
+        for marker in ({"target": "claude"}, {"target": "zcode"}):
             with self.subTest(marker=marker):
                 marker_path = destination / skill_install.MARKER_NAME
                 marker_path.unlink(missing_ok=True)
-                if marker is not None:
-                    marker_path.write_text(json.dumps(marker))
+                marker_path.write_text(json.dumps(marker))
                 with self.assertRaises(skill_install.InvalidSkillMarkerError):
                     self.uninstall("claude", "user")
                 self.assertEqual("not managed\n", protected.read_text())
+
+    def test_uninstall_without_a_marker_changes_nothing_and_stays_repeatable(self):
+        """An unmarked directory is not ours to remove, and repeating is safe."""
+        destination = self.home / ".claude/skills/comic-sol"
+        destination.mkdir(parents=True)
+        protected = destination / "SKILL.md"
+        protected.write_text("not managed\n")
+
+        for _ in range(2):
+            result = self.uninstall("claude", "user")
+            self.assertEqual("not-installed", result.status)
+            self.assertEqual("not managed\n", protected.read_text())
+
+    def test_preserved_uninstall_is_idempotent(self):
+        installed = self.install("claude", "user")
+        destination = Path(installed.destination)
+        (destination / "SKILL.md").write_text("user-modified\n", encoding="utf-8")
+
+        first = self.uninstall("claude", "user")
+        second = self.uninstall("claude", "user")
+
+        self.assertEqual("preserved", first.status)
+        self.assertEqual("not-installed", second.status)
+        self.assertEqual("user-modified\n", (destination / "SKILL.md").read_text())
+
+    def test_uninstall_failure_restores_the_complete_original_tree(self):
+        installed = self.install("claude", "user")
+        destination = Path(installed.destination)
+        original = {
+            path.relative_to(destination).as_posix(): path.read_bytes()
+            for path in destination.rglob("*")
+            if path.is_file()
+        }
+        for name in ("notes.txt", "extra/second.txt"):
+            unknown = destination / name
+            unknown.parent.mkdir(parents=True, exist_ok=True)
+            unknown.write_text(f"keep {name}\n", encoding="utf-8")
+            original[name] = unknown.read_bytes()
+        calls = 0
+        real_copy = skill_install._copy_file
+
+        def fail_after_one(source, target):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("simulated uninstall failure")
+            return real_copy(source, target)
+
+        with mock.patch.object(skill_install, "_copy_file", side_effect=fail_after_one):
+            with self.assertRaises(OSError):
+                self.uninstall("claude", "user")
+
+        restored = {
+            path.relative_to(destination).as_posix(): path.read_bytes()
+            for path in destination.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(original, restored)
+        self.assertEqual([], list(destination.parent.glob(".comic-sol*uninstall-*")))
 
     def test_uninstall_rejects_symlinked_managed_member_before_changes(self):
         installed = self.install("claude", "user")

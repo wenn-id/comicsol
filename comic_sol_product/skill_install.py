@@ -307,11 +307,13 @@ def _destination_for(
 ) -> tuple[Path, Path]:
     if (target, scope) not in _SUPPORTED:
         raise UnsupportedSkillPlacementError(target, scope)
+    # Flag combinations are usage mistakes, not path-boundary violations: they
+    # must not inherit the security recovery text.
     if scope == "user" and project_root is not None:
-        raise UnsafeSkillPathError("--project-root is valid only with project scope")
+        raise CliUsageError("--project-root is valid only with --scope project")
     if scope == "project":
         if project_root is None:
-            raise UnsafeSkillPathError("project scope requires --project-root")
+            raise CliUsageError("--scope project requires --project-root")
         root = _lexical_path(project_root, label="project root")
         _assert_directory(root, label="project root")
         relative = {
@@ -595,18 +597,51 @@ def _exchange_paths(first: Path, second: Path) -> None:
         _fsync_directory(first.parent)
         return
 
-    # Windows has no general directory-exchange primitive. Retain the old tree
-    # in a private sibling and restore it on either rename failure.
+    # Windows has no general directory-exchange primitive, so emulate one with
+    # three renames through a private sibling. Every failure path must leave the
+    # original tree published at `second` and the new tree back at `first`.
     backup = first.with_name(f".{second.name}.rollback-{secrets.token_hex(8)}")
     os.replace(second, backup)
     try:
         os.replace(first, second)
+    except BaseException:
+        os.replace(backup, second)
+        raise
+    try:
         os.replace(backup, first)
     except BaseException:
-        if backup.exists() and not second.exists():
+        # The new tree is already published. Unpublish it, restore the original
+        # bytes, and return the new tree to the staging slot for cleanup.
+        aside = first.with_name(f".{second.name}.unpublish-{secrets.token_hex(8)}")
+        os.replace(second, aside)
+        try:
             os.replace(backup, second)
+        finally:
+            os.replace(aside, first)
         raise
     _fsync_directory(first.parent)
+
+
+def _installed_members(root: Path) -> set[str]:
+    """List every regular file under one verified install, marker excluded."""
+    members: set[str] = set()
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                relative = Path(entry.path).relative_to(root).as_posix()
+                metadata = entry.stat(follow_symlinks=False)
+                if entry.is_symlink() or _is_reparse_point(metadata):
+                    raise UnsafeSkillPathError("an installed member is a link")
+                if stat.S_ISDIR(metadata.st_mode):
+                    pending.append(Path(entry.path))
+                elif stat.S_ISREG(metadata.st_mode):
+                    if relative != MARKER_NAME:
+                        members.add(_validate_relative(relative))
+                else:
+                    raise UnsafeSkillPathError("an installed member is not a regular file")
+    return members
 
 
 def _safe_remove_private_tree(path: Path) -> None:
@@ -783,56 +818,68 @@ def uninstall_skill(
             "No managed Comic Sol Skill installation was found.",
         )
     _assert_safe_tree(destination)
+    if not (destination / MARKER_NAME).exists():
+        # An unmarked directory is not ours to remove. Reporting this as a no-op
+        # keeps uninstall idempotent and safe to repeat after a preserved run.
+        return SkillOperationResult(
+            target,
+            scope,
+            "not-installed",
+            os.fspath(destination),
+            None,
+            0,
+            "No managed Comic Sol Skill installation was found; existing files were preserved.",
+        )
     marker = _read_marker(destination)
     if marker["target"] != target or marker["scope"] != scope:
         raise InvalidSkillMarkerError(
-            "Comic Sol Skill marker does not match the requested host and scope; no files were changed"
+            "Comic Sol Skill marker does not match the requested host and scope; "
+            "no files were changed"
         )
     managed: dict[str, str] = marker["managed_paths"]
-    removable: list[Path] = []
+
+    # Plan first, without mutating anything: only marker-listed files whose
+    # bytes still match are ours to remove.
+    present = _installed_members(destination)
+    removable: set[str] = set()
     for relative, expected_digest in managed.items():
         candidate = destination / relative
         _assert_contained(candidate, destination)
-        try:
-            metadata = candidate.stat(follow_symlinks=False)
-        except FileNotFoundError:
+        if relative not in present:
             continue
-        if stat.S_ISLNK(metadata.st_mode) or _is_reparse_point(metadata):
-            raise UnsafeSkillPathError("a managed file is a link")
-        if not stat.S_ISREG(metadata.st_mode):
-            raise UnsafeSkillPathError("a managed path is not a regular file")
         if hashlib.sha256(_read_regular(candidate)).hexdigest() == expected_digest:
-            removable.append(candidate)
+            removable.add(relative)
+    survivors = sorted((present | {MARKER_NAME}) - removable - {MARKER_NAME})
 
-    for candidate in removable:
-        candidate.unlink()
-        _fsync_directory(candidate.parent)
-    marker_path = destination / MARKER_NAME
-    marker_path.unlink()
-    _fsync_directory(destination)
-
-    directories = {
-        parent
-        for relative in managed
-        for parent in (destination / relative).parents
-        if parent != destination and destination in parent.parents
-    }
-    for directory in sorted(directories, key=lambda item: len(item.parts), reverse=True):
-        try:
-            directory.rmdir()
-        except (FileNotFoundError, OSError):
-            pass
+    staging = destination.with_name(f".{destination.name}.uninstall-{secrets.token_hex(8)}")
     try:
-        destination.rmdir()
-    except OSError:
-        status = "preserved"
-        message = (
-            "Managed unchanged files were removed; modified or unrelated files were preserved."
-        )
-    else:
-        _fsync_directory(destination.parent)
-        status = "uninstalled"
-        message = "Managed Comic Sol Skill files were removed."
+        if not survivors:
+            # Nothing would be left behind: detach the tree atomically, then
+            # discard it. A failure before the rename leaves the install intact.
+            os.replace(destination, staging)
+            _fsync_directory(destination.parent)
+            _safe_remove_private_tree(staging)
+            status = "uninstalled"
+            message = "Managed Comic Sol Skill files were removed."
+        else:
+            # Removal is all-or-nothing: build the post-uninstall tree beside the
+            # live one, then publish it atomically. The original keeps every byte
+            # until the exchange succeeds, so any earlier failure is a no-op.
+            staging.mkdir(mode=0o700)
+            for relative in survivors:
+                preserved = staging / relative
+                _mkdir_verified(preserved.parent)
+                _copy_file(destination / relative, preserved)
+            _fsync_directory(staging)
+            _exchange_paths(staging, destination)
+            _safe_remove_private_tree(staging)
+            _fsync_directory(destination.parent)
+            status = "preserved"
+            message = (
+                "Managed unchanged files were removed; modified or unrelated files were preserved."
+            )
+    finally:
+        _safe_remove_private_tree(staging)
     return SkillOperationResult(
         target,
         scope,

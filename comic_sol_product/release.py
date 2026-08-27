@@ -183,8 +183,11 @@ def validate_wheel_skill_payload(
     for name in archive.namelist():
         if name.startswith(PACKAGED_SKILL_PREFIX) and not name.endswith("/"):
             relative = name[len(PACKAGED_SKILL_PREFIX) :]
-            if not _is_generated_bytecode(relative):
-                packaged[relative] = archive.read(name)
+            if _is_generated_bytecode(relative):
+                continue
+            if relative in packaged:
+                raise ValueError(f"wheel Skill payload contains a duplicate member: {relative}")
+            packaged[relative] = archive.read(name)
     _compare_payload(packaged, canonical, kind="wheel")
 
 
@@ -203,6 +206,8 @@ def validate_sdist_skill_payload(
         stream = archive.extractfile(member)
         if stream is None:
             continue
+        if relative in packaged:
+            raise ValueError(f"sdist Skill payload contains a duplicate member: {relative}")
         packaged[relative] = stream.read()
     _compare_payload(packaged, canonical, kind="sdist")
 
