@@ -28,6 +28,11 @@ PACKAGED_SKILL_PREFIX = "comic_sol_product/skill/"
 SDIST_SKILL_PREFIX = "skills/comic-sol/"
 
 
+def _is_generated_bytecode(relative: str) -> bool:
+    """Byte-compilation output is environment-generated, never packaged payload."""
+    return "__pycache__" in Path(relative).parts or relative.endswith((".pyc", ".pyo"))
+
+
 def _canonical_skill_files(canonical_root: Path | None = None) -> dict[str, bytes]:
     """Read the one synchronized bundle that every artifact must carry verbatim."""
     root = canonical_root or CANONICAL_SKILL_ROOT
@@ -35,10 +40,13 @@ def _canonical_skill_files(canonical_root: Path | None = None) -> dict[str, byte
         raise ValueError(f"canonical Skill bundle is missing: {root.name}")
     payload: dict[str, bytes] = {}
     for source in sorted(root.rglob("*")):
+        relative = source.relative_to(root).as_posix()
+        if _is_generated_bytecode(relative):
+            continue
         if source.is_symlink():
             raise ValueError("canonical Skill bundle contains a link")
         if source.is_file():
-            payload[source.relative_to(root).as_posix()] = source.read_bytes()
+            payload[relative] = source.read_bytes()
     if "SKILL.md" not in payload:
         raise ValueError("canonical Skill bundle is missing SKILL.md")
     return payload
@@ -174,7 +182,9 @@ def validate_wheel_skill_payload(
     packaged: dict[str, bytes] = {}
     for name in archive.namelist():
         if name.startswith(PACKAGED_SKILL_PREFIX) and not name.endswith("/"):
-            packaged[name[len(PACKAGED_SKILL_PREFIX) :]] = archive.read(name)
+            relative = name[len(PACKAGED_SKILL_PREFIX) :]
+            if not _is_generated_bytecode(relative):
+                packaged[relative] = archive.read(name)
     _compare_payload(packaged, canonical, kind="wheel")
 
 
@@ -188,7 +198,7 @@ def validate_sdist_skill_payload(
         if not member.isfile():
             continue
         _, separator, relative = member.name.partition(SDIST_SKILL_PREFIX)
-        if not separator or not relative:
+        if not separator or not relative or _is_generated_bytecode(relative):
             continue
         stream = archive.extractfile(member)
         if stream is None:

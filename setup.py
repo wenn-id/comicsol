@@ -24,6 +24,9 @@ BUILD_ONLY_SCRIPTS = {
     "portable_release_smoke.py",
     "release_identity.py",
 }
+# Byte-compilation output is environment-generated and must never enter the
+# packaged Skill payload, or the packaged bundle stops matching its source.
+_IGNORE_GENERATED = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
 
 
 class build_py(_build_py):
@@ -66,7 +69,7 @@ class build_py(_build_py):
             raise FileNotFoundError(
                 "canonical Agent Skill bundle is missing: skills/comic-sol/SKILL.md"
             )
-        shutil.copytree(canonical_skill, skill_root)
+        shutil.copytree(canonical_skill, skill_root, ignore=_IGNORE_GENERATED)
 
 
 class sdist(_sdist):
@@ -83,7 +86,7 @@ class sdist(_sdist):
         if destination.exists():
             shutil.rmtree(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(canonical_skill, destination)
+        shutil.copytree(canonical_skill, destination, ignore=_IGNORE_GENERATED)
 
 
 setup(cmdclass={"build_py": build_py, "sdist": sdist})

@@ -78,6 +78,66 @@ class SkillInstallTests(unittest.TestCase):
                 self.assertEqual("installed", result.status)
                 self.assertTrue((expected / "SKILL.md").is_file())
 
+    def test_bytecode_caches_never_affect_the_digest_or_the_payload(self):
+        """Byte-compilation is environment-dependent, so it must never be managed.
+
+        `pip` byte-compiles an installed wheel while other installers do not, so
+        counting `__pycache__` would make the canonical digest differ between
+        environments and break both the marker contract and no-op reinstall.
+        """
+        cache = self.bundle / "scripts/__pycache__"
+        cache.mkdir(parents=True)
+        (cache / "tool.cpython-311.pyc").write_bytes(b"\x00compiled")
+        (self.bundle / "scripts/tool.pyo").write_bytes(b"\x00optimized")
+
+        result = self.install("claude", "user")
+        destination = Path(result.destination)
+
+        self.assertEqual(skill_install.bundle_digest(self.bundle), result.bundle_digest)
+        self.assertFalse((destination / "scripts/__pycache__").exists())
+        self.assertFalse((destination / "scripts/tool.pyo").exists())
+        marker = json.loads((destination / skill_install.MARKER_NAME).read_text())
+        self.assertTrue(
+            all(
+                "__pycache__" not in path and not path.endswith((".pyc", ".pyo"))
+                for path in marker["managed_paths"]
+            )
+        )
+
+    def test_digest_is_identical_with_and_without_bytecode_caches(self):
+        clean = skill_install.bundle_digest(self.bundle)
+        cache = self.bundle / "__pycache__"
+        cache.mkdir()
+        (cache / "stale.cpython-311.pyc").write_bytes(b"\x00compiled")
+        self.assertEqual(clean, skill_install.bundle_digest(self.bundle))
+
+    def test_upgrade_succeeds_after_the_host_byte_compiles_the_install(self):
+        first = self.install("claude", "user")
+        destination = Path(first.destination)
+        compiled = destination / "scripts/__pycache__"
+        compiled.mkdir(parents=True)
+        (compiled / "tool.cpython-311.pyc").write_bytes(b"\x00compiled")
+
+        upgraded = self.root / "bundle-v2"
+        self._write_bundle(upgraded, suffix="v2")
+        second = self.install("claude", "user", bundle_root=upgraded)
+
+        self.assertEqual("upgraded", second.status)
+        self.assertEqual("# Comic Sol v2\n", (destination / "SKILL.md").read_text())
+
+    def test_uninstall_preserves_host_generated_bytecode_caches(self):
+        installed = self.install("claude", "user")
+        destination = Path(installed.destination)
+        compiled = destination / "scripts/__pycache__"
+        compiled.mkdir(parents=True)
+        (compiled / "tool.cpython-311.pyc").write_bytes(b"\x00compiled")
+
+        result = self.uninstall("claude", "user")
+
+        self.assertEqual("preserved", result.status)
+        self.assertTrue((compiled / "tool.cpython-311.pyc").is_file())
+        self.assertFalse((destination / "SKILL.md").exists())
+
     def test_installed_payload_is_byte_equal_to_complete_canonical_bundle(self):
         canonical = Path(__file__).resolve().parents[1] / "skills/comic-sol"
         result = self.install("claude", "user", bundle_root=canonical)

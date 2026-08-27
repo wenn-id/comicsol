@@ -953,6 +953,12 @@ class SkillBuildSourceContractTests(unittest.TestCase):
         self.assertNotIn('shutil.copy2(ROOT / "SKILL.md"', setup_source)
         self.assertNotIn('shutil.copytree(ROOT / "references"', setup_source)
 
+    def test_build_excludes_environment_generated_bytecode_from_the_payload(self):
+        root = Path(__file__).resolve().parents[1]
+        setup_source = (root / "setup.py").read_text(encoding="utf-8")
+        self.assertIn("ignore_patterns", setup_source)
+        self.assertIn("__pycache__", setup_source)
+
     def test_sdist_build_command_carries_the_same_canonical_bundle(self):
         root = Path(__file__).resolve().parents[1]
         setup_source = (root / "setup.py").read_text(encoding="utf-8")
