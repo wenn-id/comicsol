@@ -108,19 +108,20 @@ exactness. Transition through `SCRIPTED`, validate with
 ### 4. Confirm and record image capability
 
 When generation is needed, use this declared capability priority: (1) a compatible
- declared native image tool; (2) a compatible declared external adapter; (3) a portable
- handoff prepared with `PYTHON scripts/comic_sol.py handoff prepare PROJECT`; (4) an
- actionable `BLOCKED` state that preserves all editable intermediates. Use the first
- compatible route in that order. Prepare portable handoff before transitioning to
- `BLOCKED`; enter `BLOCKED` only when the handoff route also cannot proceed. Never infer
- capability availability or features from provider, model, or tool names.
+ declared native image tool; (2) a compatible declared external adapter; (3) Prepare a
+ handoff with `PYTHON scripts/comic_sol.py handoff prepare PROJECT`; (4) an
+ actionable `BLOCKED` state that preserves all editable intermediates while the handoff
+ awaits a destination with a usable declared capability. Use the first compatible executor
+ in that order. Handoff preparation creates job descriptors, not an executor: after
+ preparing it, transition to `BLOCKED` until a destination declares a usable capability.
+ Never infer capability availability or features from provider, model, or tool names.
 
 Reuse the provider-neutral observation supplied to `doctor`, unless the active session's
 tool inventory changed; in that case inspect it again as described in the capability
 reference. Record the same neutral feature flags in `project.json`. If no declared native
-or external route is available, run `PYTHON scripts/comic_sol.py handoff prepare PROJECT`
-instead of blocking. Only if handoff preparation also cannot proceed, transition to
-`BLOCKED` with the exact preservation error. Do not create empty image files.
+or external route is available, run `PYTHON scripts/comic_sol.py handoff prepare PROJECT`,
+then transition to `BLOCKED` with the exact preservation error until a destination records
+a usable declared capability. Do not create empty image files.
 
 Note the capability's documented maximum number of reference images per request. That
 count is the `--budget` value the reference plan spends in stage 5; the engine never

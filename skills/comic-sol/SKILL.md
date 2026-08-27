@@ -29,8 +29,10 @@ Turn one natural-language request into a local, editable comic project. Reason a
    `unavailable` for an inspectable inventory with no usable tool, and no flags if inspection is unavailable or fails.
    Never infer capability availability or features from provider, model, or tool names.
 4. Run doctor, initialize or inspect the project, then validate and record every stage.
-   Capability warnings allow deterministic planning. A missing direct/native capability
-   continues through a declared external adapter and the handoff route; it does not cause `BLOCKED` by itself. Deterministic scripts never discover or call providers.
+   Capability warnings allow deterministic planning. If neither a declared native tool nor
+   a declared external adapter is available, prepare that handoff and then transition
+   the project to `BLOCKED` until a destination declares a usable capability. Deterministic
+   scripts never discover or call providers.
 5. Generate canonical references and panels into attempt paths, including through an explicitly selected agent-managed external adapter; normal intake, retention, review, and promotion gates still apply. For prepared-handoff execution, run `PYTHON scripts/comic_sol.py handoff inspect PROJECT` (installed equivalent: `comic-sol handoff inspect PROJECT`), select only a reported job whose effective `status` is `ready`, and pass `PROJECT/<jobs[].path>` using the exact `path` returned for that job. After result intake, inspect again before retrying; the new inspection is authoritative for status and the next attempt. Never enumerate or execute retained `generation/jobs/*.json` files directly. See [workflow](references/workflow.md) for the full lifecycle. Require the image model to draw each exact `generated-visual` storyboard SFX and never a `deterministic-lettering` one.
    Inspect every result visually, record all seven QA checks, and repair only failures within budget. Route a bad effect to lettering with `sfx_repair.py` and follow its
    `next_action`: ink the model drew needs a `regenerate` review, not re-lettering alone.
@@ -43,7 +45,7 @@ Turn one natural-language request into a local, editable comic project. Reason a
 
 ## Executor selection
 
-When generation is needed, a compatible native image tool is eligible only when declared; follow this declared capability priority: (1) a compatible declared native image tool; (2) a compatible declared external adapter (the compatible declared external executor route); (3) Prepare a handoff for portable transfer with `PYTHON scripts/comic_sol.py handoff prepare PROJECT`—this portable handoff is the fallback execution route; (4) an actionable `BLOCKED` state that preserves all editable intermediates. Use the first compatible route in that order. Prepare portable handoff before transitioning to `BLOCKED`; enter `BLOCKED` only when the handoff route also cannot proceed. Selection ranks only declared capabilities, never by provider name, model name, or provider-specific hard-coded ranking. Never infer capability availability or features from provider, model, or tool names.
+When generation is needed, a compatible native image tool is eligible only when declared; follow this declared capability priority: (1) a compatible declared native image tool; (2) a compatible declared external adapter (the compatible declared external executor route); (3) Prepare a handoff for portable transfer with `PYTHON scripts/comic_sol.py handoff prepare PROJECT`; (4) an actionable `BLOCKED` state that preserves all editable intermediates while the handoff awaits a destination with a usable declared capability. Use the first compatible executor in that order. Handoff preparation creates job descriptors, not an executor: after preparing it, transition to `BLOCKED` until a destination declares a usable capability. Selection ranks only declared capabilities, never by provider name, model name, or provider-specific hard-coded ranking. Never infer capability availability or features from provider, model, or tool names.
 The full cross-agent handoff lifecycle is in [workflow](references/workflow.md).
 
 ## Fast Mode

@@ -28,9 +28,9 @@ and, to get the most from it:
 An editing-only image tool (crop, resize, retouch) is not sufficient — the first
 panel of a new comic must be drawable from the prompt alone. If no compatible direct
 capability is exposed, try a compatible declared external adapter and then prepare the
-portable handoff. Prepare portable handoff before transitioning to `BLOCKED`; enter
-`BLOCKED` only when the handoff route also cannot proceed. Preserve the project and report
-what is missing rather than fabricating a placeholder image.
+portable handoff. Handoff preparation creates job descriptors, not an executor: after
+preparing it, transition to `BLOCKED` until a destination declares a usable capability.
+Preserve the project and report what is missing rather than fabricating a placeholder image.
 
 ## Credential safety
 

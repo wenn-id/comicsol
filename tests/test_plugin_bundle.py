@@ -88,7 +88,7 @@ class PluginBundleTests(unittest.TestCase):
         priority = (
             "compatible declared native image tool",
             "compatible declared external adapter",
-            "portable handoff",
+            "prepare a handoff",
             "actionable `blocked` state",
         )
 
@@ -99,10 +99,10 @@ class PluginBundleTests(unittest.TestCase):
                 self.assertTrue(all(position >= 0 for position in positions), root / relative)
                 self.assertEqual(sorted(positions), positions, root / relative)
 
-    def test_portable_handoff_is_attempted_before_blocked(self):
+    def test_handoff_only_projects_are_blocked_after_preparation(self):
         contract = (
-            "Prepare portable handoff before transitioning to `BLOCKED`; enter `BLOCKED` "
-            "only when the handoff route also cannot proceed."
+            "Handoff preparation creates job descriptors, not an executor: after preparing "
+            "it, transition to `BLOCKED` until a destination declares a usable capability."
         )
         normative_paths = (
             Path("SKILL.md"),
