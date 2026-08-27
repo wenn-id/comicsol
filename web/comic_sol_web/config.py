@@ -24,6 +24,7 @@ REQUIRED_VARIABLES = (SESSION_SECRET_VAR, ENCRYPTION_SECRET_VAR, DATA_ROOT_VAR)
 # log line, or shell invocation.
 MINIMUM_SECRET_LENGTH = 32
 _UNSAFE_CHARACTERS = re.compile(r"[\x00-\x1f\x7f\s]")
+_PATH_UNSAFE_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
 
 
 class WebConfigError(ValueError):
@@ -35,19 +36,27 @@ class WebConfigError(ValueError):
 
 
 def _require(environ: Mapping[str, str], name: str) -> str:
-    """Return a present, non-empty, control-character-free value by name."""
+    """Return a present, non-empty value that contains no control characters.
+
+    Whitespace is permitted because configuration values such as absolute
+    data-root paths may legitimately contain spaces (Windows profile or
+    macOS user paths). The stricter secret-only check lives in
+    `_require_secret`.
+    """
     if name not in environ:
         raise WebConfigError(f"{name} is not set")
     value = environ[name]
     if not value.strip():
         raise WebConfigError(f"{name} is empty")
-    if _UNSAFE_CHARACTERS.search(value):
-        raise WebConfigError(f"{name} contains whitespace or control characters")
+    if _PATH_UNSAFE_CHARACTERS.search(value):
+        raise WebConfigError(f"{name} contains control characters")
     return value
 
 
 def _require_secret(environ: Mapping[str, str], name: str) -> str:
     value = _require(environ, name)
+    if _UNSAFE_CHARACTERS.search(value):
+        raise WebConfigError(f"{name} contains whitespace or control characters")
     if len(value) < MINIMUM_SECRET_LENGTH:
         raise WebConfigError(f"{name} must be at least {MINIMUM_SECRET_LENGTH} characters")
     return value

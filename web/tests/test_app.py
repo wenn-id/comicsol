@@ -47,6 +47,24 @@ class WebConfigTests(unittest.TestCase):
         self.assertNotIn(SESSION_SECRET, message)
         self.assertNotIn(ENCRYPTION_SECRET, message)
 
+    def test_config_accepts_whitespace_in_absolute_data_root(self):
+        # A Windows profile / macOS home path legitimately contains spaces;
+        # only secrets must reject whitespace and control characters.
+        from comic_sol_web.config import WebConfig
+
+        environment = valid_environment(Path("/tmp/Comic Sol projects"))
+        environment["COMIC_SOL_WEB_DATA_ROOT"] = "/tmp/Comic Sol projects"
+        for variable in (
+            "COMIC_SOL_WEB_SESSION_SECRET",
+            "COMIC_SOL_WEB_ENCRYPTION_SECRET",
+        ):
+            with self.subTest(variable=variable):
+                environment[variable] = "has space-secret-value-000000000000000000000"
+                with self.assertRaises(ValueError):
+                    WebConfig.from_env(environment)
+        config = WebConfig.from_env(valid_environment(Path("/tmp/Comic Sol projects")))
+        self.assertEqual(Path("/tmp/Comic Sol projects"), config.data_root)
+
     def test_configuration_is_immutable_and_does_not_create_data_root(self):
         from comic_sol_web.config import WebConfig
 
