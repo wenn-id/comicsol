@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "comic-sol"
 dynamic = ["version"]
-description = "Local-first deterministic comic production pipeline"
+description = "Provider-neutral, local-first comic production pipeline"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

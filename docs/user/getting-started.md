@@ -1,19 +1,34 @@
 # Getting started
 
-This page separates installation from comic creation so you know which tool is
-doing what. Choose one path and one output folder; do not mix commands from
-another surface unless its guide tells you to.
+Comic Sol is a provider-neutral, local-first comic production pipeline. The
+deterministic engine is the product; Agent Skills, CLI, and MCP are adapters. This page
+starts with the creator goal and keeps native CLI and other integration routes advanced.
 
-## 1. Install
+## 1. Install the Agent Skill
 
-### End-to-end creation: Codex Skill checkout
+`skill-install` requires Comic Sol `v2.0.0rc6` or later. Because `v2.0.0rc6`
+is not yet published, run this command only after installing an rc6-or-later package
+or native distribution whose release assets are available, or from a trusted rc6
+source checkout installed as a package. Place the one canonical synchronized Skill
+with the WP2 interface:
 
-Use the [first-run walkthrough](../onboarding.md). It includes platform-specific
-Python 3.11+ installation commands, a readiness check with an explicit output
-folder, and the first natural-language request. Start a fresh Codex session
-after installing the Skill.
+```bash
+comic-sol skill-install --target codex --scope user
+```
+
+Supported placements are Codex user, Claude user/project, Antigravity project, and
+ZCode user. Add `--project-root /absolute/project` for project scope. `--target auto`
+requires exactly one existing supported destination; it reports ambiguity without
+writing. Path-placement tests prove mechanics, not live host compatibility. Codex,
+Claude, Antigravity, and ZCode remain experimental until a real host smoke record is
+linked. Follow the [first-run walkthrough](../onboarding.md) for exact placement and
+readiness details.
 
 ### Native core CLI
+
+The core CLI does not create artwork by itself. It validates, persists, resumes,
+repairs, letters, composes, and exports around an agent-supplied compatible image
+generator. Comic Sol stores no provider credentials.
 
 Use the [verified native installer guide](../install.md). Its pinned
 `v2.0.0rc6` commands become usable only when that tag appears on the GitHub
@@ -26,8 +41,14 @@ lists available platform, architecture, and runtime combinations.
 
 ## 2. Check readiness
 
-Use the exact doctor command printed by your installer. For a Skill checkout,
-run the source command from the checkout and choose an explicit folder:
+For the installed package or native distribution used by the primary Skill route, choose
+an explicit folder and run the installed launcher:
+
+```bash
+comic-sol doctor --output-root "$HOME/Comic Sol"
+```
+
+For an advanced Skill source checkout, run the source launcher from that checkout:
 
 ```bash
 "$PYTHON" scripts/comic_sol.py doctor --output-root "$HOME/Comic Sol"
@@ -50,9 +71,13 @@ Sol only needs to know what the tool can do:
   responses.
 
 Detection checks the tool's declared features; it does not make a test image or
-contact the service. Confirm a suitable tool is present **before** starting the
-first comic. If an existing project is already blocked because no drawing tool
-was available, preserve the whole project folder and read the
+contact the service. Route selection is: compatible declared native image tool,
+compatible declared external adapter/API tool, portable handoff, then an actionable
+`BLOCKED` state preserving editable intermediates. Never infer capability from a
+provider, model, host, or tool name. Host support and image-generator support are
+separate claims. Confirm a suitable route is present **before** starting the first
+comic. If an existing project is already blocked because no drawing tool was available,
+ preserve the whole project folder and read the
 [current recovery limitation](resume-repair-export.md#drawing-tool-blocks); do
 not edit `project.json`. Advanced setup lives in the
 [provider guide](../../references/image-provider-setup.md).
@@ -77,8 +102,9 @@ When it completes, open:
 - `qa/report.md` for checks and warnings.
 
 The live-generated [Sunlight Courier sample](../../samples/sunlight-courier/README.md)
-is a useful visual example. Other samples may intentionally demonstrate only
-project mechanics; read each sample's evidence tier.
+is the only visual-quality sample. One retained sample does not prove broad illustration
+quality. Other samples and deterministic fixtures are mechanics-only evidence, never
+visual-quality proof.
 
 ## About `init` and starters
 
