@@ -102,6 +102,15 @@ On Windows, use `.venv\Scripts\python.exe` for the same commands. The capability
 detection and image-provider setup references are intentionally host-specific; other
 bundle differences fail validation.
 
+## Creator dogfood reports
+
+The [opt-in creator dogfood program](docs/dogfood.md) is a manual evidence route, not a
+project-submission route. Contributors and maintainers must not fabricate participants,
+reports, consents, or adoption results. Validate schema, explicit report-sharing consent,
+duplicate digest, creator/cohort eligibility, bounded contents, and privacy before any
+offline aggregation. Real creator/report collection remains separate from deterministic
+fixtures and maintainer samples.
+
 ## Showcase and agent-host evidence
 
 The [showcase contract](docs/showcase.md) governs any proposed visual-quality sample.

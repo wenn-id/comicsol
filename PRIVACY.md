@@ -44,6 +44,23 @@ information, or ask users to put secrets in prompts, project manifests, or
 logs. Users remain responsible for reviewing the active agent host, image
 provider, MCP client and server configuration, and operating-system permissions.
 
+## Manual opt-in dogfood reports
+
+The optional [creator dogfood program](docs/dogfood.md) adds no telemetry, upload
+service, network submission, database, or automatic collector. A participant generates,
+previews, validates, and inspects a sanitized dogfood report locally, then may choose
+manual opt-in submission through a public GitHub issue. Explicit report-sharing consent
+covers only that sanitized report and is separate from comic/showcase publication
+consent.
+
+A dogfood submission must not contain the Comic Sol project; story/source text; prompts
+or negative prompts; images, page PNGs, PDFs, or reference art; credentials, API keys,
+cookies, tokens, or account identifiers; provider request/response bodies; endpoints
+containing secrets; filesystem paths or home directories; or raw logs, stack traces,
+exceptions, or unrelated diagnostics. If a report appears to contain sensitive material,
+do not submit it publicly; use the private route in [`SUPPORT.md`](SUPPORT.md) and
+[`SECURITY.md`](SECURITY.md).
+
 ## Retention and deletion
 
 Local artifacts remain until you delete them. No surface has separate remote
