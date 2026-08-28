@@ -198,17 +198,23 @@ class GenerationTypeTests(unittest.TestCase):
                 self.assertEqual(hints, get_type_hints(method))
 
     def test_types_are_immutable_and_copy_mappings(self) -> None:
-        options = {"fixture": "success"}
+        nested_options = {"seed": 7}
+        options = {"fixture": "success", "parameters": nested_options}
         request = make_request(provider_options=options)
         options["fixture"] = "quota"
+        nested_options["seed"] = 99
         self.assertEqual("success", request.provider_options["fixture"])
+        self.assertEqual(7, request.provider_options["parameters"]["seed"])  # type: ignore[index]
         self.assertIsInstance(request.provider_options, MappingProxyType)
         with self.assertRaises(TypeError):
             request.provider_options["fixture"] = "moderation"  # type: ignore[index]
+        with self.assertRaises(TypeError):
+            request.provider_options["parameters"]["seed"] = 2  # type: ignore[index]
         with self.assertRaises(dataclasses.FrozenInstanceError):
             request.width = 1  # type: ignore[misc]
 
-        parameters = {"seed": 7}
+        sampler = {"steps": 20}
+        parameters = {"seed": 7, "sampler": sampler}
         usage: dict[str, int | float | str] = {"images": 1}
         result = GenerationResult(
             external_job_id=None,
@@ -219,11 +225,31 @@ class GenerationTypeTests(unittest.TestCase):
             usage=usage,
         )
         parameters["seed"] = 99
+        sampler["steps"] = 40
         usage["images"] = 2
         self.assertEqual(7, result.effective_parameters["seed"])
+        self.assertEqual(20, result.effective_parameters["sampler"]["steps"])  # type: ignore[index]
         self.assertEqual(1, result.usage["images"])
         with self.assertRaises(TypeError):
             result.usage["images"] = 3  # type: ignore[index]
+
+    def test_sensitive_generation_content_is_redacted_from_reprs(self) -> None:
+        request_secret = "request-secret"
+        result_secret = "result-secret"
+        request = make_request(
+            provider_options={"token": request_secret, "nested": {"token": request_secret}}
+        )
+        result = GenerationResult(
+            external_job_id=None,
+            state=JobState.ACCEPTED,
+            raster_bytes=result_secret.encode(),
+            media_type="image/png",
+            effective_parameters={"prompt": result_secret},
+            usage={"private": result_secret},
+        )
+        self.assertNotIn("private prompt", repr(request))
+        self.assertNotIn(request_secret, repr(request))
+        self.assertNotIn(result_secret, repr(result))
 
     def test_unknown_required_capability_is_rejected(self) -> None:
         with self.assertRaises(ValueError) as caught:
@@ -260,6 +286,26 @@ class CatalogAndRegistryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BoundedHTTPTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cleartext_origins_are_limited_to_loopback(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cleartext"):
+            make_policy(approved_origins=frozenset({"http://provider.example"}))
+
+        calls = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(200, content=b"ok", request=request)
+
+        for origin in ("http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]:8080"):
+            with self.subTest(origin=origin):
+                async with BoundedHTTPClient(
+                    make_policy(approved_origins=frozenset({origin})),
+                    transport=httpx.MockTransport(handler),
+                ) as client:
+                    self.assertEqual(b"ok", await client.get_bytes(f"{origin}/output"))
+        self.assertEqual(3, calls)
+
     async def test_approved_origin_is_required_before_transport(self) -> None:
         calls = 0
 
