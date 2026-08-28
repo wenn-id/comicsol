@@ -101,6 +101,15 @@ class CreatorProgramGuideTests(unittest.TestCase):
         self.assertIn("local preview", self.lower)
         self.assertIn("local validation", self.lower)
 
+    def test_counted_reports_require_a_stable_distinct_bounded_cohort_alias(self):
+        self.assertIn("reports intended to count", self.lower)
+        self.assertIn("must include `--cohort-alias`", self.lower)
+        self.assertIn("stable and distinct for each creator", self.lower)
+        self.assertIn("lowercase slug of at most 48 characters", self.lower)
+
+        report_command = self.guide.split("comic-sol dogfood report", 1)[1].split("```", 1)[0]
+        self.assertIn("--cohort-alias", report_command)
+
     def test_submission_is_manual_only(self):
         self.assertIn("manual submission only", self.lower)
         self.assertIn("dedicated github issue template", self.lower)

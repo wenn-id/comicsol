@@ -51,13 +51,17 @@ comic-sol dogfood preview "$PROJECT" \
   --first-project-minutes FIRST_PROJECT_MINUTES \
   --pdf-minutes PDF_MINUTES \
   --manual-intervention yes \
-  --would-use-again yes
+  --would-use-again yes \
+  --cohort-alias creator-07
 ```
 
 Use `no` instead of `yes` where that is the truthful answer. Optional current flags are
-`--failed-resume-attempts N`, repeatable `--friction CATEGORY`, and
-`--cohort-alias ALIAS`. From a source checkout, replace `comic-sol` with
-`"$PYTHON" scripts/comic_sol.py`.
+`--failed-resume-attempts N` and repeatable `--friction CATEGORY`. Although the report
+schema permits omitting `--cohort-alias`, reports intended to count toward the
+10-creator gate must include `--cohort-alias`. Use an anonymous lowercase slug of at
+most 48 characters that is stable and distinct for each creator, such as `creator-07`;
+the alias does not replace maintainer eligibility verification. From a source checkout,
+replace `comic-sol` with `"$PYTHON" scripts/comic_sol.py`.
 
 After inspection, create a consented report outside the Comic Sol project directory:
 
@@ -68,6 +72,7 @@ comic-sol dogfood report "$PROJECT" \
   --pdf-minutes PDF_MINUTES \
   --manual-intervention yes \
   --would-use-again yes \
+  --cohort-alias creator-07 \
   --consent-to-share \
   --output "$REPORT"
 comic-sol dogfood validate "$REPORT"
