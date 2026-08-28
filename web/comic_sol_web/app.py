@@ -22,6 +22,7 @@ from comic_sol_web.api.projects import create_projects_router
 
 if TYPE_CHECKING:
     from comic_sol_web.config import WebConfig
+    from comic_sol_web.projects import ProjectService
 
 # The static surface is a "foundation" mount that later work packages (WP13+)
 # populate with Studio UI assets. The serving package directory is created
@@ -47,27 +48,17 @@ class FutureStaticFiles(StaticFiles):
         await super().__call__(scope, receive, send)
 
 
-def _project_service(request: Request):
+def _project_service(request: Request) -> "ProjectService":
     """Construct and cache the real project boundary on first endpoint use."""
     existing = getattr(request.app.state, "projects", None)
     if existing is not None:
         return existing
 
-    from comic_sol_web.assets import _canonical_data_root, _make_plain_directory
-    from comic_sol_web.database import Database
-    from comic_sol_web.engine_gateway import EngineGateway, PROJECT_MIGRATIONS
-    from comic_sol_web.migrations import apply_migrations
+    from comic_sol_web.engine_gateway import EngineGateway
     from comic_sol_web.projects import ProjectService
 
     config = request.app.state.web_config
-    configured_root = Path(config.data_root)
-    if not configured_root.is_absolute():
-        raise ValueError("project data root must be absolute")
-    data_root = _canonical_data_root(configured_root)
-    _make_plain_directory(data_root)
-    database = Database(data_root / "application.sqlite3")
-    apply_migrations(database, PROJECT_MIGRATIONS)
-    service = ProjectService(EngineGateway(database, data_root))
+    service = ProjectService(EngineGateway.open(Path(config.data_root)))
     request.app.state.projects = service
     return service
 
@@ -75,9 +66,9 @@ def _project_service(request: Request):
 def create_app(_config: "WebConfig") -> FastAPI:
     """Return a configured FastAPI application.
 
-    `_config` is accepted for the composition-root contract; it is not used
-    to create filesystem state. `/healthz` is deterministic, bounded, and
-    provider-free.
+    Startup creates no application filesystem state. The first authenticated
+    project request lazily creates the data root, SQLite database, and project
+    directories. `/healthz` remains deterministic, bounded, and provider-free.
     """
     app = FastAPI(title="Comic Sol Web", docs_url=None, redoc_url=None)
     app.state.web_config = _config

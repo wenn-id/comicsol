@@ -59,6 +59,7 @@ class ProjectService:
         job_id: str,
         raster: Path,
         media_type: str,
+        capabilities_used: Mapping[str, object],
     ) -> ProjectSnapshot:
         self._authorize(principal, project_id)
         return self.gateway.submit_raster(
@@ -67,6 +68,7 @@ class ProjectService:
             job_id,
             raster,
             media_type,
+            capabilities_used,
         )
 
     def run_qa(

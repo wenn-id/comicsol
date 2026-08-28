@@ -37,7 +37,7 @@ def _reject(error: Exception) -> NoReturn:
         raise HTTPException(status_code=404, detail="project unavailable") from error
     if isinstance(error, StaleProjectRevisionError):
         raise HTTPException(status_code=409, detail="project revision is stale") from error
-    if isinstance(error, (GatewayError, ValueError, OSError)):
+    if isinstance(error, (GatewayError, ValueError)):
         raise HTTPException(status_code=400, detail="project request rejected") from error
     raise error
 

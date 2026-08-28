@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import secrets
 import sqlite3
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, cast
@@ -51,7 +53,8 @@ PROJECT_MIGRATION = Migration(
             project_id TEXT PRIMARY KEY,
             owner_id TEXT NOT NULL,
             storage_name TEXT NOT NULL UNIQUE,
-            revision INTEGER NOT NULL CHECK (revision >= 1)
+            revision INTEGER NOT NULL CHECK (revision >= 1),
+            engine_state TEXT NOT NULL
         )
         """,
         "CREATE INDEX web_projects_owner ON web_projects (owner_id, project_id)",
@@ -109,6 +112,38 @@ class EngineGateway:
         self.staging_root.mkdir(exist_ok=True)
         self.exports_root = contained_project_path(self.data_root, "project-exports")
         self.exports_root.mkdir(exist_ok=True)
+        self._recover_revisions()
+
+    @classmethod
+    def open(cls, data_root: Path) -> "EngineGateway":
+        """Initialize storage, migrations, and the gateway from one canonical root."""
+        configured_root = Path(data_root).expanduser()
+        if not configured_root.is_absolute():
+            raise GatewayInputError("project data root must be absolute")
+        canonical_root = _canonical_data_root(configured_root)
+        try:
+            _make_plain_directory(canonical_root)
+        except AssetError as error:
+            raise GatewayInputError("project data root must be a plain directory") from error
+        database = Database(canonical_root / "application.sqlite3")
+        from comic_sol_web.migrations import apply_migrations
+
+        apply_migrations(database, PROJECT_MIGRATIONS)
+        return cls(database, canonical_root)
+
+    def _recover_revisions(self) -> None:
+        """Reconcile engine commits interrupted before Web revision persistence."""
+        with self.database.read() as connection:
+            rows = connection.execute(
+                "SELECT project_id, owner_id, storage_name, revision, engine_state "
+                "FROM web_projects ORDER BY project_id"
+            ).fetchall()
+        for row in rows:
+            root = self._root_from_row(row)
+            with ProjectLock(root):
+                prior_state = self._engine_state(root)
+                with self.database.transaction() as connection:
+                    self._reconcile_row(connection, cast(str, row["project_id"]), prior_state)
 
     @staticmethod
     def _validate_owner(owner_id: str) -> None:
@@ -171,19 +206,21 @@ class EngineGateway:
         owner_id: str,
         storage_name: str,
         revision: int,
+        engine_state: str,
     ) -> None:
         with self.database.transaction() as connection:
             connection.execute(
-                "INSERT INTO web_projects (project_id, owner_id, storage_name, revision) "
-                "VALUES (?, ?, ?, ?)",
-                (project_id, owner_id, storage_name, revision),
+                "INSERT INTO web_projects "
+                "(project_id, owner_id, storage_name, revision, engine_state) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (project_id, owner_id, storage_name, revision, engine_state),
             )
 
     def _row(self, project_id: str) -> sqlite3.Row:
         self._validate_project_id(project_id)
         with self.database.read() as connection:
             row = connection.execute(
-                "SELECT project_id, owner_id, storage_name, revision "
+                "SELECT project_id, owner_id, storage_name, revision, engine_state "
                 "FROM web_projects WHERE project_id = ?",
                 (project_id,),
             ).fetchone()
@@ -256,7 +293,7 @@ class EngineGateway:
             )
             snapshot = self._snapshot_for(project_id, 1, root)
             storage_name = root.relative_to(self.projects_root).as_posix()
-            self._record_project(project_id, owner_id, storage_name, 1)
+            self._record_project(project_id, owner_id, storage_name, 1, self._engine_state(root))
             return snapshot
         except BaseException:
             self._cleanup_container(container, identity)
@@ -276,7 +313,7 @@ class EngineGateway:
             root = Path(root_value)
             snapshot = self._snapshot_for(project_id, 1, root)
             storage_name = root.relative_to(self.projects_root).as_posix()
-            self._record_project(project_id, owner_id, storage_name, 1)
+            self._record_project(project_id, owner_id, storage_name, 1, self._engine_state(root))
             return snapshot
         except BaseException:
             self._cleanup_container(container, identity)
@@ -354,7 +391,7 @@ class EngineGateway:
         self, connection: sqlite3.Connection, project_id: str, expected: int
     ) -> sqlite3.Row:
         row = connection.execute(
-            "SELECT project_id, owner_id, storage_name, revision "
+            "SELECT project_id, owner_id, storage_name, revision, engine_state "
             "FROM web_projects WHERE project_id = ?",
             (project_id,),
         ).fetchone()
@@ -364,13 +401,55 @@ class EngineGateway:
         return row
 
     @staticmethod
+    def _engine_state(root: Path) -> str:
+        """Return a bounded durable token for canonical project state."""
+        digest = hashlib.sha256()
+        for relative, metadata in _handoff_archive._iter_project_entries(root):
+            if _handoff_archive._is_excluded_project_path(relative):
+                continue
+            if stat.S_ISREG(metadata.st_mode):
+                digest.update(relative.encode("utf-8"))
+                digest.update(b"\0")
+                digest.update(read_contained_bytes(root, relative))
+                digest.update(b"\0")
+        return digest.hexdigest()
+
+    def _reconcile_row(
+        self, connection: sqlite3.Connection, project_id: str, state: str
+    ) -> sqlite3.Row:
+        """Advance Web revision after a process died following an engine commit."""
+        row = connection.execute(
+            "SELECT project_id, owner_id, storage_name, revision, engine_state "
+            "FROM web_projects WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            raise ProjectUnavailableError("project unavailable")
+        if row["engine_state"] != state:
+            self._set_revision(connection, project_id, cast(int, row["revision"]) + 1)
+            self._set_engine_state(connection, project_id, state)
+            row = connection.execute(
+                "SELECT project_id, owner_id, storage_name, revision, engine_state "
+                "FROM web_projects WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+        return cast(sqlite3.Row, row)
+
+    @staticmethod
     def _set_revision(connection: sqlite3.Connection, project_id: str, revision: int) -> None:
         connection.execute(
             "UPDATE web_projects SET revision = ? WHERE project_id = ?",
             (revision, project_id),
         )
 
-    def _ensure_revision(self, project_id: str, previous: int, revision: int) -> None:
+    @staticmethod
+    def _set_engine_state(connection: sqlite3.Connection, project_id: str, state: str) -> None:
+        connection.execute(
+            "UPDATE web_projects SET engine_state = ? WHERE project_id = ?",
+            (state, project_id),
+        )
+
+    def _ensure_revision(self, project_id: str, previous: int, revision: int, root: Path) -> None:
         """Finish Web bookkeeping after a canonical engine commit.
 
         Canonical engine operations publish atomically before SQLite can record
@@ -378,6 +457,7 @@ class EngineGateway:
         one independent durable repair while the project lock is still held so
         callers can never continue using the superseded revision.
         """
+        state = self._engine_state(root)
         with self.database.transaction() as connection:
             row = connection.execute(
                 "SELECT revision FROM web_projects WHERE project_id = ?",
@@ -387,10 +467,12 @@ class EngineGateway:
                 raise ProjectUnavailableError("project unavailable")
             actual = cast(int, row["revision"])
             if actual == revision:
+                self._set_engine_state(connection, project_id, state)
                 return
             if actual != previous:
                 raise StaleProjectRevisionError(previous, actual)
             self._set_revision(connection, project_id, revision)
+            self._set_engine_state(connection, project_id, state)
 
     def prepare_generation(
         self, project_id: str, expected_revision: int
@@ -402,30 +484,32 @@ class EngineGateway:
         revision = expected_revision
         with ProjectLock(root):
             try:
+                prior_state = self._engine_state(root)
                 with self.database.transaction() as connection:
-                    row = self._checked_row(connection, project_id, expected_revision)
-                    prepared = comic_sol.prepare_handoff(root)
+                    row = self._reconcile_row(connection, project_id, prior_state)
+                    self._check_revision(cast(int, row["revision"]), expected_revision)
                     revision = cast(int, row["revision"])
-                    if prepared.get("changed") is True:
-                        engine_changed = True
-                        revision += 1
-                        self._set_revision(connection, project_id, revision)
-                    inspection = comic_sol.inspect_handoff(root)
-                    requests: list[GenerationRequest] = []
-                    for descriptor in cast(list[dict[str, object]], inspection["jobs"]):
-                        if descriptor.get("status") != "ready":
-                            continue
-                        relative = descriptor.get("path")
-                        if not isinstance(relative, str):
-                            raise GatewayError("generation job path is invalid")
-                        job = read_contained_json(root, relative)
-                        if not isinstance(job, Mapping):
-                            raise GatewayError("generation job is invalid")
-                        requests.append(self._request_from_job(project_id, revision, root, job))
+                prepared = comic_sol.prepare_handoff(root)
+                if prepared.get("changed") is True:
+                    engine_changed = True
+                    revision += 1
+                    self._ensure_revision(project_id, expected_revision, revision, root)
+                inspection = comic_sol.inspect_handoff(root)
+                requests: list[GenerationRequest] = []
+                for descriptor in cast(list[dict[str, object]], inspection["jobs"]):
+                    if descriptor.get("status") != "ready":
+                        continue
+                    relative = descriptor.get("path")
+                    if not isinstance(relative, str):
+                        raise GatewayError("generation job path is invalid")
+                    job = read_contained_json(root, relative)
+                    if not isinstance(job, Mapping):
+                        raise GatewayError("generation job is invalid")
+                    requests.append(self._request_from_job(project_id, revision, root, job))
                 return tuple(requests)
             except BaseException:
                 if engine_changed:
-                    self._ensure_revision(project_id, expected_revision, revision)
+                    self._ensure_revision(project_id, expected_revision, revision, root)
                 raise
 
     def _staged_raster(self, raster: Path) -> Path:
@@ -448,6 +532,7 @@ class EngineGateway:
         job_id: str,
         raster: Path,
         media_type: str,
+        capabilities_used: Mapping[str, object],
     ) -> ProjectSnapshot:
         if media_type != "image/png":
             raise GatewayInputError("handoff raster media type must be image/png")
@@ -455,69 +540,72 @@ class EngineGateway:
         initial = self._row(project_id)
         self._check_revision(cast(int, initial["revision"]), expected_revision)
         root = self._root_from_row(initial)
+        capability_keys = {"dimensions", "localized_edit", "reference_images"}
+        if set(capabilities_used) != capability_keys or not all(
+            isinstance(capabilities_used[key], bool) for key in capability_keys
+        ):
+            raise GatewayInputError("raster capability metadata is invalid")
         engine_changed = False
         revision = expected_revision
         with ProjectLock(root):
             try:
+                prior_state = self._engine_state(root)
                 with self.database.transaction() as connection:
-                    row = self._checked_row(connection, project_id, expected_revision)
-                    inspection = comic_sol.inspect_handoff(root)
-                    state = next(
-                        (
-                            item
-                            for item in cast(list[dict[str, object]], inspection["jobs"])
-                            if item.get("job_id") == job_id
-                        ),
-                        None,
-                    )
-                    if state is None:
-                        raise _handoff.HandoffResultError(
-                            ["job_id: does not name a current handoff job"]
-                        )
-                    attempt = state.get("next_attempt")
-                    if isinstance(attempt, bool) or not isinstance(attempt, int):
-                        attempt = max(1, cast(int, state.get("attempts_used", 0)))
-                    subject_kind = state.get("subject_kind")
-                    subject_id = state.get("subject_id")
-                    result = comic_sol.accept_handoff_result(
-                        root,
-                        job_id=job_id,
-                        attempt=attempt,
-                        raster_path=staged,
-                        executor_kind="external-tool",
-                        executor_id="comic-sol-web",
-                        capabilities_used={
-                            "dimensions": True,
-                            "localized_edit": False,
-                            "reference_images": False,
-                        },
-                        approve_reference=subject_kind == "reference",
-                    )
-                    duplicate = result.get("duplicate") is True
-                    engine_changed = not duplicate
+                    row = self._reconcile_row(connection, project_id, prior_state)
+                    self._check_revision(cast(int, row["revision"]), expected_revision)
                     revision = cast(int, row["revision"])
-                    if engine_changed:
-                        # Acceptance commits retained bytes before panel promotion.
-                        # Compute the target now so a promotion failure repairs
-                        # SQLite to the already-published engine generation.
-                        revision += 1
-                    if subject_kind == "panel":
-                        if not isinstance(subject_id, str) or not isinstance(
-                            result.get("raster_path"), str
-                        ):
-                            raise GatewayError("accepted panel result binding is invalid")
-                        comic_sol.promote_attempt(
-                            root,
-                            subject_id,
-                            Path(cast(str, result["raster_path"])),
-                        )
-                    if engine_changed:
-                        self._set_revision(connection, project_id, revision)
-                    snapshot = self._snapshot_for(project_id, revision, root)
+                inspection = comic_sol.inspect_handoff(root)
+                state = next(
+                    (
+                        item
+                        for item in cast(list[dict[str, object]], inspection["jobs"])
+                        if item.get("job_id") == job_id
+                    ),
+                    None,
+                )
+                if state is None:
+                    raise _handoff.HandoffResultError(
+                        ["job_id: does not name a current handoff job"]
+                    )
+                attempt = state.get("next_attempt")
+                if isinstance(attempt, bool) or not isinstance(attempt, int):
+                    attempt = max(1, cast(int, state.get("attempts_used", 0)))
+                subject_kind = state.get("subject_kind")
+                subject_id = state.get("subject_id")
+                result = comic_sol.accept_handoff_result(
+                    root,
+                    job_id=job_id,
+                    attempt=attempt,
+                    raster_path=staged,
+                    executor_kind="external-tool",
+                    executor_id="comic-sol-web",
+                    capabilities_used=capabilities_used,
+                    approve_reference=subject_kind == "reference",
+                )
+                duplicate = result.get("duplicate") is True
+                engine_changed = not duplicate
+                if engine_changed:
+                    # Acceptance commits retained bytes before panel promotion.
+                    # Compute the target now so a promotion failure repairs
+                    # SQLite to the already-published engine generation.
+                    revision += 1
+                if subject_kind == "panel":
+                    if not isinstance(subject_id, str) or not isinstance(
+                        result.get("raster_path"), str
+                    ):
+                        raise GatewayError("accepted panel result binding is invalid")
+                    comic_sol.promote_attempt(
+                        root,
+                        subject_id,
+                        Path(cast(str, result["raster_path"])),
+                    )
+                if engine_changed:
+                    self._ensure_revision(project_id, expected_revision, revision, root)
+                snapshot = self._snapshot_for(project_id, revision, root)
                 return snapshot
             except BaseException:
                 if engine_changed:
-                    self._ensure_revision(project_id, expected_revision, revision)
+                    self._ensure_revision(project_id, expected_revision, revision, root)
                 raise
 
     def run_qa(self, project_id: str, expected_revision: int) -> ProjectSnapshot:
@@ -558,26 +646,33 @@ class EngineGateway:
         revision = expected_revision
         with ProjectLock(root):
             try:
+                prior_state = self._engine_state(root)
                 with self.database.transaction() as connection:
-                    row = self._checked_row(connection, project_id, expected_revision)
+                    row = self._reconcile_row(connection, project_id, prior_state)
+                    self._check_revision(cast(int, row["revision"]), expected_revision)
                     revision = cast(int, row["revision"])
-                    outputs: dict[str, Path] = {}
-                    if "pdf" in formats:
-                        outputs["pdf"] = guarded_export(root)
-                        engine_changed = True
-                        revision += 1
-                        self._set_revision(connection, project_id, revision)
-                    if "archive" in formats:
-                        export_directory = contained_project_path(self.exports_root, project_id)
-                        export_directory.mkdir(exist_ok=True)
-                        destination = export_directory / f"{root.name}-r{revision}{ARCHIVE_SUFFIX}"
-                        result = export_handoff_archive(root, destination)
-                        archive_path = result.get("archive_path")
-                        if not isinstance(archive_path, str):
-                            raise GatewayError("archive export did not return an output path")
-                        outputs["archive"] = Path(archive_path)
+                outputs: dict[str, Path] = {}
+                if "pdf" in formats:
+                    outputs["pdf"] = guarded_export(root)
+                    engine_changed = True
+                    revision += 1
+                    self._ensure_revision(project_id, expected_revision, revision, root)
+                if "archive" in formats:
+                    export_directory = contained_project_path(self.exports_root, project_id)
+                    export_directory.mkdir(exist_ok=True)
+                    stem = f"{root.name}-r{revision}"
+                    destination = export_directory / f"{stem}{ARCHIVE_SUFFIX}"
+                    sequence = 2
+                    while destination.exists():
+                        destination = export_directory / f"{stem}-{sequence}{ARCHIVE_SUFFIX}"
+                        sequence += 1
+                    result = export_handoff_archive(root, destination)
+                    archive_path = result.get("archive_path")
+                    if not isinstance(archive_path, str):
+                        raise GatewayError("archive export did not return an output path")
+                    outputs["archive"] = Path(archive_path)
                 return outputs
             except BaseException:
                 if engine_changed:
-                    self._ensure_revision(project_id, expected_revision, revision)
+                    self._ensure_revision(project_id, expected_revision, revision, root)
                 raise

@@ -45,6 +45,14 @@ from scripts.schema import CURRENT_PROJECT_SCHEMA_VERSION, read_project_manifest
 from scripts.validate_project import validate_manifest
 
 
+CAPABILITIES_USED = {
+    "dimensions": True,
+    "localized_edit": False,
+    "reference_images": False,
+}
+PANEL_CAPABILITIES_USED = {**CAPABILITIES_USED, "reference_images": True}
+
+
 def tree_snapshot(root: Path) -> dict[str, bytes]:
     return {
         relative: path.read_bytes()
@@ -170,13 +178,22 @@ class EngineGatewayContractTests(GatewayFixture):
                 },
             ),
             "submit_raster": (
-                ["self", "project_id", "expected_revision", "job_id", "raster", "media_type"],
+                [
+                    "self",
+                    "project_id",
+                    "expected_revision",
+                    "job_id",
+                    "raster",
+                    "media_type",
+                    "capabilities_used",
+                ],
                 {
                     "project_id": str,
                     "expected_revision": int,
                     "job_id": str,
                     "raster": Path,
                     "media_type": str,
+                    "capabilities_used": Mapping[str, object],
                     "return": ProjectSnapshot,
                 },
             ),
@@ -368,6 +385,7 @@ class EngineGatewayContractTests(GatewayFixture):
             request.job_id,
             raster,
             "image/png",
+            CAPABILITIES_USED,
         )
         self.assertEqual(snapshot.revision + 1, accepted.revision)
         retained = accepted.root / "references/attempts/mira/initial-001.png"
@@ -376,6 +394,11 @@ class EngineGatewayContractTests(GatewayFixture):
         self.assertEqual(retained.read_bytes(), canonical.read_bytes())
         inspection = comic_sol.inspect_handoff(accepted.root)
         self.assertEqual("completed", inspection["jobs"][0]["status"])
+        receipt_path = next((accepted.root / "generation/receipts").glob("*.json"))
+        self.assertEqual(
+            CAPABILITIES_USED,
+            json.loads(receipt_path.read_text(encoding="utf-8"))["capabilities_used"],
+        )
 
     def test_panel_submission_retains_and_promotes_the_accepted_raster(self) -> None:
         snapshot = self.import_prepared()
@@ -386,6 +409,7 @@ class EngineGatewayContractTests(GatewayFixture):
             reference.job_id,
             self.staged_raster(reference),
             "image/png",
+            CAPABILITIES_USED,
         )
         panel_requests = self.gateway.prepare_generation(
             snapshot.project_id, accepted_reference.revision
@@ -398,12 +422,43 @@ class EngineGatewayContractTests(GatewayFixture):
             panel.job_id,
             raster,
             "image/png",
+            PANEL_CAPABILITIES_USED,
         )
         retained = accepted_panel.root / f"panels/attempts/{panel.subject_id}/initial-001.png"
         canonical = accepted_panel.root / f"panels/raw/{panel.subject_id}.png"
         self.assertEqual(raster.read_bytes(), retained.read_bytes())
         self.assertEqual(retained.read_bytes(), canonical.read_bytes())
         self.assertEqual(panel.project_revision + 1, accepted_panel.revision)
+        receipts = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in (accepted_panel.root / "generation/receipts").glob("*.json")
+        ]
+        panel_receipt = next(item for item in receipts if item["job_id"] == panel.job_id)
+        self.assertEqual(PANEL_CAPABILITIES_USED, panel_receipt["capabilities_used"])
+
+    def test_restart_recovers_revision_after_an_interrupted_engine_commit(self) -> None:
+        snapshot = self.import_prepared()
+        request = self.gateway.prepare_generation(snapshot.project_id, snapshot.revision)[0]
+        with mock.patch.object(
+            self.gateway,
+            "_ensure_revision",
+            side_effect=RuntimeError("simulated process termination"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "simulated process termination"):
+                self.gateway.submit_raster(
+                    snapshot.project_id,
+                    snapshot.revision,
+                    request.job_id,
+                    self.staged_raster(request),
+                    "image/png",
+                    CAPABILITIES_USED,
+                )
+
+        reopened = EngineGateway(self.database, self.data_root)
+        recovered = reopened.snapshot(snapshot.project_id)
+        self.assertEqual(snapshot.revision + 1, recovered.revision)
+        with self.assertRaises(StaleProjectRevisionError):
+            reopened.snapshot(snapshot.project_id, snapshot.revision)
 
     def test_panel_promotion_failure_advances_once_and_retry_completes_acceptance(self) -> None:
         snapshot = self.import_prepared()
@@ -414,6 +469,7 @@ class EngineGatewayContractTests(GatewayFixture):
             reference.job_id,
             self.staged_raster(reference),
             "image/png",
+            CAPABILITIES_USED,
         )
         panel = next(
             request
@@ -434,6 +490,7 @@ class EngineGatewayContractTests(GatewayFixture):
                     panel.job_id,
                     raster,
                     "image/png",
+                    CAPABILITIES_USED,
                 )
         after_failure = self.gateway.snapshot(snapshot.project_id)
         self.assertEqual(panel.project_revision + 1, after_failure.revision)
@@ -448,6 +505,7 @@ class EngineGatewayContractTests(GatewayFixture):
             panel.job_id,
             raster,
             "image/png",
+            CAPABILITIES_USED,
         )
         self.assertEqual(after_failure.revision, recovered.revision)
         self.assertEqual(retained.read_bytes(), canonical.read_bytes())
@@ -474,6 +532,7 @@ class EngineGatewayContractTests(GatewayFixture):
                     request.job_id,
                     raster,
                     "image/png",
+                    CAPABILITIES_USED,
                 )
         self.assertEqual(2, attempts)
         reopened = self.gateway.snapshot(snapshot.project_id)
@@ -488,7 +547,12 @@ class EngineGatewayContractTests(GatewayFixture):
         request = self.gateway.prepare_generation(snapshot.project_id, snapshot.revision)[0]
         first = self.staged_raster(request, "navy")
         accepted = self.gateway.submit_raster(
-            snapshot.project_id, snapshot.revision, request.job_id, first, "image/png"
+            snapshot.project_id,
+            snapshot.revision,
+            request.job_id,
+            first,
+            "image/png",
+            CAPABILITIES_USED,
         )
         retained = accepted.root / "references/attempts/mira/initial-001.png"
         canonical = accepted.root / "references/characters/mira.png"
@@ -501,6 +565,7 @@ class EngineGatewayContractTests(GatewayFixture):
                 request.job_id,
                 replacement,
                 "image/png",
+                CAPABILITIES_USED,
             )
         self.assertEqual(accepted_bytes, retained.read_bytes())
         self.assertEqual(accepted_bytes, canonical.read_bytes())
@@ -512,6 +577,7 @@ class EngineGatewayContractTests(GatewayFixture):
                 request.job_id,
                 replacement,
                 "image/jpeg",
+                CAPABILITIES_USED,
             )
         self.assertEqual(accepted_bytes, retained.read_bytes())
 
@@ -522,13 +588,23 @@ class EngineGatewayContractTests(GatewayFixture):
         before = tree_snapshot(snapshot.root)
         with self.assertRaises(HandoffResultError):
             self.gateway.submit_raster(
-                snapshot.project_id, snapshot.revision, "0" * 64, raster, "image/png"
+                snapshot.project_id,
+                snapshot.revision,
+                "0" * 64,
+                raster,
+                "image/png",
+                CAPABILITIES_USED,
             )
         outside = Path(self.temporary_directory.name) / "outside.png"
         Image.new("RGB", (1024, 1024), "black").save(outside)
         with self.assertRaises(GatewayInputError):
             self.gateway.submit_raster(
-                snapshot.project_id, snapshot.revision, request.job_id, outside, "image/png"
+                snapshot.project_id,
+                snapshot.revision,
+                request.job_id,
+                outside,
+                "image/png",
+                CAPABILITIES_USED,
             )
         self.assertEqual(before, tree_snapshot(snapshot.root))
 
@@ -545,6 +621,7 @@ class EngineGatewayContractTests(GatewayFixture):
                 request.job_id,
                 raster,
                 "image/png",
+                CAPABILITIES_USED,
             ),
             lambda: self.service.run_qa(self.bob, snapshot.project_id, snapshot.revision),
             lambda: self.service.export(
@@ -557,7 +634,12 @@ class EngineGatewayContractTests(GatewayFixture):
                     operation()
         stale_calls = (
             lambda: self.gateway.submit_raster(
-                snapshot.project_id, 0, request.job_id, raster, "image/png"
+                snapshot.project_id,
+                0,
+                request.job_id,
+                raster,
+                "image/png",
+                CAPABILITIES_USED,
             ),
             lambda: self.gateway.run_qa(snapshot.project_id, 0),
             lambda: self.gateway.export(snapshot.project_id, 0, ("archive",)),
@@ -599,14 +681,25 @@ class EngineGatewayContractTests(GatewayFixture):
         )
         self.assertEqual(tree_snapshot(snapshot.root), tree_snapshot(reopened.root))
 
+    def test_repeated_archive_exports_publish_unique_immutable_outputs(self) -> None:
+        snapshot = self.import_prepared()
+        first = self.gateway.export(snapshot.project_id, snapshot.revision, ("archive",))
+        first_bytes = first["archive"].read_bytes()
+        second = self.gateway.export(snapshot.project_id, snapshot.revision, ("archive",))
+        self.assertNotEqual(first["archive"], second["archive"])
+        self.assertEqual(first_bytes, first["archive"].read_bytes())
+        self.assertEqual(first_bytes, second["archive"].read_bytes())
+
     def test_containment_malformed_archives_and_unsupported_formats_fail_closed(self) -> None:
         with self.assertRaises(ProjectUnavailableError):
             self.gateway.snapshot("../outside")
         malicious_id = "A" * 32
         with self.database.transaction() as connection:
             connection.execute(
-                "INSERT INTO web_projects (project_id, owner_id, storage_name, revision) VALUES (?, ?, ?, ?)",
-                (malicious_id, self.alice.user_id, "../outside", 1),
+                "INSERT INTO web_projects "
+                "(project_id, owner_id, storage_name, revision, engine_state) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (malicious_id, self.alice.user_id, "../outside", 1, "0" * 64),
             )
         with self.assertRaises(ProjectUnavailableError):
             self.gateway.snapshot(malicious_id)
@@ -695,6 +788,18 @@ class ProjectApiTests(GatewayFixture):
             response = client.get(f"/api/projects/{snapshot.project_id}")
         self.assertEqual(401, response.status_code)
         self.assertEqual({"detail": "authentication required"}, response.json())
+
+    def test_server_filesystem_failures_are_not_reported_as_client_errors(self) -> None:
+        class FailingService:
+            def snapshot(self, *_args, **_kwargs):
+                raise OSError("injected server filesystem failure")
+
+        app = FastAPI()
+        app.include_router(create_projects_router(FailingService()))
+        app.dependency_overrides[require_principal] = lambda: self.alice
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.get(f"/api/projects/{'A' * 32}")
+        self.assertEqual(500, response.status_code)
 
 
 if __name__ == "__main__":

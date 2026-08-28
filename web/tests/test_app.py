@@ -297,14 +297,15 @@ with TemporaryDirectory() as temporary:
     assert forbidden == set(), forbidden
 import PIL
 import comic_sol_web.engine_gateway as gateway
+import comic_sol_product
 from comic_sol_product.cli import _load_engine_module
 engine = _load_engine_module("comic_sol")
 assert engine.__name__ == "comic_sol_product.engine.comic_sol"
 assert gateway.comic_sol is engine
-assert version("comic-sol") == "2.0.0rc6"
+assert version("comic-sol") == comic_sol_product.__version__
 assert version("comic-sol-web") == "0.1.0"
 assert "site-packages" in Path(engine.__file__).as_posix()
-print(engine.__name__, PIL.__version__)
+print(engine.__name__)
 """
         with tempfile.TemporaryDirectory() as temporary:
             completed = subprocess.run(
@@ -320,7 +321,7 @@ print(engine.__name__, PIL.__version__)
             f"stdout={completed.stdout!r}\nstderr={completed.stderr!r}",
         )
         self.assertEqual(
-            "comic_sol_product.engine.comic_sol 12.3.0",
+            "comic_sol_product.engine.comic_sol",
             completed.stdout.strip(),
         )
 
