@@ -267,6 +267,19 @@ class OnboardingTests(unittest.TestCase):
         self.assertIn("credentials", capability)
         self.assertIn("agent-image-generation", capability)
 
+    def test_multi_host_walkthrough_stays_in_the_selected_host(self):
+        """Keep first-comic and resume instructions neutral across supported targets."""
+        install = self.document.split("## 1. Install the Agent Skill", 1)[1].split("\n## ", 1)[0]
+        walkthrough = self.document.split("## 4. Make your first comic", 1)[1].split(
+            "\n## 5. If `doctor` reported a failure", 1
+        )[0]
+        for target in ("codex", "claude", "antigravity", "zcode"):
+            self.assertIn(f"`{target}`", install)
+        self.assertIn("host where you installed the Skill", walkthrough)
+        self.assertIn("ask the agent to **resume that Comic Sol project**", walkthrough)
+        self.assertNotIn("fresh Codex session", walkthrough)
+        self.assertNotIn("ask Codex to", walkthrough)
+
 
 class SupportPrivacyTermsTests(unittest.TestCase):
     """SUPPORT/PRIVACY/TERMS cover every surface and the private report route."""
@@ -698,6 +711,29 @@ class GoldenCreatorPathTests(unittest.TestCase):
         ):
             self.assertGreater(section.find(marker), -1, marker)
             self.assertLess(section.index(marker), command, marker)
+
+    def test_primary_skill_install_guides_share_the_rc6_gate(self):
+        """Gate every primary installer command on the release that ships it."""
+        qualification = collapsed(
+            """`skill-install` requires Comic Sol `v2.0.0rc6` or later. Because
+            `v2.0.0rc6` is not yet published, run this command only after installing
+            an rc6-or-later package or native distribution whose release assets are
+            available, or from a trusted rc6 source checkout installed as a package."""
+        )
+        command = "comic-sol skill-install --target codex --scope user"
+        guides = {
+            "docs/install.md": (read("docs/install.md"), "Creator path"),
+            "docs/onboarding.md": (read("docs/onboarding.md"), "1. Install the Agent Skill"),
+            "docs/user/getting-started.md": (
+                read("docs/user/getting-started.md"),
+                "1. Install the Agent Skill",
+            ),
+        }
+        for name, (document, heading) in guides.items():
+            with self.subTest(document=name):
+                section = collapsed(self.section(document, heading))
+                self.assertEqual(1, section.count(qualification), name)
+                self.assertLess(section.index(qualification), section.index(command), name)
 
     def test_codex_plugin_does_not_reintroduce_manual_skill_placement(self):
         """Keep manual Skill checkout commands out of the plugin workflow."""

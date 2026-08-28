@@ -6,8 +6,11 @@ starts with the creator goal and keeps native CLI and other integration routes a
 
 ## 1. Install the Agent Skill
 
-After installing a current Comic Sol package or native distribution, place the one
-canonical synchronized Skill with the WP2 interface:
+`skill-install` requires Comic Sol `v2.0.0rc6` or later. Because `v2.0.0rc6`
+is not yet published, run this command only after installing an rc6-or-later package
+or native distribution whose release assets are available, or from a trusted rc6
+source checkout installed as a package. Place the one canonical synchronized Skill
+with the WP2 interface:
 
 ```bash
 comic-sol skill-install --target codex --scope user

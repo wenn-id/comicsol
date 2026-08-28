@@ -12,8 +12,10 @@ integrations stay linked after the creator path. The
 
 ## 1. Install the Agent Skill
 
-Install a current Comic Sol package or native distribution first, then use its WP2
-transactional installer. The shortest explicit user-scope placement is:
+`skill-install` requires Comic Sol `v2.0.0rc6` or later. Because `v2.0.0rc6`
+is not yet published, run this command only after installing an rc6-or-later package
+or native distribution whose release assets are available, or from a trusted rc6
+source checkout installed as a package. The shortest explicit user-scope placement is:
 
 ```bash
 comic-sol skill-install --target codex --scope user
@@ -131,8 +133,8 @@ and tells you how to resume; it never invents a placeholder. See
 
 ## 4. Make your first comic
 
-Start a fresh Codex session so the newly installed skill is loaded, then say
-exactly this:
+Open a fresh session in the host where you installed the Skill so the newly installed
+Skill is loaded, then say exactly this:
 
 > Make a 2-page manga about a courier delivering sunlight to an underground city.
 
@@ -169,7 +171,7 @@ prompts, and individual panels — stays on disk and is editable, so you can cha
 one panel and resume instead of regenerating the whole comic.
 
 If the run stops early, the project is intentionally resumable. Fix what the
-message reported, then ask Codex to **resume that Comic Sol project**.
+message reported, then ask the agent to **resume that Comic Sol project**.
 
 ## 5. If `doctor` reported a failure
 

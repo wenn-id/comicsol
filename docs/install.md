@@ -4,8 +4,10 @@
 
 Comic Sol is a provider-neutral, local-first comic production pipeline. In the creator
 path, the deterministic engine is the product; Agent Skills, CLI, and MCP are adapters.
-After installing the current package or native distribution, install the Agent Skill for
-a supported host:
+`skill-install` requires Comic Sol `v2.0.0rc6` or later. Because `v2.0.0rc6`
+is not yet published, run this command only after installing an rc6-or-later package
+or native distribution whose release assets are available, or from a trusted rc6
+source checkout installed as a package. Install the Agent Skill for a supported host:
 
 ```bash
 comic-sol skill-install --target codex --scope user
