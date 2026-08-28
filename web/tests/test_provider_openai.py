@@ -13,6 +13,7 @@ import httpx
 from web.tests import support as _support  # noqa: F401  # Checkout import path setup.
 
 from comic_sol_web.generation.providers.base import ProviderError
+from comic_sol_web.generation.providers.http import read_reference_raster
 from comic_sol_web.generation.providers.openai import OpenAIProvider
 from comic_sol_web.generation.types import ErrorCategory, GenerationRequest, JobState
 
@@ -130,13 +131,69 @@ class OpenAIProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b'name="prompt"', request.content)
         self.assertNotIn(str(reference).encode(), request.content)
 
+    def test_reference_read_accepts_plain_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reference = Path(directory) / "reference.png"
+            reference.write_bytes(PNG)
+            self.assertEqual((PNG, "image/png"), read_reference_raster(reference, len(PNG)))
+
+    def test_reference_read_rejects_final_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reference = root / "reference.png"
+            reference.write_bytes(PNG)
+            linked = root / "linked.png"
+            _support.make_symlink(self, linked, reference)
+            with self.assertRaises(ProviderError) as caught:
+                read_reference_raster(linked, len(PNG))
+        self.assertEqual(ErrorCategory.INVALID_OUTPUT, caught.exception.category)
+
+    def test_reference_read_rejects_linked_ancestor_and_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inside = root / "inside"
+            inside.mkdir()
+            (inside / "reference.png").write_bytes(PNG)
+            linked_inside = root / "linked-inside"
+            _support.make_symlink(self, linked_inside, inside, directory=True)
+            with self.assertRaises(ProviderError) as linked_error:
+                read_reference_raster(linked_inside / "reference.png", len(PNG))
+            self.assertEqual(ErrorCategory.INVALID_OUTPUT, linked_error.exception.category)
+
+            outside = root / "outside"
+            outside.mkdir()
+            (outside / "reference.png").write_bytes(PNG)
+            container = root / "container"
+            container.mkdir()
+            escaped = container / "escaped"
+            _support.make_symlink(self, escaped, outside, directory=True)
+            with self.assertRaises(ProviderError) as escape_error:
+                read_reference_raster(escaped / "reference.png", len(PNG))
+        self.assertEqual(ErrorCategory.INVALID_OUTPUT, escape_error.exception.category)
+
     async def test_errors_moderation_timeout_cancellation_and_redaction_are_normalized(
         self,
     ) -> None:
         cases = (
             (401, {"error": {"message": CANARY}}, ErrorCategory.INVALID_CREDENTIALS),
             (402, {"error": {"message": CANARY}}, ErrorCategory.QUOTA_EXHAUSTED),
-            (429, {"error": {"message": CANARY}}, ErrorCategory.RATE_LIMITED),
+            (
+                429,
+                {"error": {"code": "insufficient_quota", "message": CANARY}},
+                ErrorCategory.QUOTA_EXHAUSTED,
+            ),
+            (
+                429,
+                {"error": {"type": "insufficient_quota", "message": CANARY}},
+                ErrorCategory.QUOTA_EXHAUSTED,
+            ),
+            (429, {"error": {"message": "insufficient_quota"}}, ErrorCategory.RATE_LIMITED),
+            (
+                429,
+                {"error": {"code": "temporary_insufficient_quota"}},
+                ErrorCategory.RATE_LIMITED,
+            ),
+            (429, {"error": {"code": "rate_limit_exceeded"}}, ErrorCategory.RATE_LIMITED),
             (
                 400,
                 {"error": {"code": "content_policy_violation", "message": CANARY}},

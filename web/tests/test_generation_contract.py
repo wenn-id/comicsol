@@ -413,6 +413,24 @@ class BoundedHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ErrorCategory.CANCELLED, cancelled_error.exception.category)
         self.assertNotIn(secret, repr(cancelled_error.exception))
 
+    async def test_caller_cancellation_is_re_raised_without_normalization(self) -> None:
+        started = asyncio.Event()
+
+        async def blocked(request: httpx.Request) -> httpx.Response:
+            started.set()
+            await asyncio.Future()
+            raise AssertionError("unreachable")
+
+        async with BoundedHTTPClient(
+            make_policy(), transport=httpx.MockTransport(blocked)
+        ) as client:
+            task = asyncio.create_task(client.get_bytes("https://allowed.example/output"))
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertTrue(task.cancelled())
+
     async def test_redirect_is_refused_and_location_is_redacted(self) -> None:
         secret = "redirect-secret-token"
 

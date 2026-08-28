@@ -183,6 +183,74 @@ class BFLProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(request.url.params["id"] == "request-123" for request in poll_requests))
         self.assertTrue(all(request.headers["x-key"] == CANARY for request in poll_requests))
 
+    async def test_poll_accepts_strict_regional_delivery_origin(self) -> None:
+        seen: list[httpx.Request] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.path == "/v1/get_result":
+                return httpx.Response(
+                    200,
+                    json={
+                        "status": "Ready",
+                        "result": {"sample": "https://delivery-eu1.bfl.ai/output/request-123.png"},
+                    },
+                    request=request,
+                )
+            if request.url.host == "delivery-eu1.bfl.ai":
+                return httpx.Response(
+                    200,
+                    content=PNG,
+                    headers={"content-type": "image/png"},
+                    request=request,
+                )
+            self.fail(f"unexpected fixture request: {request.url}")
+
+        result = await BFLProvider(transport=httpx.MockTransport(handler)).poll(
+            "request-123", CANARY
+        )
+        self.assertEqual(JobState.ACCEPTED, result.state)
+        self.assertEqual(PNG, result.raster_bytes)
+        self.assertEqual(
+            ["api.bfl.ai", "delivery-eu1.bfl.ai"], [request.url.host for request in seen]
+        )
+
+    async def test_poll_rejects_noncanonical_delivery_lookalikes_before_fetch(self) -> None:
+        samples = (
+            "http://delivery-eu1.bfl.ai/output.png",
+            "https://delivery-eu1.bfl.ai:444/output.png",
+            "https://delivery-eu1.bfl.ai.evil.example/output.png",
+            "https://delivery-eu1.bfl.ai@evil.example/output.png",
+            "https://delivery.eu1.bfl.ai/output.png",
+            "https://delivery-eu1.evil.bfl.ai/output.png",
+        )
+        for sample in samples:
+            calls = 0
+
+            async def handler(request: httpx.Request, result_url: str = sample) -> httpx.Response:
+                nonlocal calls
+                calls += 1
+                if request.url.path == "/v1/get_result":
+                    return httpx.Response(
+                        200,
+                        json={"status": "Ready", "result": {"sample": result_url}},
+                        request=request,
+                    )
+                return httpx.Response(
+                    200,
+                    content=PNG,
+                    headers={"content-type": "image/png"},
+                    request=request,
+                )
+
+            with self.subTest(sample=sample):
+                with self.assertRaises(ProviderError) as caught:
+                    await BFLProvider(transport=httpx.MockTransport(handler)).poll(
+                        "request-123", CANARY
+                    )
+                self.assertEqual(ErrorCategory.INVALID_OUTPUT, caught.exception.category)
+                self.assertEqual(1, calls)
+
     async def test_moderation_quota_rate_invalid_credentials_and_redaction_are_normalized(
         self,
     ) -> None:

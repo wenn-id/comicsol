@@ -3,7 +3,8 @@ from __future__ import annotations
 import base64
 import re
 from collections.abc import Mapping, Sequence
-from urllib.parse import urlencode
+from dataclasses import replace
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 
@@ -13,11 +14,11 @@ from .base import ProviderError
 from .http import BoundedHTTPClient, TransportPolicy, read_reference_raster
 
 _API_ORIGIN = "https://api.bfl.ai"
-_DELIVERY_ORIGIN = "https://delivery.bfl.ai"
 _GENERATE_URL = f"{_API_ORIGIN}/v1/flux-pro-1.1"
 _RESULT_URL = f"{_API_ORIGIN}/v1/get_result"
 _MODEL = next(model for model in CATALOG if model.provider == "bfl")
 _EXTERNAL_JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
+_DELIVERY_HOST = re.compile(r"delivery(?:-[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)?\.bfl\.ai\Z")
 _DEFAULT_MAX_RESPONSE_BYTES = 20 * 1024 * 1024
 
 
@@ -34,7 +35,7 @@ class BFLProvider:
     ) -> None:
         self._transport = transport
         self._policy = TransportPolicy(
-            approved_origins=frozenset({_API_ORIGIN, _DELIVERY_ORIGIN}),
+            approved_origins=frozenset({_API_ORIGIN}),
             connect_timeout=5.0,
             read_timeout=30.0,
             total_timeout=60.0,
@@ -132,7 +133,16 @@ class BFLProvider:
             result = response.get("result")
             if not isinstance(result, Mapping) or not isinstance(result.get("sample"), str):
                 raise ProviderError(ErrorCategory.INVALID_OUTPUT)
-            raster, media_type = await client.get_raster(result["sample"])
+            sample = result["sample"]
+            try:
+                delivery_origin = _delivery_origin(sample)
+            except ValueError:
+                raise ProviderError(ErrorCategory.INVALID_OUTPUT) from None
+            delivery_policy = replace(self._policy, approved_origins=frozenset({delivery_origin}))
+            async with BoundedHTTPClient(
+                delivery_policy, transport=self._transport
+            ) as delivery_client:
+                raster, media_type = await delivery_client.get_raster(sample)
         effective: dict[str, object] = {"model": _MODEL.model}
         seed = result.get("seed")
         if isinstance(seed, int) and not isinstance(seed, bool):
@@ -169,6 +179,26 @@ class BFLProvider:
             raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
         if len(request.references) > 1:
             raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
+
+
+def _delivery_origin(url: str) -> str:
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        raise ValueError("invalid BFL delivery URL") from None
+    host = parsed.hostname
+    if (
+        parsed.scheme != "https"
+        or host is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+        or parsed.fragment
+        or _DELIVERY_HOST.fullmatch(host) is None
+    ):
+        raise ValueError("invalid BFL delivery URL")
+    return f"https://{host}"
 
 
 def _credential_headers(credential: str | None) -> Mapping[str, str]:

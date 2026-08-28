@@ -143,10 +143,13 @@ def _credential_headers(credential: str | None) -> Mapping[str, str]:
 
 
 def _classify_error(status_code: int, payload: Mapping[str, object]) -> ErrorCategory | None:
-    del status_code
     error = payload.get("error")
     if not isinstance(error, Mapping):
         return None
+    if status_code == 429 and any(
+        error.get(key) == "insufficient_quota" for key in ("code", "type")
+    ):
+        return ErrorCategory.QUOTA_EXHAUSTED
     markers = " ".join(
         value.lower() for key in ("code", "type") if isinstance((value := error.get(key)), str)
     )

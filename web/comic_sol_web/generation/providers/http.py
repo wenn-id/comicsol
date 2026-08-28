@@ -14,6 +14,8 @@ from urllib.parse import urlsplit
 import httpx
 from PIL import Image, UnidentifiedImageError
 
+from comic_sol_product.cli import _load_engine_module
+
 from ..types import ErrorCategory
 from .base import ProviderError
 
@@ -24,7 +26,7 @@ _FORMAT_MEDIA_TYPES = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/
 _MAX_RASTER_PIXELS = 40_000_000
 _MAX_DECODED_RASTER_BYTES = 160 * 1024 * 1024
 _O_BINARY = getattr(os, "O_BINARY", 0)
-_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_project_io = _load_engine_module("project_io")
 
 
 @dataclass(frozen=True)
@@ -236,6 +238,9 @@ class BoundedHTTPClient:
         except ProviderError:
             raise
         except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling() > 0:
+                raise
             raise ProviderError(ErrorCategory.CANCELLED) from None
         except (TimeoutError, httpx.TimeoutException):
             raise ProviderError(ErrorCategory.TIMEOUT) from None
@@ -254,24 +259,17 @@ class BoundedHTTPClient:
 
 
 def read_reference_raster(path: Path, max_bytes: int) -> tuple[bytes, str]:
-    """Read one plain local raster without following a final-component link."""
+    """Read one plain local raster without following linked path components."""
     try:
-        if path.is_symlink():
-            raise ProviderError(ErrorCategory.INVALID_OUTPUT)
-        descriptor = os.open(path, os.O_RDONLY | _O_BINARY | _O_NOFOLLOW)
+        source = _project_io.open_path_nofollow(path.absolute(), flags=os.O_RDONLY | _O_BINARY)
+        with source:
+            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+            content = source.read(max_bytes + 1)
     except ProviderError:
         raise
-    except OSError:
+    except (OSError, ValueError):
         raise ProviderError(ErrorCategory.INVALID_OUTPUT) from None
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise ProviderError(ErrorCategory.INVALID_OUTPUT)
-        with os.fdopen(descriptor, "rb", closefd=False) as source:
-            content = source.read(max_bytes + 1)
-    except OSError:
-        raise ProviderError(ErrorCategory.INVALID_OUTPUT) from None
-    finally:
-        os.close(descriptor)
     if not content or len(content) > max_bytes:
         raise ProviderError(ErrorCategory.INVALID_OUTPUT)
     return validate_raster(content, "")
