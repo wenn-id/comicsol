@@ -11,7 +11,7 @@ license = "MIT"
 authors = [{ name = "Alwan Juliawan" }]
 dependencies = [
     "authlib==1.5.2",
-    "cryptography==46.0.2",
+    "cryptography==50.0.0",
     "fastapi==0.115.12",
     "httpx==0.28.1",
     "python-multipart==0.0.20",
