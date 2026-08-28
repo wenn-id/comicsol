@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from support import ENCRYPTION_SECRET, SESSION_SECRET, valid_environment
+from web.tests.support import (
+    ENCRYPTION_SECRET,
+    SESSION_SECRET,
+    make_symlink,
+    valid_environment,
+)
 
 
 class WebConfigTests(unittest.TestCase):
@@ -95,7 +102,7 @@ class WebApplicationTests(unittest.TestCase):
         forbidden = {
             name
             for name in set(sys.modules) - before
-            if name.startswith(("scripts", "comic_sol_product", "provider", "providers"))
+            if name.startswith(("scripts", "comic_sol_product", "PIL", "provider", "providers"))
         }
         self.assertEqual(set(), forbidden)
 
@@ -150,6 +157,191 @@ class WebApplicationTests(unittest.TestCase):
         ):
             app = create_app(WebConfig.from_env(valid_environment()))
         self.assertIsNotNone(app)
+
+    def test_project_routes_are_registered_without_creating_application_state(self):
+        from comic_sol_web.app import create_app
+        from comic_sol_web.config import WebConfig
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary) / "not-created"
+            app = create_app(WebConfig.from_env(valid_environment(data_root)))
+            routes = {
+                (route.path, frozenset(route.methods or ()))
+                for route in app.routes
+                if route.path.startswith("/api/projects")
+            }
+        self.assertEqual(
+            {
+                ("/api/projects", frozenset({"POST"})),
+                ("/api/projects/import", frozenset({"POST"})),
+                ("/api/projects/{project_id}", frozenset({"GET"})),
+            },
+            routes,
+        )
+        self.assertFalse(data_root.exists())
+        self.assertFalse(hasattr(app.state, "projects"))
+
+    def test_anonymous_project_request_fails_before_lazy_storage_initialization(self):
+        from comic_sol_web.app import create_app
+        from comic_sol_web.config import WebConfig
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary) / "anonymous-data"
+            app = create_app(WebConfig.from_env(valid_environment(data_root)))
+            with TestClient(app) as client:
+                response = client.get(f"/api/projects/{'A' * 32}")
+            self.assertEqual(401, response.status_code)
+            self.assertEqual({"detail": "authentication required"}, response.json())
+            self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "projects"))
+
+    def test_project_endpoint_rejects_a_symlinked_data_root_parent(self):
+        from comic_sol_web.app import create_app
+        from comic_sol_web.auth import SessionPrincipal, require_principal
+        from comic_sol_web.config import WebConfig
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            external = base / "external"
+            external.mkdir()
+            alias = base / "alias"
+            make_symlink(self, alias, external, directory=True)
+            data_root = alias / "web-data"
+            environment = valid_environment(base / "ordinary-data")
+            environment["COMIC_SOL_WEB_DATA_ROOT"] = str(data_root)
+            app = create_app(WebConfig.from_env(environment))
+            app.dependency_overrides[require_principal] = lambda: SessionPrincipal(
+                "linked-user", "linked"
+            )
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.get(f"/api/projects/{'A' * 32}")
+            self.assertEqual(400, response.status_code)
+            self.assertEqual({"detail": "project request rejected"}, response.json())
+            self.assertFalse((external / "web-data").exists())
+            self.assertFalse(hasattr(app.state, "projects"))
+
+    def test_project_endpoint_constructs_the_real_gateway_lazily(self):
+        from fastapi.testclient import TestClient
+
+        from comic_sol_web.app import create_app
+        from comic_sol_web.auth import SessionPrincipal, require_principal
+        from comic_sol_web.config import WebConfig
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary) / "lazy-data"
+            app = create_app(WebConfig.from_env(valid_environment(data_root)))
+            app.dependency_overrides[require_principal] = lambda: SessionPrincipal(
+                "lazy-user", "lazy"
+            )
+            self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "projects"))
+            with TestClient(app) as client:
+                response = client.get("/api/projects/not-an-opaque-project-id")
+            self.assertEqual(404, response.status_code)
+            self.assertEqual({"detail": "project unavailable"}, response.json())
+            self.assertTrue(data_root.is_dir())
+            self.assertEqual(
+                "ProjectService",
+                app.state.projects.__class__.__name__,
+            )
+            from comic_sol_web import engine_gateway
+
+            self.assertIs(
+                engine_gateway.EngineGateway,
+                app.state.projects.gateway.__class__,
+            )
+            self.assertEqual(
+                "scripts.comic_sol",
+                engine_gateway.comic_sol.__name__,
+            )
+
+    def test_web_declares_the_exact_canonical_root_engine_version(self):
+        from comic_sol_product import __version__ as root_version
+
+        web_project = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        metadata = tomllib.loads(web_project.read_text(encoding="utf-8"))["project"]
+        self.assertIn(f"comic-sol=={root_version}", metadata["dependencies"])
+
+    def test_clean_installed_wheels_resolve_the_bundled_engine_outside_checkout(self):
+        code = """
+from importlib.metadata import version
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import sys
+from fastapi.testclient import TestClient
+from comic_sol_web.app import create_app
+from comic_sol_web.config import WebConfig
+with TemporaryDirectory() as temporary:
+    root = Path(temporary) / "data"
+    config = WebConfig(
+        session_secret="s" * 32,
+        encryption_secret="e" * 32,
+        data_root=root,
+        hosted_secret_references={},
+        master_key_references={},
+        active_credential_key_id=None,
+    )
+    before = set(sys.modules)
+    app = create_app(config)
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert not root.exists()
+    forbidden = {
+        name for name in set(sys.modules) - before
+        if name.startswith(("scripts", "comic_sol_product", "PIL", "provider", "providers"))
+    }
+    assert forbidden == set(), forbidden
+import PIL
+import comic_sol_web.engine_gateway as gateway
+from comic_sol_product.cli import _load_engine_module
+engine = _load_engine_module("comic_sol")
+assert engine.__name__ == "comic_sol_product.engine.comic_sol"
+assert gateway.comic_sol is engine
+assert version("comic-sol") == "2.0.0rc6"
+assert version("comic-sol-web") == "0.1.0"
+assert "site-packages" in Path(engine.__file__).as_posix()
+print(engine.__name__, PIL.__version__)
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            completed = subprocess.run(
+                [sys.executable, "-I", "-c", code],
+                cwd=temporary,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(
+            0,
+            completed.returncode,
+            f"stdout={completed.stdout!r}\nstderr={completed.stderr!r}",
+        )
+        self.assertEqual(
+            "comic_sol_product.engine.comic_sol 12.3.0",
+            completed.stdout.strip(),
+        )
+
+    def test_web_ci_builds_and_installs_local_root_before_the_web_wheel(self):
+        workflow = (
+            Path(__file__).resolve().parents[2] / ".github/workflows/web-tests.yml"
+        ).read_text(encoding="utf-8")
+        required = (
+            "requirements/locks/web-${{ matrix.lock }}-x86_64.txt",
+            "requirements/locks/base-${{ matrix.lock }}-x86_64.txt",
+            "python -m build --no-isolation --wheel -o dist",
+            "python -m pip install --no-deps --force-reinstall dist/comic_sol-*.whl",
+            "python -m build --no-isolation --wheel -o dist",
+            "python -m pip install --no-deps --force-reinstall dist/comic_sol_web-*.whl",
+            'python -m unittest discover -s web/tests -p "test_*.py" -v',
+            "python -m unittest web.tests.test_projects -v",
+        )
+        cursor = 0
+        for expected in required:
+            with self.subTest(expected=expected):
+                cursor = workflow.index(expected, cursor) + len(expected)
 
     def test_web_distribution_stays_separate_from_root_distribution(self):
         web = Path(__file__).resolve().parents[1]
