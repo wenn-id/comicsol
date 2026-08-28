@@ -728,6 +728,7 @@ class GoldenCreatorPathTests(unittest.TestCase):
                 read("docs/user/getting-started.md"),
                 "1. Install the Agent Skill",
             ),
+            "docs/user/index.md": (read("docs/user/index.md"), "Start with your goal"),
         }
         for name, (document, heading) in guides.items():
             with self.subTest(document=name):
