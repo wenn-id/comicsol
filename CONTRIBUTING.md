@@ -128,6 +128,21 @@ Showcase publication consent is separate from the dogfood/report-sharing consent
 implies permission to publish the comic, story, images, or prompts. Report-sharing
 permission and comic-publication permission must be recorded independently.
 
+## Surface-freeze review
+
+A new distribution, installation, integration, or execution surface requires exactly one
+of the following in its pull request: a link to the qualifying published adoption summary,
+or an explicit named maintainer waiver recorded in both the relevant issue and pull
+request. Use the pull request template to select exactly one response, including N/A with
+a concrete reason when the change does not add a surface. Security, correctness,
+compatibility, and maintenance work on existing surfaces remains allowed without adoption
+evidence or a waiver. See [`docs/surfaces.md`](docs/surfaces.md) for the evidence gate,
+exclusions, approved #244/#245 boundaries, and human-review rules.
+
+The current creator program, tooling, fixtures, CI, maintainers, automated identities,
+fabricated submissions, and deterministic samples do not establish qualifying adoption
+evidence. Do not create or infer a waiver on behalf of a maintainer.
+
 The [agent-host smoke contract](docs/agent-host-smoke.md) defines the required live
 record. Codex, Claude Code, Google Antigravity, and ZCode remain experimental until a
 complete retained record exists; installer and path-copy tests do not verify a live
