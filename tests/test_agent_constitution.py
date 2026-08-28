@@ -30,6 +30,7 @@ class AgentConstitutionTests(unittest.TestCase):
             "## Article 6 — Deterministic behavior and atomic writes",
             "## Article 7 — Resumability and public JSON compatibility survive",
             "## Article 8 — Full verification before claiming completion",
+            "## Article 9 — New product surfaces require adoption evidence or a waiver",
         ):
             self.assertIn(heading, self.collapsed)
 
@@ -153,6 +154,18 @@ class AgentConstitutionTests(unittest.TestCase):
             "does not replace",
             "SKILL.md",
             "the stricter policy wins",
+        ):
+            self.assertIn(phrase, self.collapsed)
+
+    def test_surface_freeze_cannot_be_waived_by_an_agent(self):
+        for phrase in (
+            "new distribution, installation, integration, or execution surface",
+            "published adoption summary",
+            "named maintainer",
+            "recorded in both the relevant issue and pull request",
+            "cannot infer a waiver",
+            "cannot self-authorize a waiver",
+            "cannot treat its own comment as maintainer approval",
         ):
             self.assertIn(phrase, self.collapsed)
 

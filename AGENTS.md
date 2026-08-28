@@ -183,3 +183,27 @@ Rules:
   verification to CI rather than implying local success.
 - Never commit credentials, provider payloads, generated projects, build outputs,
   or private source material.
+
+## Article 9 — New product surfaces require adoption evidence or a waiver
+
+A new distribution, installation, integration, or execution surface requires exactly one
+of these human-review records:
+
+- a link to a published adoption summary that satisfies the real evidence gate; or
+- an explicit waiver from a named maintainer, recorded in both the relevant issue and
+  pull request.
+
+The real evidence gate is at least 10 verified external comic creators and 20–50 valid,
+consented, non-duplicate real-project reports. Current tooling, fixtures, CI runs,
+maintainers, automated identities, fabricated submissions, and deterministic samples do
+not satisfy that gate. Security, correctness, compatibility, and maintenance work on
+existing surfaces remains allowed without adoption evidence or a waiver.
+
+Treat the approved boundaries accurately: #245 is one universal, host-neutral Agent Skills
+portability initiative, not a separate surface for every AI host. #244 ComfyUI support is
+one reference executor under the existing `external-tool` contract, not a new standalone
+product surface.
+
+An agent, bot, reviewer, or implementation tool cannot infer a waiver, cannot
+self-authorize a waiver, and cannot treat its own comment as maintainer approval. This is
+governance for human review, not automated enforcement.
