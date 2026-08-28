@@ -67,6 +67,29 @@ APPLICATION_MIGRATIONS: tuple[Migration, ...] = (
         ),
     ),
     Migration(3, ("ALTER TABLE oauth_states ADD COLUMN binding_hash TEXT",)),
+    Migration(
+        4,
+        (
+            """
+            CREATE TABLE credentials (
+                owner_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                provider TEXT NOT NULL CHECK (
+                    length(provider) BETWEEN 1 AND 32
+                ),
+                auth_mode TEXT NOT NULL CHECK (auth_mode = 'byok'),
+                ciphertext TEXT NOT NULL CHECK (
+                    length(ciphertext) BETWEEN 1 AND 131072
+                ),
+                key_id TEXT NOT NULL CHECK (
+                    length(key_id) BETWEEN 1 AND 32
+                ),
+                updated_at INTEGER NOT NULL,
+                revoked_at INTEGER,
+                PRIMARY KEY (owner_id, provider, auth_mode)
+            )
+            """,
+        ),
+    ),
 )
 
 
