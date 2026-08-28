@@ -66,6 +66,7 @@ APPLICATION_MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX assets_owner ON assets (owner_id, asset_id)",
         ),
     ),
+    Migration(3, ("ALTER TABLE oauth_states ADD COLUMN binding_hash TEXT",)),
 )
 
 
@@ -95,13 +96,13 @@ def apply_migrations(
 
     applied: list[int] = []
     for migration in migrations:
-        with database.read() as connection:
+        # Serialize the presence check and non-idempotent statements.
+        with database.transaction() as connection:
             present = connection.execute(
                 "SELECT 1 FROM schema_migrations WHERE version = ?", (migration.version,)
             ).fetchone()
-        if present is not None:
-            continue
-        with database.transaction() as connection:
+            if present is not None:
+                continue
             for statement in migration.statements:
                 connection.execute(statement)
             connection.execute(

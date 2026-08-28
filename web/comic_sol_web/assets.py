@@ -73,6 +73,26 @@ def _make_plain_directory(path: Path) -> None:
         raise AssetError("asset storage path is not a plain directory")
 
 
+def _open_absolute_directory(path: Path, *, create: bool) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    parts = path.absolute().parts
+    descriptor = os.open(parts[0], flags)
+    try:
+        for component in parts[1:]:
+            if create:
+                try:
+                    os.mkdir(component, 0o700, dir_fd=descriptor)
+                except FileExistsError:
+                    pass
+            child = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
 def _png_dimensions_and_decode_size(data: bytes, max_decoded_bytes: int) -> tuple[int, int]:
     if not data.startswith(PNG_SIGNATURE):
         raise AssetError("unsupported raster media type")
@@ -175,6 +195,30 @@ class AssetStore:
         self.max_decoded_bytes = max_decoded_bytes
         self._clock = clock
 
+    def _owner_directory_fd(self, principal: SessionPrincipal) -> int:
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            root_fd = _open_absolute_directory(self.data_root, create=True)
+            try:
+                try:
+                    os.mkdir("assets", 0o700, dir_fd=root_fd)
+                except FileExistsError:
+                    pass
+                assets_fd = os.open("assets", flags, dir_fd=root_fd)
+            finally:
+                os.close(root_fd)
+            try:
+                owner = self.owner_storage_id(principal)
+                try:
+                    os.mkdir(owner, 0o700, dir_fd=assets_fd)
+                except FileExistsError:
+                    pass
+                return os.open(owner, flags, dir_fd=assets_fd)
+            finally:
+                os.close(assets_fd)
+        except OSError as error:
+            raise AssetError("asset storage path is not a plain directory") from error
+
     def owner_storage_id(self, principal: SessionPrincipal) -> str:
         if not principal.user_id:
             raise AssetError("asset owner is invalid")
@@ -223,26 +267,33 @@ class AssetStore:
     ) -> AssetHandle:
         content = self._read_upload(stream)
         sniffed, width, height = self._validate_raster(content, media_type)
-        owner_directory = self._owner_directory(principal)
+        owner_fd = self._owner_directory_fd(principal)
         asset_id = secrets.token_urlsafe(24)
         filename = f"{asset_id}.png"
-        destination = owner_directory / filename
-        temporary = owner_directory / f".{asset_id}.{secrets.token_urlsafe(8)}.tmp"
-        if destination.parent != owner_directory or destination.exists():
+        temporary = f".{asset_id}.{secrets.token_urlsafe(8)}.tmp"
+        try:
+            os.stat(filename, dir_fd=owner_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            os.close(owner_fd)
             raise AssetError("asset storage collision")
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         flags |= getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(temporary, flags, 0o600)
+        descriptor = os.open(temporary, flags, 0o600, dir_fd=owner_fd)
         try:
             with os.fdopen(descriptor, "wb", closefd=True) as output:
                 output.write(content)
                 output.flush()
                 os.fsync(output.fileno())
-            _ensure_existing_components_are_plain(owner_directory)
-            os.replace(temporary, destination)
+            os.replace(temporary, filename, src_dir_fd=owner_fd, dst_dir_fd=owner_fd)
         except BaseException:
-            temporary.unlink(missing_ok=True)
-            destination.unlink(missing_ok=True)
+            for name in (temporary, filename):
+                try:
+                    os.unlink(name, dir_fd=owner_fd)
+                except FileNotFoundError:
+                    pass
+            os.close(owner_fd)
             raise
         now = int(self._clock())
         storage_name = f"{self.owner_storage_id(principal)}/{filename}"
@@ -269,8 +320,13 @@ class AssetStore:
                     ),
                 )
         except BaseException:
-            destination.unlink(missing_ok=True)
+            try:
+                os.unlink(filename, dir_fd=owner_fd)
+            except FileNotFoundError:
+                pass
+            os.close(owner_fd)
             raise
+        os.close(owner_fd)
         return AssetHandle(asset_id, sniffed, len(content), width, height)
 
     def _row_for(self, principal: SessionPrincipal, asset_id: str):
@@ -297,17 +353,17 @@ class AssetStore:
 
     def read_bytes(self, principal: SessionPrincipal, asset_id: str) -> bytes:
         row = self._row_for(principal, asset_id)
-        owner_directory = self._owner_directory(principal)
-        path = owner_directory / f"{asset_id}.png"
-        _ensure_existing_components_are_plain(path)
-        if _is_link_or_reparse(path):
-            raise AssetError("asset file is not plain")
+        owner_fd = self._owner_directory_fd(principal)
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
         try:
-            descriptor = os.open(path, flags)
+            descriptor = os.open(f"{asset_id}.png", flags, dir_fd=owner_fd)
         except OSError as error:
             raise AssetError("asset is unavailable") from error
+        finally:
+            os.close(owner_fd)
         with os.fdopen(descriptor, "rb", closefd=True) as source:
+            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                raise AssetError("asset file is not plain")
             content = source.read(self.max_upload_bytes + 1)
         if len(content) != row["byte_size"] or len(content) > self.max_upload_bytes:
             raise AssetError("asset bytes do not match bounded metadata")

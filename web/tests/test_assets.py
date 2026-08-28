@@ -8,6 +8,7 @@ import tempfile
 import unittest
 import zlib
 from pathlib import Path
+from unittest.mock import patch
 
 from comic_sol_web.assets import AssetError, AssetStore
 from comic_sol_web.auth import SessionPrincipal
@@ -147,6 +148,24 @@ class AssetStoreTests(unittest.TestCase):
             self.skipTest(f"cannot create a directory symlink: {error}")
         with self.assertRaises(AssetError):
             AssetStore(self.database, linked_root)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
+    def test_directory_swap_cannot_redirect_upload(self) -> None:
+        outside = Path(self.temporary_directory.name) / "outside-race"
+        outside.mkdir()
+        owner = self.data_root / "assets" / self.store.owner_storage_id(self.alice)
+        displaced = self.data_root / "displaced"
+        real_replace = os.replace
+
+        def swap(source, destination, **kwargs):
+            owner.rename(displaced)
+            owner.symlink_to(outside, target_is_directory=True)
+            return real_replace(source, destination, **kwargs)
+
+        with patch("comic_sol_web.assets.os.replace", side_effect=swap):
+            self.store.create_upload(self.alice, io.BytesIO(png_bytes()), "image/png")
+        self.assertEqual([], list(outside.iterdir()))
+        self.assertEqual(1, len(list(displaced.glob("*.png"))))
 
 
 if __name__ == "__main__":

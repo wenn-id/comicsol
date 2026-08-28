@@ -18,18 +18,24 @@ def create_auth_router(
 
     @router.get("/login")
     async def login() -> RedirectResponse:
-        _, authorization_url = service.begin_oauth(callback_url)
-        return RedirectResponse(authorization_url, status_code=status.HTTP_302_FOUND)
+        _, binding, authorization_url = service.begin_oauth(callback_url)
+        response = RedirectResponse(authorization_url, status_code=status.HTTP_302_FOUND)
+        service.set_oauth_binding_cookie(response, binding)
+        return response
 
     @router.get("/callback")
-    async def callback(state: str, code: str) -> RedirectResponse:
+    async def callback(request: Request, state: str, code: str) -> RedirectResponse:
         try:
             authenticated = await service.complete_oauth(
-                state=state, code=code, redirect_uri=callback_url
+                state=state,
+                binding=request.cookies.get(service.oauth_binding_cookie_name),
+                code=code,
+                redirect_uri=callback_url,
             )
         except AuthError as error:
             raise HTTPException(status_code=400, detail="OAuth callback rejected") from error
         response = RedirectResponse(post_login_url, status_code=status.HTTP_303_SEE_OTHER)
+        service.clear_oauth_binding_cookie(response)
         service.set_session_cookies(response, authenticated)
         return response
 

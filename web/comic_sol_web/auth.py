@@ -20,7 +20,9 @@ GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 GITHUB_USER_URL = "https://api.github.com/user"
 SESSION_COOKIE_NAME = "comic_sol_session"
 CSRF_COOKIE_NAME = "comic_sol_csrf"
+OAUTH_BINDING_COOKIE_NAME = "comic_sol_oauth_binding"
 CSRF_HEADER_NAME = "x-csrf-token"
+MAX_OUTSTANDING_OAUTH_STATES = 1024
 
 
 class AuthError(ValueError):
@@ -122,37 +124,64 @@ class AuthService:
         self.session_ttl_seconds = session_ttl_seconds
         self.session_cookie_name = SESSION_COOKIE_NAME
         self.csrf_cookie_name = CSRF_COOKIE_NAME
+        self.oauth_binding_cookie_name = OAUTH_BINDING_COOKIE_NAME
         self.csrf_header_name = CSRF_HEADER_NAME
 
     def _now(self) -> int:
         return int(self._clock())
 
     def _digest(self, namespace: bytes, token: str) -> str:
-        return hmac.new(self._secret, namespace + token.encode("utf-8"), hashlib.sha256).hexdigest()
+        key = hashlib.blake2b(self._secret, digest_size=32, person=b"comic-sol-key").digest()
+        return hashlib.blake2b(
+            token.encode("utf-8"), key=key, digest_size=32, person=namespace[:16]
+        ).hexdigest()
 
-    def begin_oauth(self, redirect_uri: str) -> tuple[str, str]:
+    def begin_oauth(self, redirect_uri: str) -> tuple[str, str, str]:
         if not redirect_uri.startswith("https://"):
             raise AuthError("OAuth redirect URI must use HTTPS")
         state = secrets.token_urlsafe(32)
+        binding = secrets.token_urlsafe(32)
         state_hash = self._digest(b"oauth-state:", state)
+        binding_hash = self._digest(b"oauth-binding:", binding)
         with self.database.transaction() as connection:
+            now = self._now()
             connection.execute(
-                "INSERT INTO oauth_states (state_hash, expires_at) VALUES (?, ?)",
-                (state_hash, self._now() + self.state_ttl_seconds),
+                "DELETE FROM oauth_states WHERE expires_at <= ? OR consumed_at IS NOT NULL", (now,)
             )
-        return state, self._github_oauth.authorization_url(state=state, redirect_uri=redirect_uri)
+            connection.execute(
+                "DELETE FROM oauth_states WHERE state_hash IN "
+                "(SELECT state_hash FROM oauth_states ORDER BY expires_at, state_hash "
+                "LIMIT MAX(0, (SELECT COUNT(*) FROM oauth_states) - ?))",
+                (MAX_OUTSTANDING_OAUTH_STATES - 1,),
+            )
+            connection.execute(
+                "INSERT INTO oauth_states (state_hash, expires_at, binding_hash) VALUES (?, ?, ?)",
+                (state_hash, now + self.state_ttl_seconds, binding_hash),
+            )
+        return (
+            state,
+            binding,
+            self._github_oauth.authorization_url(state=state, redirect_uri=redirect_uri),
+        )
 
-    def _consume_oauth_state(self, state: str) -> None:
-        if not state or len(state) > 256:
+    def _consume_oauth_state(self, state: str, binding: str | None) -> None:
+        if not state or len(state) > 256 or not binding or len(binding) > 256:
             raise OAuthStateError("OAuth state is invalid")
         state_hash = self._digest(b"oauth-state:", state)
+        binding_hash = self._digest(b"oauth-binding:", binding)
         now = self._now()
         with self.database.transaction() as connection:
             row = connection.execute(
-                "SELECT expires_at, consumed_at FROM oauth_states WHERE state_hash = ?",
+                "SELECT expires_at, consumed_at, binding_hash FROM oauth_states WHERE state_hash = ?",
                 (state_hash,),
             ).fetchone()
-            if row is None or row["consumed_at"] is not None or row["expires_at"] <= now:
+            if (
+                row is None
+                or row["consumed_at"] is not None
+                or row["expires_at"] <= now
+                or row["binding_hash"] is None
+                or not hmac.compare_digest(row["binding_hash"], binding_hash)
+            ):
                 raise OAuthStateError("OAuth state is invalid")
             updated = connection.execute(
                 "UPDATE oauth_states SET consumed_at = ? "
@@ -166,10 +195,11 @@ class AuthService:
         self,
         *,
         state: str,
+        binding: str | None,
         code: str,
         redirect_uri: str,
     ) -> AuthenticatedSession:
-        self._consume_oauth_state(state)
+        self._consume_oauth_state(state, binding)
         principal = await self._github_oauth.exchange_code(code=code, redirect_uri=redirect_uri)
         return self.create_session(principal)
 
@@ -278,6 +308,22 @@ class AuthService:
     def clear_session_cookies(self, response: Response) -> None:
         response.delete_cookie(self.session_cookie_name, secure=True, httponly=True, path="/")
         response.delete_cookie(self.csrf_cookie_name, secure=True, httponly=False, path="/")
+
+    def set_oauth_binding_cookie(self, response: Response, binding: str) -> None:
+        response.set_cookie(
+            self.oauth_binding_cookie_name,
+            binding,
+            max_age=self.state_ttl_seconds,
+            secure=True,
+            httponly=True,
+            samesite="lax",
+            path="/api/auth/callback",
+        )
+
+    def clear_oauth_binding_cookie(self, response: Response) -> None:
+        response.delete_cookie(
+            self.oauth_binding_cookie_name, secure=True, httponly=True, path="/api/auth/callback"
+        )
 
 
 async def require_principal(request: Request) -> SessionPrincipal:

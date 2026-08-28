@@ -83,10 +83,13 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_oauth_state_is_one_shot_and_replay_safe(self) -> None:
-        state, authorization_url = self.service.begin_oauth("https://example.test/callback")
+        state, binding, authorization_url = self.service.begin_oauth(
+            "https://example.test/callback"
+        )
         self.assertIn("github.com/login/oauth/authorize", authorization_url)
         first = await self.service.complete_oauth(
             state=state,
+            binding=binding,
             code="code-once",
             redirect_uri="https://example.test/callback",
         )
@@ -95,17 +98,19 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(OAuthStateError):
             await self.service.complete_oauth(
                 state=state,
+                binding=binding,
                 code="code-twice",
                 redirect_uri="https://example.test/callback",
             )
         self.assertEqual(1, self.oauth.exchanges)
 
     async def test_oauth_state_is_consumed_before_a_failed_exchange(self) -> None:
-        state, _ = self.service.begin_oauth("https://example.test/callback")
+        state, binding, _ = self.service.begin_oauth("https://example.test/callback")
         self.oauth.fail = True
         with self.assertRaises(AuthError):
             await self.service.complete_oauth(
                 state=state,
+                binding=binding,
                 code="bad-code",
                 redirect_uri="https://example.test/callback",
             )
@@ -113,20 +118,48 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(OAuthStateError):
             await self.service.complete_oauth(
                 state=state,
+                binding=binding,
                 code="replay",
                 redirect_uri="https://example.test/callback",
             )
 
     async def test_expired_oauth_state_is_rejected(self) -> None:
-        state, _ = self.service.begin_oauth("https://example.test/callback")
+        state, binding, _ = self.service.begin_oauth("https://example.test/callback")
         self.now += 301
         with self.assertRaises(OAuthStateError):
             await self.service.complete_oauth(
                 state=state,
+                binding=binding,
                 code="late",
                 redirect_uri="https://example.test/callback",
             )
         self.assertEqual(0, self.oauth.exchanges)
+
+    async def test_oauth_state_is_bound_to_initiating_browser(self) -> None:
+        state, binding, _ = self.service.begin_oauth("https://example.test/callback")
+        with self.assertRaises(OAuthStateError):
+            await self.service.complete_oauth(
+                state=state,
+                binding="other-browser",
+                code="code",
+                redirect_uri="https://example.test/callback",
+            )
+        result = await self.service.complete_oauth(
+            state=state,
+            binding=binding,
+            code="code",
+            redirect_uri="https://example.test/callback",
+        )
+        self.assertEqual("github-42", result.principal.user_id)
+
+    def test_begin_oauth_purges_expired_states(self) -> None:
+        self.service.begin_oauth("https://example.test/callback")
+        self.now += 301
+        self.service.begin_oauth("https://example.test/callback")
+        with self.database.read() as connection:
+            self.assertEqual(
+                1, connection.execute("SELECT COUNT(*) FROM oauth_states").fetchone()[0]
+            )
 
     def test_sessions_are_hashed_and_cookies_are_secure(self) -> None:
         authenticated = self.service.create_session(SessionPrincipal("github-42", "octocat"))

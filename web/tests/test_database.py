@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -18,7 +19,7 @@ class DatabaseTests(unittest.TestCase):
 
     def test_application_migrations_are_numbered_and_applied_in_order(self) -> None:
         applied = apply_migrations(self.database)
-        self.assertEqual((1, 2), applied)
+        self.assertEqual((1, 2, 3), applied)
         with self.database.read() as connection:
             versions = tuple(
                 row[0]
@@ -30,7 +31,7 @@ class DatabaseTests(unittest.TestCase):
                 row[0]
                 for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
             }
-        self.assertEqual((1, 2), versions)
+        self.assertEqual((1, 2, 3), versions)
         self.assertTrue({"oauth_states", "sessions", "assets"}.issubset(tables))
         self.assertEqual((), apply_migrations(self.database))
 
@@ -71,6 +72,26 @@ class DatabaseTests(unittest.TestCase):
         for migrations in invalid_sets:
             with self.subTest(migrations=migrations), self.assertRaises(ValueError):
                 apply_migrations(self.database, migrations)
+
+    def test_concurrent_migration_workers_apply_once(self) -> None:
+        barrier = threading.Barrier(2)
+        results = []
+        failures = []
+
+        def migrate():
+            try:
+                barrier.wait()
+                results.append(apply_migrations(self.database))
+            except BaseException as error:
+                failures.append(error)
+
+        workers = [threading.Thread(target=migrate) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        self.assertEqual([], failures)
+        self.assertEqual([(1, 2, 3), ()], sorted(results, reverse=True))
 
     def test_transaction_rolls_back_on_exception(self) -> None:
         apply_migrations(self.database)
