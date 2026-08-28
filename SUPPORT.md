@@ -1,6 +1,6 @@
 # Comic Sol Support
 
-Support channel:
+Support channel for ordinary support:
 [GitHub Issues](https://github.com/wenn-id/comicsol/issues)
 
 Comic Sol ships as several surfaces, and support looks slightly different on
@@ -65,7 +65,18 @@ Do not post API keys, passwords, private story text, private images, personal
 contact data, or generated logs containing sensitive material in a public
 issue.
 
+## Dogfood reports
+
+The [opt-in dogfood route](docs/dogfood.md) accepts only a locally inspected, sanitized
+report through its dedicated public issue form. Do not submit a Comic Sol project,
+story text, prompts, images, credentials, provider payloads, filesystem paths, raw logs,
+or any report that appears sensitive. Dogfood reporting is optional and is not an
+ordinary support requirement.
+
 ## Private route for sensitive reports
+
+Use private security reporting—not an ordinary support issue—when a report involves a
+vulnerability, suspected exposure, or material that cannot safely be public.
 
 Some reports cannot be made public even sanitized — for example a leaked
 credential, a privacy concern that requires showing private source text or

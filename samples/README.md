@@ -7,7 +7,9 @@ records — can be opened and diffed.
 
 Start with the catalog, then read the evidence tiers and the
 [showcase evidence contract](../docs/showcase.md) before drawing conclusions about
-image quality from any example.
+image quality from any example. The separate
+[opt-in creator dogfood program](../docs/dogfood.md) explains why deterministic samples
+and maintainer samples do not count as adoption evidence.
 
 ## Catalog
 

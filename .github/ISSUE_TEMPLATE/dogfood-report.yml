@@ -1,0 +1,50 @@
+name: Opt-in creator dogfood report
+description: Manually share one inspected, sanitized Comic Sol dogfood report.
+title: "[Dogfood report] "
+labels:
+  - testing
+  - qa
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for opting in. Submit only a locally generated and inspected sanitized dogfood report. This public form is a manual submission route; it does not upload a Comic Sol project automatically.
+
+        **Do not submit** the Comic Sol project; story/source text; prompts or negative prompts; images, page PNGs, PDFs, or reference art; credentials, API keys, cookies, tokens, account identifiers; provider request/response bodies; endpoints containing secrets; filesystem paths or home directories; or raw logs, stack traces, exceptions, or unrelated diagnostics.
+
+        If the report appears to contain sensitive material, do not submit it here. Use [ordinary support](https://github.com/wenn-id/comicsol/blob/main/SUPPORT.md) for safe questions or [private security reporting](https://github.com/wenn-id/comicsol/blob/main/SECURITY.md) for vulnerabilities, suspected exposure, or material that cannot safely be public.
+
+  - type: textarea
+    id: sanitized_report
+    attributes:
+      label: Sanitized dogfood report
+      description: Provide only an attachment or stable link, or fenced sanitized JSON. Inspect it locally before sharing.
+      placeholder: Drag the sanitized report here, provide a stable link, or paste fenced sanitized JSON.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: share_report_consent
+    attributes:
+      label: Report-sharing consent
+      description: This consent applies only to the sanitized report supplied above.
+      options:
+        - label: I explicitly set consent.share_report to true and consent to share only this sanitized dogfood report.
+          required: true
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: privacy_acknowledgement
+    attributes:
+      label: Privacy acknowledgement
+      options:
+        - label: I confirm that I did not include any prohibited project or private materials listed above.
+          required: true
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        Showcase publication permission is separate. Sharing this sanitized report does not grant permission to publish a comic, story text, prompts, images, pages, PDF, references, or project files. A showcase proposal requires its own explicit consent and rights-to-share confirmation under the [showcase contract](https://github.com/wenn-id/comicsol/blob/main/docs/showcase.md); consent for one purpose is never inferred from the other.

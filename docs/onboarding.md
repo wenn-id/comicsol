@@ -212,5 +212,7 @@ Once your first comic exists:
   the exact capability check and `BLOCKED`-project recovery procedure.
 - [`README.md` → MCP Server](../README.md#mcp-server-optional) — expose the
   deterministic lifecycle as MCP tools.
+- [`docs/dogfood.md`](dogfood.md) — the optional manual creator-report route,
+  local privacy checks, and separate report/showcase consent boundaries.
 - [`docs/structured-errors.md`](structured-errors.md) — the stable error code
   taxonomy shared by the CLI and MCP surfaces.
