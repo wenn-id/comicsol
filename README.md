@@ -32,8 +32,11 @@ generator.
 
 ## Install the Agent Skill
 
-After installing the `comic-sol` package or native distribution, place the canonical
-Agent Skill with the WP2 installer. This is the shortest explicit user-scope route:
+`skill-install` first ships in `v2.0.0rc6`, which is prepared but not published.
+The latest published prerelease, `v2.0.0rc4`, does not include `skill-install`.
+Use the command below only after installing an rc6 package or native distribution once
+its release assets are available, or from a trusted rc6 source checkout installed as a
+package. This is the shortest explicit user-scope route:
 
 ```bash
 comic-sol skill-install --target codex --scope user
@@ -147,10 +150,16 @@ prints one absolute doctor command to run next. Advanced local-archive, source,
 wheel, and OCI procedures live separately in
 [`docs/install-manual.md`](docs/install-manual.md).
 
+Source installation supports Linux, macOS, Windows, and WSL2 on Python 3.11+.
+The pinned runtime dependency is Pillow 12.3.0. Intel macOS is source-install-only;
+it has no native archive. The native archive matrix is Linux x86_64, macOS arm64,
+and Windows x86_64. WSL2 uses the Linux x86_64 archive; it has no separate native
+archive. The deterministic test suite does not need an image provider.
+
 ### Agent Skill placement
 
-The recommended creator route is the transactional installer shipped by the installed
-package and native distributions:
+For `v2.0.0rc6` and later, the recommended creator route is the transactional
+installer shipped by the installed package and native distributions:
 
 ```bash
 comic-sol skill-install --target codex --scope user
@@ -189,25 +198,7 @@ fonts, and legal assets. Start a fresh Codex session after installation. The
 optional MCP/CLI engine remains in this repository as a separate local surface;
 plugin installation does not require a hosted service or MCP server.
 
-Windows PowerShell:
-
-```powershell
-git clone https://github.com/wenn-id/comicsol.git `
-  "$env:USERPROFILE\.codex\skills\comic-sol"
-Set-Location "$env:USERPROFILE\.codex\skills\comic-sol"
-$PYTHON = "py"  # use: py -3; resolve Python 3.11+ first
-& $PYTHON -3 -m pip install --require-hashes -r requirements/locks/base-windows-x86_64.txt
-```
-
-Source installation supports Linux, macOS, Windows, and WSL2 on Python 3.11+.
-The pinned runtime dependency is Pillow 12.3.0. Intel macOS is source-install-only; it has no native archive.
-The native archive matrix is Linux x86_64, macOS arm64, and Windows x86_64.
-WSL2 uses the Linux x86_64 archive; it has no separate native archive. On WSL,
-follow the Linux instructions above; the PowerShell steps apply only when running
-Comic Sol directly on native Windows. The deterministic test suite does not need
-an image provider.
-
-Comic Sol ships as several surfaces — Skill checkout, Codex Plugin, source
+Comic Sol ships as several surfaces — Skill placement, Codex Plugin, source
 checkout, installed CLI wheel, native portable archive, MCP server, and OCI
 image — each with its own start command and default output root;
 [`docs/surfaces.md`](docs/surfaces.md) separates them, and

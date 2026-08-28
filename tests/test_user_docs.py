@@ -686,6 +686,31 @@ class GoldenCreatorPathTests(unittest.TestCase):
         qa = normalized.index("visual QA and promotion")
         self.assertLess(resume, qa)
 
+    def test_skill_install_path_requires_a_distribution_that_ships_it(self):
+        """Disclose rc6 availability before advertising its installer command."""
+        section = self.section(self.readme, "Install the Agent Skill")
+        command = section.index("comic-sol skill-install --target codex --scope user")
+        for marker in (
+            "v2.0.0rc6",
+            "not published",
+            "v2.0.0rc4",
+            "does not include `skill-install`",
+        ):
+            self.assertGreater(section.find(marker), -1, marker)
+            self.assertLess(section.index(marker), command, marker)
+
+    def test_codex_plugin_does_not_reintroduce_manual_skill_placement(self):
+        """Keep manual Skill checkout commands out of the plugin workflow."""
+        section = self.section(self.readme, "Codex Plugin — same repository")
+        for command in (
+            "codex plugin marketplace add",
+            "codex plugin list",
+            "codex plugin add",
+        ):
+            self.assertIn(command, section)
+        self.assertNotIn("git clone", section)
+        self.assertNotIn(r".codex\skills\comic-sol", section)
+
     def test_sample_claims_keep_the_evidence_boundary(self):
         """Limit visual-quality claims to the one retained live sample."""
         evidence = self.section(self.readme, "Retained live-generated evidence")
