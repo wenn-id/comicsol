@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "comic-sol-web"
+dynamic = ["version"]
+description = "Isolated Web application foundation for Comic Sol"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Alwan Juliawan" }]
+dependencies = [
+    "authlib==1.5.2",
+    "cryptography==46.0.2",
+    "fastapi==0.115.12",
+    "httpx==0.28.1",
+    "python-multipart==0.0.20",
+    "uvicorn==0.35.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "build==1.5.0",
+    "coverage==7.15.4",
+    "mypy==2.3.1",
+    "pip==26.2.1",
+    "pip-tools==7.6.1",
+    "ruff==0.16.3",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "comic_sol_web.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["comic_sol_web*"]
