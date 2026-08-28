@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 from dataclasses import dataclass
 from typing import Mapping
 from urllib.parse import urlsplit
@@ -136,9 +137,21 @@ def _canonical_origin(url: str) -> str:
     ):
         raise ValueError("invalid provider origin")
     host = parsed.hostname.lower()
+    if parsed.scheme != "https" and not _is_loopback_host(host):
+        raise ValueError("cleartext provider origins must be loopback")
     default_port = 80 if parsed.scheme == "http" else 443
     port_suffix = "" if port is None or port == default_port else f":{port}"
-    return f"{parsed.scheme}://{host}{port_suffix}"
+    rendered_host = f"[{host}]" if ":" in host else host
+    return f"{parsed.scheme}://{rendered_host}{port_suffix}"
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _category_for_status(status_code: int) -> ErrorCategory:

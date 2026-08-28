@@ -56,6 +56,20 @@ def _validate_capabilities(capabilities: frozenset[str]) -> None:
         raise ValueError("unknown generation capability")
 
 
+def _freeze(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, tuple | list):
+        return tuple(_freeze(item) for item in value)
+    if isinstance(value, set | frozenset):
+        return frozenset(_freeze(item) for item in value)
+    return value
+
+
+def _freeze_mapping(value: Mapping[str, object]) -> Mapping[str, object]:
+    return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+
+
 @dataclass(frozen=True)
 class GenerationRequest:
     job_id: str
@@ -63,13 +77,13 @@ class GenerationRequest:
     project_revision: int
     subject_kind: str
     subject_id: str
-    prompt: str
-    negative_prompt: str | None
-    references: tuple[Path, ...]
+    prompt: str = field(repr=False)
+    negative_prompt: str | None = field(repr=False)
+    references: tuple[Path, ...] = field(repr=False)
     width: int
     height: int
     required_capabilities: frozenset[str]
-    provider_options: Mapping[str, object] = field(default_factory=dict)
+    provider_options: Mapping[str, object] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         capabilities = frozenset(self.required_capabilities)
@@ -79,7 +93,7 @@ class GenerationRequest:
         object.__setattr__(
             self,
             "provider_options",
-            MappingProxyType(dict(self.provider_options)),
+            _freeze_mapping(self.provider_options),
         )
 
 
@@ -87,16 +101,16 @@ class GenerationRequest:
 class GenerationResult:
     external_job_id: str | None
     state: JobState
-    raster_bytes: bytes | None
+    raster_bytes: bytes | None = field(repr=False)
     media_type: str | None
-    effective_parameters: Mapping[str, object]
-    usage: Mapping[str, int | float | str]
+    effective_parameters: Mapping[str, object] = field(repr=False)
+    usage: Mapping[str, int | float | str] = field(repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "effective_parameters",
-            MappingProxyType(dict(self.effective_parameters)),
+            _freeze_mapping(self.effective_parameters),
         )
         object.__setattr__(self, "usage", MappingProxyType(dict(self.usage)))
 
