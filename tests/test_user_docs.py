@@ -35,8 +35,9 @@ class SurfacesDocumentTests(unittest.TestCase):
         cls.document = read("docs/surfaces.md")
 
     def test_every_surface_has_a_section(self):
+        """Keep every documented integration surface reachable by its current heading."""
         for surface in (
-            "Codex Skill checkout",
+            "Codex Skill placement",
             "Codex Plugin bundle",
             "Source checkout (development)",
             "Installed CLI (wheel)",
@@ -265,6 +266,19 @@ class OnboardingTests(unittest.TestCase):
         self.assertIn("install anything", capability)
         self.assertIn("credentials", capability)
         self.assertIn("agent-image-generation", capability)
+
+    def test_multi_host_walkthrough_stays_in_the_selected_host(self):
+        """Keep first-comic and resume instructions neutral across supported targets."""
+        install = self.document.split("## 1. Install the Agent Skill", 1)[1].split("\n## ", 1)[0]
+        walkthrough = self.document.split("## 4. Make your first comic", 1)[1].split(
+            "\n## 5. If `doctor` reported a failure", 1
+        )[0]
+        for target in ("codex", "claude", "antigravity", "zcode"):
+            self.assertIn(f"`{target}`", install)
+        self.assertIn("host where you installed the Skill", walkthrough)
+        self.assertIn("ask the agent to **resume that Comic Sol project**", walkthrough)
+        self.assertNotIn("fresh Codex session", walkthrough)
+        self.assertNotIn("ask Codex to", walkthrough)
 
 
 class SupportPrivacyTermsTests(unittest.TestCase):
@@ -583,6 +597,267 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         # Must not say "failure with a reason" in the handoff section
         handoff_section = self.readme.split("## Cross-agent handoff", 1)[1].split("\n## ", 1)[0]
         self.assertNotIn("with a reason", handoff_section)
+
+
+class GoldenCreatorPathTests(unittest.TestCase):
+    """WP3 keeps the approved creator path ahead of every advanced surface."""
+
+    @classmethod
+    def setUpClass(cls):
+        """Load the creator documents and both canonical and shipped provider guides."""
+        cls.readme = read("README.md")
+        cls.support = read("docs/support-matrix.md")
+        cls.providers = {
+            "canonical": read("references/image-provider-setup.md"),
+            "bundle": read("skills/comic-sol/references/image-provider-setup.md"),
+        }
+
+    @staticmethod
+    def section(document: str, heading: str) -> str:
+        """Return one level-two Markdown section by its exact heading."""
+        marker = f"## {heading}"
+        start = document.index(marker)
+        end = document.find("\n## ", start + len(marker))
+        return document[start:] if end == -1 else document[start:end]
+
+    def test_readme_creator_path_has_approved_structural_order(self):
+        """Keep every approved creator-path element in its binding order."""
+        advanced = self.readme.index("## Advanced integrations")
+        creator = self.readme[:advanced]
+        ordered_markers = (
+            "## Retained live-generated evidence",
+            "samples/sunlight-courier/pages/page-001.png",
+            "samples/sunlight-courier/pages/page-002.png",
+            "Comic Sol is a local-first production pipeline around any compatible AI image generator. Plan anywhere. Render anywhere. Resume everywhere.",
+            "comic-sol skill-install",
+            "Make a 2-page manga about a courier delivering sunlight to an underground city.",
+            "Codex planning → Antigravity rendering",
+            "samples/sunlight-courier/exports/sunlight-courier.pdf",
+            "samples/sunlight-courier/project.json",
+            "samples/sunlight-courier/qa/report.md",
+        )
+        positions = tuple(creator.index(marker) for marker in ordered_markers)
+        self.assertEqual(tuple(sorted(positions)), positions)
+        for page in ("001", "002"):
+            match = re.search(
+                rf"!\[([^]]+)\]\(samples/sunlight-courier/pages/page-{page}\.png\)",
+                creator,
+            )
+            self.assertIsNotNone(match, page)
+            self.assertRegex(match.group(1).lower(), r"courier|sunlight|underground")
+
+    def test_every_creator_path_element_precedes_advanced_integrations(self):
+        """Keep all creator essentials above the advanced-integration boundary."""
+        advanced = self.readme.index("## Advanced integrations")
+        required = (
+            "page-001.png",
+            "page-002.png",
+            "retained live-generated evidence",
+            "Plan anywhere. Render anywhere. Resume everywhere.",
+            "skill-install",
+            "Make a 2-page manga",
+            "handoff prepare",
+            "handoff export",
+            "handoff import",
+            "handoff accept-result",
+            "sunlight-courier.pdf",
+            "project.json",
+            "qa/report.md",
+        )
+        for marker in required:
+            self.assertLess(self.readme.index(marker), advanced, marker)
+
+    def test_handoff_example_preserves_the_complete_concise_contract(self):
+        """Keep transfer, intake, unblock, resume, and promotion in executable order."""
+        section = self.section(self.readme, "Codex planning → Antigravity rendering")
+        normalized = collapsed(section)
+        for phrase in (
+            "experimental until linked live smoke evidence exists",
+            "has not been verified",
+            "handoff prepare",
+            "handoff inspect",
+            "handoff export",
+            "handoff import",
+            "exact `jobs[].path`",
+            "only a `ready` job",
+            "--job JOB_ID",
+            "--attempt ATTEMPT",
+            "--executor-kind EXECUTOR_KIND",
+            "--executor-id EXECUTOR_ID",
+            "--path RASTER_PATH",
+            "--approve-reference",
+            "prepare again",
+            "inspect again before retries",
+            "record its real provider-neutral capability observation",
+            'comic-sol resume "$IMPORTED_PROJECT" --json',
+            "visual QA and promotion",
+        ):
+            self.assertIn(phrase, normalized, phrase)
+        self.assertIn("installed package", normalized)
+        self.assertIn("source checkout", normalized)
+        resume = normalized.index('comic-sol resume "$IMPORTED_PROJECT" --json')
+        qa = normalized.index("visual QA and promotion")
+        self.assertLess(resume, qa)
+
+    def test_skill_install_path_requires_a_distribution_that_ships_it(self):
+        """Disclose rc6 availability before advertising its installer command."""
+        section = self.section(self.readme, "Install the Agent Skill")
+        command = section.index("comic-sol skill-install --target codex --scope user")
+        for marker in (
+            "v2.0.0rc6",
+            "not published",
+            "v2.0.0rc4",
+            "does not include `skill-install`",
+        ):
+            self.assertGreater(section.find(marker), -1, marker)
+            self.assertLess(section.index(marker), command, marker)
+
+    def test_primary_skill_install_guides_share_the_rc6_gate(self):
+        """Gate every primary installer command on the release that ships it."""
+        qualification = collapsed(
+            """`skill-install` requires Comic Sol `v2.0.0rc6` or later. Because
+            `v2.0.0rc6` is not yet published, run this command only after installing
+            an rc6-or-later package or native distribution whose release assets are
+            available, or from a trusted rc6 source checkout installed as a package."""
+        )
+        command = "comic-sol skill-install --target codex --scope user"
+        guides = {
+            "docs/install.md": (read("docs/install.md"), "Creator path"),
+            "docs/onboarding.md": (read("docs/onboarding.md"), "1. Install the Agent Skill"),
+            "docs/user/getting-started.md": (
+                read("docs/user/getting-started.md"),
+                "1. Install the Agent Skill",
+            ),
+        }
+        for name, (document, heading) in guides.items():
+            with self.subTest(document=name):
+                section = collapsed(self.section(document, heading))
+                self.assertEqual(1, section.count(qualification), name)
+                self.assertLess(section.index(qualification), section.index(command), name)
+
+    def test_codex_plugin_does_not_reintroduce_manual_skill_placement(self):
+        """Keep manual Skill checkout commands out of the plugin workflow."""
+        section = self.section(self.readme, "Codex Plugin — same repository")
+        for command in (
+            "codex plugin marketplace add",
+            "codex plugin list",
+            "codex plugin add",
+        ):
+            self.assertIn(command, section)
+        self.assertNotIn("git clone", section)
+        self.assertNotIn(r".codex\skills\comic-sol", section)
+
+    def test_sample_claims_keep_the_evidence_boundary(self):
+        """Limit visual-quality claims to the one retained live sample."""
+        evidence = self.section(self.readme, "Retained live-generated evidence")
+        normalized = collapsed(evidence).lower()
+        self.assertIn("only visual-quality sample", normalized)
+        self.assertIn("one retained sample does not prove broad illustration quality", normalized)
+        self.assertIn("deterministic fixtures are mechanics-only evidence", normalized)
+        self.assertNotIn("placeholder quality", normalized)
+
+    def test_support_matrix_has_exact_tiers_and_separate_claims(self):
+        """Publish exactly three tiers while separating host and generator claims."""
+        tiers = collapsed(self.section(self.support, "Support tiers"))
+        expected = (
+            "### 1. Full orchestration",
+            "Agent Skills plus filesystem and shell/tool execution.",
+            "### 2. Handoff executor",
+            "Filesystem plus a compatible native image tool or configured external adapter",
+            "consumes prepared generation jobs and returns rasters/receipts.",
+            "### 3. Planning only",
+            "Chat without required filesystem/tool execution",
+            "cannot be claimed to execute or resume the pipeline.",
+        )
+        for phrase in expected:
+            self.assertIn(phrase, tiers)
+        self.assertIn("## Host support", self.support)
+        self.assertIn("## Image-generator support", self.support)
+        host = self.section(self.support, "Host support")
+        for name in ("Codex", "Claude", "Antigravity", "ZCode"):
+            self.assertRegex(host, rf"(?i){name}[^\n]*experimental")
+        self.assertIn("contract claim, not universal verification", collapsed(host))
+
+    def test_image_routes_follow_declared_capability_order(self):
+        """Enforce identical route priority in canonical and shipped provider guides."""
+        markers = (
+            "1. **Compatible declared native image tool.**",
+            "2. **Compatible declared external adapter/API tool.**",
+            "3. **Portable handoff.**",
+            "4. **Actionable `BLOCKED` state preserving editable intermediates.**",
+        )
+        for name, provider in self.providers.items():
+            routes = self.section(provider, "Image route order")
+            normalized = collapsed(routes)
+            positions = tuple(normalized.index(marker) for marker in markers)
+            self.assertEqual(tuple(sorted(positions)), positions, name)
+            self.assertIn(
+                "Never infer capability from provider, model, host, or tool names.",
+                normalized,
+                name,
+            )
+
+    def test_native_cli_and_engine_positioning_are_explicit(self):
+        """Describe the engine as product and CLI/MCP/Skills as adapters."""
+        documents = "\n".join(
+            read(path)
+            for path in (
+                "README.md",
+                "docs/user/index.md",
+                "docs/user/getting-started.md",
+                "docs/surfaces.md",
+            )
+        )
+        normalized = collapsed(documents).lower()
+        self.assertIn("deterministic engine is the product", normalized)
+        self.assertIn("agent skills, cli, and mcp are adapters", normalized)
+        self.assertIn("core cli does not create artwork by itself", normalized)
+        for verb in (
+            "validates",
+            "persists",
+            "resumes",
+            "repairs",
+            "letters",
+            "composes",
+            "exports",
+        ):
+            self.assertIn(verb, normalized)
+        self.assertIn("stores no provider credentials", normalized)
+
+    def test_source_and_bundle_provider_links_resolve(self):
+        """Resolve every relative provider-guide link in both layouts."""
+        for relative in (
+            "references/image-provider-setup.md",
+            "skills/comic-sol/references/image-provider-setup.md",
+        ):
+            document_path = ROOT / relative
+            for target in re.findall(r"\[[^]]+\]\(([^)]+)\)", read(relative)):
+                if target.startswith(("http://", "https://", "#")):
+                    continue
+                path = (document_path.parent / target.split("#", 1)[0]).resolve()
+                self.assertTrue(path.is_file(), f"{relative}: {target}")
+
+    def test_docs_make_no_fabricated_host_verification_or_adoption_claim(self):
+        """Reject unsupported host-verification, rendering, and adoption claims."""
+        documents = "\n".join(
+            read(path)
+            for path in (
+                "README.md",
+                "docs/onboarding.md",
+                "docs/support-matrix.md",
+                "references/image-provider-setup.md",
+            )
+        )
+        banned = (
+            "Antigravity has been verified",
+            "verified on every host",
+            "works with every AI chat product",
+            "automatic rendering on every host",
+            "widely adopted",
+            "thousands of creators",
+        )
+        for claim in banned:
+            self.assertNotIn(claim, documents)
 
 
 if __name__ == "__main__":

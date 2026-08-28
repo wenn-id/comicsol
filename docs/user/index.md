@@ -1,15 +1,16 @@
 # Comic Sol user guide
 
-Comic Sol turns a short idea, pasted story, or `.txt`/`.md` file into an editable
-local comic project. With a compatible drawing tool in the same agent session,
-it plans the story, keeps character notes, creates and checks artwork, adds
-lettering, lays out pages, and exports an image-based PDF.
+Comic Sol is a provider-neutral, local-first comic production pipeline. The
+deterministic engine is the product; Agent Skills, CLI, and MCP are adapters. It turns
+a short idea, pasted story, or `.txt`/`.md` file into an editable local comic project
+around any compatible AI image generator.
 
-Comic Sol is **not** a hosted web app, an image generator, or an image-provider
-account. It does not read or store a drawing service's password or API key. A
-missing drawing tool leaves the project safely `BLOCKED` instead of fabricating
-artwork; see the [current recovery limitation](resume-repair-export.md#drawing-tool-blocks)
-before starting without one.
+The core CLI does not create artwork by itself. It validates, persists, resumes, repairs,
+letters, composes, and exports around an agent-supplied compatible image generator.
+Comic Sol stores no provider credentials. If no compatible native tool or external
+adapter is declared, portable handoff is next; if no route is available, the project
+remains safely `BLOCKED` with editable intermediates instead of fabricated artwork. See the
+[current recovery limitation](resume-repair-export.md#drawing-tool-blocks).
 
 ## Start with your goal
 
@@ -21,8 +22,14 @@ before starting without one.
 | Finish a comic and find its PDF | [Resume, repair, and export](resume-repair-export.md#export-a-finished-comic) |
 | Recover from a `CS-…` error | [Troubleshooting by error code](troubleshooting.md) |
 
-The older [single first-run walkthrough](../onboarding.md) remains the complete
-copy-and-paste path for a Codex Skill checkout.
+Install the canonical Agent Skill from a current package or native distribution with:
+
+```bash
+comic-sol skill-install --target codex --scope user
+```
+
+The [single first-run walkthrough](../onboarding.md) lists all supported WP2 host/scope
+placements and follows the creator path from install through retained outputs.
 
 ## Choose the right surface
 
@@ -64,6 +71,12 @@ Keep the whole project folder if you may want to revise or resume it.
 - Starter projects contain plans and storyboards, not finished artwork. Official
   [samples](../../samples/README.md) identify whether they demonstrate live art
   or deterministic mechanics.
+
+## Advanced integrations
+
+CLI automation, MCP, OCI, source/wheel installation, native archives, security, and
+release trust remain supported. Start with the [surface guide](../surfaces.md),
+[installation guide](../install.md), and [support matrix](../support-matrix.md).
 
 ## Contributor and architecture documentation
 

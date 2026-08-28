@@ -12,6 +12,22 @@ labeled, platform-specific host examples show possible wiring patterns without
 prescribing a vendor, endpoint, credential mechanism, or capability claim for every
 session of that host.
 
+## Image route order
+
+Choose strictly from declared capability metadata, in this order:
+
+1. **Compatible declared native image tool.** Use it only when it declares text-to-image
+   and local-raster behavior required by the job.
+2. **Compatible declared external adapter/API tool.** Use a configured adapter only when
+   its declared contract matches the prepared job.
+3. **Portable handoff.** Prepare, inspect, export, import, inspect again, and execute only
+   a `ready` job at the destination.
+4. **Actionable `BLOCKED` state preserving editable intermediates.** Record the missing
+   capability and keep the project resumable rather than fabricating artwork.
+
+Never infer capability from provider, model, host, or tool names. Host compatibility
+and image-generator compatibility are separate claims.
+
 ## The capability, not a vendor
 
 Whatever the host, Comic Sol needs exactly one thing from the agent session:
