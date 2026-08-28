@@ -1,0 +1,55 @@
+"""FastAPI routes for the Web authentication boundary."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import JSONResponse, RedirectResponse
+
+from comic_sol_web.auth import AuthError, AuthService, require_principal
+
+
+def create_auth_router(
+    service: AuthService,
+    *,
+    callback_url: str,
+    post_login_url: str = "/",
+) -> APIRouter:
+    router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+    @router.get("/login")
+    async def login() -> RedirectResponse:
+        _, authorization_url = service.begin_oauth(callback_url)
+        return RedirectResponse(authorization_url, status_code=status.HTTP_302_FOUND)
+
+    @router.get("/callback")
+    async def callback(state: str, code: str) -> RedirectResponse:
+        try:
+            authenticated = await service.complete_oauth(
+                state=state, code=code, redirect_uri=callback_url
+            )
+        except AuthError as error:
+            raise HTTPException(status_code=400, detail="OAuth callback rejected") from error
+        response = RedirectResponse(post_login_url, status_code=status.HTTP_303_SEE_OTHER)
+        service.set_session_cookies(response, authenticated)
+        return response
+
+    @router.get("/session")
+    async def session(request: Request) -> dict[str, str]:
+        principal = await require_principal(request)
+        return {"user_id": principal.user_id, "login": principal.login}
+
+    @router.post("/logout")
+    async def logout(request: Request) -> JSONResponse:
+        try:
+            service.require_csrf(request)
+        except AuthError as error:
+            raise HTTPException(status_code=403, detail="CSRF validation failed") from error
+        service.revoke(request.cookies.get(service.session_cookie_name))
+        response = JSONResponse({"ok": True})
+        service.clear_session_cookies(response)
+        return response
+
+    return router
+
+
+create_router = create_auth_router
