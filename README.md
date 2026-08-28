@@ -22,7 +22,9 @@ visual-quality sample. They use only that sample's retained provenance and artif
 ![The courier completing the sunlight delivery on the second retained live-generated page](samples/sunlight-courier/pages/page-002.png)
 
 One retained sample does not prove broad illustration quality. Deterministic fixtures
-are mechanics-only evidence; placeholder output is not visual-quality proof.
+are mechanics-only evidence; placeholder output is not visual-quality proof. The
+[showcase evidence contract](docs/showcase.md) records the exact retained provenance,
+limitations, and publication-consent boundary.
 
 **Comic Sol is a local-first production pipeline around any compatible AI image generator. Plan anywhere. Render anywhere. Resume everywhere.**
 
@@ -47,7 +49,9 @@ project scope when appropriate; [getting started](docs/user/getting-started.md) 
 the exact placements. The [surface guide](docs/surfaces.md) and
 [support matrix](docs/support-matrix.md) separate host, image capability, launcher, and
 output-root claims. “Agent Skills compatible” is a contract claim, not universal
-host verification.
+host verification. The [agent-host smoke contract](docs/agent-host-smoke.md) keeps
+Codex, Claude Code, Google Antigravity, and ZCode experimental until a complete live
+record is retained.
 
 ## Request a comic
 
