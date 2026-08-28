@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import tempfile
 import unittest
@@ -70,8 +69,6 @@ class BFLProviderTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "async_jobs",
                     "custom_dimensions",
-                    "image_to_image",
-                    "reference_images",
                     "text_to_image",
                 }
             ),
@@ -99,40 +96,38 @@ class BFLProviderTests(unittest.IsolatedAsyncioTestCase):
             json.loads(request.content),
         )
 
-    async def test_single_reference_is_bounded_base64_and_multiple_are_not_guessed(self) -> None:
+    async def test_flux_11_pro_rejects_references_before_transport(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             reference = Path(directory) / "reference.png"
             reference.write_bytes(PNG)
-            seen: list[httpx.Request] = []
+            calls = 0
 
             async def handler(request: httpx.Request) -> httpx.Response:
-                seen.append(request)
-                return httpx.Response(200, json={"id": "request-ref"}, request=request)
+                nonlocal calls
+                calls += 1
+                return httpx.Response(200, json={"id": "unexpected"}, request=request)
 
             provider = BFLProvider(transport=httpx.MockTransport(handler))
-            result = await provider.generate(
-                make_request(
-                    references=(reference,),
-                    required_capabilities=frozenset({"image_to_image", "reference_images"}),
-                ),
-                "flux-1.1-pro",
-                CANARY,
-            )
-            with self.assertRaises(ProviderError) as multiple:
-                await provider.generate(
-                    make_request(
-                        references=(reference, reference),
-                        required_capabilities=frozenset({"reference_images"}),
-                    ),
-                    "flux-1.1-pro",
-                    CANARY,
-                )
-        self.assertEqual(JobState.POLLING, result.state)
-        payload = json.loads(seen[0].content)
-        self.assertEqual(PNG, base64.b64decode(payload["image_prompt"]))
-        self.assertNotIn(str(reference), seen[0].content.decode())
-        self.assertEqual(ErrorCategory.CAPABILITY_MISSING, multiple.exception.category)
-        self.assertEqual(1, len(seen))
+            for references, required_capabilities in (
+                ((reference,), frozenset({"text_to_image"})),
+                ((reference,), frozenset({"image_to_image", "reference_images"})),
+                ((reference, reference), frozenset({"reference_images"})),
+            ):
+                with self.subTest(
+                    reference_count=len(references),
+                    required_capabilities=required_capabilities,
+                ):
+                    with self.assertRaises(ProviderError) as caught:
+                        await provider.generate(
+                            make_request(
+                                references=references,
+                                required_capabilities=required_capabilities,
+                            ),
+                            "flux-1.1-pro",
+                            CANARY,
+                        )
+                    self.assertEqual(ErrorCategory.CAPABILITY_MISSING, caught.exception.category)
+        self.assertEqual(0, calls)
 
     async def test_poll_translates_pending_then_fetches_and_validates_ready_output(self) -> None:
         seen: list[httpx.Request] = []

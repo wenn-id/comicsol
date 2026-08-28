@@ -117,7 +117,10 @@ class GoogleProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             {
                 "contents": [{"parts": [{"text": "private prompt"}]}],
-                "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+                "generationConfig": {
+                    "imageConfig": {"aspectRatio": "1:1"},
+                    "responseModalities": ["TEXT", "IMAGE"],
+                },
             },
             json.loads(request.content),
         )
@@ -144,6 +147,13 @@ class GoogleProviderTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(JobState.ACCEPTED, result.state)
         payload = json.loads(seen[0].content)
+        self.assertEqual(
+            {
+                "imageConfig": {"aspectRatio": "1:1"},
+                "responseModalities": ["TEXT", "IMAGE"],
+            },
+            payload["generationConfig"],
+        )
         parts = payload["contents"][0]["parts"]
         self.assertEqual({"text": "private prompt"}, parts[0])
         self.assertEqual(2, len(parts[1:]))

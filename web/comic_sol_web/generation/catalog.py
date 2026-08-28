@@ -41,8 +41,6 @@ CATALOG: tuple[ProviderModel, ...] = (
             {
                 "async_jobs",
                 "custom_dimensions",
-                "image_to_image",
-                "reference_images",
                 "text_to_image",
             }
         ),

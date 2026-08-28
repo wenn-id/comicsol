@@ -72,7 +72,10 @@ class GoogleProvider:
                 headers=_credential_headers(credential),
                 payload={
                     "contents": [{"parts": parts}],
-                    "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+                    "generationConfig": {
+                        "imageConfig": {"aspectRatio": "1:1"},
+                        "responseModalities": ["TEXT", "IMAGE"],
+                    },
                 },
                 error_classifier=_classify_error,
             )

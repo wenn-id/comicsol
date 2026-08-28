@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -11,7 +10,7 @@ import httpx
 from ..catalog import CATALOG
 from ..types import ErrorCategory, GenerationRequest, GenerationResult, JobState, ProviderModel
 from .base import ProviderError
-from .http import BoundedHTTPClient, TransportPolicy, read_reference_raster
+from .http import BoundedHTTPClient, TransportPolicy
 
 _API_ORIGIN = "https://api.bfl.ai"
 _GENERATE_URL = f"{_API_ORIGIN}/v1/flux-pro-1.1"
@@ -62,11 +61,6 @@ class BFLProvider:
             "prompt": request.prompt,
             "width": request.width,
         }
-        if request.references:
-            content, _ = read_reference_raster(
-                request.references[0], self._policy.max_response_bytes
-            )
-            payload["image_prompt"] = base64.b64encode(content).decode("ascii")
         async with BoundedHTTPClient(self._policy, transport=self._transport) as client:
             response = await client.post_json(
                 _GENERATE_URL,
@@ -177,7 +171,7 @@ class BFLProvider:
             or request.height % 32
         ):
             raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
-        if len(request.references) > 1:
+        if request.references:
             raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
 
 
