@@ -10,6 +10,7 @@
   --success: #176b45;
   --danger: #a32638;
   --focus: #006bd6;
+
   font-family: "Noto Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -145,6 +146,8 @@ footer { border-top: 1px solid var(--line); padding-block: 1rem 2rem; color: var
     --accent-strong: #b28cff;
     --muted: #c7bfd1;
     --line: #544762;
+    --success: #57d49a;
+    --danger: #ff9eaa;
     --focus: #62b4ff;
   }
   body { background: linear-gradient(135deg, #21162e, var(--paper) 60%, #12261f); }

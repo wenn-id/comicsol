@@ -42,6 +42,25 @@ class ProjectService:
         self._authorize(principal, project_id)
         return self.gateway.snapshot(project_id, expected_revision)
 
+    def read_plan(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        expected_revision: int | None = None,
+    ) -> ProjectSnapshot:
+        self._authorize(principal, project_id)
+        return self.gateway.read_plan(project_id, expected_revision)
+
+    def update_plan(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        expected_revision: int,
+        plan: Mapping[str, object],
+    ) -> ProjectSnapshot:
+        self._authorize(principal, project_id)
+        return self.gateway.update_plan(project_id, expected_revision, plan)
+
     def prepare_generation(
         self,
         principal: SessionPrincipal,

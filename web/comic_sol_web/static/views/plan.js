@@ -1,4 +1,4 @@
-import { StudioApiError, getProject } from "../api.js";
+import { StudioApiError, StaleRevisionError, getProject, updatePlan } from "../api.js";
 
 const FIELDS = Object.freeze([
   Object.freeze(["storyPlan", "Story plan"]),
@@ -169,16 +169,39 @@ export function renderPlanView({ store, announce }) {
     const latest = store.getState();
     const draft = latest.draft;
     if (!draft) return;
-    if (project.revision !== draft.expectedRevision) {
+    if (latest.project.revision !== draft.expectedRevision) {
       store.clearDraft();
       updateDraft();
       announce("Revision changed. The stale draft was discarded; refresh before editing.", "error");
       return;
     }
-    if (store.promoteDraft()) {
-      for (const [key] of FIELDS) controls[key].value = store.getState().workingPlan[key];
+    promote.disabled = true;
+    discard.disabled = true;
+    announce("Saving the reviewed Plan to the canonical project…");
+    try {
+      const persisted = await updatePlan(
+        latest.project.project_id,
+        draft.changes,
+        draft.expectedRevision,
+      );
+      if (store.promoteDraft(persisted)) {
+        for (const [key] of FIELDS) controls[key].value = store.getState().workingPlan[key];
+        updateDraft();
+        announce("Draft committed and promoted to the revision-bound working copy.", "success");
+      }
+    } catch (error) {
+      if (error instanceof StaleRevisionError) {
+        await refreshProject();
+      } else {
+        announce(
+          error instanceof StudioApiError
+            ? error.message
+            : "The reviewed Plan could not be saved safely.",
+          "error",
+        );
+      }
+    } finally {
       updateDraft();
-      announce("Draft promoted to the revision-bound working copy.", "success");
     }
   });
   discard.addEventListener("click", () => {
@@ -194,15 +217,18 @@ export function renderPlanView({ store, announce }) {
       announce("Revision changed. The agent proposal is stale and was not opened.", "error");
       return;
     }
+    if (store.getState().draft) {
+      announce("A draft is already waiting for review. Discard or promote it first.", "error");
+      return;
+    }
     store.createDraft(proposal.changes, "agent");
     updateDraft();
     announce("Agent-proposed changes are ready for review.");
   };
-  if (activeProposalHandler) {
-    document.removeEventListener("comic-sol:plan-proposal", activeProposalHandler);
+  if (!activeProposalHandler) {
+    activeProposalHandler = proposalHandler;
+    document.addEventListener("comic-sol:plan-proposal", activeProposalHandler);
   }
-  activeProposalHandler = proposalHandler;
-  document.addEventListener("comic-sol:plan-proposal", proposalHandler, { once: true });
   updateDraft();
   return view;
 }

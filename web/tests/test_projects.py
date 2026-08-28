@@ -38,11 +38,12 @@ from comic_sol_web.generation.types import GenerationRequest
 from comic_sol_web.migrations import APPLICATION_MIGRATIONS, Migration, apply_migrations
 from comic_sol_web.projects import ProjectService
 from scripts import comic_sol
-from scripts.core_primitives import canonical_json_bytes
+from scripts.core_primitives import canonical_artifact_bytes, canonical_json_bytes
 from scripts.handoff import HandoffResultError
 from scripts.handoff_archive import HandoffArchiveError, export_handoff_archive
 from scripts.schema import CURRENT_PROJECT_SCHEMA_VERSION, read_project_manifest
-from scripts.validate_project import validate_manifest
+from scripts.validate_project import validate_manifest, validate_project
+from tests.test_validation import valid_story, valid_storyboard
 
 
 CAPABILITIES_USED = {
@@ -60,6 +61,16 @@ def tree_snapshot(root: Path) -> dict[str, bytes]:
         if path.is_file()
         if (relative := path.relative_to(root).as_posix()) != ".comic-sol.lock"
         and not relative.startswith("logs/transactions/")
+    }
+
+
+def plan_payload(root: Path) -> dict[str, str]:
+    return {
+        "storyPlan": (root / "plan/story-plan.json").read_text(encoding="utf-8"),
+        "storyboard": (root / "plan/storyboard.json").read_text(encoding="utf-8"),
+        "visualIdentityPack": (root / "plan/character-identity-pack.json").read_text(
+            encoding="utf-8"
+        ),
     }
 
 
@@ -166,6 +177,23 @@ class EngineGatewayContractTests(GatewayFixture):
                 {
                     "project_id": str,
                     "expected_revision": int | None,
+                    "return": ProjectSnapshot,
+                },
+            ),
+            "read_plan": (
+                ["self", "project_id", "expected_revision"],
+                {
+                    "project_id": str,
+                    "expected_revision": int | None,
+                    "return": ProjectSnapshot,
+                },
+            ),
+            "update_plan": (
+                ["self", "project_id", "expected_revision", "plan"],
+                {
+                    "project_id": str,
+                    "expected_revision": int,
+                    "plan": Mapping[str, object],
                     "return": ProjectSnapshot,
                 },
             ),
@@ -278,6 +306,34 @@ class EngineGatewayContractTests(GatewayFixture):
         self.assertEqual([], validate_manifest(manifest))
         self.assertEqual(snapshot.root, self.gateway.snapshot(snapshot.project_id).root)
 
+    def test_create_honors_source_mode_and_rejects_page_count_above_engine_limit(self) -> None:
+        story = self.service.create_project(
+            self.alice,
+            {
+                "title": "Pasted Story",
+                "prompt": "A complete story pasted by its creator.",
+                "language": "en",
+                "mode": "pasted_story",
+                "page_count": 4,
+            },
+        )
+        self.assertEqual(
+            {"language": "en", "mode": "pasted_story"},
+            json.loads((story.root / "source/request.json").read_bytes()),
+        )
+        before = set(self.gateway.projects_root.iterdir())
+        with self.assertRaises(ValueError):
+            self.service.create_project(
+                self.alice,
+                {
+                    "title": "Too Many Pages",
+                    "prompt": "This request must fail closed.",
+                    "mode": "short_prompt",
+                    "page_count": 5,
+                },
+            )
+        self.assertEqual(before, set(self.gateway.projects_root.iterdir()))
+
     def test_supported_portable_archive_import_is_canonical(self) -> None:
         snapshot = self.import_prepared()
         self.assertEqual(1, snapshot.revision)
@@ -288,6 +344,108 @@ class EngineGatewayContractTests(GatewayFixture):
         self.assertEqual(
             [], validate_manifest(read_project_manifest(snapshot.root / "project.json"))
         )
+
+    def test_imported_plan_is_loaded_from_canonical_artifacts_without_paths(self) -> None:
+        snapshot = self.import_prepared()
+        loaded = self.service.read_plan(self.alice, snapshot.project_id, snapshot.revision)
+        plan = cast(Mapping[str, str], loaded.summary["plan"])
+        self.assertEqual(plan_payload(snapshot.root), dict(plan))
+        self.assertEqual(valid_story(), json.loads(plan["storyPlan"]))
+        self.assertEqual(valid_storyboard(), json.loads(plan["storyboard"]))
+        self.assertNotIn(str(snapshot.root), json.dumps(dict(plan), sort_keys=True))
+
+    def test_plan_update_commits_canonical_bytes_and_survives_gateway_reload(self) -> None:
+        snapshot = self.import_prepared()
+        candidate = plan_payload(snapshot.root)
+        story = json.loads(candidate["storyPlan"])
+        story["theme"] = "Hope remains shared through every delivery."
+        candidate["storyPlan"] = json.dumps(story)
+
+        updated = self.service.update_plan(
+            self.alice,
+            snapshot.project_id,
+            snapshot.revision,
+            candidate,
+        )
+        self.assertEqual(snapshot.revision + 1, updated.revision)
+        self.assertEqual(
+            canonical_artifact_bytes(story),
+            (snapshot.root / "plan/story-plan.json").read_bytes(),
+        )
+        self.assertEqual([], validate_project(snapshot.root, "storyboard"))
+        manifest = read_project_manifest(snapshot.root / "project.json")
+        self.assertEqual(
+            {"contract_version": "1.0", "locked_scope_sha256": None, "manifest_path": None},
+            manifest["handoff"],
+        )
+        reopened = EngineGateway(self.database, self.data_root)
+        persisted = reopened.read_plan(snapshot.project_id, updated.revision)
+        self.assertEqual(
+            plan_payload(snapshot.root),
+            dict(cast(Mapping[str, str], persisted.summary["plan"])),
+        )
+
+    def test_failed_plan_updates_preserve_project_bytes_and_web_revision_exactly(self) -> None:
+        snapshot = self.import_prepared()
+        before = tree_snapshot(snapshot.root)
+        candidate = plan_payload(snapshot.root)
+
+        operations = (
+            lambda: self.gateway.update_plan(snapshot.project_id, 0, candidate),
+            lambda: self.gateway.update_plan(
+                snapshot.project_id,
+                snapshot.revision,
+                {**candidate, "storyPlan": "not json"},
+            ),
+            lambda: self.gateway.update_plan(
+                snapshot.project_id,
+                snapshot.revision,
+                {**candidate, "storyboard": json.dumps({"schema_version": "1.0", "pages": []})},
+            ),
+            lambda: self.service.update_plan(
+                self.bob,
+                snapshot.project_id,
+                snapshot.revision,
+                candidate,
+            ),
+        )
+        for operation in operations:
+            with self.subTest(operation=operation), self.assertRaises(ValueError):
+                operation()
+            self.assertEqual(before, tree_snapshot(snapshot.root))
+            self.assertEqual(snapshot.revision, self.gateway.snapshot(snapshot.project_id).revision)
+
+        interrupted = dict(candidate)
+        interrupted_story = json.loads(interrupted["storyPlan"])
+        interrupted_story["theme"] = "A changed theme that must not partially publish."
+        interrupted["storyPlan"] = json.dumps(interrupted_story)
+        interrupted_storyboard = json.loads(interrupted["storyboard"])
+        interrupted_storyboard["pages"][0]["panels"][0]["beat"] = (
+            "A changed beat that must not partially publish."
+        )
+        interrupted["storyboard"] = json.dumps(interrupted_storyboard)
+
+        original_stage = getattr(
+            __import__("comic_sol_web.engine_gateway", fromlist=["ProjectTransaction"]),
+            "ProjectTransaction",
+        ).stage_bytes
+        calls = 0
+
+        def interrupt(transaction, relative, payload):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("injected interrupted Plan staging")
+            return original_stage(transaction, relative, payload)
+
+        with mock.patch(
+            "comic_sol_web.engine_gateway.ProjectTransaction.stage_bytes",
+            new=interrupt,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "interrupted Plan staging"):
+                self.gateway.update_plan(snapshot.project_id, snapshot.revision, interrupted)
+        self.assertEqual(before, tree_snapshot(snapshot.root))
+        self.assertEqual(snapshot.revision, self.gateway.snapshot(snapshot.project_id).revision)
 
     def test_created_and_imported_projects_converge_on_canonical_engine_state(self) -> None:
         created = self.create(title="New Canonical Project")
@@ -772,6 +930,36 @@ class ProjectApiTests(GatewayFixture):
             self.assertEqual({"project_id", "revision", "status", "summary"}, set(imported_body))
             self.assertEqual(1, imported_body["revision"])
             self.assertEqual("STORYBOARDED", imported_body["status"])
+            self.assertEqual(
+                plan_payload(self.gateway.snapshot(imported_body["project_id"]).root),
+                imported_body["summary"]["plan"],
+            )
+        self.assertEqual(2, auth.csrf_checks)
+
+    def test_plan_api_requires_write_headers_and_returns_committed_canonical_plan(self) -> None:
+        snapshot = self.import_prepared()
+        app, auth = self.app_for(self.alice)
+        plan = plan_payload(snapshot.root)
+        story = json.loads(plan["storyPlan"])
+        story["theme"] = "The API commits a reviewed canonical Plan."
+        plan["storyPlan"] = json.dumps(story)
+        request = {"project_id": snapshot.project_id, "plan": plan}
+        with TestClient(app) as client:
+            missing_headers = client.post("/api/projects", json=request)
+            self.assertEqual(400, missing_headers.status_code)
+
+            updated = client.post(
+                "/api/projects",
+                json=request,
+                headers={
+                    "Idempotency-Key": "b3a11f8d-8f73-48fb-9d22-09e80c9d90be",
+                    "X-Expected-Revision": str(snapshot.revision),
+                },
+            )
+        self.assertEqual(200, updated.status_code)
+        body = updated.json()
+        self.assertEqual(snapshot.revision + 1, body["revision"])
+        self.assertEqual(plan_payload(snapshot.root), body["summary"]["plan"])
         self.assertEqual(2, auth.csrf_checks)
 
     def test_api_anonymous_or_wrong_owner_access_is_unavailable(self) -> None:

@@ -75,7 +75,7 @@ function creationCard({ store, announce, navigate }) {
     type: "number",
     value: "2",
     min: "1",
-    max: "64",
+    max: "4",
     required: true,
   });
 
@@ -83,8 +83,8 @@ function creationCard({ store, announce, navigate }) {
   mode.append(element("legend", {}, "Source format"));
   const choices = element("div", { className: "choice-row" });
   for (const [id, value, text, checked] of [
-    ["source-mode-prompt", "prompt", "Short prompt", true],
-    ["source-mode-story", "story", "Full story", false],
+    ["source-mode-prompt", "short_prompt", "Short prompt", true],
+    ["source-mode-story", "pasted_story", "Full story", false],
   ]) {
     const input = element("input", {
       id,
@@ -124,11 +124,12 @@ function creationCard({ store, announce, navigate }) {
       title: title.value.trim(),
       prompt: source.value.trim(),
       language: language.value.trim(),
+      mode: form.elements.source_mode.value,
       page_count: Number(pageCount.value),
     };
     try {
       const project = await createProject(request);
-      store.setProject(project, request.prompt);
+      store.setProject(project);
       announce("Project created. Plan is ready for review.", "success");
       navigate("plan");
     } catch (error) {

@@ -13,6 +13,10 @@ function freezePlan(value = EMPTY_PLAN) {
   });
 }
 
+function projectPlan(project) {
+  return freezePlan(project?.summary?.plan);
+}
+
 function initialState() {
   return Object.freeze({
     view: "start",
@@ -46,12 +50,11 @@ export function createStore() {
       if (view === "plan" && !state.project) return;
       publish({ ...state, view });
     },
-    setProject(project, source = "") {
-      const workingPlan = freezePlan({ storyPlan: source });
-      publish({ view: "plan", project, workingPlan, draft: null });
+    setProject(project) {
+      publish({ view: "plan", project, workingPlan: projectPlan(project), draft: null });
     },
     replaceProject(project) {
-      publish({ ...state, project });
+      publish({ ...state, project, workingPlan: projectPlan(project) });
     },
     createDraft(changes, origin = "creator") {
       if (!state.project) return;
@@ -67,13 +70,18 @@ export function createStore() {
     clearDraft() {
       publish({ ...state, draft: null });
     },
-    promoteDraft() {
-      if (!state.project || !state.draft) return false;
+    promoteDraft(project) {
+      if (!state.project || !state.draft || !project) return false;
       if (state.project.revision !== state.draft.expectedRevision) {
         publish({ ...state, draft: null });
         return false;
       }
-      publish({ ...state, workingPlan: state.draft.changes, draft: null });
+      publish({
+        ...state,
+        project,
+        workingPlan: projectPlan(project),
+        draft: null,
+      });
       return true;
     },
   });

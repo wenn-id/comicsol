@@ -43,15 +43,25 @@ function validateEnvelope(value) {
     value.revision < 1 ||
     typeof value.status !== "string" ||
     !value.summary ||
-    typeof value.summary !== "object"
+    typeof value.summary !== "object" ||
+    !value.summary.plan ||
+    typeof value.summary.plan !== "object" ||
+    !["storyPlan", "storyboard", "visualIdentityPack"].every(
+      (field) => typeof value.summary.plan[field] === "string",
+    )
   ) {
     throw new StudioApiError("The server returned an invalid project response.");
   }
+  const plan = Object.freeze({
+    storyPlan: value.summary.plan.storyPlan,
+    storyboard: value.summary.plan.storyboard,
+    visualIdentityPack: value.summary.plan.visualIdentityPack,
+  });
   return Object.freeze({
     project_id: value.project_id,
     revision: value.revision,
     status: value.status,
-    summary: Object.freeze({ ...value.summary }),
+    summary: Object.freeze({ ...value.summary, plan }),
   });
 }
 
@@ -114,6 +124,13 @@ export function importProject(archive) {
     body,
     expectedRevision: 0,
     archive: true,
+  });
+}
+
+export function updatePlan(projectId, plan, expectedRevision) {
+  return writeRequest(PROJECTS_PATH, {
+    body: { project_id: projectId, plan },
+    expectedRevision,
   });
 }
 

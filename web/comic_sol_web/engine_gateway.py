@@ -23,27 +23,42 @@ from comic_sol_web.generation.types import GenerationRequest
 from comic_sol_web.migrations import APPLICATION_MIGRATIONS, Migration
 
 comic_sol = _load_engine_module("comic_sol")
+_character_identity = _load_engine_module("character_identity")
+_core_primitives = _load_engine_module("core_primitives")
 _export_pdf = _load_engine_module("export_pdf")
 _handoff = _load_engine_module("handoff")
 _handoff_archive = _load_engine_module("handoff_archive")
+_input_limits = _load_engine_module("input_limits")
 _project_io = _load_engine_module("project_io")
 _schema = _load_engine_module("schema")
 _validation = _load_engine_module("validate_project")
 
 ARCHIVE_SUFFIX = _handoff_archive.ARCHIVE_SUFFIX
 ProjectLock = _project_io.ProjectLock
+ProjectTransaction = _project_io.ProjectTransaction
+canonical_artifact_bytes = _core_primitives.canonical_artifact_bytes
 cleanup_owned_directory = _project_io.cleanup_owned_directory
 contained_project_path = _project_io.contained_project_path
 export_handoff_archive = _handoff_archive.export_handoff_archive
 guarded_export = _export_pdf.guarded_export
 import_handoff_archive = _handoff_archive.import_handoff_archive
+loads_bounded_json = _input_limits.loads_bounded_json
 read_contained_bytes = _project_io.read_contained_bytes
 read_contained_json = _project_io.read_contained_json
 read_project_manifest = _schema.read_project_manifest
+validate_character_bible = _validation.validate_character_bible
+validate_identity_pack = _character_identity.validate_identity_pack
+validate_story_plan = _validation.validate_story_plan
+validate_storyboard = _validation.validate_storyboard
 validate_project = _validation.validate_project
 
 _PROJECT_ID = re.compile(r"[A-Za-z0-9_-]{32}\Z")
 _DEFAULT_GENERATION_DIMENSION = 1024
+_PLAN_FIELDS = {
+    "storyPlan": "plan/story-plan.json",
+    "storyboard": "plan/storyboard.json",
+    "visualIdentityPack": "plan/character-identity-pack.json",
+}
 
 PROJECT_MIGRATION = Migration(
     5,
@@ -178,12 +193,13 @@ class EngineGateway:
     ) -> tuple[str, bytes, dict[str, object], int]:
         if not isinstance(request, Mapping):
             raise GatewayInputError("project request must be an object")
-        allowed = {"title", "prompt", "language", "page_count"}
+        allowed = {"title", "prompt", "language", "mode", "page_count"}
         if set(request) - allowed:
             raise GatewayInputError("project request contains unsupported fields")
         title = request.get("title")
         prompt = request.get("prompt")
         language = request.get("language", "en")
+        mode = request.get("mode", "short_prompt")
         page_count = request.get("page_count", 2)
         if not isinstance(title, str) or not title.strip():
             raise GatewayInputError("project title is required")
@@ -191,12 +207,18 @@ class EngineGateway:
             raise GatewayInputError("project prompt is required")
         if not isinstance(language, str):
             raise GatewayInputError("project language is invalid")
-        if isinstance(page_count, bool) or not isinstance(page_count, int):
+        if mode not in {"short_prompt", "pasted_story"}:
+            raise GatewayInputError("project source mode is invalid")
+        if (
+            isinstance(page_count, bool)
+            or not isinstance(page_count, int)
+            or not 1 <= page_count <= 4
+        ):
             raise GatewayInputError("project page count is invalid")
         return (
             title,
             prompt.encode("utf-8"),
-            {"language": language, "mode": "short_prompt"},
+            {"language": language, "mode": mode},
             page_count,
         )
 
@@ -324,6 +346,159 @@ class EngineGateway:
         revision = cast(int, row["revision"])
         self._check_revision(revision, expected_revision)
         return self._snapshot_for(project_id, revision, self._root_from_row(row))
+
+    @staticmethod
+    def _plan_summary(root: Path) -> dict[str, str]:
+        plan: dict[str, str] = {}
+        for field, relative in _PLAN_FIELDS.items():
+            candidate = contained_project_path(root, relative)
+            plan[field] = (
+                read_contained_bytes(root, relative).decode("utf-8") if candidate.is_file() else ""
+            )
+        return plan
+
+    def read_plan(self, project_id: str, expected_revision: int | None = None) -> ProjectSnapshot:
+        row = self._row(project_id)
+        revision = cast(int, row["revision"])
+        self._check_revision(revision, expected_revision)
+        root = self._root_from_row(row)
+        return self._snapshot_for(
+            project_id,
+            revision,
+            root,
+            extra_summary={"plan": self._plan_summary(root)},
+        )
+
+    @staticmethod
+    def _plan_candidate(
+        root: Path, plan: Mapping[str, object]
+    ) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+        if not isinstance(plan, Mapping) or set(plan) != set(_PLAN_FIELDS):
+            raise GatewayInputError("Plan request must contain the complete canonical envelope")
+        documents: dict[str, dict[str, object]] = {}
+        for field, relative in _PLAN_FIELDS.items():
+            if not contained_project_path(root, relative).is_file():
+                raise GatewayInputError("Plan update requires existing canonical artifacts")
+            payload = plan[field]
+            if not isinstance(payload, str):
+                raise GatewayInputError("Plan document must be JSON text")
+            try:
+                document = loads_bounded_json(payload, source=relative)
+            except (TypeError, ValueError) as error:
+                raise GatewayInputError("Plan document is invalid") from error
+            if not isinstance(document, dict):
+                raise GatewayInputError("Plan document must contain a JSON object")
+            documents[field] = cast(dict[str, object], document)
+        return (
+            documents["storyPlan"],
+            documents["storyboard"],
+            documents["visualIdentityPack"],
+        )
+
+    @staticmethod
+    def _validate_plan_candidate(
+        root: Path,
+        story: dict[str, object],
+        storyboard: dict[str, object],
+        identity_pack: dict[str, object],
+    ) -> None:
+        character_bible = read_contained_json(root, "plan/character-bible.json")
+        if not isinstance(character_bible, dict):
+            raise GatewayInputError("canonical character bible is invalid")
+        issues: list[object] = []
+        issues.extend(validate_story_plan(story))
+        issues.extend(validate_character_bible(character_bible))
+        issues.extend(validate_storyboard(storyboard, story, character_bible))
+        issues.extend(
+            validate_identity_pack(
+                identity_pack,
+                character_bible=character_bible,
+            )
+        )
+
+        known_characters = {
+            item.get("id")
+            for item in character_bible.get("characters", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        scenes = story.get("scenes")
+        if not isinstance(scenes, list):
+            scenes = []
+        for scene in scenes:
+            if not isinstance(scene, dict):
+                continue
+            scene_characters = scene.get("characters")
+            if isinstance(scene_characters, list) and any(
+                character_id not in known_characters for character_id in scene_characters
+            ):
+                issues.append("story scene references an unknown character")
+
+        manifest = read_project_manifest(root / "project.json")
+        settings = manifest.get("settings")
+        pages = storyboard.get("pages")
+        manifest_panels = manifest.get("panels")
+        if isinstance(settings, dict) and isinstance(pages, list):
+            panel_ids = [
+                panel.get("id")
+                for page in pages
+                if isinstance(page, dict)
+                for panel in page.get("panels", [])
+                if isinstance(panel, dict)
+            ]
+            if settings.get("page_count") != len(pages):
+                issues.append("storyboard page count does not match project settings")
+            if settings.get("panel_count") != len(panel_ids):
+                issues.append("storyboard panel count does not match project settings")
+            if manifest_panels != panel_ids:
+                issues.append("storyboard panel order does not match the project manifest")
+        else:
+            issues.append("project settings or storyboard pages are invalid")
+        if issues:
+            raise GatewayInputError("Plan candidate failed canonical validation")
+
+    def update_plan(
+        self,
+        project_id: str,
+        expected_revision: int,
+        plan: Mapping[str, object],
+    ) -> ProjectSnapshot:
+        initial = self._row(project_id)
+        self._check_revision(cast(int, initial["revision"]), expected_revision)
+        root = self._root_from_row(initial)
+        revision = expected_revision
+        changed = False
+        with ProjectTransaction(root, "studio-plan-update") as transaction:
+            prior_state = self._engine_state(root)
+            with self.database.transaction() as connection:
+                row = self._reconcile_row(connection, project_id, prior_state)
+                self._check_revision(cast(int, row["revision"]), expected_revision)
+                revision = cast(int, row["revision"])
+            story, storyboard, identity_pack = self._plan_candidate(root, plan)
+            self._validate_plan_candidate(root, story, storyboard, identity_pack)
+            payloads = {
+                "storyPlan": canonical_artifact_bytes(story),
+                "storyboard": canonical_artifact_bytes(storyboard),
+                "visualIdentityPack": canonical_artifact_bytes(identity_pack),
+            }
+            changed_fields = [
+                field
+                for field, relative in _PLAN_FIELDS.items()
+                if read_contained_bytes(root, relative) != payloads[field]
+            ]
+            if changed_fields:
+                comic_sol._invalidate_from_locked(root, "planning", transaction)
+                for field in changed_fields:
+                    transaction.stage_bytes(_PLAN_FIELDS[field], payloads[field])
+                changed = True
+        if changed:
+            revision += 1
+            self._ensure_revision(project_id, expected_revision, revision, root)
+        return self._snapshot_for(
+            project_id,
+            revision,
+            root,
+            extra_summary={"plan": self._plan_summary(root)},
+        )
 
     @staticmethod
     def _request_from_job(

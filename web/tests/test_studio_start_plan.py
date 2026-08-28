@@ -3,14 +3,41 @@
 from __future__ import annotations
 
 import re
+import tomllib
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import ClassVar
 
+from fastapi.testclient import TestClient
+
+from web.tests.support import valid_environment
+
 
 WEB_ROOT = Path(__file__).resolve().parents[1]
 STATIC_ROOT = WEB_ROOT / "comic_sol_web" / "static"
+STATIC_ASSETS = {
+    "static/index.html",
+    "static/app.js",
+    "static/api.js",
+    "static/state.js",
+    "static/styles.css",
+    "static/views/start.js",
+    "static/views/plan.js",
+}
+
+
+def contrast_ratio(foreground: str, background: str) -> float:
+    def luminance(color: str) -> float:
+        channels = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+        linear = [
+            channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+            for channel in channels
+        ]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    lighter, darker = sorted((luminance(foreground), luminance(background)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
 
 
 class StudioDocumentParser(HTMLParser):
@@ -60,15 +87,7 @@ class StudioContractTests(unittest.TestCase):
             if path.is_file()
         }
         self.assertEqual(
-            {
-                "index.html",
-                "app.js",
-                "api.js",
-                "state.js",
-                "styles.css",
-                "views/start.js",
-                "views/plan.js",
-            },
+            {asset.removeprefix("static/") for asset in STATIC_ASSETS},
             relative_files,
         )
         self.assertRegex(
@@ -77,6 +96,21 @@ class StudioContractTests(unittest.TestCase):
         )
         self.assertNotRegex(self.index, r"https?://|<link[^>]+stylesheet[^>]+(?:cdn|http)")
         self.assertNotRegex(self.scripts, r"\bReact\b|\bVue\b|\bAngular\b|require\(|node_modules")
+
+    def test_wheel_declares_and_http_serves_all_seven_studio_assets(self) -> None:
+        project = tomllib.loads((WEB_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        package_data = project["tool"]["setuptools"]["package-data"]["comic_sol_web"]
+        self.assertEqual(STATIC_ASSETS, set(package_data))
+
+        from comic_sol_web.app import create_app
+        from comic_sol_web.config import WebConfig
+
+        with TestClient(create_app(WebConfig.from_env(valid_environment()))) as client:
+            statuses = {
+                relative: client.get(f"/{relative}").status_code
+                for relative in sorted(STATIC_ASSETS)
+            }
+        self.assertEqual({relative: 200 for relative in sorted(STATIC_ASSETS)}, statuses)
 
     def test_document_landmarks_navigation_and_live_status_are_accessible(self) -> None:
         tags = [tag for tag, _attrs in self.parser.elements]
@@ -107,6 +141,14 @@ class StudioContractTests(unittest.TestCase):
         self.assertRegex(self.start, r"(?:archive|file)\.size\s*>\s*MAX_ARCHIVE_BYTES")
         self.assertRegex(self.start, r"required")
 
+    def test_start_honors_engine_page_bounds_and_selected_source_mode(self) -> None:
+        self.assertRegex(self.start, r'name:\s*["\']page_count["\'][\s\S]{0,160}max:\s*["\']4["\']')
+        self.assertNotIn('max: "64"', self.start)
+        self.assertIn('"short_prompt"', self.start)
+        self.assertIn('"pasted_story"', self.start)
+        self.assertRegex(self.start, r"mode:\s*form\.elements\.source_mode\.value")
+        self.assertRegex(self.start, r"page_count:\s*Number\(pageCount\.value\)")
+
     def test_start_and_import_errors_are_safe_and_migration_specific(self) -> None:
         self.assertIn("MigrationValidationError", self.api)
         self.assertRegex(self.api, r"response\.status\s*===\s*409")
@@ -124,6 +166,7 @@ class StudioContractTests(unittest.TestCase):
         self.assertRegex(self.api, r"function\s+writeRequest\s*\(")
         self.assertRegex(self.api, r"createProject[\s\S]+writeRequest\(")
         self.assertRegex(self.api, r"importProject[\s\S]+writeRequest\(")
+        self.assertRegex(self.api, r"updatePlan[\s\S]+writeRequest\(")
         self.assertRegex(self.api, r"expectedRevision:\s*0")
         self.assertIn('credentials: "same-origin"', self.api)
 
@@ -149,6 +192,26 @@ class StudioContractTests(unittest.TestCase):
         self.assertRegex(self.plan, r"textContent\s*=")
         self.assertNotRegex(self.plan, r"JSON\.stringify\([^)]*project")
 
+    def test_plan_persists_reviewed_draft_before_local_promotion(self) -> None:
+        self.assertIn("updatePlan", self.plan)
+        update_position = self.plan.index("await updatePlan")
+        promotion_position = self.plan.index("store.promoteDraft", update_position)
+        success_position = self.plan.index('"success"', promotion_position)
+        self.assertLess(update_position, promotion_position)
+        self.assertLess(promotion_position, success_position)
+        self.assertRegex(self.state, r"summary\?\.plan")
+        self.assertRegex(self.state, r"promoteDraft\(project\)")
+
+    def test_proposal_listener_survives_bad_events_and_preserves_pending_review(self) -> None:
+        self.assertNotIn("{ once: true }", self.plan)
+        self.assertNotIn("removeEventListener", self.plan)
+        self.assertEqual(1, self.plan.count('addEventListener("comic-sol:plan-proposal"'))
+        self.assertRegex(self.plan, r"if\s*\(store\.getState\(\)\.draft\)[\s\S]{0,240}return")
+        self.assertRegex(self.plan, r"if\s*\(!activeProposalHandler\)")
+        malformed_return = self.plan.index("if (!proposal) return")
+        listener_registration = self.plan.index('addEventListener("comic-sol:plan-proposal"')
+        self.assertLess(malformed_return, listener_registration)
+
     def test_stale_revisions_refresh_deterministically_without_implicit_promotion(self) -> None:
         self.assertIn("StaleRevisionError", self.api)
         self.assertIn("refreshProject", self.plan)
@@ -172,6 +235,18 @@ class StudioContractTests(unittest.TestCase):
         reduced = self.styles.split("prefers-reduced-motion: reduce", 1)[1]
         self.assertRegex(reduced, r"animation-duration:\s*0\.01ms")
         self.assertRegex(reduced, r"scroll-behavior:\s*auto")
+
+    def test_dark_success_and_danger_text_meet_wcag_aa_contrast(self) -> None:
+        dark = self.styles.split("@media (prefers-color-scheme: dark)", 1)[1]
+        variables = dict(re.findall(r"--([a-z-]+):\s*(#[0-9a-fA-F]{6})", dark))
+        for name in ("success", "danger"):
+            with self.subTest(name=name):
+                self.assertIn(name, variables)
+                self.assertGreaterEqual(contrast_ratio(variables[name], variables["paper"]), 4.5)
+
+    def test_root_custom_properties_are_separated_from_declarations(self) -> None:
+        root = self.styles.split("}", 1)[0]
+        self.assertRegex(root, r"--focus:\s*#[0-9a-fA-F]{6};\n\n\s*font-family:")
 
     def test_private_content_is_not_persisted_or_reported(self) -> None:
         self.assertNotRegex(
