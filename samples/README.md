@@ -5,8 +5,9 @@ is the result organized?" Each one is a real project directory, not a screenshot
 so every editable artifact — story plan, character bible, storyboard, prompts, QA
 records — can be opened and diffed.
 
-Start with the catalog, then read the evidence tiers before drawing conclusions
-about image quality from any example.
+Start with the catalog, then read the evidence tiers and the
+[showcase evidence contract](../docs/showcase.md) before drawing conclusions about
+image quality from any example.
 
 ## Catalog
 
@@ -27,11 +28,13 @@ claim, and mixing them would let placeholder geometry masquerade as illustration
 
 ### Live-generated
 
-`sunlight-courier` contains real generated artwork from an image capability, and
-its final PDF and page PNGs are tracked in Git. This is the tier to look at for
-visual output. The canonical clean panels and character reference remain
-full-fidelity source art; tracked lettered panels and page PNGs are compact,
-opaque-RGB delivery derivatives that preserve their published dimensions.
+`sunlight-courier` is the repository's **retained live visual evidence** and the
+**only initial visual-quality sample**. It contains real generated artwork from an
+image capability, and its final PDF and page PNGs are tracked in Git. This narrow
+sample does not establish broad or universal illustration quality. The canonical
+clean panels and character reference remain full-fidelity source art; tracked
+lettered panels and page PNGs are compact, opaque-RGB delivery derivatives that
+preserve their published dimensions.
 
 Its canonical clean panel art is tracked once at `panels/<panel-id>/clean.png`.
 Raw and legacy-clean compatibility copies are generated locally and ignored by
@@ -56,12 +59,13 @@ composition cache, the PDF — is produced on demand by
 [`scripts/build_examples.py`](../scripts/build_examples.py), which synthesizes
 panel artwork locally from the example seed and never contacts an image provider.
 
-**A deterministic build proves mechanics, not illustration quality.** It exercises
-schema validity, lettering geometry, balloon tail direction, page composition,
-export, hashing, and full-project validation. Its panel artwork is flat geometric
-placeholder — deliberately so, because generated panel art must be text-free and a
-placeholder cannot smuggle in glyphs. Each built project records this boundary in
-`qa/evidence.json` and the rendered `qa/report.md`:
+**Deterministic samples are mechanics-only and never proof of illustration
+quality.** A deterministic build exercises schema validity, lettering geometry,
+balloon tail direction, page composition, export, hashing, and full-project
+validation. Its panel artwork is flat geometric placeholder — deliberately so,
+because generated panel art must be text-free and a placeholder cannot smuggle in
+glyphs. Each built project records this boundary in `qa/evidence.json` and the
+rendered `qa/report.md`:
 
 ```text
 - Mode: deterministic

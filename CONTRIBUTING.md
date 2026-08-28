@@ -102,6 +102,28 @@ On Windows, use `.venv\Scripts\python.exe` for the same commands. The capability
 detection and image-provider setup references are intentionally host-specific; other
 bundle differences fail validation.
 
+## Showcase and agent-host evidence
+
+The [showcase contract](docs/showcase.md) governs any proposed visual-quality sample.
+A proposal must include explicit consent to publish the comic, confirmation that the
+submitter owns the work or has permission to share it, disclosure of the provider and
+model when available, retained generation attempts and provenance, and retained
+visual-QA evidence with honest limitations.
+
+Before opening a public pull request, remove private source material, credentials,
+tokens, account identifiers, private endpoints, raw provider responses, and unrelated
+logs. Do not infer missing provider, model, reviewer, host, date, or quality results.
+
+Showcase publication consent is separate from the dogfood/report-sharing consent in
+[issue #246](https://github.com/wenn-id/comicsol/issues/246). A dogfood report never
+implies permission to publish the comic, story, images, or prompts. Report-sharing
+permission and comic-publication permission must be recorded independently.
+
+The [agent-host smoke contract](docs/agent-host-smoke.md) defines the required live
+record. Codex, Claude Code, Google Antigravity, and ZCode remain experimental until a
+complete retained record exists; installer and path-copy tests do not verify a live
+host. Provider support and host support are separate claims.
+
 ## Pull requests
 
 - Target `main`.
