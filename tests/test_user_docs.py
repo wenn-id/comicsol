@@ -35,8 +35,9 @@ class SurfacesDocumentTests(unittest.TestCase):
         cls.document = read("docs/surfaces.md")
 
     def test_every_surface_has_a_section(self):
+        """Keep every documented integration surface reachable by its current heading."""
         for surface in (
-            "Codex Skill checkout",
+            "Codex Skill placement",
             "Codex Plugin bundle",
             "Source checkout (development)",
             "Installed CLI (wheel)",

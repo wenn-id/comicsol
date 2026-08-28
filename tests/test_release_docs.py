@@ -1261,10 +1261,15 @@ class GoldenCreatorDocumentationHierarchyTests(unittest.TestCase):
             "docs/onboarding.md",
             "docs/install.md",
             "docs/user/getting-started.md",
+            "docs/user/index.md",
         ):
             document = self._read(relative)
             self.assertIn("comic-sol skill-install --target", document, relative)
             self.assertIn("--scope", document, relative)
+        self.assertIn(
+            "comic-sol skill-install --target codex --scope user",
+            self._read("docs/user/index.md"),
+        )
 
     def test_installed_creator_readiness_uses_the_installed_launcher(self):
         """Use `comic-sol doctor` before source-checkout alternatives."""
@@ -1275,6 +1280,8 @@ class GoldenCreatorDocumentationHierarchyTests(unittest.TestCase):
         self.assertLess(installed, source)
 
         surfaces = self._read("docs/surfaces.md")
+        self.assertIn("## Codex Skill placement", surfaces)
+        self.assertNotIn("## Codex Skill checkout", surfaces)
         summary = surfaces.split("## Surface summary", 1)[1]
         skill_row = next(line for line in summary.splitlines() if "Codex Skill" in line)
         self.assertIn("fresh agent session", skill_row)

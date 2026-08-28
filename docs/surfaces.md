@@ -39,7 +39,7 @@ Every CLI command also accepts `--output-root PATH` to select a different
 explicit root; the happy path in [`docs/onboarding.md`](onboarding.md) pins one
 so the first run does not depend on the default at all.
 
-## Codex Skill checkout
+## Codex Skill placement
 
 The installed package places the canonical verified Agent Skill payload with
 `comic-sol skill-install --target codex --scope user`. A fresh agent session then
