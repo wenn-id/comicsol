@@ -19,7 +19,7 @@ class DatabaseTests(unittest.TestCase):
 
     def test_application_migrations_are_numbered_and_applied_in_order(self) -> None:
         applied = apply_migrations(self.database)
-        self.assertEqual((1, 2, 3), applied)
+        self.assertEqual((1, 2, 3, 4), applied)
         with self.database.read() as connection:
             versions = tuple(
                 row[0]
@@ -31,8 +31,8 @@ class DatabaseTests(unittest.TestCase):
                 row[0]
                 for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
             }
-        self.assertEqual((1, 2, 3), versions)
-        self.assertTrue({"oauth_states", "sessions", "assets"}.issubset(tables))
+        self.assertEqual((1, 2, 3, 4), versions)
+        self.assertTrue({"oauth_states", "sessions", "assets", "credentials"}.issubset(tables))
         self.assertEqual((), apply_migrations(self.database))
 
     def test_migration_failure_rolls_back_all_statements_and_version(self) -> None:
@@ -102,7 +102,7 @@ class DatabaseTests(unittest.TestCase):
         # that no version is applied twice and the schema reaches the final
         # version exactly once.
         applied = [version for result in results for version in result]
-        self.assertEqual([1, 2, 3], sorted(applied))
+        self.assertEqual([1, 2, 3, 4], sorted(applied))
         with self.database.read() as connection:
             versions = tuple(
                 row[0]
@@ -110,7 +110,7 @@ class DatabaseTests(unittest.TestCase):
                     "SELECT version FROM schema_migrations ORDER BY version"
                 )
             )
-        self.assertEqual((1, 2, 3), versions)
+        self.assertEqual((1, 2, 3, 4), versions)
         self.assertEqual((), apply_migrations(self.database))
 
     def test_concurrent_connections_to_a_fresh_database_all_reach_wal(self) -> None:

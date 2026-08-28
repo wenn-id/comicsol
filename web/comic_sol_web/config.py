@@ -12,10 +12,22 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
+
+from comic_sol_web.credential_references import (
+    KEY_IDENTIFIER,
+    MINIMUM_MASTER_KEY_LENGTH,
+    PROVIDER_IDENTIFIER,
+    SECRET_REFERENCE,
+    active_key_is_valid,
+)
 
 SESSION_SECRET_VAR = "COMIC_SOL_WEB_SESSION_SECRET"
 ENCRYPTION_SECRET_VAR = "COMIC_SOL_WEB_ENCRYPTION_SECRET"
 DATA_ROOT_VAR = "COMIC_SOL_WEB_DATA_ROOT"
+HOSTED_SECRET_REFS_VAR = "COMIC_SOL_WEB_HOSTED_SECRET_REFS"
+CREDENTIAL_KEY_REFS_VAR = "COMIC_SOL_WEB_CREDENTIAL_KEY_REFS"
+CREDENTIAL_ACTIVE_KEY_ID_VAR = "COMIC_SOL_WEB_CREDENTIAL_ACTIVE_KEY_ID"
 
 REQUIRED_VARIABLES = (SESSION_SECRET_VAR, ENCRYPTION_SECRET_VAR, DATA_ROOT_VAR)
 
@@ -62,6 +74,30 @@ def _require_secret(environ: Mapping[str, str], name: str) -> str:
     return value
 
 
+def _parse_secret_references(
+    environ: Mapping[str, str],
+    variable: str,
+    *,
+    identifier_pattern: re.Pattern[str],
+) -> Mapping[str, str]:
+    """Parse comma-separated ``identifier=ENVIRONMENT_VARIABLE`` declarations."""
+    raw = environ.get(variable, "")
+    if not raw:
+        return MappingProxyType({})
+    references: dict[str, str] = {}
+    for declaration in raw.split(","):
+        identifier, separator, reference = declaration.partition("=")
+        if (
+            not separator
+            or identifier_pattern.fullmatch(identifier) is None
+            or SECRET_REFERENCE.fullmatch(reference) is None
+            or identifier in references
+        ):
+            raise WebConfigError(f"{variable} contains an invalid secret reference declaration")
+        references[identifier] = reference
+    return MappingProxyType(references)
+
+
 @dataclass(frozen=True)
 class WebConfig:
     """Immutable Web configuration.
@@ -74,6 +110,9 @@ class WebConfig:
     session_secret: str = field(repr=False)
     encryption_secret: str = field(repr=False)
     data_root: Path
+    hosted_secret_references: Mapping[str, str] = field(repr=False)
+    master_key_references: Mapping[str, str] = field(repr=False)
+    active_credential_key_id: str | None = field(repr=False)
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> WebConfig:
@@ -86,6 +125,38 @@ class WebConfig:
         session_secret = _require_secret(environ, SESSION_SECRET_VAR)
         encryption_secret = _require_secret(environ, ENCRYPTION_SECRET_VAR)
         raw_data_root = _require(environ, DATA_ROOT_VAR)
+        hosted_secret_references = _parse_secret_references(
+            environ,
+            HOSTED_SECRET_REFS_VAR,
+            identifier_pattern=PROVIDER_IDENTIFIER,
+        )
+        master_key_references = _parse_secret_references(
+            environ,
+            CREDENTIAL_KEY_REFS_VAR,
+            identifier_pattern=KEY_IDENTIFIER,
+        )
+        active_key_id = environ.get(CREDENTIAL_ACTIVE_KEY_ID_VAR)
+        if not active_key_is_valid(master_key_references, active_key_id):
+            raise WebConfigError(
+                f"{CREDENTIAL_ACTIVE_KEY_ID_VAR} does not name a declared credential key"
+            )
+        if master_key_references and active_key_id is None:
+            raise WebConfigError(
+                f"{CREDENTIAL_ACTIVE_KEY_ID_VAR} is required when credential keys are declared"
+            )
+        for variable, references in (
+            (HOSTED_SECRET_REFS_VAR, hosted_secret_references),
+            (CREDENTIAL_KEY_REFS_VAR, master_key_references),
+        ):
+            for reference in references.values():
+                value = environ.get(reference)
+                if not value:
+                    raise WebConfigError(f"{variable} names {reference}, which is not set or empty")
+                if variable == CREDENTIAL_KEY_REFS_VAR and len(value) < MINIMUM_MASTER_KEY_LENGTH:
+                    raise WebConfigError(
+                        f"{variable} names {reference}, which must be at least "
+                        f"{MINIMUM_MASTER_KEY_LENGTH} characters"
+                    )
 
         data_root = Path(raw_data_root)
         if not data_root.is_absolute():
@@ -95,4 +166,7 @@ class WebConfig:
             session_secret=session_secret,
             encryption_secret=encryption_secret,
             data_root=data_root,
+            hosted_secret_references=hosted_secret_references,
+            master_key_references=master_key_references,
+            active_credential_key_id=active_key_id,
         )
