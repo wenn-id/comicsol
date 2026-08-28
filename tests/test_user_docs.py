@@ -590,18 +590,24 @@ class GoldenCreatorPathTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        """Load the creator documents and both canonical and shipped provider guides."""
         cls.readme = read("README.md")
         cls.support = read("docs/support-matrix.md")
-        cls.provider = read("references/image-provider-setup.md")
+        cls.providers = {
+            "canonical": read("references/image-provider-setup.md"),
+            "bundle": read("skills/comic-sol/references/image-provider-setup.md"),
+        }
 
     @staticmethod
     def section(document: str, heading: str) -> str:
+        """Return one level-two Markdown section by its exact heading."""
         marker = f"## {heading}"
         start = document.index(marker)
         end = document.find("\n## ", start + len(marker))
         return document[start:] if end == -1 else document[start:end]
 
     def test_readme_creator_path_has_approved_structural_order(self):
+        """Keep every approved creator-path element in its binding order."""
         advanced = self.readme.index("## Advanced integrations")
         creator = self.readme[:advanced]
         ordered_markers = (
@@ -627,6 +633,7 @@ class GoldenCreatorPathTests(unittest.TestCase):
             self.assertRegex(match.group(1).lower(), r"courier|sunlight|underground")
 
     def test_every_creator_path_element_precedes_advanced_integrations(self):
+        """Keep all creator essentials above the advanced-integration boundary."""
         advanced = self.readme.index("## Advanced integrations")
         required = (
             "page-001.png",
@@ -647,6 +654,7 @@ class GoldenCreatorPathTests(unittest.TestCase):
             self.assertLess(self.readme.index(marker), advanced, marker)
 
     def test_handoff_example_preserves_the_complete_concise_contract(self):
+        """Keep transfer, intake, unblock, resume, and promotion in executable order."""
         section = self.section(self.readme, "Codex planning → Antigravity rendering")
         normalized = collapsed(section)
         for phrase in (
@@ -666,13 +674,19 @@ class GoldenCreatorPathTests(unittest.TestCase):
             "--approve-reference",
             "prepare again",
             "inspect again before retries",
+            "record its real provider-neutral capability observation",
+            'comic-sol resume "$IMPORTED_PROJECT" --json',
             "visual QA and promotion",
         ):
             self.assertIn(phrase, normalized, phrase)
         self.assertIn("installed package", normalized)
         self.assertIn("source checkout", normalized)
+        resume = normalized.index('comic-sol resume "$IMPORTED_PROJECT" --json')
+        qa = normalized.index("visual QA and promotion")
+        self.assertLess(resume, qa)
 
     def test_sample_claims_keep_the_evidence_boundary(self):
+        """Limit visual-quality claims to the one retained live sample."""
         evidence = self.section(self.readme, "Retained live-generated evidence")
         normalized = collapsed(evidence).lower()
         self.assertIn("only visual-quality sample", normalized)
@@ -681,6 +695,7 @@ class GoldenCreatorPathTests(unittest.TestCase):
         self.assertNotIn("placeholder quality", normalized)
 
     def test_support_matrix_has_exact_tiers_and_separate_claims(self):
+        """Publish exactly three tiers while separating host and generator claims."""
         tiers = collapsed(self.section(self.support, "Support tiers"))
         expected = (
             "### 1. Full orchestration",
@@ -702,21 +717,26 @@ class GoldenCreatorPathTests(unittest.TestCase):
         self.assertIn("contract claim, not universal verification", collapsed(host))
 
     def test_image_routes_follow_declared_capability_order(self):
-        routes = self.section(self.provider, "Image route order")
-        normalized = collapsed(routes)
+        """Enforce identical route priority in canonical and shipped provider guides."""
         markers = (
             "1. **Compatible declared native image tool.**",
             "2. **Compatible declared external adapter/API tool.**",
             "3. **Portable handoff.**",
             "4. **Actionable `BLOCKED` state preserving editable intermediates.**",
         )
-        positions = tuple(normalized.index(marker) for marker in markers)
-        self.assertEqual(tuple(sorted(positions)), positions)
-        self.assertIn(
-            "Never infer capability from provider, model, host, or tool names.", normalized
-        )
+        for name, provider in self.providers.items():
+            routes = self.section(provider, "Image route order")
+            normalized = collapsed(routes)
+            positions = tuple(normalized.index(marker) for marker in markers)
+            self.assertEqual(tuple(sorted(positions)), positions, name)
+            self.assertIn(
+                "Never infer capability from provider, model, host, or tool names.",
+                normalized,
+                name,
+            )
 
     def test_native_cli_and_engine_positioning_are_explicit(self):
+        """Describe the engine as product and CLI/MCP/Skills as adapters."""
         documents = "\n".join(
             read(path)
             for path in (
@@ -743,6 +763,7 @@ class GoldenCreatorPathTests(unittest.TestCase):
         self.assertIn("stores no provider credentials", normalized)
 
     def test_source_and_bundle_provider_links_resolve(self):
+        """Resolve every relative provider-guide link in both layouts."""
         for relative in (
             "references/image-provider-setup.md",
             "skills/comic-sol/references/image-provider-setup.md",
@@ -755,6 +776,7 @@ class GoldenCreatorPathTests(unittest.TestCase):
                 self.assertTrue(path.is_file(), f"{relative}: {target}")
 
     def test_docs_make_no_fabricated_host_verification_or_adoption_claim(self):
+        """Reject unsupported host-verification, rendering, and adoption claims."""
         documents = "\n".join(
             read(path)
             for path in (

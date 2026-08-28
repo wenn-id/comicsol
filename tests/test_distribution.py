@@ -972,6 +972,7 @@ class CreatorPositioningMetadataTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        """Load package, plugin, marketplace, and listing metadata."""
         cls.root = Path(__file__).resolve().parents[1]
         cls.package = tomllib.loads((cls.root / "pyproject.toml").read_text(encoding="utf-8"))
         cls.plugin = json.loads(
@@ -983,6 +984,7 @@ class CreatorPositioningMetadataTests(unittest.TestCase):
         cls.listing = (cls.root / "submission/listing.md").read_text(encoding="utf-8")
 
     def test_creator_facing_short_description_is_consistent(self):
+        """Publish one short description through every metadata surface."""
         expected = "Provider-neutral, local-first comic production pipeline"
         self.assertEqual(expected, self.package["project"]["description"])
         self.assertEqual(expected, self.plugin["description"])
@@ -993,26 +995,29 @@ class CreatorPositioningMetadataTests(unittest.TestCase):
         self.assertEqual(expected, short)
 
     def test_metadata_uses_engine_first_provider_neutral_positioning(self):
-        documents = " ".join(
-            (
-                self.plugin["interface"]["longDescription"],
-                self.marketplace["plugins"][0]["longDescription"],
-                self.listing.split("## Long description", 1)[1].split("\n## ", 1)[0],
-            )
+        """Require the complete positioning contract on each long description."""
+        documents = (
+            self.plugin["interface"]["longDescription"],
+            self.marketplace["plugins"][0]["longDescription"],
+            self.listing.split("## Long description", 1)[1].split("\n## ", 1)[0],
         )
-        normalized = " ".join(documents.split()).lower()
-        for phrase in (
+        required = (
             "provider-neutral",
             "deterministic engine is the product",
             "agent skills, cli, and mcp are adapters",
             "does not create artwork by itself",
             "stores no provider credentials",
-        ):
-            self.assertIn(phrase, normalized)
-        self.assertNotIn("local image generator", normalized)
-        self.assertNotIn("codex workflow", normalized)
+        )
+        forbidden = ("local image generator", "codex workflow")
+        for document in documents:
+            normalized = " ".join(document.split()).lower()
+            for phrase in required:
+                self.assertIn(phrase, normalized)
+            for phrase in forbidden:
+                self.assertNotIn(phrase, normalized)
 
     def test_metadata_schemas_preserve_identity_version_and_permissions(self):
+        """Keep identity, version, permission, and policy fields unchanged."""
         self.assertEqual("comic-sol", self.plugin["name"])
         self.assertEqual(RELEASE_VERSION, self.plugin["version"])
         self.assertEqual(["Read", "Write"], self.plugin["interface"]["capabilities"])

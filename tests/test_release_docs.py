@@ -1192,12 +1192,15 @@ class GoldenCreatorDocumentationHierarchyTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        """Resolve the repository root used by every documentation assertion."""
         cls.root = Path(__file__).resolve().parents[1]
 
     def _read(self, relative: str) -> str:
+        """Read one UTF-8 repository document."""
         return (self.root / relative).read_text(encoding="utf-8")
 
     def test_creator_documents_lead_with_goal_before_advanced_installation(self):
+        """Keep creator outcomes ahead of advanced installation material."""
         expectations = {
             "docs/onboarding.md": ("Install the Agent Skill", "native archive"),
             "docs/install.md": ("Creator path", "Recommended installation"),
@@ -1212,6 +1215,7 @@ class GoldenCreatorDocumentationHierarchyTests(unittest.TestCase):
             self.assertLess(document.find(creator), document.find(advanced), relative)
 
     def test_advanced_entry_keeps_every_supported_surface_reachable(self):
+        """Keep every retained advanced integration linked from one entry."""
         readme = self._read("README.md")
         section = readme.split("## Advanced integrations", 1)[1].split("\n## ", 1)[0]
         for phrase in (
@@ -1235,6 +1239,7 @@ class GoldenCreatorDocumentationHierarchyTests(unittest.TestCase):
             self.assertIn(f"]({link})", section, link)
 
     def test_readme_sample_output_links_are_real_tracked_files(self):
+        """Require each creator-facing sample output link to resolve to a file."""
         readme = self._read("README.md")
         advanced = readme.index("## Advanced integrations")
         creator = readme[:advanced]
@@ -1250,6 +1255,7 @@ class GoldenCreatorDocumentationHierarchyTests(unittest.TestCase):
             self.assertTrue((self.root / relative).is_file(), relative)
 
     def test_installer_docs_use_the_current_wp2_interface(self):
+        """Keep all installation routes on the current target-and-scope CLI."""
         for relative in (
             "README.md",
             "docs/onboarding.md",
@@ -1259,3 +1265,46 @@ class GoldenCreatorDocumentationHierarchyTests(unittest.TestCase):
             document = self._read(relative)
             self.assertIn("comic-sol skill-install --target", document, relative)
             self.assertIn("--scope", document, relative)
+
+    def test_installed_creator_readiness_uses_the_installed_launcher(self):
+        """Use `comic-sol doctor` before source-checkout alternatives."""
+        getting_started = self._read("docs/user/getting-started.md")
+        readiness = getting_started.split("## 2. Check readiness", 1)[1].split("\n## ", 1)[0]
+        installed = readiness.index('comic-sol doctor --output-root "$HOME/Comic Sol"')
+        source = readiness.index('"$PYTHON" scripts/comic_sol.py doctor')
+        self.assertLess(installed, source)
+
+        surfaces = self._read("docs/surfaces.md")
+        summary = surfaces.split("## Surface summary", 1)[1]
+        skill_row = next(line for line in summary.splitlines() if "Codex Skill" in line)
+        self.assertIn("fresh agent session", skill_row)
+        self.assertIn("`comic-sol doctor`", skill_row)
+        self.assertNotIn("scripts/comic_sol.py", skill_row)
+
+    def test_source_pillow_recovery_links_the_real_install_command(self):
+        """Point source users from the Pillow failure row to executable instructions."""
+        onboarding = self._read("docs/onboarding.md")
+        failure_table = onboarding.split("## 5. If `doctor` reported a failure", 1)[1]
+        pillow_row = next(line for line in failure_table.splitlines() if "`pillow`" in line)
+        self.assertIn("install-manual.md#source-and-wheel-installation", pillow_row)
+        self.assertNotIn("in step 1", pillow_row)
+
+    def test_user_index_routes_to_blocked_only_when_no_execution_route_exists(self):
+        """Describe native, external, handoff, and BLOCKED as ordered alternatives."""
+        index = " ".join(self._read("docs/user/index.md").split())
+        self.assertIn(
+            "If no compatible native tool or external adapter is declared, portable "
+            "handoff is next; if no route is available, the project remains safely `BLOCKED`",
+            index,
+        )
+        self.assertNotIn("handoff is next; otherwise the project remains", index)
+
+    def test_readme_getting_started_anchor_matches_the_numbered_heading(self):
+        """Keep the README Skill-placement deep link aligned with GitHub anchors."""
+        readme = self._read("README.md")
+        getting_started = self._read("docs/user/getting-started.md")
+        self.assertIn(
+            "[getting started](docs/user/getting-started.md#1-install-the-agent-skill)",
+            readme,
+        )
+        self.assertIn("## 1. Install the Agent Skill", getting_started)

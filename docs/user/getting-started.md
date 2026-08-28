@@ -38,8 +38,14 @@ lists available platform, architecture, and runtime combinations.
 
 ## 2. Check readiness
 
-Use the exact doctor command printed by your installer. For a Skill checkout,
-run the source command from the checkout and choose an explicit folder:
+For the installed package or native distribution used by the primary Skill route, choose
+an explicit folder and run the installed launcher:
+
+```bash
+comic-sol doctor --output-root "$HOME/Comic Sol"
+```
+
+For an advanced Skill source checkout, run the source launcher from that checkout:
 
 ```bash
 "$PYTHON" scripts/comic_sol.py doctor --output-root "$HOME/Comic Sol"

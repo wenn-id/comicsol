@@ -8,8 +8,8 @@ around any compatible AI image generator.
 The core CLI does not create artwork by itself. It validates, persists, resumes, repairs,
 letters, composes, and exports around an agent-supplied compatible image generator.
 Comic Sol stores no provider credentials. If no compatible native tool or external
-adapter is declared, portable handoff is next; otherwise the project remains safely
-`BLOCKED` with editable intermediates instead of fabricated artwork. See the
+adapter is declared, portable handoff is next; if no route is available, the project
+remains safely `BLOCKED` with editable intermediates instead of fabricated artwork. See the
 [current recovery limitation](resume-repair-export.md#drawing-tool-blocks).
 
 ## Start with your goal

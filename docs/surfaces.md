@@ -141,7 +141,7 @@ persists outside that volume.
 
 | Surface | Start command | Default project output root |
 |---|---|---|
-| Codex Skill checkout | `"$PYTHON" scripts/comic_sol.py doctor` | Platform default (table above) |
+| Codex Skill placement | fresh agent session; `comic-sol doctor` for readiness | Platform default (table above) |
 | Codex Plugin bundle | fresh Codex session | Platform default (table above) |
 | Source (development) | `scripts/comic_sol.py --output-root <temp>` | None expected — explicit root required by convention |
 | Installed CLI | `comic-sol doctor` | Platform default (table above) |

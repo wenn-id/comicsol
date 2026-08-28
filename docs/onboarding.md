@@ -176,7 +176,7 @@ message reported, then ask Codex to **resume that Comic Sol project**.
 | Failed check | What it means | How to fix it |
 |---|---|---|
 | `runtime` | Your Python is older than 3.11. | Install Python 3.11+, then redo step 1 with that launcher. See [`README.md` → Install](../README.md#install). |
-| `pillow` | The one pinned dependency is missing or the wrong version. | Re-run the `pip install --require-hashes` command for your platform in step 1. |
+| `pillow` | The one pinned dependency is missing or the wrong version. | Installed-package users should reinstall the package. Source users should repeat the matching command in [source and wheel installation](install-manual.md#source-and-wheel-installation). |
 | `fonts` | A bundled font face is missing or unreadable. | Your copy is incomplete. Re-clone or reinstall so `assets/fonts/` is intact; see [`assets/README.md`](../assets/README.md). |
 | `templates` | A project template is missing, empty, or malformed JSON. | Reinstall to restore `templates/`; see [`docs/install.md` → Upgrade and rollback](install.md#upgrade-and-rollback). |
 | `references` | The `references/` guidance files are missing. | Reinstall as in step 1 and keep `references/` beside `SKILL.md`. |

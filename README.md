@@ -95,8 +95,17 @@ comic-sol handoff accept-result "$IMPORTED_PROJECT" \
 Add `--approve-reference` **only** when accepting a reference job. If completed
 reference jobs report `next_action=prepare`, prepare again by running
 `comic-sol handoff prepare "$IMPORTED_PROJECT"` to create panel jobs; inspect again before
-retries with `comic-sol handoff inspect "$IMPORTED_PROJECT"`, then continue normal visual
-QA and promotion. The [complete handoff lifecycle](references/workflow.md#cross-agent-handoff-lifecycle)
+retries with `comic-sol handoff inspect "$IMPORTED_PROJECT"`. If the imported project
+entered handoff as `BLOCKED` for `image-capability-unavailable`, inspect the
+destination's exposed tools, record its real provider-neutral capability observation in
+the project, and resume only after recording an available capability:
+
+```bash
+comic-sol resume "$IMPORTED_PROJECT" --json
+```
+
+Otherwise preserve `BLOCKED`. Then continue normal visual QA and promotion. The
+[complete handoff lifecycle](references/workflow.md#cross-agent-handoff-lifecycle)
 defines failure intake, two-phase reference handling, resume, and promotion.
 
 ## Inspect the retained result
@@ -152,7 +161,7 @@ ZCode user. Project placements require `--project-root`. `--target auto` is safe
 when exactly one supported host location exists; it reports zero or multiple candidates
 without writing. The installer copies and verifies one canonical synchronized payload;
 path-placement tests prove mechanics, not live compatibility with a host. See
-[getting started](docs/user/getting-started.md#install-the-agent-skill).
+[getting started](docs/user/getting-started.md#1-install-the-agent-skill).
 
 A source checkout remains available for development and advanced manual use. Developers
 may clone or copy the repository, but `skill-install` replaces manual placement into a
