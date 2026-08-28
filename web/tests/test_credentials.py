@@ -12,6 +12,7 @@ import zipfile
 from collections.abc import Iterator, Mapping
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from web.tests import support as _support  # noqa: F401  # Checkout import path setup.
 
@@ -93,6 +94,16 @@ class CredentialBrokerTests(unittest.IsolatedAsyncioTestCase):
         with self.database.read() as connection:
             rows = connection.execute("SELECT * FROM credentials").fetchall()
         self.assertEqual([], rows)
+
+    async def test_broker_rejects_weak_master_key_without_disclosing_it(self) -> None:
+        weak_key = "guess-me"
+        with self.assertRaises(ValueError) as caught:
+            self.make_broker(
+                environment={"MASTER_ONE": weak_key},
+                key_references={"k1": "MASTER_ONE"},
+                active_key_id="k1",
+            )
+        self.assertNotIn(weak_key, str(caught.exception))
 
     async def test_missing_hosted_secret_fails_with_sanitized_typed_error(self) -> None:
         from comic_sol_web.generation.credentials import CredentialUnavailableError
@@ -212,6 +223,21 @@ class CredentialBrokerTests(unittest.IsolatedAsyncioTestCase):
         async with new_key_only.resolve("owner-a", "bfl", AuthMode.BYOK) as credential:
             self.assertEqual(CANARY, credential)
 
+    async def test_current_key_resolution_does_not_take_a_write_transaction(self) -> None:
+        broker = self.make_broker(
+            environment={"MASTER_ONE": KEY_ONE},
+            key_references={"k1": "MASTER_ONE"},
+            active_key_id="k1",
+        )
+        broker.store_encrypted("owner-a", "bfl", CANARY)
+        with mock.patch.object(
+            self.database,
+            "transaction",
+            side_effect=AssertionError("current-key resolution requested a write transaction"),
+        ):
+            async with broker.resolve("owner-a", "bfl", AuthMode.BYOK) as credential:
+                self.assertEqual(CANARY, credential)
+
     async def test_old_ciphertext_requires_its_authorized_rotation_key(self) -> None:
         from comic_sol_web.generation.credentials import CredentialKeyUnavailableError
 
@@ -300,6 +326,26 @@ class CredentialBrokerTests(unittest.IsolatedAsyncioTestCase):
             ).fetchone()[0]
         self.assertEqual(self.clock.value, revoked_at)
 
+    async def test_failed_persisted_revocation_preserves_session_credential(self) -> None:
+        from comic_sol_web.generation.credentials import CredentialStorageError
+
+        broker = self.make_broker(
+            environment={"MASTER_ONE": KEY_ONE},
+            key_references={"k1": "MASTER_ONE"},
+            active_key_id="k1",
+        )
+        broker.store_session("owner-a", "bfl", "session-" + CANARY)
+        broker.store_encrypted("owner-a", "bfl", CANARY)
+        with self.database.transaction() as connection:
+            connection.execute(
+                "CREATE TRIGGER reject_credential_revocation BEFORE UPDATE OF revoked_at "
+                "ON credentials BEGIN SELECT RAISE(ABORT, 'reject revocation'); END"
+            )
+        with self.assertRaises(CredentialStorageError):
+            broker.revoke("owner-a", "bfl")
+        async with broker.resolve("owner-a", "bfl", AuthMode.BYOK) as credential:
+            self.assertEqual("session-" + CANARY, credential)
+
     async def test_wrong_owner_revocation_fails_closed_without_changing_owner_row(self) -> None:
         from comic_sol_web.generation.credentials import CredentialUnavailableError
 
@@ -370,6 +416,9 @@ class CredentialBrokerTests(unittest.IsolatedAsyncioTestCase):
         captured = io.StringIO()
         handler = logging.StreamHandler(captured)
         root_logger = logging.getLogger()
+        previous_level = root_logger.level
+        root_logger.setLevel(logging.DEBUG)
+        self.addCleanup(root_logger.setLevel, previous_level)
         root_logger.addHandler(handler)
         self.addCleanup(root_logger.removeHandler, handler)
         with redirect_stdout(captured), redirect_stderr(captured):
@@ -556,6 +605,27 @@ class CredentialConfigurationTests(unittest.TestCase):
                 with self.assertRaises(ValueError) as caught:
                     WebConfig.from_env(environment)
                 self.assertNotIn(value, str(caught.exception))
+
+    def test_config_rejects_missing_or_weak_declared_secret_values(self) -> None:
+        from comic_sol_web.config import WebConfig
+
+        cases = (
+            ("COMIC_SOL_WEB_HOSTED_SECRET_REFS", "bfl=MISSING_HOSTED", None),
+            ("COMIC_SOL_WEB_CREDENTIAL_KEY_REFS", "k1=MISSING_MASTER", None),
+            ("COMIC_SOL_WEB_CREDENTIAL_KEY_REFS", "k1=WEAK_MASTER", "short"),
+        )
+        for variable, declaration, secret in cases:
+            environment = _support.valid_environment()
+            environment[variable] = declaration
+            if variable == "COMIC_SOL_WEB_CREDENTIAL_KEY_REFS":
+                environment["COMIC_SOL_WEB_CREDENTIAL_ACTIVE_KEY_ID"] = "k1"
+            reference = declaration.partition("=")[2]
+            if secret is not None:
+                environment[reference] = secret
+            with self.subTest(variable=variable, reference=reference):
+                with self.assertRaises(ValueError) as caught:
+                    WebConfig.from_env(environment)
+                self.assertNotIn(secret or "not-present", str(caught.exception))
 
 
 if __name__ == "__main__":

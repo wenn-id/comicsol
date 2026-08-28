@@ -14,6 +14,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 
+from comic_sol_web.credential_references import (
+    KEY_IDENTIFIER,
+    MINIMUM_MASTER_KEY_LENGTH,
+    PROVIDER_IDENTIFIER,
+    SECRET_REFERENCE,
+    active_key_is_valid,
+)
+
 SESSION_SECRET_VAR = "COMIC_SOL_WEB_SESSION_SECRET"
 ENCRYPTION_SECRET_VAR = "COMIC_SOL_WEB_ENCRYPTION_SECRET"
 DATA_ROOT_VAR = "COMIC_SOL_WEB_DATA_ROOT"
@@ -29,9 +37,6 @@ REQUIRED_VARIABLES = (SESSION_SECRET_VAR, ENCRYPTION_SECRET_VAR, DATA_ROOT_VAR)
 MINIMUM_SECRET_LENGTH = 32
 _UNSAFE_CHARACTERS = re.compile(r"[\x00-\x1f\x7f\s]")
 _PATH_UNSAFE_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
-_PROVIDER_IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
-_KEY_IDENTIFIER = re.compile(r"[A-Za-z0-9_-]{1,32}")
-_SECRET_REFERENCE = re.compile(r"[A-Z][A-Z0-9_]{0,127}")
 
 
 class WebConfigError(ValueError):
@@ -85,7 +90,7 @@ def _parse_secret_references(
         if (
             not separator
             or identifier_pattern.fullmatch(identifier) is None
-            or _SECRET_REFERENCE.fullmatch(reference) is None
+            or SECRET_REFERENCE.fullmatch(reference) is None
             or identifier in references
         ):
             raise WebConfigError(f"{variable} contains an invalid secret reference declaration")
@@ -123,18 +128,15 @@ class WebConfig:
         hosted_secret_references = _parse_secret_references(
             environ,
             HOSTED_SECRET_REFS_VAR,
-            identifier_pattern=_PROVIDER_IDENTIFIER,
+            identifier_pattern=PROVIDER_IDENTIFIER,
         )
         master_key_references = _parse_secret_references(
             environ,
             CREDENTIAL_KEY_REFS_VAR,
-            identifier_pattern=_KEY_IDENTIFIER,
+            identifier_pattern=KEY_IDENTIFIER,
         )
         active_key_id = environ.get(CREDENTIAL_ACTIVE_KEY_ID_VAR)
-        if active_key_id is not None and (
-            _KEY_IDENTIFIER.fullmatch(active_key_id) is None
-            or active_key_id not in master_key_references
-        ):
+        if not active_key_is_valid(master_key_references, active_key_id):
             raise WebConfigError(
                 f"{CREDENTIAL_ACTIVE_KEY_ID_VAR} does not name a declared credential key"
             )
@@ -142,6 +144,19 @@ class WebConfig:
             raise WebConfigError(
                 f"{CREDENTIAL_ACTIVE_KEY_ID_VAR} is required when credential keys are declared"
             )
+        for variable, references in (
+            (HOSTED_SECRET_REFS_VAR, hosted_secret_references),
+            (CREDENTIAL_KEY_REFS_VAR, master_key_references),
+        ):
+            for reference in references.values():
+                value = environ.get(reference)
+                if not value:
+                    raise WebConfigError(f"{variable} names {reference}, which is not set or empty")
+                if variable == CREDENTIAL_KEY_REFS_VAR and len(value) < MINIMUM_MASTER_KEY_LENGTH:
+                    raise WebConfigError(
+                        f"{variable} names {reference}, which must be at least "
+                        f"{MINIMUM_MASTER_KEY_LENGTH} characters"
+                    )
 
         data_root = Path(raw_data_root)
         if not data_root.is_absolute():

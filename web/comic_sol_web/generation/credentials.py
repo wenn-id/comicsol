@@ -14,6 +14,13 @@ from types import MappingProxyType
 from typing import AsyncContextManager, Protocol
 
 from comic_sol_web.database import Database
+from comic_sol_web.credential_references import (
+    KEY_IDENTIFIER,
+    MINIMUM_MASTER_KEY_LENGTH,
+    PROVIDER_IDENTIFIER,
+    SECRET_REFERENCE,
+    active_key_is_valid,
+)
 from comic_sol_web.security import CredentialCipher, MAX_CREDENTIAL_BYTES
 
 from .catalog import CATALOG
@@ -22,8 +29,6 @@ from .types import AuthMode, ErrorCategory
 
 MAX_SESSION_TTL_SECONDS = 60 * 60
 _OWNER_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}")
-_KEY_IDENTIFIER = re.compile(r"[A-Za-z0-9_-]{1,32}")
-_SECRET_REFERENCE = re.compile(r"[A-Z][A-Z0-9_]{0,127}")
 _PROVIDER_IDS = frozenset(entry.provider for entry in CATALOG)
 
 
@@ -103,10 +108,7 @@ class CredentialBroker:
             raise ValueError("session credential lifetime is outside the allowed bound")
         self._validate_references(hosted_secret_references, provider_keys=True)
         self._validate_references(master_key_references, provider_keys=False)
-        if active_key_id is not None and (
-            _KEY_IDENTIFIER.fullmatch(active_key_id) is None
-            or active_key_id not in master_key_references
-        ):
+        if not active_key_is_valid(master_key_references, active_key_id):
             raise ValueError("active credential key ID must name a declared key")
         if master_key_references and active_key_id is None:
             raise ValueError("an active credential key ID is required")
@@ -129,6 +131,8 @@ class CredentialBroker:
         self._master_key_ciphertexts = self._snapshot_deployment_secrets(
             deployment_environment,
             self._master_key_references,
+            minimum_length=MINIMUM_MASTER_KEY_LENGTH,
+            reject_short_values=True,
         )
         self._session_credentials: dict[tuple[str, str], _SessionCredential] = {}
         self._session_lock = threading.RLock()
@@ -138,15 +142,18 @@ class CredentialBroker:
 
     @staticmethod
     def _validate_references(references: Mapping[str, str], *, provider_keys: bool) -> None:
-        key_pattern = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}") if provider_keys else _KEY_IDENTIFIER
+        key_pattern = PROVIDER_IDENTIFIER if provider_keys else KEY_IDENTIFIER
         for key, reference in references.items():
-            if key_pattern.fullmatch(key) is None or _SECRET_REFERENCE.fullmatch(reference) is None:
+            if key_pattern.fullmatch(key) is None or SECRET_REFERENCE.fullmatch(reference) is None:
                 raise ValueError("credential secret references are invalid")
 
     def _snapshot_deployment_secrets(
         self,
         environment: Mapping[str, str],
         references: Mapping[str, str],
+        *,
+        minimum_length: int = 1,
+        reject_short_values: bool = False,
     ) -> Mapping[str, str]:
         """Copy only declared deployment values into process-local ciphertext."""
         encrypted: dict[str, str] = {}
@@ -157,11 +164,13 @@ class CredentialBroker:
             if not isinstance(value, str):
                 continue
             encoded = value.encode("utf-8")
-            if not encoded or len(encoded) > MAX_CREDENTIAL_BYTES:
-                value = ""
+            if len(encoded) < minimum_length:
+                if reject_short_values:
+                    raise ValueError("credential master key is too short")
+                continue
+            if len(encoded) > MAX_CREDENTIAL_BYTES:
                 continue
             encrypted[identifier] = self._memory_cipher.encrypt(value)
-            value = ""
         return MappingProxyType(encrypted)
 
     @staticmethod
@@ -243,7 +252,6 @@ class CredentialBroker:
             raise ValueError("session credential lifetime is outside the allowed bound")
         ciphertext = self._memory_cipher.encrypt(plaintext)
         del plaintext
-        credential = ""
         with self._session_lock:
             self._session_credentials[(owner, provider_id)] = _SessionCredential(
                 ciphertext=ciphertext,
@@ -259,7 +267,6 @@ class CredentialBroker:
         assert self._active_key_id is not None
         encrypted = cipher.encrypt(plaintext)
         del plaintext
-        credential = ""
         token = self._split_ciphertext(encrypted, self._active_key_id)
         try:
             with self._database.transaction() as connection:
@@ -291,26 +298,28 @@ class CredentialBroker:
         owner = self._validate_owner(user_id)
         provider_id = self._validate_provider(provider)
         with self._session_lock:
-            removed_session = self._session_credentials.pop((owner, provider_id), None) is not None
-        try:
-            with self._database.transaction() as connection:
-                cursor = connection.execute(
-                    """
-                    UPDATE credentials
-                    SET revoked_at = ?, updated_at = ?
-                    WHERE owner_id = ? AND provider = ? AND auth_mode = ?
-                        AND revoked_at IS NULL
-                    """,
-                    (
-                        self._clock(),
-                        self._clock(),
-                        owner,
-                        provider_id,
-                        AuthMode.BYOK.value,
-                    ),
-                )
-        except sqlite3.DatabaseError:
-            raise CredentialStorageError("credential storage is unavailable") from None
+            session_key = (owner, provider_id)
+            removed_session = session_key in self._session_credentials
+            try:
+                with self._database.transaction() as connection:
+                    cursor = connection.execute(
+                        """
+                        UPDATE credentials
+                        SET revoked_at = ?, updated_at = ?
+                        WHERE owner_id = ? AND provider = ? AND auth_mode = ?
+                            AND revoked_at IS NULL
+                        """,
+                        (
+                            self._clock(),
+                            self._clock(),
+                            owner,
+                            provider_id,
+                            AuthMode.BYOK.value,
+                        ),
+                    )
+            except sqlite3.DatabaseError:
+                raise CredentialStorageError("credential storage is unavailable") from None
+            self._session_credentials.pop(session_key, None)
         if cursor.rowcount != 1 and not removed_session:
             raise CredentialUnavailableError("credential is unavailable")
 
@@ -335,7 +344,7 @@ class CredentialBroker:
         plaintext: str | None = None
         failure: str | None = None
         try:
-            with self._database.transaction() as connection:
+            with self._database.read() as connection:
                 row = connection.execute(
                     """
                     SELECT ciphertext, key_id, revoked_at
@@ -352,10 +361,11 @@ class CredentialBroker:
                     plaintext = cipher.decrypt(f"{key_id}:{row['ciphertext']}")
                 except ValueError:
                     raise CredentialStorageError("credential storage is unavailable") from None
-                if key_id != self._active_key_id:
-                    assert self._active_key_id is not None
-                    rotated = cipher.encrypt(plaintext)
-                    token = self._split_ciphertext(rotated, self._active_key_id)
+            if key_id != self._active_key_id:
+                assert self._active_key_id is not None
+                rotated = cipher.encrypt(plaintext)
+                token = self._split_ciphertext(rotated, self._active_key_id)
+                with self._database.transaction() as connection:
                     cursor = connection.execute(
                         """
                         UPDATE credentials
