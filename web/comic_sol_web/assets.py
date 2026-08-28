@@ -9,6 +9,7 @@ import re
 import secrets
 import stat
 import struct
+import sys
 import time
 import zlib
 from collections.abc import Callable
@@ -58,6 +59,24 @@ def _is_link_or_reparse(path: Path) -> bool:
     if stat.S_ISLNK(metadata.st_mode):
         return True
     return bool(getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT)
+
+
+def _canonical_data_root(path: Path) -> Path:
+    """Resolve the macOS native alias in a configured data root.
+
+    macOS exposes its native temporary directories through root-owned aliases
+    such as ``/var`` -> ``/private/var``, so an ordinary absolute data root would
+    be refused as a symlinked component. Only that leading platform alias is
+    canonicalized, matching `external_output_path` in `scripts/project_io.py`;
+    every remaining component is still refused if it is a link or reparse point.
+    """
+    absolute = path.expanduser().absolute()
+    if sys.platform != "darwin" or absolute.anchor != "/" or len(absolute.parts) < 2:
+        return absolute
+    alias = Path("/") / absolute.parts[1]
+    if alias.name in {"tmp", "var"} and alias.is_symlink():
+        return alias.resolve(strict=True).joinpath(*absolute.parts[2:])
+    return absolute
 
 
 def _ensure_existing_components_are_plain(path: Path) -> None:
@@ -257,11 +276,12 @@ class AssetStore:
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.database = database
-        self.data_root = Path(data_root)
-        if not self.data_root.is_absolute():
+        configured = Path(data_root)
+        if not configured.is_absolute():
             raise AssetError("asset data root must be absolute")
         if min(max_upload_bytes, max_pixels, max_decoded_bytes) <= 0:
             raise ValueError("asset limits must be positive")
+        self.data_root = _canonical_data_root(configured)
         _ensure_existing_components_are_plain(self.data_root)
         if self.data_root.exists() and (
             not self.data_root.is_dir() or _is_link_or_reparse(self.data_root)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import binascii
 import io
 import os
+import shutil
 import struct
 import tempfile
 import unittest
@@ -67,6 +68,18 @@ class AssetStoreTests(unittest.TestCase):
         asset_files = [path for path in files if path.suffix == ".png"]
         self.assertEqual(1, len(asset_files))
         self.assertTrue(asset_files[0].is_relative_to(self.data_root))
+
+    def test_native_temporary_data_root_is_accepted(self) -> None:
+        # macOS exposes native temporary directories through the root-owned
+        # ``/var`` -> ``/private/var`` alias, so a plain absolute data root under
+        # the platform temporary directory must not be mistaken for a symlinked
+        # component.
+        native_root = Path(tempfile.mkdtemp()) / "web-data"
+        self.addCleanup(shutil.rmtree, native_root.parent, True)
+        store = AssetStore(Database(native_root / "application.sqlite3"), native_root)
+        apply_migrations(store.database)
+        handle = store.create_upload(self.alice, io.BytesIO(png_bytes()), "image/png")
+        self.assertEqual(png_bytes(), store.read_bytes(self.alice, handle.asset_id))
 
     def test_cross_owner_access_fails_closed(self) -> None:
         handle = self.store.create_upload(self.alice, io.BytesIO(png_bytes()), "image/png")
