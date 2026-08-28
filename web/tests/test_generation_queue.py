@@ -1,0 +1,432 @@
+"""RED -> GREEN contracts for the durable Web generation queue."""
+
+from __future__ import annotations
+
+import asyncio
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+from typing import Mapping, cast
+
+from web.tests import support as _support  # noqa: F401  # Checkout import path setup.
+
+from comic_sol_web.auth import SessionPrincipal
+from comic_sol_web.database import Database
+from comic_sol_web.generation.providers.base import ProviderRegistry
+from comic_sol_web.generation.providers.fake import FakeProvider
+from comic_sol_web.generation.receipts import AUTHORIZED_RECEIPT_FIELDS
+from comic_sol_web.generation.service import (
+    GenerationConflictError,
+    GenerationService,
+    GenerationUnavailableError,
+    RetryLimitError,
+)
+from comic_sol_web.generation.types import (
+    AuthMode,
+    GenerationRequest,
+    GenerationResult,
+    JobState,
+)
+from comic_sol_web.migrations import GENERATION_MIGRATIONS, apply_migrations
+
+
+PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDAT\x08\xd7c\xf8\xcf\xc0"
+    b"\xf0\x1f\x00\x05\x00\x01\xff\x89\x99=\x1d\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+CAPABILITIES_USED = {
+    "dimensions": False,
+    "localized_edit": False,
+    "reference_images": False,
+}
+
+
+class MutableClock:
+    def __init__(self, value: int = 1_000) -> None:
+        self.value = value
+
+    def __call__(self) -> int:
+        return self.value
+
+
+class FakeProjects:
+    """Owner/revision guard that records only contained staged raster paths."""
+
+    def __init__(self, staging_root: Path) -> None:
+        self.staging_root = staging_root
+        self.owner_id = "alice-id"
+        self.project_id = "project-1"
+        self.revision = 3
+        self.submissions: list[tuple[Path, bytes]] = []
+        self.accepted_raster: bytes | None = None
+
+    def prepare_generation(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        expected_revision: int,
+    ) -> tuple[GenerationRequest, ...]:
+        self._authorize(principal, project_id, expected_revision)
+        return (make_request(project_revision=self.revision),)
+
+    def submit_raster(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        expected_revision: int,
+        job_id: str,
+        raster: Path,
+        media_type: str,
+        capabilities_used: Mapping[str, object],
+    ) -> object:
+        self._authorize(principal, project_id, expected_revision)
+        self.assert_contained(raster)
+        if media_type != "image/png" or capabilities_used != CAPABILITIES_USED:
+            raise ValueError("invalid staged raster")
+        payload = raster.read_bytes()
+        self.submissions.append((raster, payload))
+        self.accepted_raster = payload
+        self.revision += 1
+        return type("Snapshot", (), {"revision": self.revision})()
+
+    def snapshot(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        expected_revision: int | None = None,
+    ) -> object:
+        if principal.user_id != self.owner_id or project_id != self.project_id:
+            raise ValueError("project unavailable")
+        if expected_revision is not None and expected_revision != self.revision:
+            raise ValueError("project revision is stale")
+        return type("Snapshot", (), {"revision": self.revision})()
+
+    def _authorize(
+        self, principal: SessionPrincipal, project_id: str, expected_revision: int
+    ) -> None:
+        if principal.user_id != self.owner_id or project_id != self.project_id:
+            raise ValueError("project unavailable")
+        if expected_revision != self.revision:
+            raise ValueError("project revision is stale")
+
+    def assert_contained(self, raster: Path) -> None:
+        resolved = raster.resolve(strict=True)
+        resolved.relative_to(self.staging_root.resolve(strict=True))
+
+
+class GenerationQueueFixture(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.staging_root = self.root / "staging"
+        self.staging_root.mkdir()
+        self.database = Database(self.root / "application.sqlite3")
+        apply_migrations(self.database, GENERATION_MIGRATIONS)
+        self.clock = MutableClock()
+        self.projects = FakeProjects(self.staging_root)
+        self.alice = SessionPrincipal("alice-id", "alice")
+        self.bob = SessionPrincipal("bob-id", "bob")
+        self.service = self.make_service()
+
+    def make_service(self) -> GenerationService:
+        return GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry((FakeProvider(),)),
+            self.staging_root,
+            clock=self.clock,
+        )
+
+    def queue(self, *, max_retries: int = 2):
+        return self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="fake",
+            model="fake-raster-v1",
+            auth_mode=AuthMode.AGENT,
+            max_retries=max_retries,
+        )[0]
+
+    @staticmethod
+    def accepted_result(
+        payload: bytes = PNG,
+        *,
+        external_job_id: str | None = None,
+        usage: Mapping[str, int | float | str] | None = None,
+        effective_parameters: Mapping[str, object] | None = None,
+    ) -> GenerationResult:
+        return GenerationResult(
+            external_job_id=external_job_id,
+            state=JobState.ACCEPTED,
+            raster_bytes=payload,
+            media_type="image/png",
+            effective_parameters={} if effective_parameters is None else effective_parameters,
+            usage={"images": 1} if usage is None else usage,
+        )
+
+    @staticmethod
+    def failed_result() -> GenerationResult:
+        return GenerationResult(
+            external_job_id=None,
+            state=JobState.FAILED,
+            raster_bytes=None,
+            media_type=None,
+            effective_parameters={},
+            usage={},
+        )
+
+    @staticmethod
+    def polling_result(external_job_id: str) -> GenerationResult:
+        return GenerationResult(
+            external_job_id=external_job_id,
+            state=JobState.POLLING,
+            raster_bytes=None,
+            media_type=None,
+            effective_parameters={},
+            usage={},
+        )
+
+
+class DurableQueueTests(GenerationQueueFixture):
+    def test_duplicate_enqueue_is_idempotent(self) -> None:
+        first = self.queue()
+        second = self.queue()
+        self.assertEqual(first.job_id, second.job_id)
+        with self.database.read() as connection:
+            count = connection.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0]
+        self.assertEqual(1, count)
+
+    def test_lease_expiry_is_bounded_and_compare_and_set(self) -> None:
+        queued = self.queue()
+        first = self.service.lease_next("worker-a", lease_seconds=10)
+        self.assertIsNotNone(first)
+        assert first is not None
+        self.assertEqual(queued.job_id, first.job.job_id)
+        self.assertIsNone(self.service.lease_next("worker-b", lease_seconds=10))
+        with self.assertRaises(ValueError):
+            self.service.lease_next("worker-b", lease_seconds=301)
+
+        self.clock.value += 11
+        recovered = self.service.lease_next("worker-b", lease_seconds=10)
+        self.assertIsNotNone(recovered)
+        assert recovered is not None
+        self.assertEqual(queued.job_id, recovered.job.job_id)
+        self.assertNotEqual(first.lease_token, recovered.lease_token)
+
+    def test_restart_recovers_an_expired_running_job(self) -> None:
+        queued = self.queue()
+        leased = self.service.lease_next("worker-before-restart", lease_seconds=5)
+        self.assertIsNotNone(leased)
+        self.clock.value += 6
+
+        reopened = self.make_service()
+        recovered = reopened.lease_next("worker-after-restart", lease_seconds=5)
+        self.assertIsNotNone(recovered)
+        assert recovered is not None
+        self.assertEqual(queued.job_id, recovered.job.job_id)
+
+    def test_callback_poll_completion_race_is_exactly_once(self) -> None:
+        queued = self.queue()
+        initial_lease = self.service.lease_next("worker", lease_seconds=30)
+        assert initial_lease is not None
+        external_job_id = "fake:callback-race"
+        polling = self.service.record_result(
+            queued.job_id,
+            initial_lease.lease_token,
+            self.polling_result(external_job_id),
+        )
+        self.assertEqual(JobState.POLLING, polling.state)
+
+        poll_lease = self.service.lease_next("poll-worker", lease_seconds=30)
+        assert poll_lease is not None
+        callback = self.service.record_result(
+            queued.job_id,
+            None,
+            self.accepted_result(external_job_id=external_job_id),
+        )
+        duplicate_poll = self.service.record_result(
+            queued.job_id,
+            poll_lease.lease_token,
+            self.accepted_result(external_job_id=external_job_id),
+        )
+        self.assertEqual(JobState.VALIDATING, callback.state)
+        self.assertEqual(callback, duplicate_poll)
+        self.assertEqual(1, len(self.service.receipts(queued.job_id)))
+
+        promoted = self.service.submit_staged_raster(self.alice, queued.job_id, 3)
+        promoted_again = self.service.submit_staged_raster(self.alice, queued.job_id, 3)
+        self.assertEqual(JobState.ACCEPTED, promoted.state)
+        self.assertEqual(promoted, promoted_again)
+        self.assertEqual(1, len(self.projects.submissions))
+        receipts = self.service.receipts(queued.job_id)
+        self.assertEqual(1, len(receipts))
+        usage = cast(Mapping[str, object], receipts[0]["usage"])
+        self.assertEqual(1, usage["images"])
+
+    def test_same_provider_retry_has_a_hard_ceiling(self) -> None:
+        queued = self.queue(max_retries=1)
+        lease = self.service.lease_next("worker", lease_seconds=30)
+        assert lease is not None
+        failed = self.service.record_result(queued.job_id, lease.lease_token, self.failed_result())
+        self.assertEqual(JobState.FAILED, failed.state)
+
+        retry = self.service.retry_same_provider(self.alice, queued.job_id, 3)
+        self.assertEqual(JobState.QUEUED, retry.state)
+        self.assertEqual("fake", retry.provider)
+        self.assertEqual("fake-raster-v1", retry.model)
+        second_lease = self.service.lease_next("worker", lease_seconds=30)
+        assert second_lease is not None
+        self.service.record_result(queued.job_id, second_lease.lease_token, self.failed_result())
+        with self.assertRaises(RetryLimitError):
+            self.service.retry_same_provider(self.alice, queued.job_id, 3)
+
+    def test_attempts_and_receipts_are_database_enforced_append_only(self) -> None:
+        queued = self.queue(max_retries=1)
+        lease = self.service.lease_next("worker", lease_seconds=30)
+        assert lease is not None
+        self.service.record_result(queued.job_id, lease.lease_token, self.failed_result())
+        before = self.service.attempts(queued.job_id)
+        self.service.retry_same_provider(self.alice, queued.job_id, 3)
+        after = self.service.attempts(queued.job_id)
+        self.assertEqual(before, after[: len(before)])
+        self.assertGreater(len(after), len(before))
+
+        with self.database.transaction() as connection:
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "UPDATE generation_attempts SET state = 'accepted' WHERE job_id = ?",
+                    (queued.job_id,),
+                )
+            with self.assertRaises(sqlite3.IntegrityError):
+                connection.execute(
+                    "DELETE FROM generation_attempts WHERE job_id = ?", (queued.job_id,)
+                )
+
+    def test_receipts_contain_only_authorized_sanitized_fields(self) -> None:
+        secret = "raw-provider-secret"
+        queued = self.queue()
+        lease = self.service.lease_next("worker", lease_seconds=30)
+        assert lease is not None
+        self.service.record_result(
+            queued.job_id,
+            lease.lease_token,
+            self.accepted_result(
+                usage={"images": 1, "credential": secret, "private": secret},
+                effective_parameters={"prompt": secret, "response": secret},
+            ),
+        )
+        receipt = self.service.receipts(queued.job_id)[0]
+        self.assertEqual(AUTHORIZED_RECEIPT_FIELDS, frozenset(receipt))
+        self.assertEqual({"images": 1}, receipt["usage"])
+        rendered = repr(receipt)
+        self.assertNotIn(secret, rendered)
+        with self.database.read() as connection:
+            persisted = repr(
+                tuple(connection.execute("SELECT * FROM generation_receipts").fetchall())
+            )
+        self.assertNotIn(secret, persisted)
+
+    def test_stale_revisions_fail_before_queue_or_state_mutation(self) -> None:
+        with self.assertRaises(ValueError):
+            self.service.queue(
+                self.alice,
+                self.projects.project_id,
+                2,
+                provider="fake",
+                model="fake-raster-v1",
+                auth_mode=AuthMode.AGENT,
+            )
+        queued = self.queue()
+        lease = self.service.lease_next("worker", lease_seconds=30)
+        assert lease is not None
+        self.service.record_result(queued.job_id, lease.lease_token, self.failed_result())
+        with self.assertRaises(GenerationConflictError):
+            self.service.retry_same_provider(self.alice, queued.job_id, 2)
+        with self.assertRaises(GenerationConflictError):
+            self.service.pause_for_switch(self.alice, queued.job_id, 2)
+
+    def test_owner_isolation_applies_to_reads_retries_pauses_and_submission(self) -> None:
+        queued = self.queue()
+        for operation in (
+            lambda: self.service.get(self.bob, queued.job_id),
+            lambda: self.service.retry_same_provider(self.bob, queued.job_id, 3),
+            lambda: self.service.pause_for_switch(self.bob, queued.job_id, 3),
+            lambda: self.service.submit_staged_raster(self.bob, queued.job_id, 3),
+        ):
+            with self.subTest(operation=operation), self.assertRaises(GenerationUnavailableError):
+                operation()
+
+    def test_provider_switch_pauses_without_fallback(self) -> None:
+        queued = self.queue()
+        paused = self.service.pause_for_switch(self.alice, queued.job_id, 3)
+        self.assertEqual(JobState.AWAITING_PROVIDER_CONFIRMATION, paused.state)
+        self.assertEqual("fake", paused.provider)
+        self.assertEqual("fake-raster-v1", paused.model)
+        self.assertIsNone(self.service.lease_next("worker", lease_seconds=30))
+
+    def test_provider_bytes_cross_wp3_only_as_a_contained_staged_file(self) -> None:
+        queued = self.queue()
+        lease = self.service.lease_next("worker", lease_seconds=30)
+        assert lease is not None
+        validating = self.service.record_result(
+            queued.job_id, lease.lease_token, self.accepted_result()
+        )
+        assert validating.staged_raster is not None
+        self.projects.assert_contained(validating.staged_raster)
+        self.assertEqual(PNG, validating.staged_raster.read_bytes())
+        self.service.submit_staged_raster(self.alice, queued.job_id, 3)
+        self.assertEqual([(validating.staged_raster, PNG)], self.projects.submissions)
+
+    def test_failed_or_duplicate_completion_preserves_last_accepted_raster_bytes(self) -> None:
+        queued = self.queue()
+        lease = self.service.lease_next("worker", lease_seconds=30)
+        assert lease is not None
+        self.service.record_result(queued.job_id, lease.lease_token, self.accepted_result())
+        self.service.submit_staged_raster(self.alice, queued.job_id, 3)
+        accepted = self.projects.accepted_raster
+        self.assertEqual(PNG, accepted)
+
+        with self.assertRaises(GenerationConflictError):
+            self.service.record_result(
+                queued.job_id,
+                lease.lease_token,
+                self.accepted_result(b"different-provider-bytes"),
+            )
+        with self.assertRaises(GenerationConflictError):
+            self.service.record_result(queued.job_id, lease.lease_token, self.failed_result())
+        self.assertEqual(accepted, self.projects.accepted_raster)
+        self.assertEqual(1, len(self.projects.submissions))
+
+    def test_worker_executes_the_wp4_fake_provider_offline(self) -> None:
+        queued = self.queue()
+        completed = asyncio.run(self.service.run_once("offline-worker"))
+        self.assertIsNotNone(completed)
+        assert completed is not None
+        self.assertEqual(queued.job_id, completed.job_id)
+        self.assertEqual(JobState.ACCEPTED, completed.state)
+        self.assertEqual(PNG, self.projects.accepted_raster)
+
+
+def make_request(*, project_revision: int) -> GenerationRequest:
+    return GenerationRequest(
+        job_id="engine-job-1",
+        project_id="project-1",
+        project_revision=project_revision,
+        subject_kind="panel",
+        subject_id="panel-1",
+        prompt="private generation prompt",
+        negative_prompt=None,
+        references=(),
+        width=1024,
+        height=1024,
+        required_capabilities=frozenset({"text_to_image"}),
+        provider_options={"fixture": "success"},
+    )
+
+
+if __name__ == "__main__":
+    unittest.main()

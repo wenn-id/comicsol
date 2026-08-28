@@ -92,6 +92,130 @@ APPLICATION_MIGRATIONS: tuple[Migration, ...] = (
     ),
 )
 
+# WP3 originally declared version 5 beside its sole engine boundary. WP5 must
+# be usable from the same database without importing that engine-owning module,
+# so this bridge repeats the accepted version-5 SQL exactly. On an ordinary app
+# path version 5 is already recorded and is skipped; on isolated queue tests it
+# establishes the same prerequisite schema.
+_GENERATION_PROJECT_BRIDGE = Migration(
+    5,
+    (
+        """
+        CREATE TABLE web_projects (
+            project_id TEXT PRIMARY KEY,
+            owner_id TEXT NOT NULL,
+            storage_name TEXT NOT NULL UNIQUE,
+            revision INTEGER NOT NULL CHECK (revision >= 1),
+            engine_state TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX web_projects_owner ON web_projects (owner_id, project_id)",
+    ),
+)
+
+GENERATION_SCHEMA_MIGRATION = Migration(
+    6,
+    (
+        """
+        CREATE TABLE generation_jobs (
+            job_id TEXT PRIMARY KEY,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            owner_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            project_revision INTEGER NOT NULL CHECK (project_revision >= 1),
+            request_json TEXT NOT NULL CHECK (length(request_json) <= 1048576),
+            provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 64),
+            model TEXT NOT NULL CHECK (length(model) BETWEEN 1 AND 128),
+            auth_mode TEXT NOT NULL CHECK (auth_mode IN ('agent', 'hosted', 'byok')),
+            state TEXT NOT NULL CHECK (state IN (
+                'queued', 'running', 'polling', 'validating', 'accepted',
+                'awaiting_provider_confirmation', 'paused', 'failed', 'cancelled'
+            )),
+            attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+            retry_count INTEGER NOT NULL CHECK (retry_count >= 0),
+            max_retries INTEGER NOT NULL CHECK (max_retries BETWEEN 0 AND 10),
+            external_job_id TEXT,
+            lease_token TEXT,
+            lease_owner TEXT,
+            lease_expires_at INTEGER,
+            staged_raster_name TEXT,
+            result_checksum TEXT,
+            accepted_project_revision INTEGER,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+        """,
+        "CREATE INDEX generation_jobs_owner ON generation_jobs (owner_id, job_id)",
+        "CREATE INDEX generation_jobs_lease ON generation_jobs "
+        "(state, lease_expires_at, created_at, job_id)",
+        """
+        CREATE TABLE generation_attempts (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT NOT NULL REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
+            attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            auth_mode TEXT NOT NULL,
+            state TEXT NOT NULL,
+            error_category TEXT,
+            external_job_id TEXT,
+            result_checksum TEXT,
+            created_at INTEGER NOT NULL
+        )
+        """,
+        "CREATE INDEX generation_attempts_job ON generation_attempts (job_id, event_id)",
+        """
+        CREATE TABLE generation_receipts (
+            receipt_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT NOT NULL REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
+            attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            auth_mode TEXT NOT NULL,
+            usage_json TEXT NOT NULL,
+            checksum TEXT NOT NULL CHECK (length(checksum) = 64),
+            created_at INTEGER NOT NULL,
+            UNIQUE (job_id, attempt_number, checksum)
+        )
+        """,
+        "CREATE INDEX generation_receipts_job ON generation_receipts (job_id, receipt_id)",
+        """
+        CREATE TRIGGER generation_attempts_no_update
+        BEFORE UPDATE ON generation_attempts
+        BEGIN
+            SELECT RAISE(ABORT, 'generation attempts are append-only');
+        END
+        """,
+        """
+        CREATE TRIGGER generation_attempts_no_delete
+        BEFORE DELETE ON generation_attempts
+        BEGIN
+            SELECT RAISE(ABORT, 'generation attempts are append-only');
+        END
+        """,
+        """
+        CREATE TRIGGER generation_receipts_no_update
+        BEFORE UPDATE ON generation_receipts
+        BEGIN
+            SELECT RAISE(ABORT, 'generation receipts are append-only');
+        END
+        """,
+        """
+        CREATE TRIGGER generation_receipts_no_delete
+        BEFORE DELETE ON generation_receipts
+        BEGIN
+            SELECT RAISE(ABORT, 'generation receipts are append-only');
+        END
+        """,
+    ),
+)
+
+GENERATION_MIGRATIONS = (
+    *APPLICATION_MIGRATIONS,
+    _GENERATION_PROJECT_BRIDGE,
+    GENERATION_SCHEMA_MIGRATION,
+)
+
 
 def _validate_migrations(migrations: Sequence[Migration]) -> None:
     versions = tuple(migration.version for migration in migrations)

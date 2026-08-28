@@ -18,6 +18,7 @@ from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 
+from comic_sol_web.api.generation import create_generation_router
 from comic_sol_web.api.projects import create_projects_router
 
 if TYPE_CHECKING:
@@ -63,6 +64,30 @@ def _project_service(request: Request) -> "ProjectService":
     return service
 
 
+def _generation_service(request: Request) -> object:
+    """Construct and cache queue storage and the offline provider on demand."""
+    existing = getattr(request.app.state, "generation", None)
+    if existing is not None:
+        return existing
+
+    # Keep provider, queue, migration, and engine imports outside application
+    # construction so /healthz remains a pure in-memory response.
+    from comic_sol_web.generation.providers.base import ProviderRegistry
+    from comic_sol_web.generation.providers.fake import FakeProvider
+    from comic_sol_web.generation.service import GenerationService
+
+    projects = _project_service(request)
+    gateway = projects.gateway
+    service = GenerationService(
+        gateway.database,
+        projects,
+        ProviderRegistry((FakeProvider(),)),
+        gateway.staging_root,
+    )
+    request.app.state.generation = service
+    return service
+
+
 def create_app(_config: "WebConfig") -> FastAPI:
     """Return a configured FastAPI application.
 
@@ -73,6 +98,7 @@ def create_app(_config: "WebConfig") -> FastAPI:
     app = FastAPI(title="Comic Sol Web", docs_url=None, redoc_url=None)
     app.state.web_config = _config
     app.include_router(create_projects_router(_project_service))
+    app.include_router(create_generation_router(_generation_service))
 
     @app.get("/healthz")
     def healthz() -> Response:
