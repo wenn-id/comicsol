@@ -13,6 +13,7 @@ from web.tests import support as _support  # noqa: F401  # Checkout import path 
 
 from comic_sol_web.auth import SessionPrincipal
 from comic_sol_web.database import Database
+from comic_sol_web.engine_gateway import StaleProjectRevisionError
 from comic_sol_web.generation.providers.base import ProviderRegistry
 from comic_sol_web.generation.providers.fake import FakeProvider
 from comic_sol_web.generation.receipts import AUTHORIZED_RECEIPT_FIELDS
@@ -109,7 +110,7 @@ class FakeProjects:
         if principal.user_id != self.owner_id or project_id != self.project_id:
             raise ValueError("project unavailable")
         if expected_revision != self.revision:
-            raise ValueError("project revision is stale")
+            raise StaleProjectRevisionError(expected_revision, self.revision)
 
     def assert_contained(self, raster: Path) -> None:
         resolved = raster.resolve(strict=True)
@@ -348,6 +349,25 @@ class DurableQueueTests(GenerationQueueFixture):
             self.service.retry_same_provider(self.alice, queued.job_id, 2)
         with self.assertRaises(GenerationConflictError):
             self.service.pause_for_switch(self.alice, queued.job_id, 2)
+
+    def test_promotion_never_rebinds_raster_to_a_newer_project_revision(self) -> None:
+        queued = self.queue()
+        lease = self.service.lease_next("worker", lease_seconds=30)
+        assert lease is not None
+        validating = self.service.record_result(
+            queued.job_id, lease.lease_token, self.accepted_result()
+        )
+
+        self.projects.revision += 1
+        with self.assertRaises(StaleProjectRevisionError):
+            self.service.submit_staged_raster(self.alice, queued.job_id, 3)
+
+        current = self.service.get(self.alice, queued.job_id)
+        self.assertEqual(JobState.VALIDATING, current.state)
+        self.assertEqual(validating.staged_raster, current.staged_raster)
+        assert current.staged_raster is not None
+        self.assertEqual(PNG, current.staged_raster.read_bytes())
+        self.assertEqual([], self.projects.submissions)
 
     def test_owner_isolation_applies_to_reads_retries_pauses_and_submission(self) -> None:
         queued = self.queue()
