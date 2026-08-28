@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -71,7 +72,7 @@ class WebConfigTests(unittest.TestCase):
     def test_configuration_is_immutable_and_does_not_create_data_root(self):
         from comic_sol_web.config import WebConfig
 
-        data_root = Path("/tmp/comic-sol-web-config-test") / "not-created"
+        data_root = Path(tempfile.gettempdir()) / "comic-sol-web-config-test" / "not-created"
         environment = valid_environment(data_root)
         with patch("pathlib.Path.mkdir") as mkdir:
             config = WebConfig.from_env(environment)
