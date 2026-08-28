@@ -170,5 +170,61 @@ class SampleAssetTests(unittest.TestCase):
         self.assertFalse((self.project / "panels/clean").exists())
 
 
+class SampleDocumentationContractTests(unittest.TestCase):
+    """The tracked sample catalog keeps visual and mechanical evidence distinct."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.catalog = (ROOT / "samples/README.md").read_text(encoding="utf-8")
+        cls.sunlight = (SAMPLE / "README.md").read_text(encoding="utf-8")
+
+    def test_catalog_claims_exactly_one_visual_quality_sample(self):
+        live_rows = [
+            line
+            for line in self.catalog.splitlines()
+            if line.startswith("|") and "Live-generated" in line
+        ]
+        self.assertEqual(1, len(live_rows))
+        self.assertIn("[`sunlight-courier`](sunlight-courier)", live_rows[0])
+        self.assertIn("only initial visual-quality sample", self.catalog)
+
+    def test_catalog_labels_deterministic_samples_mechanics_only(self):
+        deterministic = self.catalog.split("### Deterministic", 1)[1].split("\n## ", 1)[0]
+        normalized = " ".join(deterministic.split())
+        self.assertIn("mechanics-only", normalized)
+        self.assertIn("never proof of illustration quality", normalized)
+
+    def test_sunlight_readme_labels_retained_evidence_and_claim_limit(self):
+        normalized = " ".join(self.sunlight.split())
+        for phrase in (
+            "retained live visual evidence",
+            "only initial visual-quality sample",
+            "does not establish broad or universal illustration quality",
+            "Provider/model provenance",
+            "Reviewer and visual-QA evidence",
+        ):
+            self.assertIn(phrase, normalized, phrase)
+
+    def test_sunlight_readme_links_pages_pdf_project_and_qa(self):
+        for target in (
+            "pages/page-001.png",
+            "pages/page-002.png",
+            "exports/sunlight-courier.pdf",
+            "project.json",
+            "qa/report.md",
+        ):
+            self.assertIn(f"]({target})", self.sunlight, target)
+
+    def test_sunlight_readme_states_known_limitations(self):
+        self.assertIn("## Known limitations", self.sunlight)
+        limitations = self.sunlight.split("## Known limitations", 1)[1]
+        normalized = " ".join(limitations.split())
+        self.assertIn(
+            "The retained reviewer label does not identify a human reviewer.",
+            normalized,
+        )
+        self.assertIn("provider and model are not separately identified", normalized)
+
+
 if __name__ == "__main__":
     unittest.main()
