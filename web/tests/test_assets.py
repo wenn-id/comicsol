@@ -10,10 +10,11 @@ import zlib
 from pathlib import Path
 from unittest.mock import patch
 
-from comic_sol_web.assets import AssetError, AssetStore
+from comic_sol_web.assets import HAS_DIRECTORY_HANDLES, AssetError, AssetStore
 from comic_sol_web.auth import SessionPrincipal
 from comic_sol_web.database import Database
 from comic_sol_web.migrations import apply_migrations
+from support import make_symlink
 
 
 def png_bytes(width: int = 2, height: int = 2, *, trailing_decompressed: int = 0) -> bytes:
@@ -122,34 +123,28 @@ class AssetStoreTests(unittest.TestCase):
                 "image/png",
             )
 
-    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
     def test_symlink_escape_is_rejected_before_asset_write_or_read(self) -> None:
         outside = Path(self.temporary_directory.name) / "outside"
         outside.mkdir()
         assets_root = self.data_root / "assets"
         assets_root.mkdir(parents=True)
         owner_directory = assets_root / self.store.owner_storage_id(self.alice)
-        try:
-            owner_directory.symlink_to(outside, target_is_directory=True)
-        except OSError as error:
-            self.skipTest(f"cannot create a directory symlink: {error}")
+        make_symlink(self, owner_directory, outside, directory=True)
         with self.assertRaises(AssetError):
             self.store.create_upload(self.alice, io.BytesIO(png_bytes()), "image/png")
         self.assertEqual([], list(outside.iterdir()))
 
-    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
     def test_configured_data_root_symlink_is_rejected(self) -> None:
         real_root = Path(self.temporary_directory.name) / "real-root"
         real_root.mkdir()
         linked_root = Path(self.temporary_directory.name) / "linked-root"
-        try:
-            linked_root.symlink_to(real_root, target_is_directory=True)
-        except OSError as error:
-            self.skipTest(f"cannot create a directory symlink: {error}")
+        make_symlink(self, linked_root, real_root, directory=True)
         with self.assertRaises(AssetError):
             AssetStore(self.database, linked_root)
 
-    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
+    @unittest.skipUnless(
+        HAS_DIRECTORY_HANDLES, "directory-handle anchoring is unavailable on this platform"
+    )
     def test_directory_swap_cannot_redirect_upload(self) -> None:
         outside = Path(self.temporary_directory.name) / "outside-race"
         outside.mkdir()
@@ -159,7 +154,7 @@ class AssetStoreTests(unittest.TestCase):
 
         def swap(source, destination, **kwargs):
             owner.rename(displaced)
-            owner.symlink_to(outside, target_is_directory=True)
+            make_symlink(self, owner, outside, directory=True)
             return real_replace(source, destination, **kwargs)
 
         with patch("comic_sol_web.assets.os.replace", side_effect=swap):

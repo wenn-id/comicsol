@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import FastAPI, HTTPException, Response
 from starlette.requests import Request
@@ -160,6 +161,35 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 1, connection.execute("SELECT COUNT(*) FROM oauth_states").fetchone()[0]
             )
+
+    async def test_outstanding_oauth_state_retention_is_bounded(self) -> None:
+        live = []
+        with patch("comic_sol_web.auth.MAX_OUTSTANDING_OAUTH_STATES", 4):
+            for _ in range(6):
+                live.append(self.service.begin_oauth("https://example.test/callback"))
+                # Eviction orders by expiry, so distinct start times make which
+                # states survive deterministic rather than digest-ordered.
+                self.now += 1
+        with self.database.read() as connection:
+            self.assertEqual(
+                4, connection.execute("SELECT COUNT(*) FROM oauth_states").fetchone()[0]
+            )
+        for state, binding, _ in live[:2]:
+            with self.subTest(state="evicted"), self.assertRaises(OAuthStateError):
+                await self.service.complete_oauth(
+                    state=state,
+                    binding=binding,
+                    code="code",
+                    redirect_uri="https://example.test/callback",
+                )
+        newest_state, newest_binding, _ = live[-1]
+        retained = await self.service.complete_oauth(
+            state=newest_state,
+            binding=newest_binding,
+            code="code",
+            redirect_uri="https://example.test/callback",
+        )
+        self.assertEqual("github-42", retained.principal.user_id)
 
     def test_sessions_are_hashed_and_cookies_are_secure(self) -> None:
         authenticated = self.service.create_session(SessionPrincipal("github-42", "octocat"))

@@ -74,24 +74,74 @@ class DatabaseTests(unittest.TestCase):
                 apply_migrations(self.database, migrations)
 
     def test_concurrent_migration_workers_apply_once(self) -> None:
-        barrier = threading.Barrier(2)
+        worker_count = 4
+        barrier = threading.Barrier(worker_count)
         results = []
         failures = []
+        lock = threading.Lock()
 
         def migrate():
             try:
                 barrier.wait()
-                results.append(apply_migrations(self.database))
-            except BaseException as error:
-                failures.append(error)
+                applied = apply_migrations(self.database)
+            except BaseException as error:  # noqa: BLE001 - reported by the assertion below
+                with lock:
+                    failures.append(error)
+                return
+            with lock:
+                results.append(applied)
 
-        workers = [threading.Thread(target=migrate) for _ in range(2)]
+        workers = [threading.Thread(target=migrate) for _ in range(worker_count)]
         for worker in workers:
             worker.start()
         for worker in workers:
             worker.join()
         self.assertEqual([], failures)
-        self.assertEqual([(1, 2, 3), ()], sorted(results, reverse=True))
+        # Each worker serializes its presence check with the statements it runs,
+        # so several may legitimately split the pending set. What must hold is
+        # that no version is applied twice and the schema reaches the final
+        # version exactly once.
+        applied = [version for result in results for version in result]
+        self.assertEqual([1, 2, 3], sorted(applied))
+        with self.database.read() as connection:
+            versions = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                )
+            )
+        self.assertEqual((1, 2, 3), versions)
+        self.assertEqual((), apply_migrations(self.database))
+
+    def test_concurrent_connections_to_a_fresh_database_all_reach_wal(self) -> None:
+        worker_count = 6
+        barrier = threading.Barrier(worker_count)
+        modes = []
+        failures = []
+        lock = threading.Lock()
+
+        def connect():
+            try:
+                barrier.wait()
+                with self.database.transaction() as connection:
+                    mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+            except BaseException as error:  # noqa: BLE001 - reported by the assertion below
+                with lock:
+                    failures.append(error)
+                return
+            with lock:
+                modes.append(mode)
+
+        workers = [threading.Thread(target=connect) for _ in range(worker_count)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        # Enabling WAL needs brief exclusive access and SQLite does not run the
+        # busy handler for that pragma, so a shared fresh database must not turn
+        # a losing racer into a startup failure.
+        self.assertEqual([], failures)
+        self.assertEqual(["wal"] * worker_count, [mode.lower() for mode in modes])
 
     def test_transaction_rolls_back_on_exception(self) -> None:
         apply_migrations(self.database)

@@ -42,6 +42,11 @@ jobs:
     - name: Verify isolated Web test discovery
       shell: bash
       run: python -m unittest discover -s web/tests -p "test_app.py" -v
+    - name: Run the Web test suite
+      shell: bash
+      env:
+        COMIC_SOL_REQUIRE_SYMLINK_TESTS: ${{ matrix.os == 'windows-latest' && '0' || '1' }}
+      run: python -m unittest discover -s web/tests -p "test_*.py" -v
     - name: Get healthz via the test client
       shell: bash
       env:

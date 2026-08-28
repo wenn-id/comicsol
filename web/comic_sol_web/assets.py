@@ -25,6 +25,16 @@ DEFAULT_MAX_PIXELS = 40_000_000
 DEFAULT_MAX_DECODED_BYTES = 160 * 1024 * 1024
 _HANDLE_PATTERN = re.compile(r"[A-Za-z0-9_-]{32,64}\Z")
 _REPARSE_POINT = 0x400
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_BINARY = getattr(os, "O_BINARY", 0)
+# Anchoring every write to an already-validated directory descriptor closes the
+# check/use race between validating the owner directory and writing into it.
+# Windows exposes neither ``O_NOFOLLOW`` nor ``dir_fd``, so it falls back to
+# component-by-component pathname validation. This mirrors the POSIX-only split
+# that `scripts/project_io.py` documents for the deterministic engine.
+HAS_DIRECTORY_HANDLES = _O_NOFOLLOW != 0 and {os.open, os.mkdir, os.stat, os.unlink, os.rename} <= (
+    os.supports_dir_fd
+)
 
 
 class AssetError(ValueError):
@@ -74,7 +84,7 @@ def _make_plain_directory(path: Path) -> None:
 
 
 def _open_absolute_directory(path: Path, *, create: bool) -> int:
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _O_NOFOLLOW
     parts = path.absolute().parts
     descriptor = os.open(parts[0], flags)
     try:
@@ -91,6 +101,74 @@ def _open_absolute_directory(path: Path, *, create: bool) -> int:
     except BaseException:
         os.close(descriptor)
         raise
+
+
+class _OwnerDirectory:
+    """A validated owner directory that anchors every subsequent operation.
+
+    On POSIX the directory is held open as a descriptor, so a later component
+    swap cannot redirect a write outside the configured root. Windows has no
+    ``dir_fd`` support, so it revalidates the pathname before each operation and
+    relies on ``O_EXCL`` plus a post-open descriptor check instead.
+    """
+
+    def __init__(self, path: Path, descriptor: int | None) -> None:
+        self.path = path
+        self._descriptor = descriptor
+
+    def close(self) -> None:
+        if self._descriptor is not None:
+            os.close(self._descriptor)
+            self._descriptor = None
+
+    def _validated(self, name: str) -> Path:
+        _ensure_existing_components_are_plain(self.path)
+        if not self.path.is_dir() or _is_link_or_reparse(self.path):
+            raise AssetError("asset storage path is not a plain directory")
+        return self.path / name
+
+    def exists(self, name: str) -> bool:
+        try:
+            if self._descriptor is None:
+                os.stat(self._validated(name), follow_symlinks=False)
+            else:
+                os.stat(name, dir_fd=self._descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        return True
+
+    def create(self, name: str) -> int:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_BINARY
+        if self._descriptor is None:
+            return os.open(self._validated(name), flags, 0o600)
+        return os.open(name, flags, 0o600, dir_fd=self._descriptor)
+
+    def open_read(self, name: str) -> int:
+        flags = os.O_RDONLY | _O_NOFOLLOW | _O_BINARY
+        if self._descriptor is None:
+            target = self._validated(name)
+            if _is_link_or_reparse(target):
+                raise AssetError("asset file is not plain")
+            return os.open(target, flags)
+        return os.open(name, flags, dir_fd=self._descriptor)
+
+    def publish(self, temporary: str, name: str) -> None:
+        if self._descriptor is None:
+            os.replace(self._validated(temporary), self._validated(name))
+            return
+        os.replace(temporary, name, src_dir_fd=self._descriptor, dst_dir_fd=self._descriptor)
+
+    def discard(self, name: str) -> None:
+        """Remove a name best-effort, never following a swapped-in link."""
+        try:
+            if self._descriptor is None:
+                os.unlink(self._validated(name))
+            else:
+                os.unlink(name, dir_fd=self._descriptor)
+        except (AssetError, OSError):
+            # Cleanup runs on a failure path. A path that no longer validates is
+            # left alone rather than deleted through whatever replaced it.
+            pass
 
 
 def _png_dimensions_and_decode_size(data: bytes, max_decoded_bytes: int) -> tuple[int, int]:
@@ -195,8 +273,13 @@ class AssetStore:
         self.max_decoded_bytes = max_decoded_bytes
         self._clock = clock
 
-    def _owner_directory_fd(self, principal: SessionPrincipal) -> int:
-        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    def _owner_directory(self, principal: SessionPrincipal) -> _OwnerDirectory:
+        owner = self.owner_storage_id(principal)
+        path = self.assets_root / owner
+        if not HAS_DIRECTORY_HANDLES:
+            _make_plain_directory(path)
+            return _OwnerDirectory(path, None)
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | _O_NOFOLLOW
         try:
             root_fd = _open_absolute_directory(self.data_root, create=True)
             try:
@@ -208,16 +291,16 @@ class AssetStore:
             finally:
                 os.close(root_fd)
             try:
-                owner = self.owner_storage_id(principal)
                 try:
                     os.mkdir(owner, 0o700, dir_fd=assets_fd)
                 except FileExistsError:
                     pass
-                return os.open(owner, flags, dir_fd=assets_fd)
+                descriptor = os.open(owner, flags, dir_fd=assets_fd)
             finally:
                 os.close(assets_fd)
         except OSError as error:
             raise AssetError("asset storage path is not a plain directory") from error
+        return _OwnerDirectory(path, descriptor)
 
     def owner_storage_id(self, principal: SessionPrincipal) -> str:
         if not principal.user_id:
@@ -254,11 +337,6 @@ class AssetStore:
             raise AssetError("raster dimensions exceed the configured limit")
         return sniffed, width, height
 
-    def _owner_directory(self, principal: SessionPrincipal) -> Path:
-        directory = self.assets_root / self.owner_storage_id(principal)
-        _make_plain_directory(directory)
-        return directory
-
     def create_upload(
         self,
         principal: SessionPrincipal,
@@ -267,66 +345,53 @@ class AssetStore:
     ) -> AssetHandle:
         content = self._read_upload(stream)
         sniffed, width, height = self._validate_raster(content, media_type)
-        owner_fd = self._owner_directory_fd(principal)
+        owner = self._owner_directory(principal)
         asset_id = secrets.token_urlsafe(24)
         filename = f"{asset_id}.png"
         temporary = f".{asset_id}.{secrets.token_urlsafe(8)}.tmp"
         try:
-            os.stat(filename, dir_fd=owner_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            pass
-        else:
-            os.close(owner_fd)
-            raise AssetError("asset storage collision")
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        flags |= getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(temporary, flags, 0o600, dir_fd=owner_fd)
-        try:
-            with os.fdopen(descriptor, "wb", closefd=True) as output:
-                output.write(content)
-                output.flush()
-                os.fsync(output.fileno())
-            os.replace(temporary, filename, src_dir_fd=owner_fd, dst_dir_fd=owner_fd)
-        except BaseException:
-            for name in (temporary, filename):
-                try:
-                    os.unlink(name, dir_fd=owner_fd)
-                except FileNotFoundError:
-                    pass
-            os.close(owner_fd)
-            raise
-        now = int(self._clock())
-        storage_name = f"{self.owner_storage_id(principal)}/{filename}"
-        try:
-            with self.database.transaction() as connection:
-                connection.execute(
-                    "INSERT INTO users (user_id, login, updated_at) VALUES (?, ?, ?) "
-                    "ON CONFLICT(user_id) DO UPDATE SET login = excluded.login, "
-                    "updated_at = excluded.updated_at",
-                    (principal.user_id, principal.login, now),
-                )
-                connection.execute(
-                    "INSERT INTO assets (asset_id, owner_id, storage_name, media_type, byte_size, "
-                    "width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        asset_id,
-                        principal.user_id,
-                        storage_name,
-                        sniffed,
-                        len(content),
-                        width,
-                        height,
-                        now,
-                    ),
-                )
-        except BaseException:
+            if owner.exists(filename):
+                raise AssetError("asset storage collision")
+            descriptor = owner.create(temporary)
             try:
-                os.unlink(filename, dir_fd=owner_fd)
-            except FileNotFoundError:
-                pass
-            os.close(owner_fd)
-            raise
-        os.close(owner_fd)
+                with os.fdopen(descriptor, "wb", closefd=True) as output:
+                    output.write(content)
+                    output.flush()
+                    os.fsync(output.fileno())
+                owner.publish(temporary, filename)
+            except BaseException:
+                owner.discard(temporary)
+                owner.discard(filename)
+                raise
+            now = int(self._clock())
+            storage_name = f"{self.owner_storage_id(principal)}/{filename}"
+            try:
+                with self.database.transaction() as connection:
+                    connection.execute(
+                        "INSERT INTO users (user_id, login, updated_at) VALUES (?, ?, ?) "
+                        "ON CONFLICT(user_id) DO UPDATE SET login = excluded.login, "
+                        "updated_at = excluded.updated_at",
+                        (principal.user_id, principal.login, now),
+                    )
+                    connection.execute(
+                        "INSERT INTO assets (asset_id, owner_id, storage_name, media_type, "
+                        "byte_size, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            asset_id,
+                            principal.user_id,
+                            storage_name,
+                            sniffed,
+                            len(content),
+                            width,
+                            height,
+                            now,
+                        ),
+                    )
+            except BaseException:
+                owner.discard(filename)
+                raise
+        finally:
+            owner.close()
         return AssetHandle(asset_id, sniffed, len(content), width, height)
 
     def _row_for(self, principal: SessionPrincipal, asset_id: str):
@@ -353,14 +418,13 @@ class AssetStore:
 
     def read_bytes(self, principal: SessionPrincipal, asset_id: str) -> bytes:
         row = self._row_for(principal, asset_id)
-        owner_fd = self._owner_directory_fd(principal)
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        owner = self._owner_directory(principal)
         try:
-            descriptor = os.open(f"{asset_id}.png", flags, dir_fd=owner_fd)
+            descriptor = owner.open_read(f"{asset_id}.png")
         except OSError as error:
             raise AssetError("asset is unavailable") from error
         finally:
-            os.close(owner_fd)
+            owner.close()
         with os.fdopen(descriptor, "rb", closefd=True) as source:
             if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
                 raise AssetError("asset file is not plain")
