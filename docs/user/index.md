@@ -22,7 +22,10 @@ remains safely `BLOCKED` with editable intermediates instead of fabricated artwo
 | Finish a comic and find its PDF | [Resume, repair, and export](resume-repair-export.md#export-a-finished-comic) |
 | Recover from a `CS-…` error | [Troubleshooting by error code](troubleshooting.md) |
 
-Install the canonical Agent Skill from a current package or native distribution with:
+`skill-install` requires Comic Sol `v2.0.0rc6` or later. Because `v2.0.0rc6`
+is not yet published, run this command only after installing an rc6-or-later package
+or native distribution whose release assets are available, or from a trusted rc6
+source checkout installed as a package. Install the canonical Agent Skill with:
 
 ```bash
 comic-sol skill-install --target codex --scope user
