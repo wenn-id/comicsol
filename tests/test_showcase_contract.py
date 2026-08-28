@@ -149,6 +149,7 @@ class HostSmokeContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.document = read("docs/agent-host-smoke.md")
         cls.format = level_two_section(cls.document, "Smoke-record format")
+        cls.threshold = level_two_section(cls.document, "Verification threshold")
         cls.status = level_two_section(cls.document, "Host evidence status")
 
     def test_smoke_record_requires_each_field(self):
@@ -196,6 +197,26 @@ class HostSmokeContractTests(unittest.TestCase):
         normalized = collapsed(self.document)
         self.assertIn("Provider support and host support are separate", normalized)
         self.assertIn("does not verify the agent host", normalized)
+
+    def test_generated_output_can_be_retained_outside_the_repository(self):
+        normalized = collapsed(self.format)
+        self.assertIn("generated projects and build output must not be committed", normalized)
+        self.assertIn("durable, access-controlled external location", normalized)
+        self.assertIn("immutable artifact or record", normalized)
+
+    def test_verification_requires_successful_live_observations(self):
+        normalized = collapsed(self.threshold)
+        for phrase in (
+            "read and wrote the test project",
+            "successfully invoked the documented shell or tool-execution route",
+            "full portable handoff through result intake",
+            "accepted the resulting local raster",
+            "completed deterministic validation and export",
+            "remain inspectable through durable links",
+        ):
+            self.assertIn(phrase, normalized, phrase)
+        self.assertIn("Partial and blocked records", normalized)
+        self.assertIn("remains **Experimental**", normalized)
 
 
 class DocumentationReachabilityTests(unittest.TestCase):

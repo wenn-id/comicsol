@@ -217,7 +217,7 @@ class SampleDocumentationContractTests(unittest.TestCase):
 
     def test_sunlight_readme_states_known_limitations(self):
         self.assertIn("## Known limitations", self.sunlight)
-        limitations = self.sunlight.split("## Known limitations", 1)[1]
+        limitations = self.sunlight.split("## Known limitations", 1)[1].split("\n## ", 1)[0]
         normalized = " ".join(limitations.split())
         self.assertIn(
             "The retained reviewer label does not identify a human reviewer.",
