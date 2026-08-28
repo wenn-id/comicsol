@@ -131,6 +131,25 @@ class AuthService:
         return int(self._clock())
 
     def _digest(self, namespace: bytes, token: str) -> str:
+        """Return a keyed, domain-separated digest of a server-issued token.
+
+        Every value reaching this function is a fresh 256-bit token from
+        ``secrets.token_urlsafe(32)`` — an OAuth state, a browser binding, a
+        session token, or a CSRF token. None is a password, a passphrase, or any
+        other low-entropy or user-chosen secret.
+
+        That is why a keyed hash is correct here and a password KDF is not.
+        Argon2, scrypt, bcrypt, and PBKDF2 exist to add a work factor over a
+        small guessable input space. A 256-bit random token has no such space to
+        search, so a work factor would buy no security while charging its cost
+        on every authenticated request. The properties this call does need are
+        preimage resistance, so a database read cannot recover a live token, and
+        a server-held key, so an attacker with the table cannot precompute
+        candidates offline. Keyed BLAKE2b provides both.
+
+        ``person`` separates namespaces, so a digest minted for one purpose can
+        never be redeemed as another.
+        """
         key = hashlib.blake2b(self._secret, digest_size=32, person=b"comic-sol-key").digest()
         return hashlib.blake2b(
             token.encode("utf-8"), key=key, digest_size=32, person=namespace[:16]

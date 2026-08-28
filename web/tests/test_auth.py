@@ -269,6 +269,37 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(url.startswith("https://github.com/login/oauth/authorize?"))
         self.assertIn("state=state-value", url)
 
+    def test_every_hashed_credential_is_a_full_entropy_server_issued_token(self) -> None:
+        """Nothing user-chosen or low-entropy reaches the keyed digest.
+
+        The keyed-hash design in `AuthService._digest` is only sound while every
+        hashed value is a fresh 256-bit token. This pins that premise so a later
+        change cannot quietly route a password or passphrase through it.
+        """
+        state, binding, _ = self.service.begin_oauth("https://example.test/callback")
+        authenticated = self.service.create_session(SessionPrincipal("github-42", "octocat"))
+        for label, token in (
+            ("oauth state", state),
+            ("browser binding", binding),
+            ("session", authenticated.session_token),
+            ("csrf", authenticated.csrf_token),
+        ):
+            with self.subTest(token=label):
+                # secrets.token_urlsafe(32) is 32 random bytes, base64url encoded
+                # without padding, so 43 characters from the URL-safe alphabet.
+                self.assertEqual(43, len(token))
+                self.assertRegex(token, r"\A[A-Za-z0-9_-]{43}\Z")
+                self.assertNotIn(token, SESSION_SECRET)
+
+        # Distinct namespaces must never collide for the same token, so a digest
+        # minted for one purpose cannot be redeemed as another.
+        namespaces = (b"oauth-state:", b"oauth-binding:", b"session:", b"csrf:")
+        digests = {self.service._digest(namespace, state) for namespace in namespaces}
+        self.assertEqual(len(namespaces), len(digests))
+        for digest in digests:
+            self.assertEqual(64, len(digest))
+            self.assertNotIn(state, digest)
+
 
 class SecurityPrimitiveTests(unittest.TestCase):
     def test_credential_cipher_round_trips_without_exposing_plaintext(self) -> None:
