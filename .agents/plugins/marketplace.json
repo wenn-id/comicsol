@@ -1,11 +1,14 @@
 {
   "name": "comic-sol",
   "interface": {
-    "displayName": "Comic Sol"
+    "displayName": "Comic Sol",
+    "shortDescription": "Provider-neutral, local-first comic production pipeline"
   },
   "plugins": [
     {
       "name": "comic-sol",
+      "description": "Provider-neutral, local-first comic production pipeline",
+      "longDescription": "Comic Sol is a provider-neutral, local-first comic production pipeline. The deterministic engine is the product; Agent Skills, CLI, and MCP are adapters. The core CLI does not create artwork by itself: it validates, persists, resumes, repairs, letters, composes, and exports around an agent-supplied compatible image generator. Comic Sol stores no provider credentials.",
       "source": {
         "source": "url",
         "url": "./"

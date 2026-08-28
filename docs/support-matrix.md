@@ -1,8 +1,53 @@
 # Support matrix
 
 This page is the published statement of which platform, install mode,
-architecture, and runtime combinations Comic Sol supports. It is the
-user-facing summary; the release-side gate lives in
+architecture, and runtime combinations Comic Sol supports. Comic Sol is a
+provider-neutral, local-first comic production pipeline: the deterministic engine is
+the product, while Agent Skills, CLI, and MCP are adapters. Host support and
+image-generator support are separate claims.
+
+## Support tiers
+
+### 1. Full orchestration
+
+Agent Skills plus filesystem and shell/tool execution.
+
+### 2. Handoff executor
+
+Filesystem plus a compatible native image tool or configured external adapter;
+consumes prepared generation jobs and returns rasters/receipts.
+
+### 3. Planning only
+
+Chat without required filesystem/tool execution; may help author content but cannot be
+claimed to execute or resume the pipeline.
+
+## Host support
+
+“Agent Skills compatible” is a contract claim, not universal verification. Path-copy
+and installer tests prove placement mechanics, not live host compatibility. Other Agent
+Skills hosts are compatibility targets rather than blanket verified hosts.
+
+| Host | Current claim | Supported placement |
+|---|---|---|
+| Codex | **Experimental** until a real host smoke record is linked | User |
+| Claude | **Experimental** until a real host smoke record is linked | User or project |
+| Antigravity | **Experimental** until a real host smoke record is linked | Project |
+| ZCode | **Experimental** until a real host smoke record is linked | User |
+
+No claim above implies that every AI chat product can execute local projects. A host
+must provide the filesystem and tool execution required by its tier.
+
+## Image-generator support
+
+Generator compatibility is assessed independently for each active session from declared
+capability metadata, never from a provider, model, host, or tool name. The route order is:
+a compatible declared native image tool; a compatible declared external adapter/API
+tool; portable handoff; then an actionable `BLOCKED` state preserving editable
+intermediates. Comic Sol stores no provider credentials, and automatic rendering is not
+claimed without retained native-generator or external-adapter evidence.
+
+The release-side gate lives in
 [`docs/releases/v2.0-stable-criteria.md`](releases/v2.0-stable-criteria.md)
 and the qualification workflow that proves each published archive.
 

@@ -22,16 +22,21 @@
 
 ## Short description
 
-Turn prompts into editable, QA-checked manga comics.
+Provider-neutral, local-first comic production pipeline
 
 ## Long description
 
-Comic Sol is a local-first Codex workflow for turning a short prompt, story, or
-source file into an original manga/anime comic. It creates editable story
-plans, character and scene references, panel prompts, generated panel PNGs,
-deterministic lettering, composed pages, a PDF, manifest, hashes, and
-transparent QA evidence. It uses the image-generation capability exposed by
-the current Codex session and keeps provider credentials outside the project.
+Comic Sol is a provider-neutral, local-first comic production pipeline. The
+deterministic engine is the product; Agent Skills, CLI, and MCP are adapters. The core
+CLI does not create artwork by itself: it validates, persists, resumes, repairs, letters,
+composes, and exports around an agent-supplied compatible image generator. Comic Sol
+stores no provider credentials.
+
+The Agent Skill creates editable story plans, character and scene references, panel
+prompts, generated panel PNGs, deterministic lettering, composed pages, a PDF, manifest,
+hashes, and transparent QA evidence. It selects image execution from declared capability:
+a compatible native tool, compatible external adapter/API tool, portable handoff, or an
+actionable `BLOCKED` state that preserves editable intermediates.
 
 Comic Sol has no hosted backend and requires no Comic Sol account or demo
 credentials. A Codex session and the selected image provider may require their own
