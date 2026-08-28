@@ -35,6 +35,18 @@ coverage.json
 coverage.xml
 coverage-html/
 
+# Isolated comic-sol-web distribution build artifacts (web/ is a separate
+# distribution; root ignores are re-used there)
+web/build/
+web/dist/
+web/*.egg-info/
+web/.coverage
+web/coverage.json
+web/coverage.xml
+web/coverage-html/
+web/.mypy_cache/
+web/.ruff_cache/
+
 # Isolated development worktrees
 .worktrees/
 
