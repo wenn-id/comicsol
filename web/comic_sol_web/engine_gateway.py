@@ -1,0 +1,678 @@
+"""The sole Comic Sol Web boundary to deterministic project engine state."""
+
+from __future__ import annotations
+
+import hashlib
+import re
+import secrets
+import sqlite3
+import stat
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Mapping, cast
+
+from comic_sol_product.cli import _load_engine_module
+
+from comic_sol_web.assets import (
+    AssetError,
+    _canonical_data_root,
+    _make_plain_directory,
+)
+from comic_sol_web.database import Database
+from comic_sol_web.generation.types import GenerationRequest
+from comic_sol_web.migrations import APPLICATION_MIGRATIONS, Migration
+
+comic_sol = _load_engine_module("comic_sol")
+_export_pdf = _load_engine_module("export_pdf")
+_handoff = _load_engine_module("handoff")
+_handoff_archive = _load_engine_module("handoff_archive")
+_project_io = _load_engine_module("project_io")
+_schema = _load_engine_module("schema")
+_validation = _load_engine_module("validate_project")
+
+ARCHIVE_SUFFIX = _handoff_archive.ARCHIVE_SUFFIX
+ProjectLock = _project_io.ProjectLock
+cleanup_owned_directory = _project_io.cleanup_owned_directory
+contained_project_path = _project_io.contained_project_path
+export_handoff_archive = _handoff_archive.export_handoff_archive
+guarded_export = _export_pdf.guarded_export
+import_handoff_archive = _handoff_archive.import_handoff_archive
+read_contained_bytes = _project_io.read_contained_bytes
+read_contained_json = _project_io.read_contained_json
+read_project_manifest = _schema.read_project_manifest
+validate_project = _validation.validate_project
+
+_PROJECT_ID = re.compile(r"[A-Za-z0-9_-]{32}\Z")
+_DEFAULT_GENERATION_DIMENSION = 1024
+
+PROJECT_MIGRATION = Migration(
+    5,
+    (
+        """
+        CREATE TABLE web_projects (
+            project_id TEXT PRIMARY KEY,
+            owner_id TEXT NOT NULL,
+            storage_name TEXT NOT NULL UNIQUE,
+            revision INTEGER NOT NULL CHECK (revision >= 1),
+            engine_state TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX web_projects_owner ON web_projects (owner_id, project_id)",
+    ),
+)
+PROJECT_MIGRATIONS = (*APPLICATION_MIGRATIONS, PROJECT_MIGRATION)
+
+
+class GatewayError(ValueError):
+    """A Web project request failed at the application/engine boundary."""
+
+
+class GatewayInputError(GatewayError):
+    """Caller input is not part of the frozen gateway contract."""
+
+
+class ProjectUnavailableError(GatewayError):
+    """A project is absent or unavailable to the requesting application service."""
+
+
+class StaleProjectRevisionError(GatewayError):
+    """A mutation was bound to a superseded project revision."""
+
+    def __init__(self, expected: int, actual: int) -> None:
+        self.expected = expected
+        self.actual = actual
+        super().__init__("project revision is stale")
+
+
+@dataclass(frozen=True)
+class ProjectSnapshot:
+    project_id: str
+    revision: int
+    root: Path
+    status: str
+    summary: Mapping[str, object]
+
+
+class EngineGateway:
+    """Resolve opaque Web IDs and call existing deterministic engine operations."""
+
+    def __init__(self, database: Database, data_root: Path) -> None:
+        self.database = database
+        configured_root = Path(data_root).expanduser()
+        if not configured_root.is_absolute():
+            raise GatewayInputError("project data root must be absolute")
+        self.data_root = _canonical_data_root(configured_root)
+        try:
+            _make_plain_directory(self.data_root)
+        except AssetError as error:
+            raise GatewayInputError("project data root must be a plain directory") from error
+        self.projects_root = contained_project_path(self.data_root, "projects")
+        self.projects_root.mkdir(exist_ok=True)
+        self.staging_root = contained_project_path(self.data_root, "staging")
+        self.staging_root.mkdir(exist_ok=True)
+        self.exports_root = contained_project_path(self.data_root, "project-exports")
+        self.exports_root.mkdir(exist_ok=True)
+        self._recover_revisions()
+
+    @classmethod
+    def open(cls, data_root: Path) -> "EngineGateway":
+        """Initialize storage, migrations, and the gateway from one canonical root."""
+        configured_root = Path(data_root).expanduser()
+        if not configured_root.is_absolute():
+            raise GatewayInputError("project data root must be absolute")
+        canonical_root = _canonical_data_root(configured_root)
+        try:
+            _make_plain_directory(canonical_root)
+        except AssetError as error:
+            raise GatewayInputError("project data root must be a plain directory") from error
+        database = Database(canonical_root / "application.sqlite3")
+        from comic_sol_web.migrations import apply_migrations
+
+        apply_migrations(database, PROJECT_MIGRATIONS)
+        return cls(database, canonical_root)
+
+    def _recover_revisions(self) -> None:
+        """Reconcile engine commits interrupted before Web revision persistence."""
+        with self.database.read() as connection:
+            rows = connection.execute(
+                "SELECT project_id, owner_id, storage_name, revision, engine_state "
+                "FROM web_projects ORDER BY project_id"
+            ).fetchall()
+        for row in rows:
+            root = self._root_from_row(row)
+            with ProjectLock(root):
+                prior_state = self._engine_state(root)
+                with self.database.transaction() as connection:
+                    self._reconcile_row(connection, cast(str, row["project_id"]), prior_state)
+
+    @staticmethod
+    def _validate_owner(owner_id: str) -> None:
+        if not isinstance(owner_id, str) or not owner_id or len(owner_id) > 64:
+            raise GatewayInputError("project owner is invalid")
+
+    @staticmethod
+    def _validate_project_id(project_id: str) -> None:
+        if not isinstance(project_id, str) or _PROJECT_ID.fullmatch(project_id) is None:
+            raise ProjectUnavailableError("project unavailable")
+
+    def _allocate_container(self) -> tuple[str, Path, tuple[int, int]]:
+        for _attempt in range(16):
+            project_id = secrets.token_urlsafe(24)
+            container = contained_project_path(self.projects_root, project_id)
+            try:
+                container.mkdir(mode=0o700)
+            except FileExistsError:
+                continue
+            metadata = container.stat(follow_symlinks=False)
+            return project_id, container, (metadata.st_dev, metadata.st_ino)
+        raise RuntimeError("could not allocate an opaque project ID")
+
+    @staticmethod
+    def _cleanup_container(container: Path, identity: tuple[int, int]) -> None:
+        if not cleanup_owned_directory(container, identity):
+            raise RuntimeError("project rollback refused a changed directory identity")
+
+    @staticmethod
+    def _create_parameters(
+        request: Mapping[str, object],
+    ) -> tuple[str, bytes, dict[str, object], int]:
+        if not isinstance(request, Mapping):
+            raise GatewayInputError("project request must be an object")
+        allowed = {"title", "prompt", "language", "page_count"}
+        if set(request) - allowed:
+            raise GatewayInputError("project request contains unsupported fields")
+        title = request.get("title")
+        prompt = request.get("prompt")
+        language = request.get("language", "en")
+        page_count = request.get("page_count", 2)
+        if not isinstance(title, str) or not title.strip():
+            raise GatewayInputError("project title is required")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise GatewayInputError("project prompt is required")
+        if not isinstance(language, str):
+            raise GatewayInputError("project language is invalid")
+        if isinstance(page_count, bool) or not isinstance(page_count, int):
+            raise GatewayInputError("project page count is invalid")
+        return (
+            title,
+            prompt.encode("utf-8"),
+            {"language": language, "mode": "short_prompt"},
+            page_count,
+        )
+
+    def _record_project(
+        self,
+        project_id: str,
+        owner_id: str,
+        storage_name: str,
+        revision: int,
+        engine_state: str,
+    ) -> None:
+        with self.database.transaction() as connection:
+            connection.execute(
+                "INSERT INTO web_projects "
+                "(project_id, owner_id, storage_name, revision, engine_state) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (project_id, owner_id, storage_name, revision, engine_state),
+            )
+
+    def _row(self, project_id: str) -> sqlite3.Row:
+        self._validate_project_id(project_id)
+        with self.database.read() as connection:
+            row = connection.execute(
+                "SELECT project_id, owner_id, storage_name, revision, engine_state "
+                "FROM web_projects WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+        if row is None:
+            raise ProjectUnavailableError("project unavailable")
+        return row
+
+    def _root_from_row(self, row: sqlite3.Row) -> Path:
+        storage_name = row["storage_name"]
+        if not isinstance(storage_name, str):
+            raise ProjectUnavailableError("project unavailable")
+        try:
+            root = contained_project_path(self.projects_root, storage_name, must_exist=True)
+        except (OSError, ValueError) as error:
+            raise ProjectUnavailableError("project unavailable") from error
+        if not root.is_dir():
+            raise ProjectUnavailableError("project unavailable")
+        return root
+
+    def require_owner(self, project_id: str, owner_id: str) -> None:
+        self._validate_owner(owner_id)
+        row = self._row(project_id)
+        if row["owner_id"] != owner_id:
+            raise ProjectUnavailableError("project unavailable")
+
+    @staticmethod
+    def _check_revision(actual: int, expected: int | None) -> None:
+        if expected is not None and expected != actual:
+            raise StaleProjectRevisionError(expected, actual)
+
+    @staticmethod
+    def _snapshot_for(
+        project_id: str,
+        revision: int,
+        root: Path,
+        *,
+        extra_summary: Mapping[str, object] | None = None,
+    ) -> ProjectSnapshot:
+        manifest = read_project_manifest(root / "project.json")
+        engine_project_id = manifest.get("project_id")
+        status = manifest.get("status")
+        schema_version = manifest.get("schema_version")
+        title = manifest.get("title")
+        if engine_project_id != root.name or not isinstance(status, str):
+            raise GatewayError("canonical project identity is invalid")
+        summary: dict[str, object] = {
+            "engine_project_id": engine_project_id,
+            "schema_version": schema_version,
+            "title": title,
+        }
+        settings = manifest.get("settings")
+        if isinstance(settings, Mapping):
+            summary["page_count"] = settings.get("page_count")
+            summary["panel_count"] = settings.get("panel_count")
+        if extra_summary:
+            summary.update(extra_summary)
+        return ProjectSnapshot(project_id, revision, root, status, summary)
+
+    def create_project(self, owner_id: str, request: Mapping[str, object]) -> ProjectSnapshot:
+        self._validate_owner(owner_id)
+        title, source, engine_request, page_count = self._create_parameters(request)
+        project_id, container, identity = self._allocate_container()
+        try:
+            root = comic_sol.init_project(
+                container,
+                title,
+                source,
+                engine_request,
+                page_count=page_count,
+            )
+            snapshot = self._snapshot_for(project_id, 1, root)
+            storage_name = root.relative_to(self.projects_root).as_posix()
+            self._record_project(project_id, owner_id, storage_name, 1, self._engine_state(root))
+            return snapshot
+        except BaseException:
+            self._cleanup_container(container, identity)
+            raise
+
+    def import_project(self, owner_id: str, archive: Path) -> ProjectSnapshot:
+        self._validate_owner(owner_id)
+        archive_path = Path(archive)
+        if archive_path.suffix != ARCHIVE_SUFFIX:
+            raise GatewayInputError("unsupported project archive format")
+        project_id, container, identity = self._allocate_container()
+        try:
+            result = import_handoff_archive(archive_path, container)
+            root_value = result.get("project_dir")
+            if not isinstance(root_value, str):
+                raise GatewayError("archive import did not return a project root")
+            root = Path(root_value)
+            snapshot = self._snapshot_for(project_id, 1, root)
+            storage_name = root.relative_to(self.projects_root).as_posix()
+            self._record_project(project_id, owner_id, storage_name, 1, self._engine_state(root))
+            return snapshot
+        except BaseException:
+            self._cleanup_container(container, identity)
+            raise
+
+    def snapshot(self, project_id: str, expected_revision: int | None = None) -> ProjectSnapshot:
+        row = self._row(project_id)
+        revision = cast(int, row["revision"])
+        self._check_revision(revision, expected_revision)
+        return self._snapshot_for(project_id, revision, self._root_from_row(row))
+
+    @staticmethod
+    def _request_from_job(
+        project_id: str,
+        revision: int,
+        root: Path,
+        job: Mapping[str, object],
+    ) -> GenerationRequest:
+        job_id = job.get("job_id")
+        subject_kind = job.get("subject_kind")
+        subject_id = job.get("subject_id")
+        prompt_path = job.get("prompt_path")
+        if not all(
+            isinstance(value, str) for value in (job_id, subject_kind, subject_id, prompt_path)
+        ):
+            raise GatewayError("generation job identity is invalid")
+        prompt = read_contained_bytes(root, cast(str, prompt_path)).decode("utf-8")
+        references_value = job.get("references")
+        if not isinstance(references_value, list):
+            raise GatewayError("generation job references are invalid")
+        references: list[Path] = []
+        for item in references_value:
+            if not isinstance(item, Mapping) or not isinstance(item.get("path"), str):
+                raise GatewayError("generation job reference is invalid")
+            references.append(
+                contained_project_path(root, cast(str, item["path"]), must_exist=True)
+            )
+        dimensions = job.get("requested_dimensions")
+        if dimensions is None:
+            width = height = _DEFAULT_GENERATION_DIMENSION
+        elif isinstance(dimensions, Mapping):
+            candidate_width = dimensions.get("width")
+            candidate_height = dimensions.get("height")
+            if (
+                isinstance(candidate_width, bool)
+                or not isinstance(candidate_width, int)
+                or isinstance(candidate_height, bool)
+                or not isinstance(candidate_height, int)
+            ):
+                raise GatewayError("generation job dimensions are invalid")
+            width = candidate_width
+            height = candidate_height
+        else:
+            raise GatewayError("generation job dimensions are invalid")
+        capabilities = {"text_to_image"}
+        if references:
+            capabilities.add("reference_images")
+        if dimensions is not None:
+            capabilities.add("custom_dimensions")
+        return GenerationRequest(
+            job_id=cast(str, job_id),
+            project_id=project_id,
+            project_revision=revision,
+            subject_kind=cast(str, subject_kind),
+            subject_id=cast(str, subject_id),
+            prompt=prompt,
+            negative_prompt=None,
+            references=tuple(references),
+            width=width,
+            height=height,
+            required_capabilities=frozenset(capabilities),
+        )
+
+    def _checked_row(
+        self, connection: sqlite3.Connection, project_id: str, expected: int
+    ) -> sqlite3.Row:
+        row = connection.execute(
+            "SELECT project_id, owner_id, storage_name, revision, engine_state "
+            "FROM web_projects WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            raise ProjectUnavailableError("project unavailable")
+        self._check_revision(cast(int, row["revision"]), expected)
+        return row
+
+    @staticmethod
+    def _engine_state(root: Path) -> str:
+        """Return a bounded durable token for canonical project state."""
+        digest = hashlib.sha256()
+        for relative, metadata in _handoff_archive._iter_project_entries(root):
+            if _handoff_archive._is_excluded_project_path(relative):
+                continue
+            if stat.S_ISREG(metadata.st_mode):
+                digest.update(relative.encode("utf-8"))
+                digest.update(b"\0")
+                digest.update(read_contained_bytes(root, relative))
+                digest.update(b"\0")
+        return digest.hexdigest()
+
+    def _reconcile_row(
+        self, connection: sqlite3.Connection, project_id: str, state: str
+    ) -> sqlite3.Row:
+        """Advance Web revision after a process died following an engine commit."""
+        row = connection.execute(
+            "SELECT project_id, owner_id, storage_name, revision, engine_state "
+            "FROM web_projects WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            raise ProjectUnavailableError("project unavailable")
+        if row["engine_state"] != state:
+            self._set_revision(connection, project_id, cast(int, row["revision"]) + 1)
+            self._set_engine_state(connection, project_id, state)
+            row = connection.execute(
+                "SELECT project_id, owner_id, storage_name, revision, engine_state "
+                "FROM web_projects WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+        return cast(sqlite3.Row, row)
+
+    @staticmethod
+    def _set_revision(connection: sqlite3.Connection, project_id: str, revision: int) -> None:
+        connection.execute(
+            "UPDATE web_projects SET revision = ? WHERE project_id = ?",
+            (revision, project_id),
+        )
+
+    @staticmethod
+    def _set_engine_state(connection: sqlite3.Connection, project_id: str, state: str) -> None:
+        connection.execute(
+            "UPDATE web_projects SET engine_state = ? WHERE project_id = ?",
+            (state, project_id),
+        )
+
+    def _ensure_revision(self, project_id: str, previous: int, revision: int, root: Path) -> None:
+        """Finish Web bookkeeping after a canonical engine commit.
+
+        Canonical engine operations publish atomically before SQLite can record
+        their resulting Web revision. If that first record attempt fails, make
+        one independent durable repair while the project lock is still held so
+        callers can never continue using the superseded revision.
+        """
+        state = self._engine_state(root)
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                "SELECT revision FROM web_projects WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+            if row is None:
+                raise ProjectUnavailableError("project unavailable")
+            actual = cast(int, row["revision"])
+            if actual == revision:
+                self._set_engine_state(connection, project_id, state)
+                return
+            if actual != previous:
+                raise StaleProjectRevisionError(previous, actual)
+            self._set_revision(connection, project_id, revision)
+            self._set_engine_state(connection, project_id, state)
+
+    def prepare_generation(
+        self, project_id: str, expected_revision: int
+    ) -> tuple[GenerationRequest, ...]:
+        initial = self._row(project_id)
+        self._check_revision(cast(int, initial["revision"]), expected_revision)
+        root = self._root_from_row(initial)
+        engine_changed = False
+        revision = expected_revision
+        with ProjectLock(root):
+            try:
+                prior_state = self._engine_state(root)
+                with self.database.transaction() as connection:
+                    row = self._reconcile_row(connection, project_id, prior_state)
+                    self._check_revision(cast(int, row["revision"]), expected_revision)
+                    revision = cast(int, row["revision"])
+                prepared = comic_sol.prepare_handoff(root)
+                if prepared.get("changed") is True:
+                    engine_changed = True
+                    revision += 1
+                    self._ensure_revision(project_id, expected_revision, revision, root)
+                inspection = comic_sol.inspect_handoff(root)
+                requests: list[GenerationRequest] = []
+                for descriptor in cast(list[dict[str, object]], inspection["jobs"]):
+                    if descriptor.get("status") != "ready":
+                        continue
+                    relative = descriptor.get("path")
+                    if not isinstance(relative, str):
+                        raise GatewayError("generation job path is invalid")
+                    job = read_contained_json(root, relative)
+                    if not isinstance(job, Mapping):
+                        raise GatewayError("generation job is invalid")
+                    requests.append(self._request_from_job(project_id, revision, root, job))
+                return tuple(requests)
+            except BaseException:
+                if engine_changed:
+                    self._ensure_revision(project_id, expected_revision, revision, root)
+                raise
+
+    def _staged_raster(self, raster: Path) -> Path:
+        candidate = Path(raster)
+        if not candidate.is_absolute():
+            raise GatewayInputError("raster staging path must be absolute")
+        try:
+            relative = candidate.relative_to(self.staging_root)
+            staged = contained_project_path(self.staging_root, relative, must_exist=True)
+        except (OSError, ValueError) as error:
+            raise GatewayInputError("raster is outside the contained staging root") from error
+        if not staged.is_file():
+            raise GatewayInputError("raster staging path is not a file")
+        return staged
+
+    def submit_raster(
+        self,
+        project_id: str,
+        expected_revision: int,
+        job_id: str,
+        raster: Path,
+        media_type: str,
+        capabilities_used: Mapping[str, object],
+    ) -> ProjectSnapshot:
+        if media_type != "image/png":
+            raise GatewayInputError("handoff raster media type must be image/png")
+        staged = self._staged_raster(raster)
+        initial = self._row(project_id)
+        self._check_revision(cast(int, initial["revision"]), expected_revision)
+        root = self._root_from_row(initial)
+        capability_keys = {"dimensions", "localized_edit", "reference_images"}
+        if set(capabilities_used) != capability_keys or not all(
+            isinstance(capabilities_used[key], bool) for key in capability_keys
+        ):
+            raise GatewayInputError("raster capability metadata is invalid")
+        engine_changed = False
+        revision = expected_revision
+        with ProjectLock(root):
+            try:
+                prior_state = self._engine_state(root)
+                with self.database.transaction() as connection:
+                    row = self._reconcile_row(connection, project_id, prior_state)
+                    self._check_revision(cast(int, row["revision"]), expected_revision)
+                    revision = cast(int, row["revision"])
+                inspection = comic_sol.inspect_handoff(root)
+                state = next(
+                    (
+                        item
+                        for item in cast(list[dict[str, object]], inspection["jobs"])
+                        if item.get("job_id") == job_id
+                    ),
+                    None,
+                )
+                if state is None:
+                    raise _handoff.HandoffResultError(
+                        ["job_id: does not name a current handoff job"]
+                    )
+                attempt = state.get("next_attempt")
+                if isinstance(attempt, bool) or not isinstance(attempt, int):
+                    attempt = max(1, cast(int, state.get("attempts_used", 0)))
+                subject_kind = state.get("subject_kind")
+                subject_id = state.get("subject_id")
+                result = comic_sol.accept_handoff_result(
+                    root,
+                    job_id=job_id,
+                    attempt=attempt,
+                    raster_path=staged,
+                    executor_kind="external-tool",
+                    executor_id="comic-sol-web",
+                    capabilities_used=capabilities_used,
+                    approve_reference=subject_kind == "reference",
+                )
+                duplicate = result.get("duplicate") is True
+                engine_changed = not duplicate
+                if engine_changed:
+                    # Acceptance commits retained bytes before panel promotion.
+                    # Compute the target now so a promotion failure repairs
+                    # SQLite to the already-published engine generation.
+                    revision += 1
+                if subject_kind == "panel":
+                    if not isinstance(subject_id, str) or not isinstance(
+                        result.get("raster_path"), str
+                    ):
+                        raise GatewayError("accepted panel result binding is invalid")
+                    comic_sol.promote_attempt(
+                        root,
+                        subject_id,
+                        Path(cast(str, result["raster_path"])),
+                    )
+                if engine_changed:
+                    self._ensure_revision(project_id, expected_revision, revision, root)
+                snapshot = self._snapshot_for(project_id, revision, root)
+                return snapshot
+            except BaseException:
+                if engine_changed:
+                    self._ensure_revision(project_id, expected_revision, revision, root)
+                raise
+
+    def run_qa(self, project_id: str, expected_revision: int) -> ProjectSnapshot:
+        initial = self._row(project_id)
+        self._check_revision(cast(int, initial["revision"]), expected_revision)
+        root = self._root_from_row(initial)
+        with ProjectLock(root), self.database.read() as connection:
+            row = self._checked_row(connection, project_id, expected_revision)
+            issues = validate_project(root, "all")
+            qa = {
+                "valid": not issues,
+                "issues": tuple(
+                    {"field": issue.field, "message": issue.message, "path": issue.path}
+                    for issue in issues
+                ),
+            }
+            return self._snapshot_for(
+                project_id,
+                cast(int, row["revision"]),
+                root,
+                extra_summary={"qa": qa},
+            )
+
+    def export(
+        self,
+        project_id: str,
+        expected_revision: int,
+        formats: tuple[str, ...],
+    ) -> Mapping[str, Path]:
+        if not formats or len(set(formats)) != len(formats):
+            raise GatewayInputError("export formats must be unique and non-empty")
+        if not set(formats) <= {"archive", "pdf"}:
+            raise GatewayInputError("unsupported project export format")
+        initial = self._row(project_id)
+        self._check_revision(cast(int, initial["revision"]), expected_revision)
+        root = self._root_from_row(initial)
+        engine_changed = False
+        revision = expected_revision
+        with ProjectLock(root):
+            try:
+                prior_state = self._engine_state(root)
+                with self.database.transaction() as connection:
+                    row = self._reconcile_row(connection, project_id, prior_state)
+                    self._check_revision(cast(int, row["revision"]), expected_revision)
+                    revision = cast(int, row["revision"])
+                outputs: dict[str, Path] = {}
+                if "pdf" in formats:
+                    outputs["pdf"] = guarded_export(root)
+                    engine_changed = True
+                    revision += 1
+                    self._ensure_revision(project_id, expected_revision, revision, root)
+                if "archive" in formats:
+                    export_directory = contained_project_path(self.exports_root, project_id)
+                    export_directory.mkdir(exist_ok=True)
+                    stem = f"{root.name}-r{revision}"
+                    destination = export_directory / f"{stem}{ARCHIVE_SUFFIX}"
+                    sequence = 2
+                    while destination.exists():
+                        destination = export_directory / f"{stem}-{sequence}{ARCHIVE_SUFFIX}"
+                        sequence += 1
+                    result = export_handoff_archive(root, destination)
+                    archive_path = result.get("archive_path")
+                    if not isinstance(archive_path, str):
+                        raise GatewayError("archive export did not return an output path")
+                    outputs["archive"] = Path(archive_path)
+                return outputs
+            except BaseException:
+                if engine_changed:
+                    self._ensure_revision(project_id, expected_revision, revision, root)
+                raise

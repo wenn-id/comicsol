@@ -1,10 +1,11 @@
 """FastAPI composition root for comic-sol-web.
 
 `create_app` builds a provider-free application with a deterministic,
-bounded `/healthz` endpoint and a static mount foundation. It imports no
-provider adapters, the deterministic engine, project lifecycle code,
-credentials, or database code, and performs no network I/O, background
-task, migration, or startup side effect.
+bounded `/healthz` endpoint, lazily resolved project routes, and a static mount
+foundation. It imports no provider adapters or deterministic engine modules and
+performs no network I/O, background task, migration, or filesystem side effect.
+Project storage and engine modules are initialized only after an authenticated
+project endpoint is invoked.
 """
 
 from __future__ import annotations
@@ -12,13 +13,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 
+from comic_sol_web.api.projects import create_projects_router
+
 if TYPE_CHECKING:
     from comic_sol_web.config import WebConfig
+    from comic_sol_web.projects import ProjectService
 
 # The static surface is a "foundation" mount that later work packages (WP13+)
 # populate with Studio UI assets. The serving package directory is created
@@ -44,14 +48,31 @@ class FutureStaticFiles(StaticFiles):
         await super().__call__(scope, receive, send)
 
 
+def _project_service(request: Request) -> "ProjectService":
+    """Construct and cache the real project boundary on first endpoint use."""
+    existing = getattr(request.app.state, "projects", None)
+    if existing is not None:
+        return existing
+
+    from comic_sol_web.engine_gateway import EngineGateway
+    from comic_sol_web.projects import ProjectService
+
+    config = request.app.state.web_config
+    service = ProjectService(EngineGateway.open(Path(config.data_root)))
+    request.app.state.projects = service
+    return service
+
+
 def create_app(_config: "WebConfig") -> FastAPI:
     """Return a configured FastAPI application.
 
-    `_config` is accepted for the composition-root contract; it is not used
-    to create filesystem state. `/healthz` is deterministic, bounded, and
-    provider-free.
+    Startup creates no application filesystem state. The first authenticated
+    project request lazily creates the data root, SQLite database, and project
+    directories. `/healthz` remains deterministic, bounded, and provider-free.
     """
     app = FastAPI(title="Comic Sol Web", docs_url=None, redoc_url=None)
+    app.state.web_config = _config
+    app.include_router(create_projects_router(_project_service))
 
     @app.get("/healthz")
     def healthz() -> Response:
