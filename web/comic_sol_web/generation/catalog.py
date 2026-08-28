@@ -1,0 +1,25 @@
+from __future__ import annotations
+
+from .types import ProviderModel
+
+CATALOG: tuple[ProviderModel, ...] = (
+    ProviderModel(
+        provider="fake",
+        model="fake-raster-v1",
+        capabilities=frozenset({"async_jobs", "custom_dimensions", "text_to_image"}),
+        enabled=True,
+    ),
+    ProviderModel(
+        provider="bfl",
+        model="flux-1.1-pro",
+        capabilities=frozenset(
+            {
+                "custom_dimensions",
+                "image_to_image",
+                "reference_images",
+                "text_to_image",
+            }
+        ),
+        enabled=True,
+    ),
+)
