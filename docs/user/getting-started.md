@@ -106,6 +106,11 @@ is the only visual-quality sample. One retained sample does not prove broad illu
 quality. Other samples and deterministic fixtures are mechanics-only evidence, never
 visual-quality proof.
 
+After completing a normal real project, creators may separately choose the
+[opt-in creator dogfood program](../dogfood.md). It uses local preview and validation,
+manual report submission, and purpose-specific consent; participation is never required
+to create or export a comic.
+
 ## About `init` and starters
 
 `comic-sol init --interactive` creates a project boundary and records its source;

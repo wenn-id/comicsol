@@ -61,10 +61,13 @@ A showcase proposal must include all of the following before review:
 - removal of credentials, tokens, account identifiers, private endpoints, raw provider
   responses, and unrelated logs.
 
-Showcase publication consent is separate from the dogfood/report-sharing consent in
+Showcase publication consent is separate from the dogfood report-sharing consent in the
+[opt-in creator program](dogfood.md) and
 [issue #246](https://github.com/wenn-id/comicsol/issues/246). A dogfood report never
 implies permission to publish the comic, story, images, or prompts. Conversely,
 permission to showcase a comic does not authorize publication of unrelated report data.
+Dogfood report-sharing consent and showcase publication consent must never be inferred
+from one another; each requires its own explicit choice and rights-to-share confirmation.
 
 Submissions that cannot establish rights, publication consent, or inspectable evidence
 remain out of the showcase. Do not create replacement provenance or fill evidence gaps
