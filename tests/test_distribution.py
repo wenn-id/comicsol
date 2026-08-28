@@ -6,6 +6,7 @@ import socket
 import struct
 import tarfile
 import tempfile
+import tomllib
 import unittest
 import zipfile
 import uuid
@@ -964,3 +965,58 @@ class SkillBuildSourceContractTests(unittest.TestCase):
         setup_source = (root / "setup.py").read_text(encoding="utf-8")
         self.assertIn("class sdist", setup_source)
         self.assertIn('"skills" / "comic-sol"', setup_source)
+
+
+class CreatorPositioningMetadataTests(unittest.TestCase):
+    """WP3 publishes one engine-first description through every metadata surface."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(__file__).resolve().parents[1]
+        cls.package = tomllib.loads((cls.root / "pyproject.toml").read_text(encoding="utf-8"))
+        cls.plugin = json.loads(
+            (cls.root / ".codex-plugin/plugin.json").read_text(encoding="utf-8")
+        )
+        cls.marketplace = json.loads(
+            (cls.root / ".agents/plugins/marketplace.json").read_text(encoding="utf-8")
+        )
+        cls.listing = (cls.root / "submission/listing.md").read_text(encoding="utf-8")
+
+    def test_creator_facing_short_description_is_consistent(self):
+        expected = "Provider-neutral, local-first comic production pipeline"
+        self.assertEqual(expected, self.package["project"]["description"])
+        self.assertEqual(expected, self.plugin["description"])
+        self.assertEqual(expected, self.plugin["interface"]["shortDescription"])
+        self.assertEqual(expected, self.marketplace["interface"]["shortDescription"])
+        self.assertEqual(expected, self.marketplace["plugins"][0]["description"])
+        short = self.listing.split("## Short description", 1)[1].split("\n## ", 1)[0].strip()
+        self.assertEqual(expected, short)
+
+    def test_metadata_uses_engine_first_provider_neutral_positioning(self):
+        documents = " ".join(
+            (
+                self.plugin["interface"]["longDescription"],
+                self.marketplace["plugins"][0]["longDescription"],
+                self.listing.split("## Long description", 1)[1].split("\n## ", 1)[0],
+            )
+        )
+        normalized = " ".join(documents.split()).lower()
+        for phrase in (
+            "provider-neutral",
+            "deterministic engine is the product",
+            "agent skills, cli, and mcp are adapters",
+            "does not create artwork by itself",
+            "stores no provider credentials",
+        ):
+            self.assertIn(phrase, normalized)
+        self.assertNotIn("local image generator", normalized)
+        self.assertNotIn("codex workflow", normalized)
+
+    def test_metadata_schemas_preserve_identity_version_and_permissions(self):
+        self.assertEqual("comic-sol", self.plugin["name"])
+        self.assertEqual(RELEASE_VERSION, self.plugin["version"])
+        self.assertEqual(["Read", "Write"], self.plugin["interface"]["capabilities"])
+        self.assertEqual("comic-sol", self.marketplace["name"])
+        self.assertEqual("comic-sol", self.marketplace["plugins"][0]["name"])
+        self.assertEqual("AVAILABLE", self.marketplace["plugins"][0]["policy"]["installation"])
+        self.assertEqual(["CODEX"], self.marketplace["plugins"][0]["policy"]["products"])

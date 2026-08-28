@@ -1,5 +1,21 @@
 # Distribution surfaces and output roots
 
+## Creator path
+
+The creator path starts with the installed Agent Skill, a natural-language comic
+request, and inspection of the editable project, page PNGs, QA report, and PDF. Comic
+Sol is a provider-neutral, local-first comic production pipeline. The deterministic
+engine is the product; Agent Skills, CLI, and MCP are adapters.
+
+```bash
+comic-sol skill-install --target codex --scope user
+```
+
+The core CLI does not create artwork by itself. It validates, persists, resumes, repairs,
+letters, composes, and exports around an agent-supplied compatible image generator.
+Comic Sol stores no provider credentials. Follow [getting started](user/getting-started.md)
+for the complete creator route; the surfaces below are retained integration choices.
+
 Comic Sol is one product distributed through several installable surfaces: a
 Codex Skill checkout, a Codex Plugin bundle, a source checkout for development,
 an installed Python CLI, native portable archives, an optional MCP server, and
@@ -25,15 +41,17 @@ so the first run does not depend on the default at all.
 
 ## Codex Skill checkout
 
-Clone this repository as one `comic-sol` folder beneath the Codex skills
-directory and install the pinned dependency with your resolved Python 3.11+
-launcher. The agent session orchestrates `SKILL.md`; the deterministic scripts
-run through `"$PYTHON" scripts/comic_sol.py`.
+The installed package places the canonical verified Agent Skill payload with
+`comic-sol skill-install --target codex --scope user`. A fresh agent session then
+orchestrates `SKILL.md`; the deterministic engine runs through the installed launcher
+or, for an advanced source checkout, `"$PYTHON" scripts/comic_sol.py`.
 
-- **How you start it:** `"$PYTHON" scripts/comic_sol.py doctor` from the
-  checkout, or a natural-language request in a fresh Codex session.
+- **How you start it:** a natural-language request in a fresh session; use
+  `comic-sol doctor` for deterministic readiness.
 - **Default output root:** the platform default in the table above.
-- **Details:** [`README.md` → Install](../README.md#install) and
+- **Claim boundary:** Codex remains experimental until a real host smoke record is
+  linked. Installer tests prove placement mechanics, not live host compatibility.
+- **Details:** [`README.md` → Install](../README.md#install-the-agent-skill) and
   [`docs/onboarding.md`](onboarding.md).
 
 ## Codex Plugin bundle

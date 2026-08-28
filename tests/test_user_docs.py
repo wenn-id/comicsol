@@ -585,5 +585,196 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         self.assertNotIn("with a reason", handoff_section)
 
 
+class GoldenCreatorPathTests(unittest.TestCase):
+    """WP3 keeps the approved creator path ahead of every advanced surface."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.readme = read("README.md")
+        cls.support = read("docs/support-matrix.md")
+        cls.provider = read("references/image-provider-setup.md")
+
+    @staticmethod
+    def section(document: str, heading: str) -> str:
+        marker = f"## {heading}"
+        start = document.index(marker)
+        end = document.find("\n## ", start + len(marker))
+        return document[start:] if end == -1 else document[start:end]
+
+    def test_readme_creator_path_has_approved_structural_order(self):
+        advanced = self.readme.index("## Advanced integrations")
+        creator = self.readme[:advanced]
+        ordered_markers = (
+            "## Retained live-generated evidence",
+            "samples/sunlight-courier/pages/page-001.png",
+            "samples/sunlight-courier/pages/page-002.png",
+            "Comic Sol is a local-first production pipeline around any compatible AI image generator. Plan anywhere. Render anywhere. Resume everywhere.",
+            "comic-sol skill-install",
+            "Make a 2-page manga about a courier delivering sunlight to an underground city.",
+            "Codex planning → Antigravity rendering",
+            "samples/sunlight-courier/exports/sunlight-courier.pdf",
+            "samples/sunlight-courier/project.json",
+            "samples/sunlight-courier/qa/report.md",
+        )
+        positions = tuple(creator.index(marker) for marker in ordered_markers)
+        self.assertEqual(tuple(sorted(positions)), positions)
+        for page in ("001", "002"):
+            match = re.search(
+                rf"!\[([^]]+)\]\(samples/sunlight-courier/pages/page-{page}\.png\)",
+                creator,
+            )
+            self.assertIsNotNone(match, page)
+            self.assertRegex(match.group(1).lower(), r"courier|sunlight|underground")
+
+    def test_every_creator_path_element_precedes_advanced_integrations(self):
+        advanced = self.readme.index("## Advanced integrations")
+        required = (
+            "page-001.png",
+            "page-002.png",
+            "retained live-generated evidence",
+            "Plan anywhere. Render anywhere. Resume everywhere.",
+            "skill-install",
+            "Make a 2-page manga",
+            "handoff prepare",
+            "handoff export",
+            "handoff import",
+            "handoff accept-result",
+            "sunlight-courier.pdf",
+            "project.json",
+            "qa/report.md",
+        )
+        for marker in required:
+            self.assertLess(self.readme.index(marker), advanced, marker)
+
+    def test_handoff_example_preserves_the_complete_concise_contract(self):
+        section = self.section(self.readme, "Codex planning → Antigravity rendering")
+        normalized = collapsed(section)
+        for phrase in (
+            "experimental until linked live smoke evidence exists",
+            "has not been verified",
+            "handoff prepare",
+            "handoff inspect",
+            "handoff export",
+            "handoff import",
+            "exact `jobs[].path`",
+            "only a `ready` job",
+            "--job JOB_ID",
+            "--attempt ATTEMPT",
+            "--executor-kind EXECUTOR_KIND",
+            "--executor-id EXECUTOR_ID",
+            "--path RASTER_PATH",
+            "--approve-reference",
+            "prepare again",
+            "inspect again before retries",
+            "visual QA and promotion",
+        ):
+            self.assertIn(phrase, normalized, phrase)
+        self.assertIn("installed package", normalized)
+        self.assertIn("source checkout", normalized)
+
+    def test_sample_claims_keep_the_evidence_boundary(self):
+        evidence = self.section(self.readme, "Retained live-generated evidence")
+        normalized = collapsed(evidence).lower()
+        self.assertIn("only visual-quality sample", normalized)
+        self.assertIn("one retained sample does not prove broad illustration quality", normalized)
+        self.assertIn("deterministic fixtures are mechanics-only evidence", normalized)
+        self.assertNotIn("placeholder quality", normalized)
+
+    def test_support_matrix_has_exact_tiers_and_separate_claims(self):
+        tiers = collapsed(self.section(self.support, "Support tiers"))
+        expected = (
+            "### 1. Full orchestration",
+            "Agent Skills plus filesystem and shell/tool execution.",
+            "### 2. Handoff executor",
+            "Filesystem plus a compatible native image tool or configured external adapter",
+            "consumes prepared generation jobs and returns rasters/receipts.",
+            "### 3. Planning only",
+            "Chat without required filesystem/tool execution",
+            "cannot be claimed to execute or resume the pipeline.",
+        )
+        for phrase in expected:
+            self.assertIn(phrase, tiers)
+        self.assertIn("## Host support", self.support)
+        self.assertIn("## Image-generator support", self.support)
+        host = self.section(self.support, "Host support")
+        for name in ("Codex", "Claude", "Antigravity", "ZCode"):
+            self.assertRegex(host, rf"(?i){name}[^\n]*experimental")
+        self.assertIn("contract claim, not universal verification", collapsed(host))
+
+    def test_image_routes_follow_declared_capability_order(self):
+        routes = self.section(self.provider, "Image route order")
+        normalized = collapsed(routes)
+        markers = (
+            "1. **Compatible declared native image tool.**",
+            "2. **Compatible declared external adapter/API tool.**",
+            "3. **Portable handoff.**",
+            "4. **Actionable `BLOCKED` state preserving editable intermediates.**",
+        )
+        positions = tuple(normalized.index(marker) for marker in markers)
+        self.assertEqual(tuple(sorted(positions)), positions)
+        self.assertIn(
+            "Never infer capability from provider, model, host, or tool names.", normalized
+        )
+
+    def test_native_cli_and_engine_positioning_are_explicit(self):
+        documents = "\n".join(
+            read(path)
+            for path in (
+                "README.md",
+                "docs/user/index.md",
+                "docs/user/getting-started.md",
+                "docs/surfaces.md",
+            )
+        )
+        normalized = collapsed(documents).lower()
+        self.assertIn("deterministic engine is the product", normalized)
+        self.assertIn("agent skills, cli, and mcp are adapters", normalized)
+        self.assertIn("core cli does not create artwork by itself", normalized)
+        for verb in (
+            "validates",
+            "persists",
+            "resumes",
+            "repairs",
+            "letters",
+            "composes",
+            "exports",
+        ):
+            self.assertIn(verb, normalized)
+        self.assertIn("stores no provider credentials", normalized)
+
+    def test_source_and_bundle_provider_links_resolve(self):
+        for relative in (
+            "references/image-provider-setup.md",
+            "skills/comic-sol/references/image-provider-setup.md",
+        ):
+            document_path = ROOT / relative
+            for target in re.findall(r"\[[^]]+\]\(([^)]+)\)", read(relative)):
+                if target.startswith(("http://", "https://", "#")):
+                    continue
+                path = (document_path.parent / target.split("#", 1)[0]).resolve()
+                self.assertTrue(path.is_file(), f"{relative}: {target}")
+
+    def test_docs_make_no_fabricated_host_verification_or_adoption_claim(self):
+        documents = "\n".join(
+            read(path)
+            for path in (
+                "README.md",
+                "docs/onboarding.md",
+                "docs/support-matrix.md",
+                "references/image-provider-setup.md",
+            )
+        )
+        banned = (
+            "Antigravity has been verified",
+            "verified on every host",
+            "works with every AI chat product",
+            "automatic rendering on every host",
+            "widely adopted",
+            "thousands of creators",
+        )
+        for claim in banned:
+            self.assertNotIn(claim, documents)
+
+
 if __name__ == "__main__":
     unittest.main()

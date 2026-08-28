@@ -1,68 +1,60 @@
 # First run: install to first comic
 
-This is the single supported happy path for a brand-new user. Follow it top to
-bottom and stop at the first step that fails. If you need to choose another
-installation path, resume an existing project, repair a comic, or export again,
-start from the [plain-language user-guide index](user/index.md).
+This is the provider-neutral creator path: install the Agent Skill, request a comic,
+let the active session render through a declared image capability or portable handoff,
+and inspect the editable project, pages, QA report, and PDF. Comic Sol is a local-first
+production pipeline; the deterministic engine is the product, and Agent Skills, CLI,
+and MCP are adapters.
 
-This page covers **one surface**: the Codex Skill checkout with the development
-script. The other surfaces — the Codex Plugin bundle, the installed CLI wheel,
-native portable archives, the MCP server, and the OCI image — start differently
-and some use different output roots. They are deliberately **not** on this page;
-[`docs/surfaces.md`](surfaces.md) separates them one per section. If you want
-the native core CLI rather than the Skill, use the single exact-tag path in
-[`docs/install.md`](install.md); advanced CLI installation is in
-[`docs/install-manual.md`](install-manual.md). The links at the bottom cover the
-other surfaces once your first comic exists.
+Follow the path top to bottom and stop at the first step that fails. Retained advanced
+integrations stay linked after the creator path. The
+[user-guide index](user/index.md) covers resume, repair, and export after the first run.
 
-## 1. Install (shortest supported path)
+## 1. Install the Agent Skill
 
-Comic Sol is a Codex Skill plus a portable Python CLI. The shortest path is to
-clone this repository straight into your Codex skills directory and install the
-one pinned dependency.
-
-You need **Python 3.11+**. Resolve one launcher, store it as `PYTHON`, and reuse
-it for every command below.
-
-### Linux and WSL
+Install a current Comic Sol package or native distribution first, then use its WP2
+transactional installer. The shortest explicit user-scope placement is:
 
 ```bash
-git clone https://github.com/wenn-id/comicsol.git \
-  "${CODEX_HOME:-$HOME/.codex}/skills/comic-sol"
-cd "${CODEX_HOME:-$HOME/.codex}/skills/comic-sol"
-PYTHON=python  # replace with your resolved Python 3.11+ launcher
-"$PYTHON" -m pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
+comic-sol skill-install --target codex --scope user
 ```
 
-### macOS
+Choose the placement that matches your host and scope; unsupported combinations fail
+rather than silently changing scope:
 
-```bash
-git clone https://github.com/wenn-id/comicsol.git \
-  "${CODEX_HOME:-$HOME/.codex}/skills/comic-sol"
-cd "${CODEX_HOME:-$HOME/.codex}/skills/comic-sol"
-PYTHON=python3  # replace with your resolved Python 3.11+ launcher
-"$PYTHON" -m pip install --require-hashes -r requirements/locks/base-macos-x86_64.txt
-```
+| Target | User scope | Project scope |
+|---|---|---|
+| `codex` | supported | not supported |
+| `claude` | supported | supported |
+| `antigravity` | not supported | supported |
+| `zcode` | supported | not supported |
 
-### Windows PowerShell
+For a project placement, add `--project-root /absolute/project`. `--target auto` is
+truthful only when exactly one supported destination already exists; zero or multiple
+matches report the candidates without writing. Installation copies and verifies the one
+canonical synchronized Agent Skill payload. Placement mechanics do not prove live host
+compatibility.
 
-```powershell
-git clone https://github.com/wenn-id/comicsol.git `
-  "$env:USERPROFILE\.codex\skills\comic-sol"
-Set-Location "$env:USERPROFILE\.codex\skills\comic-sol"
-$PYTHON = "py"  # resolve Python 3.11+ first; invoked below as: py -3
-& $PYTHON -3 -m pip install --require-hashes -r requirements/locks/base-windows-x86_64.txt
-```
-
-Keep `SKILL.md`, `scripts/`, `references/`, `templates/`, and `assets/` together
-in that one `comic-sol` folder. Nothing else is required to continue.
+The [native package guide](install.md) describes the pinned release route; its
+unpublished candidate warning remains authoritative. Source/wheel installation is an
+[advanced route](install-manual.md#source-and-wheel-installation). With a source checkout,
+resolve Python 3.11+ as `PYTHON`, install the matching hash-locked base requirements, then
+install the package before running `skill-install`.
 
 ## 2. Run `comic-sol doctor` now
 
-Do this before writing any story. `doctor` is the authoritative readiness check,
-and it tells you exactly what is missing instead of failing later mid-comic.
+Do this before writing any story. Each invocation runs one surface at a time;
+[`docs/surfaces.md`](surfaces.md) keeps their launcher and output-root rules separate.
+`doctor` is the authoritative readiness check, and it tells you exactly what is missing
+instead of failing later mid-comic.
 
-From the folder you just cloned, pass an **explicit output root** so the first
+For an installed package or native distribution:
+
+```bash
+comic-sol doctor --output-root "$HOME/Comic Sol"
+```
+
+For the advanced source-checkout route, pass an **explicit output root** so the first
 run never depends on a default you have not chosen:
 
 ```bash
@@ -115,8 +107,11 @@ local raster, then calls `doctor` with `--image-capability-status available`, th
 usable tool, it passes status `unavailable`; if inspection is unavailable or fails, it
 passes no capability flags rather than guessing.
 
-Sessions differ even on the same agent host, so Comic Sol does not assume that Codex or
-any other platform exposes image generation. The resulting `image-capability` check is:
+Sessions differ even on the same agent host, so Comic Sol does not assume that
+Codex, Claude, Antigravity, ZCode, or any other platform exposes image generation.
+Those four named hosts remain experimental until a real host smoke record is linked;
+installer tests prove placement mechanics, not live compatibility. Host support and
+image-generator support are separate claims. The resulting `image-capability` check is:
 
 | Result | Meaning |
 |---|---|
@@ -126,9 +121,12 @@ any other platform exposes image generation. The resulting `image-capability` ch
 | `WARN`/`INFO` — unknown | Tool metadata could not be inspected or detection failed, so the agent supplied no observation rather than guessing. |
 
 An editing-only image tool is not enough — it must be able to create the first
-image from text alone. If no usable capability is available when panels are needed,
-Comic Sol keeps the plan and prompts, marks the project `BLOCKED`, and tells you how to
-resume; it never invents a placeholder. See
+image from text alone. Route selection is always: a compatible declared native image
+tool; a compatible declared external adapter/API tool; portable handoff; then an
+actionable `BLOCKED` state preserving editable intermediates. Never infer capability
+from provider, model, host, or tool names. If no usable capability is available when
+panels are needed, Comic Sol keeps the plan and prompts, marks the project `BLOCKED`,
+and tells you how to resume; it never invents a placeholder. See
 [`references/image-provider-setup.md`](../references/image-provider-setup.md).
 
 ## 4. Make your first comic

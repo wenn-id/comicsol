@@ -7,20 +7,117 @@
 [![MCP tools](https://img.shields.io/badge/MCP_tools-17-brightgreen)](#mcp-server-optional)
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-blue)](docs/install.md)
 
-Comic Sol is an installable Codex Skill and portable Python CLI that turns a short prompt, pasted story,
-or `.txt`/`.md` file into an original manga/anime comic. One natural-language
-invocation drives planning, character consistency, image generation, visual QA,
-selective repair, deterministic lettering and composition, and PDF export. It is
-not a web app or hosted product. No build service is required.
+Comic Sol is an installable, provider-neutral, local-first comic production pipeline. The deterministic engine is the product; Agent Skills, CLI, and MCP are adapters that connect it to creator and integration workflows. Comic Sol stores no provider credentials. No build service is required.
 
-This repository, [`wenn-id/comicsol`](https://github.com/wenn-id/comicsol),
-is the canonical, independent home of Comic Sol. New development, issues, pull
-requests, documentation, and releases happen here.
+This repository, [`wenn-id/comicsol`](https://github.com/wenn-id/comicsol), is the canonical, independent home of Comic Sol.
 
-> **New here? Start with the [plain-language user guide](docs/user/index.md).**
-> It separates installation, first-comic, resume, repair, export, and error
-> recovery into creator-focused paths. For the complete copy-and-paste Codex
-> Skill path, use [`docs/onboarding.md`](docs/onboarding.md).
+## Retained live-generated evidence
+
+These two tracked pages are **retained live-generated evidence** from
+[`sunlight-courier`](samples/sunlight-courier/README.md), the repository's only
+visual-quality sample. They use only that sample's retained provenance and artifacts.
+
+![A sunlight courier crossing the illuminated underground city on the first retained live-generated page](samples/sunlight-courier/pages/page-001.png)
+
+![The courier completing the sunlight delivery on the second retained live-generated page](samples/sunlight-courier/pages/page-002.png)
+
+One retained sample does not prove broad illustration quality. Deterministic fixtures
+are mechanics-only evidence; placeholder output is not visual-quality proof.
+
+**Comic Sol is a local-first production pipeline around any compatible AI image generator. Plan anywhere. Render anywhere. Resume everywhere.**
+
+The core CLI does not create artwork by itself. It validates, persists, resumes,
+repairs, letters, composes, and exports around an agent-supplied compatible image
+generator.
+
+## Install the Agent Skill
+
+After installing the `comic-sol` package or native distribution, place the canonical
+Agent Skill with the WP2 installer. This is the shortest explicit user-scope route:
+
+```bash
+comic-sol skill-install --target codex --scope user
+```
+
+Use `--target claude --scope user`, `--target zcode --scope user`, or a supported
+project scope when appropriate; [getting started](docs/user/getting-started.md) lists
+the exact placements. The [surface guide](docs/surfaces.md) and
+[support matrix](docs/support-matrix.md) separate host, image capability, launcher, and
+output-root claims. “Agent Skills compatible” is a contract claim, not universal
+host verification.
+
+## Request a comic
+
+Open a fresh session in the host where you installed the Skill. One natural-language
+request is enough:
+
+> Make a 2-page manga about a courier delivering sunlight to an underground city.
+
+The active agent plans the editable project and selects an image route by declared
+capability: compatible native tool, compatible external adapter/API tool, portable
+handoff, or an actionable `BLOCKED` state that preserves the work.
+
+## Codex planning → Antigravity rendering
+
+> **Experimental host example:** this Codex-to-Antigravity route is experimental until linked live smoke evidence exists. Antigravity has not been verified.
+
+The commands below use the installed package launcher. From a source checkout, replace
+`comic-sol handoff` with `"$PYTHON" scripts/comic_sol.py handoff`.
+
+Prepare and inspect in the Codex workspace, then export before crossing a workspace or
+device boundary:
+
+```bash
+comic-sol handoff prepare "$PROJECT"
+comic-sol handoff inspect "$PROJECT"
+comic-sol handoff export "$PROJECT" --output "$PROJECT.comic-sol-handoff"
+```
+
+At the Antigravity execution destination, import and inspect again. Select only a
+`ready` job and give the selected image capability the exact `jobs[].path` returned by
+inspection—never an enumerated or guessed descriptor path.
+
+```bash
+comic-sol handoff import "$PROJECT.comic-sol-handoff" --output-root "$OUTPUT_ROOT"
+comic-sol handoff inspect "$IMPORTED_PROJECT"
+```
+
+After that capability writes the raster, accept the result with the required job,
+attempt, executor, and path values:
+
+```bash
+comic-sol handoff accept-result "$IMPORTED_PROJECT" \
+  --job JOB_ID --attempt ATTEMPT \
+  --executor-kind EXECUTOR_KIND --executor-id EXECUTOR_ID \
+  --path RASTER_PATH
+```
+
+Add `--approve-reference` **only** when accepting a reference job. If completed
+reference jobs report `next_action=prepare`, prepare again by running
+`comic-sol handoff prepare "$IMPORTED_PROJECT"` to create panel jobs; inspect again before
+retries with `comic-sol handoff inspect "$IMPORTED_PROJECT"`, then continue normal visual
+QA and promotion. The [complete handoff lifecycle](references/workflow.md#cross-agent-handoff-lifecycle)
+defines failure intake, two-phase reference handling, resume, and promotion.
+
+## Inspect the retained result
+
+- [PDF](samples/sunlight-courier/exports/sunlight-courier.pdf)
+- [Page 1 PNG](samples/sunlight-courier/pages/page-001.png)
+- [Page 2 PNG](samples/sunlight-courier/pages/page-002.png)
+- [Editable project manifest](samples/sunlight-courier/project.json)
+- [QA report](samples/sunlight-courier/qa/report.md)
+
+A normal run keeps the same classes of editable project, page, QA, and PDF outputs
+under the selected local output root.
+
+## Advanced integrations
+
+Creator workflows start with the Agent Skill. For retained advanced routes, use the
+[CLI/MCP/OCI and surface guide](docs/surfaces.md), [native archive installer](docs/install.md),
+[source, wheel, and OCI manual](docs/install-manual.md), [security policy](SECURITY.md),
+and [release trust documentation](docs/releases/release-trust-chain.md). These cover
+CLI automation, MCP, OCI, source/wheel installation, native archives, security, release
+qualification, and release trust without competing with the creator path above.
 
 ## Documentation by audience
 
@@ -41,30 +138,27 @@ prints one absolute doctor command to run next. Advanced local-archive, source,
 wheel, and OCI procedures live separately in
 [`docs/install-manual.md`](docs/install-manual.md).
 
-### Codex Skill checkout
+### Agent Skill placement
 
-The Skill surface requires Python 3.11+ and `Pillow==12.3.0`. Resolve one Python
-3.11+ launcher per device, store it as `PYTHON`, then use `"$PYTHON"`
-consistently for each run. Image creation additionally
-requires an image-generation capability exposed to the active agent session; Comic
-Sol never embeds provider credentials. Comic Sol requires no Comic Sol account or
-demo credentials, although a Codex session and the selected image provider may
-require their own account or access.
-
-Clone the public repository directly into the Codex skills directory, then install
-the one pinned dependency:
+The recommended creator route is the transactional installer shipped by the installed
+package and native distributions:
 
 ```bash
-git clone https://github.com/wenn-id/comicsol.git \
-  "${CODEX_HOME:-$HOME/.codex}/skills/comic-sol"
-cd "${CODEX_HOME:-$HOME/.codex}/skills/comic-sol"
-PYTHON=python  # replace with resolved Python 3.11+ launcher
-"$PYTHON" -m pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
+comic-sol skill-install --target codex --scope user
 ```
 
-The host-agnostic rule is: clone or copy this repository as one `comic-sol` folder
-beneath the Codex skills directory configured by your Codex installation. Keep
-`SKILL.md`, `scripts/`, `references/`, `templates/`, and `assets/` together.
+Supported placements are Codex user, Claude user/project, Antigravity project, and
+ZCode user. Project placements require `--project-root`. `--target auto` is safe only
+when exactly one supported host location exists; it reports zero or multiple candidates
+without writing. The installer copies and verifies one canonical synchronized payload;
+path-placement tests prove mechanics, not live compatibility with a host. See
+[getting started](docs/user/getting-started.md#install-the-agent-skill).
+
+A source checkout remains available for development and advanced manual use. Developers
+may clone or copy the repository, but `skill-install` replaces manual placement into a
+Codex skills directory for the creator route. Resolve Python 3.11+ as `PYTHON`, install
+the matching hash-locked base requirements, and invoke the source launcher documented in
+[the surface guide](docs/surfaces.md#source-checkout-development).
 
 ### Codex Plugin — same repository
 

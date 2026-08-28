@@ -1185,3 +1185,77 @@ class MilestoneDeliveryRecordTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GoldenCreatorDocumentationHierarchyTests(unittest.TestCase):
+    """WP3 creator outcomes stay first while release paths remain reachable."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(__file__).resolve().parents[1]
+
+    def _read(self, relative: str) -> str:
+        return (self.root / relative).read_text(encoding="utf-8")
+
+    def test_creator_documents_lead_with_goal_before_advanced_installation(self):
+        expectations = {
+            "docs/onboarding.md": ("Install the Agent Skill", "native archive"),
+            "docs/install.md": ("Creator path", "Recommended installation"),
+            "docs/surfaces.md": ("Creator path", "Source checkout (development)"),
+            "docs/user/index.md": ("Start with your goal", "Advanced integrations"),
+            "docs/user/getting-started.md": ("Install the Agent Skill", "Native core CLI"),
+        }
+        for relative, (creator, advanced) in expectations.items():
+            document = self._read(relative)
+            self.assertGreater(document.find(creator), -1, relative)
+            self.assertGreater(document.find(advanced), -1, relative)
+            self.assertLess(document.find(creator), document.find(advanced), relative)
+
+    def test_advanced_entry_keeps_every_supported_surface_reachable(self):
+        readme = self._read("README.md")
+        section = readme.split("## Advanced integrations", 1)[1].split("\n## ", 1)[0]
+        for phrase in (
+            "CLI",
+            "MCP",
+            "OCI",
+            "source",
+            "wheel",
+            "native archive",
+            "security",
+            "release",
+        ):
+            self.assertIn(phrase, section, phrase)
+        for link in (
+            "docs/surfaces.md",
+            "docs/install.md",
+            "docs/install-manual.md",
+            "SECURITY.md",
+            "docs/releases/release-trust-chain.md",
+        ):
+            self.assertIn(f"]({link})", section, link)
+
+    def test_readme_sample_output_links_are_real_tracked_files(self):
+        readme = self._read("README.md")
+        advanced = readme.index("## Advanced integrations")
+        creator = readme[:advanced]
+        outputs = (
+            "samples/sunlight-courier/exports/sunlight-courier.pdf",
+            "samples/sunlight-courier/pages/page-001.png",
+            "samples/sunlight-courier/pages/page-002.png",
+            "samples/sunlight-courier/project.json",
+            "samples/sunlight-courier/qa/report.md",
+        )
+        for relative in outputs:
+            self.assertIn(f"]({relative})", creator, relative)
+            self.assertTrue((self.root / relative).is_file(), relative)
+
+    def test_installer_docs_use_the_current_wp2_interface(self):
+        for relative in (
+            "README.md",
+            "docs/onboarding.md",
+            "docs/install.md",
+            "docs/user/getting-started.md",
+        ):
+            document = self._read(relative)
+            self.assertIn("comic-sol skill-install --target", document, relative)
+            self.assertIn("--scope", document, relative)

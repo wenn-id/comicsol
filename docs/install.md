@@ -1,5 +1,25 @@
 # Install Comic Sol v2.0.0rc6
 
+## Creator path
+
+Comic Sol is a provider-neutral, local-first comic production pipeline. In the creator
+path, the deterministic engine is the product; Agent Skills, CLI, and MCP are adapters.
+After installing the current package or native distribution, install the Agent Skill for
+a supported host:
+
+```bash
+comic-sol skill-install --target codex --scope user
+```
+
+The core CLI does not create artwork by itself. It validates, persists, resumes, repairs,
+letters, composes, and exports around an agent-supplied compatible image generator, and
+Comic Sol stores no provider credentials. Continue with the
+[first-comic walkthrough](onboarding.md). Source/wheel installation, local archives, OCI,
+and release operations are advanced integrations documented below and in the
+[manual guide](install-manual.md).
+
+## Native package status
+
 This guide is prepared for the `v2.0.0rc6` release candidate and pins every
 recommended command to that exact immutable tag. The tag and its assets are not
 published yet, so these commands become usable only when `v2.0.0rc6` appears on
