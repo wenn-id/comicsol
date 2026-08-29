@@ -10,11 +10,13 @@ import json
 import shutil
 import sqlite3
 import tempfile
+import threading
 import unittest
 import zipfile
 from pathlib import Path
 from typing import Mapping, cast, get_type_hints
 from unittest import mock
+from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -28,6 +30,7 @@ from comic_sol_web.database import Database
 from comic_sol_web.engine_gateway import (
     EngineGateway,
     GatewayInputError,
+    PROJECT_IDEMPOTENCY_MIGRATION,
     PROJECT_MIGRATION,
     PROJECT_MIGRATIONS,
     ProjectSnapshot,
@@ -38,11 +41,13 @@ from comic_sol_web.generation.types import GenerationRequest
 from comic_sol_web.migrations import APPLICATION_MIGRATIONS, Migration, apply_migrations
 from comic_sol_web.projects import ProjectService
 from scripts import comic_sol
-from scripts.core_primitives import canonical_json_bytes
+from scripts.character_identity import derive_identity_pack
+from scripts.core_primitives import canonical_artifact_bytes, canonical_json_bytes
 from scripts.handoff import HandoffResultError
 from scripts.handoff_archive import HandoffArchiveError, export_handoff_archive
 from scripts.schema import CURRENT_PROJECT_SCHEMA_VERSION, read_project_manifest
-from scripts.validate_project import validate_manifest
+from scripts.validate_project import validate_manifest, validate_project
+from tests.test_validation import valid_characters, valid_story, valid_storyboard
 
 
 CAPABILITIES_USED = {
@@ -53,6 +58,17 @@ CAPABILITIES_USED = {
 PANEL_CAPABILITIES_USED = {**CAPABILITIES_USED, "reference_images": True}
 
 
+def idempotency_key() -> str:
+    return str(uuid4())
+
+
+def write_headers(revision: int = 0, *, key: str | None = None) -> dict[str, str]:
+    return {
+        "Idempotency-Key": key or idempotency_key(),
+        "X-Expected-Revision": str(revision),
+    }
+
+
 def tree_snapshot(root: Path) -> dict[str, bytes]:
     return {
         relative: path.read_bytes()
@@ -60,6 +76,27 @@ def tree_snapshot(root: Path) -> dict[str, bytes]:
         if path.is_file()
         if (relative := path.relative_to(root).as_posix()) != ".comic-sol.lock"
         and not relative.startswith("logs/transactions/")
+    }
+
+
+def plan_payload(root: Path) -> dict[str, str]:
+    return {
+        "storyPlan": (root / "plan/story-plan.json").read_text(encoding="utf-8"),
+        "characterBible": (root / "plan/character-bible.json").read_text(encoding="utf-8"),
+        "storyboard": (root / "plan/storyboard.json").read_text(encoding="utf-8"),
+        "visualIdentityPack": (root / "plan/character-identity-pack.json").read_text(
+            encoding="utf-8"
+        ),
+    }
+
+
+def first_plan_payload() -> dict[str, str]:
+    character_bible = valid_characters()
+    return {
+        "storyPlan": json.dumps(valid_story()),
+        "characterBible": json.dumps(character_bible),
+        "storyboard": json.dumps(valid_storyboard()),
+        "visualIdentityPack": json.dumps(derive_identity_pack(character_bible)),
     }
 
 
@@ -124,10 +161,15 @@ class GatewayFixture(unittest.TestCase):
                 "language": "en",
                 "page_count": 1,
             },
+            idempotency_key(),
         )
 
     def import_prepared(self) -> ProjectSnapshot:
-        return self.service.import_project(self.alice, portable_archive(self))
+        return self.service.import_project(
+            self.alice,
+            portable_archive(self),
+            idempotency_key(),
+        )
 
     def staged_raster(self, request: GenerationRequest, color: str = "navy") -> Path:
         path = self.gateway.staging_root / f"{request.job_id}-{color}.png"
@@ -154,18 +196,52 @@ class EngineGatewayContractTests(GatewayFixture):
         )
         expected = {
             "create_project": (
-                ["self", "owner_id", "request"],
-                {"owner_id": str, "request": Mapping[str, object], "return": ProjectSnapshot},
+                ["self", "owner_id", "request", "idempotency_key"],
+                {
+                    "owner_id": str,
+                    "request": Mapping[str, object],
+                    "idempotency_key": str,
+                    "return": ProjectSnapshot,
+                },
             ),
             "import_project": (
-                ["self", "owner_id", "archive"],
-                {"owner_id": str, "archive": Path, "return": ProjectSnapshot},
+                ["self", "owner_id", "archive", "idempotency_key"],
+                {
+                    "owner_id": str,
+                    "archive": Path,
+                    "idempotency_key": str,
+                    "return": ProjectSnapshot,
+                },
+            ),
+            "current_project": (
+                ["self", "owner_id"],
+                {
+                    "owner_id": str,
+                    "return": ProjectSnapshot | None,
+                },
             ),
             "snapshot": (
                 ["self", "project_id", "expected_revision"],
                 {
                     "project_id": str,
                     "expected_revision": int | None,
+                    "return": ProjectSnapshot,
+                },
+            ),
+            "read_plan": (
+                ["self", "project_id", "expected_revision"],
+                {
+                    "project_id": str,
+                    "expected_revision": int | None,
+                    "return": ProjectSnapshot,
+                },
+            ),
+            "update_plan": (
+                ["self", "project_id", "expected_revision", "plan"],
+                {
+                    "project_id": str,
+                    "expected_revision": int,
+                    "plan": Mapping[str, object],
                     "return": ProjectSnapshot,
                 },
             ),
@@ -233,7 +309,7 @@ class EngineGatewayContractTests(GatewayFixture):
                     "SELECT version FROM schema_migrations ORDER BY version"
                 )
             )
-        self.assertEqual(tuple(range(1, PROJECT_MIGRATION.version + 1)), versions)
+        self.assertEqual(tuple(range(1, PROJECT_IDEMPOTENCY_MIGRATION.version + 1)), versions)
 
         rollback_root = Path(self.temporary_directory.name) / "migration-rollback"
         rollback_database = Database(rollback_root / "application.sqlite3")
@@ -278,6 +354,121 @@ class EngineGatewayContractTests(GatewayFixture):
         self.assertEqual([], validate_manifest(manifest))
         self.assertEqual(snapshot.root, self.gateway.snapshot(snapshot.project_id).root)
 
+    def test_create_honors_source_mode_and_rejects_page_count_above_engine_limit(self) -> None:
+        story = self.service.create_project(
+            self.alice,
+            {
+                "title": "Pasted Story",
+                "prompt": "A complete story pasted by its creator.",
+                "language": "en",
+                "mode": "pasted_story",
+                "page_count": 4,
+            },
+            idempotency_key(),
+        )
+        self.assertEqual(
+            {"language": "en", "mode": "pasted_story"},
+            json.loads((story.root / "source/request.json").read_bytes()),
+        )
+        before = set(self.gateway.projects_root.iterdir())
+        with self.assertRaises(ValueError):
+            self.service.create_project(
+                self.alice,
+                {
+                    "title": "Too Many Pages",
+                    "prompt": "This request must fail closed.",
+                    "mode": "short_prompt",
+                    "page_count": 5,
+                },
+                idempotency_key(),
+            )
+        self.assertEqual(before, set(self.gateway.projects_root.iterdir()))
+
+    def test_creation_idempotency_replays_and_concurrent_retries_leave_one_project(self) -> None:
+        key = idempotency_key()
+        request = {
+            "title": "Idempotent Project",
+            "prompt": "Only one canonical project may be allocated.",
+            "language": "en",
+            "page_count": 1,
+        }
+        rendezvous = threading.Barrier(2)
+        original_record = self.gateway._record_project
+        results: list[ProjectSnapshot] = []
+        errors: list[BaseException] = []
+
+        def record(
+            project_id: str,
+            owner_id: str,
+            storage_name: str,
+            revision: int,
+            engine_state: str,
+            creation_key: str,
+        ) -> str:
+            rendezvous.wait(timeout=5)
+            return original_record(
+                project_id,
+                owner_id,
+                storage_name,
+                revision,
+                engine_state,
+                creation_key,
+            )
+
+        def create() -> None:
+            try:
+                results.append(self.service.create_project(self.alice, request, key))
+            except BaseException as error:
+                errors.append(error)
+
+        with mock.patch.object(self.gateway, "_record_project", side_effect=record):
+            workers = [threading.Thread(target=create) for _index in range(2)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(10)
+
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual([], errors)
+        self.assertEqual(2, len(results))
+        self.assertEqual(1, len({snapshot.project_id for snapshot in results}))
+        replayed = self.service.create_project(self.alice, request, key)
+        self.assertEqual(results[0].project_id, replayed.project_id)
+        with self.database.read() as connection:
+            self.assertEqual(
+                1,
+                connection.execute("SELECT COUNT(*) FROM web_projects").fetchone()[0],
+            )
+            self.assertEqual(
+                1,
+                connection.execute("SELECT COUNT(*) FROM web_project_creations").fetchone()[0],
+            )
+        self.assertEqual(1, len(list(self.gateway.projects_root.iterdir())))
+
+    def test_current_project_is_latest_for_owner_and_empty_for_other_owner(self) -> None:
+        self.assertIsNone(self.service.current_project(self.alice))
+        first = self.create(title="First Current Project")
+        second = self.create(title="Second Current Project")
+
+        current = self.service.current_project(self.alice)
+
+        self.assertIsNotNone(current)
+        assert current is not None
+        self.assertEqual(second.project_id, current.project_id)
+        self.assertIn("plan", current.summary)
+        self.assertNotEqual(first.project_id, current.project_id)
+        self.assertIsNone(self.service.current_project(self.bob))
+
+    def test_invalid_creation_key_fails_before_container_allocation(self) -> None:
+        before = set(self.gateway.projects_root.iterdir())
+        with self.assertRaisesRegex(GatewayInputError, "idempotency key"):
+            self.gateway.create_project(
+                self.alice.user_id,
+                {"title": "Rejected", "prompt": "This must not allocate."},
+                "not-a-uuid",
+            )
+        self.assertEqual(before, set(self.gateway.projects_root.iterdir()))
+
     def test_supported_portable_archive_import_is_canonical(self) -> None:
         snapshot = self.import_prepared()
         self.assertEqual(1, snapshot.revision)
@@ -288,6 +479,280 @@ class EngineGatewayContractTests(GatewayFixture):
         self.assertEqual(
             [], validate_manifest(read_project_manifest(snapshot.root / "project.json"))
         )
+
+    def test_imported_plan_is_loaded_from_canonical_artifacts_without_paths(self) -> None:
+        snapshot = self.import_prepared()
+        loaded = self.service.read_plan(self.alice, snapshot.project_id, snapshot.revision)
+        plan = cast(Mapping[str, str], loaded.summary["plan"])
+        self.assertEqual(plan_payload(snapshot.root), dict(plan))
+        self.assertEqual(valid_story(), json.loads(plan["storyPlan"]))
+        self.assertEqual(valid_storyboard(), json.loads(plan["storyboard"]))
+        self.assertNotIn(str(snapshot.root), json.dumps(dict(plan), sort_keys=True))
+
+    def test_first_plan_update_publishes_character_data_atomically(self) -> None:
+        snapshot = self.create()
+        candidate = first_plan_payload()
+
+        updated = self.service.update_plan(
+            self.alice,
+            snapshot.project_id,
+            snapshot.revision,
+            candidate,
+        )
+
+        self.assertEqual(snapshot.revision + 1, updated.revision)
+        self.assertEqual(candidate.keys(), plan_payload(snapshot.root).keys())
+        self.assertEqual(
+            valid_characters(),
+            json.loads((snapshot.root / "plan/character-bible.json").read_bytes()),
+        )
+        manifest = read_project_manifest(snapshot.root / "project.json")
+        self.assertEqual(1, manifest["settings"]["panel_count"])
+        self.assertEqual(["p01-01"], manifest["panels"])
+        self.assertEqual(
+            {"story_plan", "character_bible", "storyboard"},
+            set(manifest["artifacts"]),
+        )
+        self.assertEqual([], validate_project(snapshot.root, "storyboard"))
+
+    def test_plan_read_serializes_complete_snapshot_with_updates(self) -> None:
+        snapshot = self.import_prepared()
+        candidate = plan_payload(snapshot.root)
+        story = json.loads(candidate["storyPlan"])
+        story["theme"] = "A concurrent update remains one coherent snapshot."
+        candidate["storyPlan"] = json.dumps(story)
+        read_started = threading.Event()
+        release_read = threading.Event()
+        update_finished = threading.Event()
+        errors: list[BaseException] = []
+        original_summary = EngineGateway._plan_summary
+
+        def blocking_summary(root: Path) -> dict[str, str]:
+            if threading.current_thread().name == "plan-reader":
+                read_started.set()
+                if not release_read.wait(5):
+                    raise TimeoutError("test did not release Plan read")
+            return original_summary(root)
+
+        def read() -> None:
+            try:
+                self.gateway.read_plan(snapshot.project_id, snapshot.revision)
+            except BaseException as error:
+                errors.append(error)
+
+        def update() -> None:
+            try:
+                self.gateway.update_plan(snapshot.project_id, snapshot.revision, candidate)
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                update_finished.set()
+
+        with mock.patch.object(
+            EngineGateway,
+            "_plan_summary",
+            new=staticmethod(blocking_summary),
+        ):
+            reader = threading.Thread(target=read, name="plan-reader")
+            updater = threading.Thread(target=update, name="plan-updater")
+            reader.start()
+            self.assertTrue(read_started.wait(2))
+            updater.start()
+            self.assertFalse(update_finished.wait(0.2))
+            release_read.set()
+            reader.join(5)
+            updater.join(5)
+        self.assertFalse(reader.is_alive())
+        self.assertFalse(updater.is_alive())
+        self.assertEqual([], errors)
+
+    def test_plan_update_response_is_serialized_with_the_next_update(self) -> None:
+        snapshot = self.import_prepared()
+        first_candidate = plan_payload(snapshot.root)
+        first_story = json.loads(first_candidate["storyPlan"])
+        first_story["theme"] = "The first response keeps its own committed Plan."
+        first_candidate["storyPlan"] = json.dumps(first_story)
+        second_candidate = dict(first_candidate)
+        second_story = dict(first_story)
+        second_story["theme"] = "A later update publishes only after the first response."
+        second_candidate["storyPlan"] = json.dumps(second_story)
+        response_read_started = threading.Event()
+        release_response_read = threading.Event()
+        second_finished = threading.Event()
+        results: dict[str, ProjectSnapshot] = {}
+        errors: list[BaseException] = []
+        original_summary = EngineGateway._plan_summary
+
+        def blocking_summary(root: Path) -> dict[str, str]:
+            if threading.current_thread().name == "first-plan-updater":
+                response_read_started.set()
+                if not release_response_read.wait(5):
+                    raise TimeoutError("test did not release the first Plan response")
+            return original_summary(root)
+
+        def first_update() -> None:
+            try:
+                results["first"] = self.gateway.update_plan(
+                    snapshot.project_id,
+                    snapshot.revision,
+                    first_candidate,
+                )
+            except BaseException as error:
+                errors.append(error)
+
+        def second_update() -> None:
+            try:
+                results["second"] = self.gateway.update_plan(
+                    snapshot.project_id,
+                    snapshot.revision + 1,
+                    second_candidate,
+                )
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                second_finished.set()
+
+        with mock.patch.object(
+            EngineGateway,
+            "_plan_summary",
+            new=staticmethod(blocking_summary),
+        ):
+            first = threading.Thread(target=first_update, name="first-plan-updater")
+            second = threading.Thread(target=second_update, name="second-plan-updater")
+            first.start()
+            self.assertTrue(response_read_started.wait(2))
+            second.start()
+            try:
+                self.assertFalse(second_finished.wait(0.2))
+            finally:
+                release_response_read.set()
+            first.join(5)
+            second.join(5)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual([], errors)
+        self.assertEqual(snapshot.revision + 1, results["first"].revision)
+        first_plan = cast(Mapping[str, str], results["first"].summary["plan"])
+        self.assertEqual(first_story, json.loads(first_plan["storyPlan"]))
+        self.assertEqual(snapshot.revision + 2, results["second"].revision)
+        self.assertEqual(
+            second_story,
+            json.loads((snapshot.root / "plan/story-plan.json").read_bytes()),
+        )
+
+    def test_plan_update_commits_canonical_bytes_and_survives_gateway_reload(self) -> None:
+        snapshot = self.import_prepared()
+        candidate = plan_payload(snapshot.root)
+        story = json.loads(candidate["storyPlan"])
+        story["theme"] = "Hope remains shared through every delivery."
+        candidate["storyPlan"] = json.dumps(story)
+
+        updated = self.service.update_plan(
+            self.alice,
+            snapshot.project_id,
+            snapshot.revision,
+            candidate,
+        )
+        self.assertEqual(snapshot.revision + 1, updated.revision)
+        self.assertEqual(
+            canonical_artifact_bytes(story),
+            (snapshot.root / "plan/story-plan.json").read_bytes(),
+        )
+        self.assertEqual([], validate_project(snapshot.root, "storyboard"))
+        manifest = read_project_manifest(snapshot.root / "project.json")
+        self.assertEqual(
+            {"contract_version": "1.0", "locked_scope_sha256": None, "manifest_path": None},
+            manifest["handoff"],
+        )
+        reopened = EngineGateway(self.database, self.data_root)
+        persisted = reopened.read_plan(snapshot.project_id, updated.revision)
+        self.assertEqual(
+            plan_payload(snapshot.root),
+            dict(cast(Mapping[str, str], persisted.summary["plan"])),
+        )
+
+    def test_plan_edits_fail_closed_until_prompts_are_rebuilt(self) -> None:
+        snapshot = self.import_prepared()
+        candidate = plan_payload(snapshot.root)
+        storyboard = json.loads(candidate["storyboard"])
+        storyboard["pages"][0]["panels"][0]["beat"] = "A newly reviewed beat."
+        candidate["storyboard"] = json.dumps(storyboard)
+        prompt = snapshot.root / "prompts/panels/p01-01.txt"
+        prompt_before = prompt.read_bytes()
+
+        updated = self.gateway.update_plan(
+            snapshot.project_id,
+            snapshot.revision,
+            candidate,
+        )
+
+        self.assertEqual("INIT", updated.status)
+        self.assertEqual(prompt_before, prompt.read_bytes())
+        with self.assertRaisesRegex(GatewayInputError, "planning and storyboard"):
+            self.gateway.prepare_generation(snapshot.project_id, updated.revision)
+        self.assertEqual(prompt_before, prompt.read_bytes())
+
+    def test_failed_plan_updates_preserve_project_bytes_and_web_revision_exactly(self) -> None:
+        snapshot = self.import_prepared()
+        before = tree_snapshot(snapshot.root)
+        candidate = plan_payload(snapshot.root)
+
+        operations = (
+            lambda: self.gateway.update_plan(snapshot.project_id, 0, candidate),
+            lambda: self.gateway.update_plan(
+                snapshot.project_id,
+                snapshot.revision,
+                {**candidate, "storyPlan": "not json"},
+            ),
+            lambda: self.gateway.update_plan(
+                snapshot.project_id,
+                snapshot.revision,
+                {**candidate, "storyboard": json.dumps({"schema_version": "1.0", "pages": []})},
+            ),
+            lambda: self.service.update_plan(
+                self.bob,
+                snapshot.project_id,
+                snapshot.revision,
+                candidate,
+            ),
+        )
+        for operation in operations:
+            with self.subTest(operation=operation), self.assertRaises(ValueError):
+                operation()
+            self.assertEqual(before, tree_snapshot(snapshot.root))
+            self.assertEqual(snapshot.revision, self.gateway.snapshot(snapshot.project_id).revision)
+
+        interrupted = dict(candidate)
+        interrupted_story = json.loads(interrupted["storyPlan"])
+        interrupted_story["theme"] = "A changed theme that must not partially publish."
+        interrupted["storyPlan"] = json.dumps(interrupted_story)
+        interrupted_storyboard = json.loads(interrupted["storyboard"])
+        interrupted_storyboard["pages"][0]["panels"][0]["beat"] = (
+            "A changed beat that must not partially publish."
+        )
+        interrupted["storyboard"] = json.dumps(interrupted_storyboard)
+
+        original_stage = getattr(
+            __import__("comic_sol_web.engine_gateway", fromlist=["ProjectTransaction"]),
+            "ProjectTransaction",
+        ).stage_bytes
+        calls = 0
+
+        def interrupt(transaction, relative, payload):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("injected interrupted Plan staging")
+            return original_stage(transaction, relative, payload)
+
+        with mock.patch(
+            "comic_sol_web.engine_gateway.ProjectTransaction.stage_bytes",
+            new=interrupt,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "interrupted Plan staging"):
+                self.gateway.update_plan(snapshot.project_id, snapshot.revision, interrupted)
+        self.assertEqual(before, tree_snapshot(snapshot.root))
+        self.assertEqual(snapshot.revision, self.gateway.snapshot(snapshot.project_id).revision)
 
     def test_created_and_imported_projects_converge_on_canonical_engine_state(self) -> None:
         created = self.create(title="New Canonical Project")
@@ -307,8 +772,13 @@ class EngineGatewayContractTests(GatewayFixture):
             lambda: self.gateway.create_project(
                 self.alice.user_id,
                 {"title": "Rollback", "prompt": "Rollback this project."},
+                idempotency_key(),
             ),
-            lambda: self.gateway.import_project(self.alice.user_id, archive),
+            lambda: self.gateway.import_project(
+                self.alice.user_id,
+                archive,
+                idempotency_key(),
+            ),
         ):
             with self.subTest(operation=operation):
                 with mock.patch.object(
@@ -674,7 +1144,11 @@ class EngineGatewayContractTests(GatewayFixture):
         other_database = Database(other_root / "application.sqlite3")
         apply_migrations(other_database, PROJECT_MIGRATIONS)
         other = EngineGateway(other_database, other_root)
-        reopened = other.import_project("other-owner", outputs["archive"])
+        reopened = other.import_project(
+            "other-owner",
+            outputs["archive"],
+            idempotency_key(),
+        )
         self.assertEqual(snapshot.status, reopened.status)
         self.assertEqual(
             snapshot.summary["engine_project_id"], reopened.summary["engine_project_id"]
@@ -707,18 +1181,30 @@ class EngineGatewayContractTests(GatewayFixture):
         malformed = Path(self.temporary_directory.name) / "malformed.comic-sol-handoff"
         malformed.write_bytes(b"not a zip archive")
         with self.assertRaises(HandoffArchiveError):
-            self.gateway.import_project(self.alice.user_id, malformed)
+            self.gateway.import_project(
+                self.alice.user_id,
+                malformed,
+                idempotency_key(),
+            )
         self.assertEqual([], list(self.gateway.projects_root.iterdir()))
 
         valid = portable_archive(self)
         unsupported_format = valid.with_suffix(".zip")
         shutil.copyfile(valid, unsupported_format)
         with self.assertRaises(GatewayInputError):
-            self.gateway.import_project(self.alice.user_id, unsupported_format)
+            self.gateway.import_project(
+                self.alice.user_id,
+                unsupported_format,
+                idempotency_key(),
+            )
 
         unsupported_schema = archive_with_schema(valid, "9.0")
         with self.assertRaises(HandoffArchiveError):
-            self.gateway.import_project(self.alice.user_id, unsupported_schema)
+            self.gateway.import_project(
+                self.alice.user_id,
+                unsupported_schema,
+                idempotency_key(),
+            )
         self.assertEqual([], list(self.gateway.projects_root.iterdir()))
 
 
@@ -748,13 +1234,16 @@ class ProjectApiTests(GatewayFixture):
             created = client.post(
                 "/api/projects",
                 json={"title": "API Project", "prompt": "A precise API project.", "page_count": 1},
+                headers=write_headers(),
             )
             self.assertEqual(201, created.status_code)
+            self.assertEqual("private, no-store", created.headers.get("cache-control"))
             created_body = created.json()
             self.assertEqual({"project_id", "revision", "status", "summary"}, set(created_body))
             self.assertEqual(1, created_body["revision"])
             fetched = client.get(f"/api/projects/{created_body['project_id']}")
             self.assertEqual(200, fetched.status_code)
+            self.assertEqual("private, no-store", fetched.headers.get("cache-control"))
             self.assertEqual(created_body, fetched.json())
 
             imported = client.post(
@@ -766,12 +1255,99 @@ class ProjectApiTests(GatewayFixture):
                         "application/zip",
                     )
                 },
+                headers=write_headers(),
             )
             self.assertEqual(201, imported.status_code)
+            self.assertEqual("private, no-store", imported.headers.get("cache-control"))
             imported_body = imported.json()
             self.assertEqual({"project_id", "revision", "status", "summary"}, set(imported_body))
             self.assertEqual(1, imported_body["revision"])
             self.assertEqual("STORYBOARDED", imported_body["status"])
+            self.assertEqual(
+                plan_payload(self.gateway.snapshot(imported_body["project_id"]).root),
+                imported_body["summary"]["plan"],
+            )
+        self.assertEqual(2, auth.csrf_checks)
+
+    def test_current_project_and_creation_retry_are_owner_bound_and_idempotent(self) -> None:
+        app, auth = self.app_for(self.alice)
+        key = idempotency_key()
+        with TestClient(app) as client:
+            empty = client.get("/api/projects/current")
+            self.assertEqual(204, empty.status_code)
+            self.assertEqual("private, no-store", empty.headers.get("cache-control"))
+
+            created = client.post(
+                "/api/projects",
+                json={"title": "Retry Project", "prompt": "Create this project once."},
+                headers=write_headers(key=key),
+            )
+            retried = client.post(
+                "/api/projects",
+                json={"title": "Ignored Retry", "prompt": "Replay the first result."},
+                headers=write_headers(key=key),
+            )
+            restored = client.get("/api/projects/current")
+
+        self.assertEqual(201, created.status_code)
+        self.assertEqual(201, retried.status_code)
+        self.assertEqual(created.json(), retried.json())
+        self.assertEqual(created.json(), restored.json())
+        self.assertEqual("private, no-store", restored.headers.get("cache-control"))
+        self.assertEqual(2, auth.csrf_checks)
+        with self.database.read() as connection:
+            self.assertEqual(
+                1,
+                connection.execute("SELECT COUNT(*) FROM web_projects").fetchone()[0],
+            )
+
+        other_app, _other_auth = self.app_for(self.bob)
+        with TestClient(other_app) as client:
+            unavailable = client.get("/api/projects/current")
+        self.assertEqual(204, unavailable.status_code)
+
+    def test_creation_headers_fail_before_project_allocation(self) -> None:
+        app, auth = self.app_for(self.alice)
+        with TestClient(app) as client:
+            missing = client.post(
+                "/api/projects",
+                json={"title": "Missing Headers", "prompt": "Reject this request."},
+            )
+            wrong_revision = client.post(
+                "/api/projects",
+                json={"title": "Wrong Revision", "prompt": "Reject this request."},
+                headers=write_headers(1),
+            )
+        self.assertEqual(400, missing.status_code)
+        self.assertEqual(400, wrong_revision.status_code)
+        self.assertEqual(2, auth.csrf_checks)
+        self.assertEqual([], list(self.gateway.projects_root.iterdir()))
+
+    def test_plan_api_requires_write_headers_and_returns_committed_canonical_plan(self) -> None:
+        snapshot = self.import_prepared()
+        app, auth = self.app_for(self.alice)
+        plan = plan_payload(snapshot.root)
+        story = json.loads(plan["storyPlan"])
+        story["theme"] = "The API commits a reviewed canonical Plan."
+        plan["storyPlan"] = json.dumps(story)
+        request = {"project_id": snapshot.project_id, "plan": plan}
+        with TestClient(app) as client:
+            missing_headers = client.post("/api/projects", json=request)
+            self.assertEqual(400, missing_headers.status_code)
+
+            updated = client.post(
+                "/api/projects",
+                json=request,
+                headers={
+                    "Idempotency-Key": "b3a11f8d-8f73-48fb-9d22-09e80c9d90be",
+                    "X-Expected-Revision": str(snapshot.revision),
+                },
+            )
+        self.assertEqual(200, updated.status_code)
+        self.assertEqual("private, no-store", updated.headers.get("cache-control"))
+        body = updated.json()
+        self.assertEqual(snapshot.revision + 1, body["revision"])
+        self.assertEqual(plan_payload(snapshot.root), body["summary"]["plan"])
         self.assertEqual(2, auth.csrf_checks)
 
     def test_api_anonymous_or_wrong_owner_access_is_unavailable(self) -> None:
