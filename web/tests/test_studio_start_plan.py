@@ -251,10 +251,21 @@ class StudioContractTests(unittest.TestCase):
         self.assertIsNotNone(node, "Node.js is required for the Studio runtime contract test")
         assert node is not None
         state_uri = (STATIC_ROOT / "state.js").as_uri()
+        api_uri = (STATIC_ROOT / "api.js").as_uri()
         plan_uri = (STATIC_ROOT / "views" / "plan.js").as_uri()
         script = f"""
-import {{ createStore }} from {json.dumps(state_uri)};
-import {{ persistReviewedDraft, safeProposal }} from {json.dumps(plan_uri)};
+import {{ readFileSync }} from "fs";
+
+const moduleUrl = (source) =>
+  `data:text/javascript;base64,${{Buffer.from(source, "utf8").toString("base64")}}`;
+const stateSource = readFileSync(new URL({json.dumps(state_uri)}), "utf8");
+const apiSource = readFileSync(new URL({json.dumps(api_uri)}), "utf8");
+const originalPlanSource = readFileSync(new URL({json.dumps(plan_uri)}), "utf8");
+const apiUrl = moduleUrl(apiSource);
+const planSource = originalPlanSource.replace('"../api.js"', JSON.stringify(apiUrl));
+if (planSource === originalPlanSource) throw new Error("Plan API import was not relocated");
+const {{ createStore }} = await import(moduleUrl(stateSource));
+const {{ persistReviewedDraft, safeProposal }} = await import(moduleUrl(planSource));
 
 function check(condition, message) {{
   if (!condition) throw new Error(message);
@@ -329,7 +340,6 @@ check(
         completed = subprocess.run(
             [
                 node,
-                "--experimental-default-type=module",
                 "--input-type=module",
                 "--eval",
                 script,
