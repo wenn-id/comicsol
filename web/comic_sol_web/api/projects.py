@@ -69,7 +69,7 @@ def _require_csrf(request: Request, principal: SessionPrincipal) -> None:
         raise HTTPException(status_code=403, detail="CSRF validation failed") from error
 
 
-def _write_revision(request: Request) -> int:
+def _write_headers(request: Request, *, creation: bool) -> tuple[str, int]:
     idempotency_key = request.headers.get("Idempotency-Key", "")
     expected_value = request.headers.get("X-Expected-Revision", "")
     try:
@@ -77,9 +77,10 @@ def _write_revision(request: Request) -> int:
         expected_revision = int(expected_value)
     except (ValueError, TypeError) as error:
         raise HTTPException(status_code=400, detail="project write headers are invalid") from error
-    if str(parsed_key) != idempotency_key.lower() or expected_revision < 1:
+    valid_revision = expected_revision == 0 if creation else expected_revision >= 1
+    if str(parsed_key) != idempotency_key.lower() or not valid_revision:
         raise HTTPException(status_code=400, detail="project write headers are invalid")
-    return expected_revision
+    return idempotency_key.lower(), expected_revision
 
 
 def _resolve_service(source: Any, request: Request) -> ProjectService:
@@ -127,7 +128,10 @@ def create_projects_router(service_source: Any) -> APIRouter:
                 plan = body["plan"]
                 if not isinstance(project_id, str) or not isinstance(plan, dict):
                     raise ValueError("Plan update envelope is invalid")
-                expected_revision = _write_revision(request)
+                _idempotency_key, expected_revision = _write_headers(
+                    request,
+                    creation=False,
+                )
                 snapshot = service.update_plan(
                     principal,
                     project_id,
@@ -136,7 +140,8 @@ def create_projects_router(service_source: Any) -> APIRouter:
                 )
                 response.status_code = status.HTTP_200_OK
                 return _envelope(snapshot)
-            snapshot = service.create_project(principal, body)
+            idempotency_key, _expected_revision = _write_headers(request, creation=True)
+            snapshot = service.create_project(principal, body, idempotency_key)
             return _envelope(service.read_plan(principal, snapshot.project_id, snapshot.revision))
         except HTTPException:
             raise
@@ -152,6 +157,7 @@ def create_projects_router(service_source: Any) -> APIRouter:
     ) -> dict[str, object]:
         _require_csrf(request, principal)
         _private_response(response)
+        idempotency_key, _expected_revision = _write_headers(request, creation=True)
         from comic_sol_product.cli import _load_engine_module
 
         archive_suffix = _load_engine_module("handoff_archive").ARCHIVE_SUFFIX
@@ -163,7 +169,7 @@ def create_projects_router(service_source: Any) -> APIRouter:
                 staged = Path(temporary) / f"upload{archive_suffix}"
                 await _stage_archive(archive, staged)
                 service = _resolve_service(service_source, request)
-                snapshot = service.import_project(principal, staged)
+                snapshot = service.import_project(principal, staged, idempotency_key)
                 return _envelope(
                     service.read_plan(principal, snapshot.project_id, snapshot.revision)
                 )
@@ -173,6 +179,23 @@ def create_projects_router(service_source: Any) -> APIRouter:
             _reject(error)
         finally:
             await archive.close()
+
+    @router.get("/current", response_model=None)
+    async def get_current_project(
+        request: Request,
+        response: Response,
+        principal: Annotated[SessionPrincipal, Depends(require_principal)],
+    ) -> dict[str, object] | Response:
+        _private_response(response)
+        try:
+            service = _resolve_service(service_source, request)
+            snapshot = service.current_project(principal)
+            if snapshot is None:
+                response.status_code = status.HTTP_204_NO_CONTENT
+                return response
+            return _envelope(snapshot)
+        except Exception as error:
+            _reject(error)
 
     @router.get("/{project_id}")
     async def get_project(

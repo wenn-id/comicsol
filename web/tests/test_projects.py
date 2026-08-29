@@ -16,6 +16,7 @@ import zipfile
 from pathlib import Path
 from typing import Mapping, cast, get_type_hints
 from unittest import mock
+from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -29,6 +30,7 @@ from comic_sol_web.database import Database
 from comic_sol_web.engine_gateway import (
     EngineGateway,
     GatewayInputError,
+    PROJECT_IDEMPOTENCY_MIGRATION,
     PROJECT_MIGRATION,
     PROJECT_MIGRATIONS,
     ProjectSnapshot,
@@ -54,6 +56,17 @@ CAPABILITIES_USED = {
     "reference_images": False,
 }
 PANEL_CAPABILITIES_USED = {**CAPABILITIES_USED, "reference_images": True}
+
+
+def idempotency_key() -> str:
+    return str(uuid4())
+
+
+def write_headers(revision: int = 0, *, key: str | None = None) -> dict[str, str]:
+    return {
+        "Idempotency-Key": key or idempotency_key(),
+        "X-Expected-Revision": str(revision),
+    }
 
 
 def tree_snapshot(root: Path) -> dict[str, bytes]:
@@ -148,10 +161,15 @@ class GatewayFixture(unittest.TestCase):
                 "language": "en",
                 "page_count": 1,
             },
+            idempotency_key(),
         )
 
     def import_prepared(self) -> ProjectSnapshot:
-        return self.service.import_project(self.alice, portable_archive(self))
+        return self.service.import_project(
+            self.alice,
+            portable_archive(self),
+            idempotency_key(),
+        )
 
     def staged_raster(self, request: GenerationRequest, color: str = "navy") -> Path:
         path = self.gateway.staging_root / f"{request.job_id}-{color}.png"
@@ -178,12 +196,29 @@ class EngineGatewayContractTests(GatewayFixture):
         )
         expected = {
             "create_project": (
-                ["self", "owner_id", "request"],
-                {"owner_id": str, "request": Mapping[str, object], "return": ProjectSnapshot},
+                ["self", "owner_id", "request", "idempotency_key"],
+                {
+                    "owner_id": str,
+                    "request": Mapping[str, object],
+                    "idempotency_key": str,
+                    "return": ProjectSnapshot,
+                },
             ),
             "import_project": (
-                ["self", "owner_id", "archive"],
-                {"owner_id": str, "archive": Path, "return": ProjectSnapshot},
+                ["self", "owner_id", "archive", "idempotency_key"],
+                {
+                    "owner_id": str,
+                    "archive": Path,
+                    "idempotency_key": str,
+                    "return": ProjectSnapshot,
+                },
+            ),
+            "current_project": (
+                ["self", "owner_id"],
+                {
+                    "owner_id": str,
+                    "return": ProjectSnapshot | None,
+                },
             ),
             "snapshot": (
                 ["self", "project_id", "expected_revision"],
@@ -274,7 +309,7 @@ class EngineGatewayContractTests(GatewayFixture):
                     "SELECT version FROM schema_migrations ORDER BY version"
                 )
             )
-        self.assertEqual(tuple(range(1, PROJECT_MIGRATION.version + 1)), versions)
+        self.assertEqual(tuple(range(1, PROJECT_IDEMPOTENCY_MIGRATION.version + 1)), versions)
 
         rollback_root = Path(self.temporary_directory.name) / "migration-rollback"
         rollback_database = Database(rollback_root / "application.sqlite3")
@@ -329,6 +364,7 @@ class EngineGatewayContractTests(GatewayFixture):
                 "mode": "pasted_story",
                 "page_count": 4,
             },
+            idempotency_key(),
         )
         self.assertEqual(
             {"language": "en", "mode": "pasted_story"},
@@ -344,6 +380,92 @@ class EngineGatewayContractTests(GatewayFixture):
                     "mode": "short_prompt",
                     "page_count": 5,
                 },
+                idempotency_key(),
+            )
+        self.assertEqual(before, set(self.gateway.projects_root.iterdir()))
+
+    def test_creation_idempotency_replays_and_concurrent_retries_leave_one_project(self) -> None:
+        key = idempotency_key()
+        request = {
+            "title": "Idempotent Project",
+            "prompt": "Only one canonical project may be allocated.",
+            "language": "en",
+            "page_count": 1,
+        }
+        rendezvous = threading.Barrier(2)
+        original_record = self.gateway._record_project
+        results: list[ProjectSnapshot] = []
+        errors: list[BaseException] = []
+
+        def record(
+            project_id: str,
+            owner_id: str,
+            storage_name: str,
+            revision: int,
+            engine_state: str,
+            creation_key: str,
+        ) -> str:
+            rendezvous.wait(timeout=5)
+            return original_record(
+                project_id,
+                owner_id,
+                storage_name,
+                revision,
+                engine_state,
+                creation_key,
+            )
+
+        def create() -> None:
+            try:
+                results.append(self.service.create_project(self.alice, request, key))
+            except BaseException as error:
+                errors.append(error)
+
+        with mock.patch.object(self.gateway, "_record_project", side_effect=record):
+            workers = [threading.Thread(target=create) for _index in range(2)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(10)
+
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual([], errors)
+        self.assertEqual(2, len(results))
+        self.assertEqual(1, len({snapshot.project_id for snapshot in results}))
+        replayed = self.service.create_project(self.alice, request, key)
+        self.assertEqual(results[0].project_id, replayed.project_id)
+        with self.database.read() as connection:
+            self.assertEqual(
+                1,
+                connection.execute("SELECT COUNT(*) FROM web_projects").fetchone()[0],
+            )
+            self.assertEqual(
+                1,
+                connection.execute("SELECT COUNT(*) FROM web_project_creations").fetchone()[0],
+            )
+        self.assertEqual(1, len(list(self.gateway.projects_root.iterdir())))
+
+    def test_current_project_is_latest_for_owner_and_empty_for_other_owner(self) -> None:
+        self.assertIsNone(self.service.current_project(self.alice))
+        first = self.create(title="First Current Project")
+        second = self.create(title="Second Current Project")
+
+        current = self.service.current_project(self.alice)
+
+        self.assertIsNotNone(current)
+        assert current is not None
+        self.assertEqual(second.project_id, current.project_id)
+        self.assertIn("plan", current.summary)
+        self.assertNotEqual(first.project_id, current.project_id)
+        self.assertIsNone(self.service.current_project(self.bob))
+
+    def test_invalid_creation_key_fails_before_container_allocation(self) -> None:
+        before = set(self.gateway.projects_root.iterdir())
+        with self.assertRaisesRegex(GatewayInputError, "idempotency key"):
+            self.gateway.create_project(
+                self.alice.user_id,
+                {"title": "Rejected", "prompt": "This must not allocate."},
+                "not-a-uuid",
             )
         self.assertEqual(before, set(self.gateway.projects_root.iterdir()))
 
@@ -650,8 +772,13 @@ class EngineGatewayContractTests(GatewayFixture):
             lambda: self.gateway.create_project(
                 self.alice.user_id,
                 {"title": "Rollback", "prompt": "Rollback this project."},
+                idempotency_key(),
             ),
-            lambda: self.gateway.import_project(self.alice.user_id, archive),
+            lambda: self.gateway.import_project(
+                self.alice.user_id,
+                archive,
+                idempotency_key(),
+            ),
         ):
             with self.subTest(operation=operation):
                 with mock.patch.object(
@@ -1017,7 +1144,11 @@ class EngineGatewayContractTests(GatewayFixture):
         other_database = Database(other_root / "application.sqlite3")
         apply_migrations(other_database, PROJECT_MIGRATIONS)
         other = EngineGateway(other_database, other_root)
-        reopened = other.import_project("other-owner", outputs["archive"])
+        reopened = other.import_project(
+            "other-owner",
+            outputs["archive"],
+            idempotency_key(),
+        )
         self.assertEqual(snapshot.status, reopened.status)
         self.assertEqual(
             snapshot.summary["engine_project_id"], reopened.summary["engine_project_id"]
@@ -1050,18 +1181,30 @@ class EngineGatewayContractTests(GatewayFixture):
         malformed = Path(self.temporary_directory.name) / "malformed.comic-sol-handoff"
         malformed.write_bytes(b"not a zip archive")
         with self.assertRaises(HandoffArchiveError):
-            self.gateway.import_project(self.alice.user_id, malformed)
+            self.gateway.import_project(
+                self.alice.user_id,
+                malformed,
+                idempotency_key(),
+            )
         self.assertEqual([], list(self.gateway.projects_root.iterdir()))
 
         valid = portable_archive(self)
         unsupported_format = valid.with_suffix(".zip")
         shutil.copyfile(valid, unsupported_format)
         with self.assertRaises(GatewayInputError):
-            self.gateway.import_project(self.alice.user_id, unsupported_format)
+            self.gateway.import_project(
+                self.alice.user_id,
+                unsupported_format,
+                idempotency_key(),
+            )
 
         unsupported_schema = archive_with_schema(valid, "9.0")
         with self.assertRaises(HandoffArchiveError):
-            self.gateway.import_project(self.alice.user_id, unsupported_schema)
+            self.gateway.import_project(
+                self.alice.user_id,
+                unsupported_schema,
+                idempotency_key(),
+            )
         self.assertEqual([], list(self.gateway.projects_root.iterdir()))
 
 
@@ -1091,6 +1234,7 @@ class ProjectApiTests(GatewayFixture):
             created = client.post(
                 "/api/projects",
                 json={"title": "API Project", "prompt": "A precise API project.", "page_count": 1},
+                headers=write_headers(),
             )
             self.assertEqual(201, created.status_code)
             self.assertEqual("private, no-store", created.headers.get("cache-control"))
@@ -1111,6 +1255,7 @@ class ProjectApiTests(GatewayFixture):
                         "application/zip",
                     )
                 },
+                headers=write_headers(),
             )
             self.assertEqual(201, imported.status_code)
             self.assertEqual("private, no-store", imported.headers.get("cache-control"))
@@ -1123,6 +1268,60 @@ class ProjectApiTests(GatewayFixture):
                 imported_body["summary"]["plan"],
             )
         self.assertEqual(2, auth.csrf_checks)
+
+    def test_current_project_and_creation_retry_are_owner_bound_and_idempotent(self) -> None:
+        app, auth = self.app_for(self.alice)
+        key = idempotency_key()
+        with TestClient(app) as client:
+            empty = client.get("/api/projects/current")
+            self.assertEqual(204, empty.status_code)
+            self.assertEqual("private, no-store", empty.headers.get("cache-control"))
+
+            created = client.post(
+                "/api/projects",
+                json={"title": "Retry Project", "prompt": "Create this project once."},
+                headers=write_headers(key=key),
+            )
+            retried = client.post(
+                "/api/projects",
+                json={"title": "Ignored Retry", "prompt": "Replay the first result."},
+                headers=write_headers(key=key),
+            )
+            restored = client.get("/api/projects/current")
+
+        self.assertEqual(201, created.status_code)
+        self.assertEqual(201, retried.status_code)
+        self.assertEqual(created.json(), retried.json())
+        self.assertEqual(created.json(), restored.json())
+        self.assertEqual("private, no-store", restored.headers.get("cache-control"))
+        self.assertEqual(2, auth.csrf_checks)
+        with self.database.read() as connection:
+            self.assertEqual(
+                1,
+                connection.execute("SELECT COUNT(*) FROM web_projects").fetchone()[0],
+            )
+
+        other_app, _other_auth = self.app_for(self.bob)
+        with TestClient(other_app) as client:
+            unavailable = client.get("/api/projects/current")
+        self.assertEqual(204, unavailable.status_code)
+
+    def test_creation_headers_fail_before_project_allocation(self) -> None:
+        app, auth = self.app_for(self.alice)
+        with TestClient(app) as client:
+            missing = client.post(
+                "/api/projects",
+                json={"title": "Missing Headers", "prompt": "Reject this request."},
+            )
+            wrong_revision = client.post(
+                "/api/projects",
+                json={"title": "Wrong Revision", "prompt": "Reject this request."},
+                headers=write_headers(1),
+            )
+        self.assertEqual(400, missing.status_code)
+        self.assertEqual(400, wrong_revision.status_code)
+        self.assertEqual(2, auth.csrf_checks)
+        self.assertEqual([], list(self.gateway.projects_root.iterdir()))
 
     def test_plan_api_requires_write_headers_and_returns_committed_canonical_plan(self) -> None:
         snapshot = self.import_prepared()

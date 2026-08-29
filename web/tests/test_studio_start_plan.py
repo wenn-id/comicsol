@@ -181,6 +181,10 @@ class StudioContractTests(unittest.TestCase):
 
     def test_client_uses_only_the_existing_wp3_project_api(self) -> None:
         self.assertIn('const PROJECTS_PATH = "/api/projects"', self.api)
+        self.assertIn("`${PROJECTS_PATH}/current`", self.api)
+        self.assertIn("getCurrentProject", self.app)
+        self.assertIn("restoreCurrentProject", self.app)
+        self.assertIn("store.setProject(project)", self.state)
         self.assertIn("`${PROJECTS_PATH}/import`", self.api)
         self.assertIn("encodeURIComponent(projectId)", self.api)
         route_literals = set(re.findall(r'["\'](/api/[^"\']*)["\']', self.scripts))
@@ -264,7 +268,7 @@ const originalPlanSource = readFileSync(new URL({json.dumps(plan_uri)}), "utf8")
 const apiUrl = moduleUrl(apiSource);
 const planSource = originalPlanSource.replace('"../api.js"', JSON.stringify(apiUrl));
 if (planSource === originalPlanSource) throw new Error("Plan API import was not relocated");
-const {{ createStore }} = await import(moduleUrl(stateSource));
+const {{ createStore, restoreCurrentProject }} = await import(moduleUrl(stateSource));
 const {{ persistReviewedDraft, safeProposal }} = await import(moduleUrl(planSource));
 
 function check(condition, message) {{
@@ -336,6 +340,26 @@ check(
     completeProposal.changes.characterBible === replacementPlan.characterBible,
   "complete proposal did not retain the canonical envelope",
 );
+
+const restoredStore = createStore();
+const restored = await restoreCurrentProject(
+  restoredStore,
+  async () => project(7, replacementPlan),
+);
+check(restored === true, "current project was not restored");
+check(restoredStore.getState().view === "plan", "restored project did not open the Plan view");
+check(restoredStore.getState().project.revision === 7, "restored revision was not installed");
+
+const activeStore = createStore();
+let resolveRestore;
+const pendingRestore = restoreCurrentProject(
+  activeStore,
+  () => new Promise((resolve) => {{ resolveRestore = resolve; }}),
+);
+activeStore.setProject(project(9, submittedPlan));
+resolveRestore(project(8, originalPlan));
+check((await pendingRestore) === false, "stale startup restore replaced active state");
+check(activeStore.getState().project.revision === 9, "active project was overwritten by restore");
 """
         completed = subprocess.run(
             [

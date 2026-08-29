@@ -28,6 +28,14 @@ function initialState() {
   });
 }
 
+export async function restoreCurrentProject(store, loadCurrentProject) {
+  const initial = store.getState();
+  const project = await loadCurrentProject();
+  if (!project || store.getState() !== initial) return false;
+  store.setProject(project);
+  return true;
+}
+
 export function createStore() {
   let state = initialState();
   const listeners = new Set();

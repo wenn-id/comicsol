@@ -23,15 +23,20 @@ class ProjectService:
         self,
         principal: SessionPrincipal,
         request: Mapping[str, object],
+        idempotency_key: str,
     ) -> ProjectSnapshot:
-        return self.gateway.create_project(principal.user_id, request)
+        return self.gateway.create_project(principal.user_id, request, idempotency_key)
 
     def import_project(
         self,
         principal: SessionPrincipal,
         archive: Path,
+        idempotency_key: str,
     ) -> ProjectSnapshot:
-        return self.gateway.import_project(principal.user_id, archive)
+        return self.gateway.import_project(principal.user_id, archive, idempotency_key)
+
+    def current_project(self, principal: SessionPrincipal) -> ProjectSnapshot | None:
+        return self.gateway.current_project(principal.user_id)
 
     def snapshot(
         self,

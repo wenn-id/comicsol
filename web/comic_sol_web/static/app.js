@@ -1,4 +1,5 @@
-import { createStore } from "./state.js";
+import { getCurrentProject } from "./api.js";
+import { createStore, restoreCurrentProject } from "./state.js";
 import { renderStartView } from "./views/start.js";
 import { renderPlanView } from "./views/plan.js";
 
@@ -52,3 +53,15 @@ for (const tab of tabs) {
 
 store.subscribe(render);
 render(store.getState());
+
+async function restoreProject() {
+  try {
+    if (await restoreCurrentProject(store, getCurrentProject)) {
+      announce("Restored your current project.", "success");
+    }
+  } catch (_error) {
+    announce("Your saved project could not be restored safely.", "danger");
+  }
+}
+
+void restoreProject();

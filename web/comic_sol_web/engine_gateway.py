@@ -10,6 +10,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, cast
+from uuid import UUID
 
 from comic_sol_product.cli import _load_engine_module
 
@@ -76,7 +77,25 @@ PROJECT_MIGRATION = Migration(
         "CREATE INDEX web_projects_owner ON web_projects (owner_id, project_id)",
     ),
 )
-PROJECT_MIGRATIONS = (*APPLICATION_MIGRATIONS, PROJECT_MIGRATION)
+PROJECT_IDEMPOTENCY_MIGRATION = Migration(
+    6,
+    (
+        """
+        CREATE TABLE web_project_creations (
+            owner_id TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            project_id TEXT NOT NULL REFERENCES web_projects(project_id) ON DELETE CASCADE,
+            PRIMARY KEY (owner_id, idempotency_key),
+            UNIQUE (project_id)
+        )
+        """,
+    ),
+)
+PROJECT_MIGRATIONS = (
+    *APPLICATION_MIGRATIONS,
+    PROJECT_MIGRATION,
+    PROJECT_IDEMPOTENCY_MIGRATION,
+)
 
 
 class GatewayError(ValueError):
@@ -167,6 +186,18 @@ class EngineGateway:
             raise GatewayInputError("project owner is invalid")
 
     @staticmethod
+    def _canonical_idempotency_key(idempotency_key: str) -> str:
+        if not isinstance(idempotency_key, str):
+            raise GatewayInputError("project idempotency key is invalid")
+        try:
+            parsed = UUID(idempotency_key)
+        except ValueError as error:
+            raise GatewayInputError("project idempotency key is invalid") from error
+        if str(parsed) != idempotency_key.lower():
+            raise GatewayInputError("project idempotency key is invalid")
+        return str(parsed)
+
+    @staticmethod
     def _validate_project_id(project_id: str) -> None:
         if not isinstance(project_id, str) or _PROJECT_ID.fullmatch(project_id) is None:
             raise ProjectUnavailableError("project unavailable")
@@ -223,6 +254,20 @@ class EngineGateway:
             page_count,
         )
 
+    def _creation_project_id(self, owner_id: str, idempotency_key: str) -> str | None:
+        with self.database.read() as connection:
+            row = connection.execute(
+                "SELECT project_id FROM web_project_creations "
+                "WHERE owner_id = ? AND idempotency_key = ?",
+                (owner_id, idempotency_key),
+            ).fetchone()
+        if row is None:
+            return None
+        project_id = row["project_id"]
+        if not isinstance(project_id, str):
+            raise ProjectUnavailableError("project unavailable")
+        return project_id
+
     def _record_project(
         self,
         project_id: str,
@@ -230,14 +275,31 @@ class EngineGateway:
         storage_name: str,
         revision: int,
         engine_state: str,
-    ) -> None:
+        idempotency_key: str,
+    ) -> str:
         with self.database.transaction() as connection:
+            existing = connection.execute(
+                "SELECT project_id FROM web_project_creations "
+                "WHERE owner_id = ? AND idempotency_key = ?",
+                (owner_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                winner = existing["project_id"]
+                if not isinstance(winner, str):
+                    raise ProjectUnavailableError("project unavailable")
+                return winner
             connection.execute(
                 "INSERT INTO web_projects "
                 "(project_id, owner_id, storage_name, revision, engine_state) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (project_id, owner_id, storage_name, revision, engine_state),
             )
+            connection.execute(
+                "INSERT INTO web_project_creations "
+                "(owner_id, idempotency_key, project_id) VALUES (?, ?, ?)",
+                (owner_id, idempotency_key, project_id),
+            )
+        return project_id
 
     def _row(self, project_id: str) -> sqlite3.Row:
         self._validate_project_id(project_id)
@@ -268,6 +330,21 @@ class EngineGateway:
         row = self._row(project_id)
         if row["owner_id"] != owner_id:
             raise ProjectUnavailableError("project unavailable")
+
+    def current_project(self, owner_id: str) -> ProjectSnapshot | None:
+        self._validate_owner(owner_id)
+        with self.database.read() as connection:
+            row = connection.execute(
+                "SELECT project_id FROM web_projects WHERE owner_id = ? "
+                "ORDER BY rowid DESC LIMIT 1",
+                (owner_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        project_id = row["project_id"]
+        if not isinstance(project_id, str):
+            raise ProjectUnavailableError("project unavailable")
+        return self.read_plan(project_id)
 
     @staticmethod
     def _check_revision(actual: int, expected: int | None) -> None:
@@ -302,9 +379,18 @@ class EngineGateway:
             summary.update(extra_summary)
         return ProjectSnapshot(project_id, revision, root, status, summary)
 
-    def create_project(self, owner_id: str, request: Mapping[str, object]) -> ProjectSnapshot:
+    def create_project(
+        self,
+        owner_id: str,
+        request: Mapping[str, object],
+        idempotency_key: str,
+    ) -> ProjectSnapshot:
         self._validate_owner(owner_id)
+        idempotency_key = self._canonical_idempotency_key(idempotency_key)
         title, source, engine_request, page_count = self._create_parameters(request)
+        existing = self._creation_project_id(owner_id, idempotency_key)
+        if existing is not None:
+            return self.read_plan(existing)
         project_id, container, identity = self._allocate_container()
         try:
             root = comic_sol.init_project(
@@ -316,17 +402,36 @@ class EngineGateway:
             )
             snapshot = self._snapshot_for(project_id, 1, root)
             storage_name = root.relative_to(self.projects_root).as_posix()
-            self._record_project(project_id, owner_id, storage_name, 1, self._engine_state(root))
-            return snapshot
+            winner = self._record_project(
+                project_id,
+                owner_id,
+                storage_name,
+                1,
+                self._engine_state(root),
+                idempotency_key,
+            )
         except BaseException:
             self._cleanup_container(container, identity)
             raise
+        if winner != project_id:
+            self._cleanup_container(container, identity)
+            return self.read_plan(winner)
+        return snapshot
 
-    def import_project(self, owner_id: str, archive: Path) -> ProjectSnapshot:
+    def import_project(
+        self,
+        owner_id: str,
+        archive: Path,
+        idempotency_key: str,
+    ) -> ProjectSnapshot:
         self._validate_owner(owner_id)
+        idempotency_key = self._canonical_idempotency_key(idempotency_key)
         archive_path = Path(archive)
         if archive_path.suffix != ARCHIVE_SUFFIX:
             raise GatewayInputError("unsupported project archive format")
+        existing = self._creation_project_id(owner_id, idempotency_key)
+        if existing is not None:
+            return self.read_plan(existing)
         project_id, container, identity = self._allocate_container()
         try:
             result = import_handoff_archive(archive_path, container)
@@ -336,11 +441,21 @@ class EngineGateway:
             root = Path(root_value)
             snapshot = self._snapshot_for(project_id, 1, root)
             storage_name = root.relative_to(self.projects_root).as_posix()
-            self._record_project(project_id, owner_id, storage_name, 1, self._engine_state(root))
-            return snapshot
+            winner = self._record_project(
+                project_id,
+                owner_id,
+                storage_name,
+                1,
+                self._engine_state(root),
+                idempotency_key,
+            )
         except BaseException:
             self._cleanup_container(container, identity)
             raise
+        if winner != project_id:
+            self._cleanup_container(container, identity)
+            return self.read_plan(winner)
+        return snapshot
 
     def snapshot(self, project_id: str, expected_revision: int | None = None) -> ProjectSnapshot:
         row = self._row(project_id)

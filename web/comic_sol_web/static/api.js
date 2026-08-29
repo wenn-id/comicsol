@@ -135,6 +135,16 @@ export function updatePlan(projectId, plan, expectedRevision) {
   });
 }
 
+export async function getCurrentProject() {
+  const response = await fetch(`${PROJECTS_PATH}/current`, {
+    method: "GET",
+    credentials: "same-origin",
+    headers: { Accept: "application/json" },
+  });
+  if (response.status === 204) return null;
+  return readEnvelope(response);
+}
+
 export async function getProject(projectId) {
   const response = await fetch(`${PROJECTS_PATH}/${encodeURIComponent(projectId)}`, {
     method: "GET",
