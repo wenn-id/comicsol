@@ -18,6 +18,7 @@ from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 
+from comic_sol_web.api.generation import create_generation_router
 from comic_sol_web.api.projects import create_projects_router
 
 if TYPE_CHECKING:
@@ -63,6 +64,44 @@ def _project_service(request: Request) -> "ProjectService":
     return service
 
 
+def _generation_service(request: Request) -> object:
+    """Construct and cache provider-neutral queue storage on demand."""
+    existing = getattr(request.app.state, "generation", None)
+    if existing is not None:
+        return existing
+
+    # Keep provider, credential, queue, migration, and engine imports outside
+    # application construction so /healthz remains a pure in-memory response.
+    import os
+
+    from comic_sol_web.generation.credentials import CredentialBroker
+    from comic_sol_web.generation.providers.base import ProviderRegistry
+    from comic_sol_web.generation.service import GenerationService
+
+    projects = _project_service(request)
+    gateway = projects.gateway
+    config = request.app.state.web_config
+    credentials = CredentialBroker(
+        gateway.database,
+        deployment_environment=os.environ,
+        hosted_secret_references=config.hosted_secret_references,
+        master_key_references=config.master_key_references,
+        active_key_id=config.active_credential_key_id,
+    )
+    service = GenerationService(
+        gateway.database,
+        projects,
+        # Provider adapters are registered by their owning work packages. The
+        # deterministic FakeProvider remains test-only because its tiny fixture
+        # intentionally does not satisfy the canonical engine raster boundary.
+        ProviderRegistry(()),
+        gateway.staging_root,
+        credentials=credentials,
+    )
+    request.app.state.generation = service
+    return service
+
+
 def create_app(_config: "WebConfig") -> FastAPI:
     """Return a configured FastAPI application.
 
@@ -73,6 +112,7 @@ def create_app(_config: "WebConfig") -> FastAPI:
     app = FastAPI(title="Comic Sol Web", docs_url=None, redoc_url=None)
     app.state.web_config = _config
     app.include_router(create_projects_router(_project_service))
+    app.include_router(create_generation_router(_generation_service))
 
     @app.get("/healthz")
     def healthz() -> Response:
