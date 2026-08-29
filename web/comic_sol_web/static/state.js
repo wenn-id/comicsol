@@ -1,5 +1,6 @@
 const EMPTY_PLAN = Object.freeze({
   storyPlan: "",
+  characterBible: "",
   storyboard: "",
   visualIdentityPack: "",
 });
@@ -7,6 +8,7 @@ const EMPTY_PLAN = Object.freeze({
 function freezePlan(value = EMPTY_PLAN) {
   return Object.freeze({
     storyPlan: typeof value.storyPlan === "string" ? value.storyPlan : "",
+    characterBible: typeof value.characterBible === "string" ? value.characterBible : "",
     storyboard: typeof value.storyboard === "string" ? value.storyboard : "",
     visualIdentityPack:
       typeof value.visualIdentityPack === "string" ? value.visualIdentityPack : "",

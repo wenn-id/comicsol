@@ -2,6 +2,7 @@ import { StudioApiError, StaleRevisionError, getProject, updatePlan } from "../a
 
 const FIELDS = Object.freeze([
   Object.freeze(["storyPlan", "Story plan"]),
+  Object.freeze(["characterBible", "Character bible"]),
   Object.freeze(["storyboard", "Storyboard"]),
   Object.freeze(["visualIdentityPack", "Visual Identity Pack"]),
 ]);
@@ -21,15 +22,17 @@ function labelFor(identifier, text) {
   return element("label", { for: identifier }, text);
 }
 
-function safeProposal(detail) {
+export function safeProposal(detail) {
   if (!detail || typeof detail !== "object" || !Number.isInteger(detail.expectedRevision)) return null;
   const changes = detail.changes;
-  if (!changes || typeof changes !== "object") return null;
+  if (
+    !changes ||
+    typeof changes !== "object" ||
+    !FIELDS.every(([key]) => typeof changes[key] === "string")
+  ) return null;
   return {
     expectedRevision: detail.expectedRevision,
-    changes: Object.fromEntries(
-      FIELDS.map(([key]) => [key, typeof changes[key] === "string" ? changes[key].slice(0, 1048576) : ""]),
-    ),
+    changes: Object.fromEntries(FIELDS.map(([key]) => [key, changes[key].slice(0, 1048576)])),
   };
 }
 
@@ -58,6 +61,18 @@ function renderDraftDiff(container, current, draft) {
   }
   if (!list.childElementCount) list.append(element("p", {}, "The draft contains no changes."));
   container.append(list);
+}
+
+export async function persistReviewedDraft(store, draft, persist) {
+  const persisted = await persist();
+  const currentDraft = store.getState().draft;
+  if (currentDraft !== draft) {
+    store.replaceProject(persisted);
+    if (currentDraft) store.createDraft(currentDraft.changes, currentDraft.origin);
+    return Object.freeze({ outcome: "replacement-preserved", persisted });
+  }
+  const outcome = store.promoteDraft(persisted) ? "promoted" : "not-promoted";
+  return Object.freeze({ outcome, persisted });
 }
 
 export function renderPlanView({ store, announce }) {
@@ -186,20 +201,17 @@ export function renderPlanView({ store, announce }) {
     updateDraft();
     announce("Saving the reviewed Plan to the canonical project…");
     try {
-      const persisted = await updatePlan(
+      const result = await persistReviewedDraft(store, draft, () => updatePlan(
         latest.project.project_id,
         draft.changes,
         draft.expectedRevision,
-      );
-      const currentDraft = store.getState().draft;
-      if (currentDraft !== draft) {
-        store.replaceProject(persisted);
-        if (currentDraft) store.createDraft(currentDraft.changes, currentDraft.origin);
+      ));
+      if (result.outcome === "replacement-preserved") {
         updateDraft();
         announce("The saved Plan was refreshed; newer edits remain a draft for review.", "error");
         return;
       }
-      if (store.promoteDraft(persisted)) {
+      if (result.outcome === "promoted") {
         for (const [key] of FIELDS) controls[key].value = store.getState().workingPlan[key];
         updateDraft();
         announce("Draft committed and promoted to the revision-bound working copy.", "success");

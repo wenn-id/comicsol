@@ -56,6 +56,7 @@ _PROJECT_ID = re.compile(r"[A-Za-z0-9_-]{32}\Z")
 _DEFAULT_GENERATION_DIMENSION = 1024
 _PLAN_FIELDS = {
     "storyPlan": "plan/story-plan.json",
+    "characterBible": "plan/character-bible.json",
     "storyboard": "plan/storyboard.json",
     "visualIdentityPack": "plan/character-identity-pack.json",
 }
@@ -386,7 +387,7 @@ class EngineGateway:
     ]:
         if not isinstance(plan, Mapping) or set(plan) != set(_PLAN_FIELDS):
             raise GatewayInputError("Plan request must contain the complete canonical envelope")
-        canonical_paths = [*_PLAN_FIELDS.values(), "plan/character-bible.json"]
+        canonical_paths = list(_PLAN_FIELDS.values())
         existing = [
             contained_project_path(root, relative).is_file() for relative in canonical_paths
         ]
@@ -405,19 +406,9 @@ class EngineGateway:
             if not isinstance(document, dict):
                 raise GatewayInputError("Plan document must contain a JSON object")
             documents[field] = cast(dict[str, object], document)
-        if first_plan:
-            character_bible: dict[str, object] = {
-                "characters": [],
-                "schema_version": "1.0",
-            }
-        else:
-            existing_bible = read_contained_json(root, "plan/character-bible.json")
-            if not isinstance(existing_bible, dict):
-                raise GatewayInputError("canonical character bible is invalid")
-            character_bible = cast(dict[str, object], existing_bible)
         return (
             documents["storyPlan"],
-            character_bible,
+            documents["characterBible"],
             documents["storyboard"],
             documents["visualIdentityPack"],
             first_plan,
@@ -497,7 +488,6 @@ class EngineGateway:
     def _initial_plan_manifest(
         root: Path,
         payloads: Mapping[str, bytes],
-        character_bible: bytes,
         panel_ids: list[str],
     ) -> bytes:
         manifest = read_project_manifest(root / "project.json", normalize_legacy=False)
@@ -509,7 +499,7 @@ class EngineGateway:
         manifest["panels"] = panel_ids
         artifact_payloads = {
             "story_plan": ("plan/story-plan.json", payloads["storyPlan"]),
-            "character_bible": ("plan/character-bible.json", character_bible),
+            "character_bible": ("plan/character-bible.json", payloads["characterBible"]),
             "storyboard": ("plan/storyboard.json", payloads["storyboard"]),
         }
         manifest["artifacts"] = {
@@ -549,20 +539,18 @@ class EngineGateway:
             )
             payloads = {
                 "storyPlan": canonical_artifact_bytes(story),
+                "characterBible": canonical_artifact_bytes(character_bible),
                 "storyboard": canonical_artifact_bytes(storyboard),
                 "visualIdentityPack": canonical_artifact_bytes(identity_pack),
             }
             if first_plan:
-                character_bible_payload = canonical_artifact_bytes(character_bible)
                 for field, relative in _PLAN_FIELDS.items():
                     transaction.stage_bytes(relative, payloads[field])
-                transaction.stage_bytes("plan/character-bible.json", character_bible_payload)
                 transaction.stage_bytes(
                     "project.json",
                     self._initial_plan_manifest(
                         root,
                         payloads,
-                        character_bible_payload,
                         panel_ids,
                     ),
                 )

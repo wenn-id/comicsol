@@ -46,7 +46,7 @@ function validateEnvelope(value) {
     typeof value.summary !== "object" ||
     !value.summary.plan ||
     typeof value.summary.plan !== "object" ||
-    !["storyPlan", "storyboard", "visualIdentityPack"].every(
+    !["storyPlan", "characterBible", "storyboard", "visualIdentityPack"].every(
       (field) => typeof value.summary.plan[field] === "string",
     )
   ) {
@@ -54,6 +54,7 @@ function validateEnvelope(value) {
   }
   const plan = Object.freeze({
     storyPlan: value.summary.plan.storyPlan,
+    characterBible: value.summary.plan.characterBible,
     storyboard: value.summary.plan.storyboard,
     visualIdentityPack: value.summary.plan.visualIdentityPack,
   });

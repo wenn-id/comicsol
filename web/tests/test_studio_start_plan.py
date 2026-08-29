@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
 import tomllib
 import unittest
 from html.parser import HTMLParser
@@ -188,7 +191,7 @@ class StudioContractTests(unittest.TestCase):
         )
 
     def test_plan_edits_are_revision_bound_and_agent_changes_are_reviewable(self) -> None:
-        for section in ("Story plan", "Storyboard", "Visual Identity Pack"):
+        for section in ("Story plan", "Character bible", "Storyboard", "Visual Identity Pack"):
             self.assertIn(section, self.plan)
         self.assertIn("comic-sol:plan-proposal", self.plan)
         self.assertIn("expectedRevision", self.plan)
@@ -200,15 +203,18 @@ class StudioContractTests(unittest.TestCase):
 
     def test_plan_persists_reviewed_draft_before_local_promotion(self) -> None:
         self.assertIn("updatePlan", self.plan)
-        update_position = self.plan.index("await updatePlan")
-        promotion_position = self.plan.index("store.promoteDraft", update_position)
-        success_position = self.plan.index('"success"', promotion_position)
-        self.assertLess(update_position, promotion_position)
-        self.assertLess(promotion_position, success_position)
+        helper_position = self.plan.index("export async function persistReviewedDraft")
+        persist_position = self.plan.index("await persist()", helper_position)
+        promotion_position = self.plan.index("store.promoteDraft", persist_position)
+        handler_position = self.plan.index("await persistReviewedDraft", promotion_position)
+        success_position = self.plan.index('"success"', handler_position)
+        self.assertLess(persist_position, promotion_position)
+        self.assertLess(promotion_position, handler_position)
+        self.assertLess(handler_position, success_position)
         self.assertRegex(self.state, r"summary\?\.plan")
         self.assertRegex(self.state, r"promoteDraft\(project\)")
 
-    def test_deferred_plan_promotion_preserves_replacement_and_syncs_controls(self) -> None:
+    def test_plan_promotion_blocks_conflicting_controls_and_reconciles_drafts(self) -> None:
         self.assertIn("let promotionPending = false", self.plan)
         self.assertGreaterEqual(self.plan.count("if (promotionPending) return"), 3)
         self.assertIn("if (promotionPending && !force) return", self.plan)
@@ -222,12 +228,11 @@ class StudioContractTests(unittest.TestCase):
         )
         self.assertRegex(
             self.plan,
-            r"promotionPending\s*=\s*true[\s\S]{0,500}await updatePlan",
+            r"promotionPending\s*=\s*true[\s\S]{0,500}await persistReviewedDraft",
         )
         self.assertRegex(
             self.plan,
-            r"await updatePlan[\s\S]{0,500}currentDraft\s*!==\s*draft"
-            r"[\s\S]{0,300}store\.replaceProject\(persisted\)"
+            r"currentDraft\s*!==\s*draft[\s\S]{0,300}store\.replaceProject\(persisted\)"
             r"[\s\S]{0,200}store\.createDraft\(currentDraft\.changes, currentDraft\.origin\)"
             r"[\s\S]{0,300}store\.promoteDraft\(persisted\)",
         )
@@ -239,6 +244,105 @@ class StudioContractTests(unittest.TestCase):
             self.plan,
             r"refreshed\.revision\s*!==\s*previousRevision[\s\S]{0,300}"
             r"controls\[key\]\.value\s*=\s*store\.getState\(\)\.workingPlan\[key\]",
+        )
+
+    def test_deferred_plan_promotion_preserves_replacement_and_syncs_controls(self) -> None:
+        node = shutil.which("node")
+        self.assertIsNotNone(node, "Node.js is required for the Studio runtime contract test")
+        assert node is not None
+        state_uri = (STATIC_ROOT / "state.js").as_uri()
+        plan_uri = (STATIC_ROOT / "views" / "plan.js").as_uri()
+        script = f"""
+import {{ createStore }} from {json.dumps(state_uri)};
+import {{ persistReviewedDraft, safeProposal }} from {json.dumps(plan_uri)};
+
+function check(condition, message) {{
+  if (!condition) throw new Error(message);
+}}
+
+const originalPlan = Object.freeze({{
+  storyPlan: "story-v1",
+  characterBible: "characters-v1",
+  storyboard: "storyboard-v1",
+  visualIdentityPack: "identity-v1",
+}});
+const submittedPlan = Object.freeze({{
+  storyPlan: "story-v2",
+  characterBible: "characters-v2",
+  storyboard: "storyboard-v2",
+  visualIdentityPack: "identity-v2",
+}});
+const replacementPlan = Object.freeze({{
+  storyPlan: "story-v3",
+  characterBible: "characters-v3",
+  storyboard: "storyboard-v3",
+  visualIdentityPack: "identity-v3",
+}});
+const project = (revision, plan) => Object.freeze({{
+  project_id: "project_0123456789abcdef01234567",
+  revision,
+  status: "INIT",
+  summary: Object.freeze({{ plan }}),
+}});
+
+const store = createStore();
+store.setProject(project(1, originalPlan));
+store.createDraft(submittedPlan);
+const submittedDraft = store.getState().draft;
+let resolveUpdatePlan;
+let updatePlanCalls = 0;
+const deferredUpdatePlan = new Promise((resolve) => {{ resolveUpdatePlan = resolve; }});
+const updatePlan = () => {{
+  updatePlanCalls += 1;
+  return deferredUpdatePlan;
+}};
+const operation = persistReviewedDraft(store, submittedDraft, updatePlan);
+await Promise.resolve();
+check(updatePlanCalls === 1, "deferred updatePlan was not called exactly once");
+store.createDraft(replacementPlan, "agent");
+resolveUpdatePlan(project(2, submittedPlan));
+const result = await operation;
+const state = store.getState();
+
+check(result.outcome === "replacement-preserved", "replacement outcome was not preserved");
+check(state.project.revision === 2, "persisted revision was not installed");
+check(state.workingPlan.storyPlan === submittedPlan.storyPlan, "persisted Plan was not installed");
+check(state.draft !== submittedDraft, "submitted draft identity survived reconciliation");
+check(state.draft.origin === "agent", "replacement draft origin was not preserved");
+check(state.draft.expectedRevision === 2, "replacement draft was not rebound to revision 2");
+for (const key of Object.keys(replacementPlan)) {{
+  check(state.draft.changes[key] === replacementPlan[key], `replacement field ${{key}} was lost`);
+}}
+
+check(
+  safeProposal({{ expectedRevision: 2, changes: {{ storyPlan: "incomplete" }} }}) === null,
+  "incomplete proposal was accepted",
+);
+const completeProposal = safeProposal({{ expectedRevision: 2, changes: replacementPlan }});
+check(completeProposal !== null, "complete proposal was rejected");
+check(
+  Object.keys(completeProposal.changes).length === 4 &&
+    completeProposal.changes.characterBible === replacementPlan.characterBible,
+  "complete proposal did not retain the canonical envelope",
+);
+"""
+        completed = subprocess.run(
+            [
+                node,
+                "--experimental-default-type=module",
+                "--input-type=module",
+                "--eval",
+                script,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertEqual(
+            0,
+            completed.returncode,
+            f"Node Studio runtime contract failed:\n{completed.stdout}\n{completed.stderr}",
         )
 
     def test_proposal_listener_survives_bad_events_and_preserves_pending_review(self) -> None:

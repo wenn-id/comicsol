@@ -39,12 +39,13 @@ from comic_sol_web.generation.types import GenerationRequest
 from comic_sol_web.migrations import APPLICATION_MIGRATIONS, Migration, apply_migrations
 from comic_sol_web.projects import ProjectService
 from scripts import comic_sol
+from scripts.character_identity import derive_identity_pack
 from scripts.core_primitives import canonical_artifact_bytes, canonical_json_bytes
 from scripts.handoff import HandoffResultError
 from scripts.handoff_archive import HandoffArchiveError, export_handoff_archive
 from scripts.schema import CURRENT_PROJECT_SCHEMA_VERSION, read_project_manifest
 from scripts.validate_project import validate_manifest, validate_project
-from tests.test_validation import valid_story, valid_storyboard
+from tests.test_validation import valid_characters, valid_story, valid_storyboard
 
 
 CAPABILITIES_USED = {
@@ -68,6 +69,7 @@ def tree_snapshot(root: Path) -> dict[str, bytes]:
 def plan_payload(root: Path) -> dict[str, str]:
     return {
         "storyPlan": (root / "plan/story-plan.json").read_text(encoding="utf-8"),
+        "characterBible": (root / "plan/character-bible.json").read_text(encoding="utf-8"),
         "storyboard": (root / "plan/storyboard.json").read_text(encoding="utf-8"),
         "visualIdentityPack": (root / "plan/character-identity-pack.json").read_text(
             encoding="utf-8"
@@ -76,18 +78,12 @@ def plan_payload(root: Path) -> dict[str, str]:
 
 
 def first_plan_payload() -> dict[str, str]:
-    story = valid_story()
-    for scene in story["scenes"]:
-        scene["characters"] = []
-    storyboard = valid_storyboard()
-    panel = storyboard["pages"][0]["panels"][0]
-    panel["characters"] = []
-    panel["continuity"] = []
-    panel["text"] = []
+    character_bible = valid_characters()
     return {
-        "storyPlan": json.dumps(story),
-        "storyboard": json.dumps(storyboard),
-        "visualIdentityPack": json.dumps({"characters": [], "schema_version": "1.0"}),
+        "storyPlan": json.dumps(valid_story()),
+        "characterBible": json.dumps(character_bible),
+        "storyboard": json.dumps(valid_storyboard()),
+        "visualIdentityPack": json.dumps(derive_identity_pack(character_bible)),
     }
 
 
@@ -371,7 +367,7 @@ class EngineGatewayContractTests(GatewayFixture):
         self.assertEqual(valid_storyboard(), json.loads(plan["storyboard"]))
         self.assertNotIn(str(snapshot.root), json.dumps(dict(plan), sort_keys=True))
 
-    def test_first_plan_update_publishes_canonical_artifacts_atomically(self) -> None:
+    def test_first_plan_update_publishes_character_data_atomically(self) -> None:
         snapshot = self.create()
         candidate = first_plan_payload()
 
@@ -385,7 +381,7 @@ class EngineGatewayContractTests(GatewayFixture):
         self.assertEqual(snapshot.revision + 1, updated.revision)
         self.assertEqual(candidate.keys(), plan_payload(snapshot.root).keys())
         self.assertEqual(
-            {"characters": [], "schema_version": "1.0"},
+            valid_characters(),
             json.loads((snapshot.root / "plan/character-bible.json").read_bytes()),
         )
         manifest = read_project_manifest(snapshot.root / "project.json")
