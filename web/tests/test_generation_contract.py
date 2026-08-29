@@ -266,6 +266,9 @@ class CatalogAndRegistryTests(unittest.IsolatedAsyncioTestCase):
                 ("openai", "gpt-image-1", True),
                 ("google", "gemini-2.5-flash-image", True),
                 ("bfl", "flux-1.1-pro", True),
+                ("replicate", "black-forest-labs/flux-1.1-pro", True),
+                ("fal", "fal-ai/flux-pro/v1.1", True),
+                ("cloudflare", "@cf/black-forest-labs/flux-1-schnell", True),
             ),
             tuple((entry.provider, entry.model, entry.enabled) for entry in CATALOG),
         )

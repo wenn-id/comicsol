@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import unittest
 from typing import Mapping
 
@@ -94,7 +95,7 @@ class CloudflareProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(f"Bearer {CANARY}", request.headers["authorization"])
         self.assertEqual(
             {"height": 1024, "prompt": "private prompt", "width": 1024},
-            __import__("json").loads(request.content),
+            json.loads(request.content),
         )
 
     async def test_base64_output_is_bounded_validated_and_redacted(self) -> None:
@@ -117,6 +118,36 @@ class CloudflareProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(PNG, result.raster_bytes)
         self.assertEqual("image/png", result.media_type)
         self.assertNotIn(CANARY, repr(result))
+
+    async def test_success_false_json_maps_provider_error_categories(self) -> None:
+        fixtures = (
+            ("quota exceeded", ErrorCategory.QUOTA_EXHAUSTED),
+            ("content safety moderation", ErrorCategory.MODERATED),
+        )
+        for message, expected_category in fixtures:
+
+            async def handler(
+                request: httpx.Request,
+                error_message: str = message,
+            ) -> httpx.Response:
+                return httpx.Response(
+                    200,
+                    json={
+                        "result": None,
+                        "success": False,
+                        "errors": [{"message": error_message}],
+                        "messages": [],
+                    },
+                    request=request,
+                )
+
+            with self.subTest(message=message), self.assertRaises(ProviderError) as caught:
+                await CloudflareProvider(
+                    ACCOUNT_ID,
+                    transport=httpx.MockTransport(handler),
+                ).generate(make_request(), "@cf/black-forest-labs/flux-1-schnell", CANARY)
+            self.assertEqual(expected_category, caught.exception.category)
+            self.assertNotIn(CANARY, repr(caught.exception))
 
     async def test_quota_rate_redirect_mime_byte_and_malformed_raster_fail_closed(self) -> None:
         fixtures = (
@@ -240,15 +271,13 @@ class CloudflareProviderTests(unittest.IsolatedAsyncioTestCase):
         receipt_provenance = tuple(
             (entry.provider, entry.model) for entry in CATALOG if "flux" in entry.model.lower()
         )
-        self.assertEqual(
-            (
-                ("bfl", "flux-1.1-pro"),
-                ("replicate", "black-forest-labs/flux-1.1-pro"),
-                ("fal", "fal-ai/flux-pro/v1.1"),
-                ("cloudflare", "@cf/black-forest-labs/flux-1-schnell"),
-            ),
-            receipt_provenance,
-        )
+        expected_provenance = {
+            ("bfl", "flux-1.1-pro"),
+            ("replicate", "black-forest-labs/flux-1.1-pro"),
+            ("fal", "fal-ai/flux-pro/v1.1"),
+            ("cloudflare", "@cf/black-forest-labs/flux-1-schnell"),
+        }
+        self.assertEqual(expected_provenance, set(receipt_provenance))
         self.assertEqual(len(receipt_provenance), len(set(receipt_provenance)))
 
 

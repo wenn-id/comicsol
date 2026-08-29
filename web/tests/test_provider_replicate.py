@@ -118,7 +118,7 @@ class ReplicateProviderTests(unittest.IsolatedAsyncioTestCase):
                 )
             if request.url.host == "replicate.delivery":
                 deliveries += 1
-                self.assertEqual(f"Bearer {CANARY}", request.headers["authorization"])
+                self.assertNotIn("authorization", request.headers)
                 return httpx.Response(
                     200,
                     content=PNG,

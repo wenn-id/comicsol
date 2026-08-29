@@ -220,12 +220,36 @@ class FalProviderTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(2, calls)
 
         fixtures = (
-            (302, b"", {"location": f"https://v3.fal.media/next?token={CANARY}"}),
-            (200, PNG + b"too-large", {"content-type": "image/png"}),
-            (200, PNG, {"content-type": "text/html"}),
-            (200, b"not-a-raster", {"content-type": "image/png"}),
+            (
+                302,
+                b"",
+                {"location": f"https://v3.fal.media/next?token={CANARY}"},
+                ErrorCategory.PROVIDER_ERROR,
+                1024,
+            ),
+            (
+                200,
+                PNG + b"too-large",
+                {"content-type": "image/png"},
+                ErrorCategory.INVALID_OUTPUT,
+                len(PNG),
+            ),
+            (
+                200,
+                PNG,
+                {"content-type": "text/html"},
+                ErrorCategory.INVALID_OUTPUT,
+                len(PNG),
+            ),
+            (
+                200,
+                b"not-a-raster",
+                {"content-type": "image/png"},
+                ErrorCategory.INVALID_OUTPUT,
+                len(PNG),
+            ),
         )
-        for status, content, headers in fixtures:
+        for status, content, headers, expected_category, response_limit in fixtures:
 
             async def invalid_delivery(
                 request: httpx.Request,
@@ -258,14 +282,11 @@ class FalProviderTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(status=status, content=content[:8]):
                 provider = FalProvider(
                     transport=httpx.MockTransport(invalid_delivery),
-                    max_response_bytes=len(PNG),
+                    max_response_bytes=response_limit,
                 )
                 with self.assertRaises(ProviderError) as caught:
                     await provider.poll("764cabcf-b745-4b3e-ae38-1200304cf45b", CANARY)
-                self.assertIn(
-                    caught.exception.category,
-                    {ErrorCategory.PROVIDER_ERROR, ErrorCategory.INVALID_OUTPUT},
-                )
+                self.assertEqual(expected_category, caught.exception.category)
                 self.assertNotIn(CANARY, repr(caught.exception))
 
     async def test_quota_rate_unknown_models_and_secret_redaction_fail_closed(self) -> None:

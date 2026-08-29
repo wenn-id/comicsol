@@ -74,7 +74,6 @@ class ReplicateProvider:
             return await self._translate_prediction(
                 response,
                 client,
-                credential,
                 expected_job_id=None,
                 effective_parameters={
                     "height": request.height,
@@ -100,7 +99,6 @@ class ReplicateProvider:
             return await self._translate_prediction(
                 response,
                 client,
-                credential,
                 expected_job_id=job_id,
                 effective_parameters={"model": _MODEL.model},
             )
@@ -125,7 +123,6 @@ class ReplicateProvider:
         self,
         response: Mapping[str, object],
         client: BoundedHTTPClient,
-        credential: str | None,
         *,
         expected_job_id: str | None,
         effective_parameters: Mapping[str, object],
@@ -161,10 +158,7 @@ class ReplicateProvider:
             raise ProviderError(ErrorCategory.INVALID_OUTPUT) from None
         delivery_policy = replace(self._policy, approved_origins=frozenset({delivery_origin}))
         async with BoundedHTTPClient(delivery_policy, transport=self._transport) as delivery_client:
-            raster, media_type = await delivery_client.get_raster(
-                output_url,
-                headers=_credential_headers(credential),
-            )
+            raster, media_type = await delivery_client.get_raster(output_url)
         return GenerationResult(
             external_job_id=external_job_id,
             state=JobState.ACCEPTED,
