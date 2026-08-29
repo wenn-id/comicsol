@@ -219,6 +219,8 @@ class GenerationService:
         # Lookup proves there is an explicit provider selection. The service
         # never catches this to choose another provider.
         self._providers.get(provider)
+        if provider == "agent" and mode is not AuthMode.AGENT:
+            raise ValueError("agent generation requires agent authentication mode")
         requests = self._projects.prepare_generation(principal, project_id, expected_revision)
         if provider == "agent":
             requests = self._bind_agent_requests(principal, project_id, requests)
@@ -952,7 +954,7 @@ class GenerationService:
                     # and job digests remain exactly the issued bindings.
                     siblings = connection.execute(
                         """
-                        SELECT job_id, request_json
+                        SELECT job_id, request_json, provider, model, auth_mode
                         FROM generation_jobs
                         WHERE owner_id = ? AND project_id = ? AND project_revision = ?
                           AND job_id <> ? AND state <> ?
@@ -977,16 +979,25 @@ class GenerationService:
                         rebound_json = serialize_request(
                             replace(request, project_revision=accepted_revision)
                         )
+                        rebound_key = self._store.idempotency_key(
+                            job.owner_id,
+                            rebound_json,
+                            sibling["provider"],
+                            sibling["model"],
+                            AuthMode(sibling["auth_mode"]),
+                        )
                         rebound = connection.execute(
                             """
                             UPDATE generation_jobs
-                            SET project_revision = ?, request_json = ?, updated_at = ?
+                            SET project_revision = ?, request_json = ?, idempotency_key = ?,
+                                updated_at = ?
                             WHERE job_id = ? AND owner_id = ? AND project_id = ?
                               AND project_revision = ? AND state <> ?
                             """,
                             (
                                 accepted_revision,
                                 rebound_json,
+                                rebound_key,
                                 event_time,
                                 sibling["job_id"],
                                 job.owner_id,

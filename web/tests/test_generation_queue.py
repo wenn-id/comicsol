@@ -285,6 +285,7 @@ class FakeProjects:
         self.revision = 3
         self.prepare_calls = 0
         self.request_ids: tuple[str, ...] = ("engine-job-1",)
+        self.subject_ids: dict[str, str] = {}
         self.fixtures: dict[str, str] = {}
         self.prompt = "private generation prompt"
         self.request_width = 1024
@@ -306,7 +307,7 @@ class FakeProjects:
             make_request(
                 project_revision=self.revision,
                 job_id=job_id,
-                subject_id=f"panel-{index}",
+                subject_id=self.subject_ids.get(job_id, f"panel-{index}"),
                 fixture=self.fixtures.get(job_id, "success"),
                 prompt=self.prompt,
                 width=self.request_width,
@@ -1403,6 +1404,26 @@ class AgentSubmissionTests(GenerationQueueFixture):
         content = bounded_png() if payload is None else payload
         return self.assets.create_upload(principal, io.BytesIO(content), "image/png")
 
+    def test_agent_provider_requires_agent_auth_before_project_preparation(self) -> None:
+        for mode in (AuthMode.HOSTED, AuthMode.BYOK):
+            with self.subTest(auth_mode=mode):
+                prepare_calls = self.projects.prepare_calls
+
+                with self.assertRaises(ValueError):
+                    self.service.queue(
+                        self.alice,
+                        self.projects.project_id,
+                        self.projects.revision,
+                        provider="agent",
+                        model=AGENT_MODEL,
+                        auth_mode=mode,
+                    )
+
+                self.assertEqual(prepare_calls, self.projects.prepare_calls)
+        with self.database.read() as connection:
+            count = connection.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0]
+        self.assertEqual(0, count)
+
     def test_missing_agent_capability_is_resumable_without_resolving_credentials(self) -> None:
         self.service = GenerationService(
             self.database,
@@ -1535,6 +1556,63 @@ class AgentSubmissionTests(GenerationQueueFixture):
         self.assertEqual(first_checksum, agent_job_checksum(first_before.request))
         self.assertEqual(second_checksum, agent_job_checksum(rebound.request))
         self.assertEqual(locked_scope, agent_locked_scope_digest(rebound.request))
+        self.assertEqual(2, len(self.projects.submissions))
+        self.assertEqual(bounded_png(channel=2), self.projects.accepted_raster)
+
+    def test_requeued_rebound_agent_sibling_reuses_existing_job(self) -> None:
+        self.projects.request_ids = ("a" * 64, "b" * 64)
+        first_before, second_before = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="agent",
+            model=AGENT_MODEL,
+            auth_mode=AuthMode.AGENT,
+        )
+        for index in range(2):
+            waiting = asyncio.run(self.service.run_once(f"agent-package-{index}"))
+            assert waiting is not None
+            self.assertEqual(JobState.POLLING, waiting.state)
+        first_asset = self.upload(self.alice, bounded_png(channel=1))
+
+        first = self.service.submit_agent_asset(
+            self.alice,
+            first_before.job_id,
+            first_asset.asset_id,
+            first_before.project_revision,
+        )
+        self.projects.request_ids = ("b" * 64,)
+        self.projects.subject_ids["b" * 64] = "panel-2"
+        requeued = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="agent",
+            model=AGENT_MODEL,
+            auth_mode=AuthMode.AGENT,
+        )[0]
+
+        with self.database.read() as connection:
+            rows = connection.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0]
+            rebound_key = connection.execute(
+                "SELECT idempotency_key FROM generation_jobs WHERE job_id = ?",
+                (second_before.job_id,),
+            ).fetchone()[0]
+        self.assertEqual(second_before.job_id, requeued.job_id)
+        self.assertEqual(2, rows)
+        self.assertEqual(first.accepted_project_revision, requeued.project_revision)
+        self.assertEqual(requeued.project_revision, requeued.request.project_revision)
+        self.assertNotEqual(second_before.job_id, rebound_key)
+
+        second_asset = self.upload(self.alice, bounded_png(channel=2))
+        second = self.service.submit_agent_asset(
+            self.alice,
+            requeued.job_id,
+            second_asset.asset_id,
+            requeued.project_revision,
+        )
+
+        self.assertEqual(JobState.ACCEPTED, second.state)
         self.assertEqual(2, len(self.projects.submissions))
         self.assertEqual(bounded_png(channel=2), self.projects.accepted_raster)
 
