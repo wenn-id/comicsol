@@ -141,6 +141,15 @@ class CredentialBrokerTests(unittest.IsolatedAsyncioTestCase):
                 self.fail("expired session credential resolved")
         self.assertNotIn(CANARY, repr(broker))
 
+    async def test_xai_and_stability_are_valid_credential_providers(self) -> None:
+        broker = self.make_broker()
+        for provider in ("xai", "stability"):
+            credential_value = f"{CANARY}-{provider}"
+            broker.store_session("owner-a", provider, credential_value)
+            async with broker.resolve("owner-a", provider, AuthMode.BYOK) as credential:
+                self.assertEqual(credential_value, credential)
+        self.assertNotIn(CANARY, repr(broker))
+
     async def test_session_and_persisted_credentials_are_owner_isolated(self) -> None:
         from comic_sol_web.generation.credentials import CredentialUnavailableError
 

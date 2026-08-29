@@ -12,6 +12,7 @@ import struct
 import tempfile
 import threading
 import unittest
+import uuid
 import zlib
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,11 +24,14 @@ from fastapi.testclient import TestClient
 from web.tests import support as _support  # noqa: F401  # Checkout import path setup.
 
 from comic_sol_product.cli import _load_engine_module
-from comic_sol_web.assets import AssetStore
+from comic_sol_web.api.approvals import create_approvals_router
 from comic_sol_web.api.generation import _consume_queue, create_generation_router
+from comic_sol_web.assets import AssetStore
 from comic_sol_web.auth import SessionPrincipal, require_principal
 from comic_sol_web.database import Database
 from comic_sol_web.engine_gateway import StaleProjectRevisionError
+from comic_sol_web.generation.approvals import ProviderSwitchApprovals
+from comic_sol_web.generation.credentials import CredentialUnavailableError
 from comic_sol_web.generation.providers.agent import (
     AGENT_MODEL,
     AgentProvider,
@@ -107,6 +111,43 @@ class ErrorProvider(FakeProvider):
     ) -> GenerationResult:
         del request, model, credential
         raise ProviderError(self.category)
+
+
+class BflQuotaProvider(FakeProvider):
+    """Fail a BFL request with a normalized quota category."""
+
+    provider_id = "bfl"
+
+    async def generate(
+        self,
+        request: GenerationRequest,
+        model: str,
+        credential: str | None,
+    ) -> GenerationResult:
+        del request, model, credential
+        raise ProviderError(ErrorCategory.QUOTA_EXHAUSTED)
+
+
+class GoogleSuccessProvider(FakeProvider):
+    """Accept a server-selected Google route entirely offline."""
+
+    provider_id = "google"
+
+    async def generate(
+        self,
+        request: GenerationRequest,
+        model: str,
+        credential: str | None,
+    ) -> GenerationResult:
+        del request, model, credential
+        return GenerationResult(
+            external_job_id=None,
+            state=JobState.ACCEPTED,
+            raster_bytes=PNG,
+            media_type="image/png",
+            effective_parameters={"fixture": "deterministic", "width": 1, "height": 1},
+            usage={"images": 1},
+        )
 
 
 class FailOnceProvider(FakeProvider):
@@ -244,6 +285,37 @@ class RecordingCredentialResolver:
         key = (user_id, provider, mode)
         self.resolutions.append(key)
         yield self.credentials.get(key)
+
+
+class SelectiveCredentialResolver:
+    """Expose only explicitly available owner/provider/mode tuples."""
+
+    def __init__(
+        self,
+        credentials: Mapping[tuple[str, str, AuthMode], str | None],
+    ) -> None:
+        self.credentials = dict(credentials)
+
+    def resolve(
+        self,
+        user_id: str,
+        provider: str,
+        auth_mode: AuthMode | str,
+    ) -> AsyncContextManager[str | None]:
+        return self._resolve(user_id, provider, auth_mode)
+
+    @asynccontextmanager
+    async def _resolve(
+        self,
+        user_id: str,
+        provider: str,
+        auth_mode: AuthMode | str,
+    ) -> AsyncIterator[str | None]:
+        mode = auth_mode if isinstance(auth_mode, AuthMode) else AuthMode(auth_mode)
+        key = (user_id, provider, mode)
+        if key not in self.credentials:
+            raise CredentialUnavailableError("credential is unavailable")
+        yield self.credentials[key]
 
 
 class FakeAuth:
@@ -1301,6 +1373,97 @@ class DurableQueueTests(GenerationQueueFixture):
         self.assertEqual(200, retried.status_code)
         self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, job_id).state)
         self.assertEqual(2, provider.calls)
+
+    def test_switch_route_creates_server_recommendation_and_approval_resumes_worker(
+        self,
+    ) -> None:
+        resolver = SelectiveCredentialResolver(
+            {
+                ("alice-id", "bfl", AuthMode.AGENT): None,
+                ("alice-id", "google", AuthMode.HOSTED): "hosted-google-credential",
+            }
+        )
+        self.service = GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry((BflQuotaProvider(), GoogleSuccessProvider())),
+            self.staging_root,
+            credentials=resolver,
+            clock=self.clock,
+        )
+        with self.database.transaction() as connection:
+            connection.execute(
+                "INSERT INTO users (user_id, login, updated_at) VALUES (?, ?, ?)",
+                (self.alice.user_id, self.alice.login, self.clock()),
+            )
+            connection.execute(
+                "INSERT INTO web_projects "
+                "(project_id, owner_id, storage_name, revision, engine_state) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    self.projects.project_id,
+                    self.alice.user_id,
+                    "project-storage",
+                    self.projects.revision,
+                    "STORYBOARDED",
+                ),
+            )
+        queued = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="bfl",
+            model="flux-1.1-pro",
+            auth_mode=AuthMode.AGENT,
+        )[0]
+        failed = asyncio.run(self.service.run_once("initial-bfl-worker"))
+        assert failed is not None
+        self.assertEqual(JobState.FAILED, failed.state)
+        approvals = ProviderSwitchApprovals(self.database, clock=self.clock)
+        app = FastAPI()
+        app.state.auth = FakeAuth(self.alice)
+        app.include_router(create_generation_router(self.service, approvals, resolver))
+        app.include_router(create_approvals_router(approvals, self.service))
+        app.dependency_overrides[require_principal] = lambda: self.alice
+
+        with TestClient(app) as client:
+            injected = client.post(
+                f"/api/generation/{queued.job_id}/pause-for-switch",
+                json={
+                    "expected_revision": self.projects.revision,
+                    "provider": "attacker-provider",
+                    "model": "attacker-model",
+                },
+                headers={"Idempotency-Key": str(uuid.uuid4())},
+            )
+            proposed = client.post(
+                f"/api/generation/{queued.job_id}/pause-for-switch",
+                json={"expected_revision": self.projects.revision},
+                headers={"Idempotency-Key": str(uuid.uuid4())},
+            )
+            self.assertEqual(400, injected.status_code)
+            self.assertEqual(200, proposed.status_code)
+            proposal = proposed.json()
+            self.assertEqual([queued.job_id], proposal["job_ids"])
+            self.assertEqual("bfl", proposal["from_provider"])
+            self.assertEqual("google", proposal["to_provider"])
+            self.assertEqual("gemini-2.5-flash-image", proposal["to_model"])
+            self.assertEqual(
+                JobState.AWAITING_PROVIDER_CONFIRMATION,
+                self.service.get(self.alice, queued.job_id).state,
+            )
+
+            approved = client.post(
+                f"/api/approvals/{proposal['proposal_id']}/approve",
+                headers={
+                    "Idempotency-Key": str(uuid.uuid4()),
+                    "X-Expected-Revision": str(self.projects.revision),
+                },
+            )
+
+        self.assertEqual(200, approved.status_code)
+        self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, queued.job_id).state)
+        self.assertEqual(PNG, self.projects.accepted_raster)
 
     def test_worker_pauses_when_the_persisted_provider_is_unavailable(self) -> None:
         queued = self.queue()
