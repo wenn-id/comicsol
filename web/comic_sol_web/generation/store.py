@@ -137,6 +137,21 @@ class GenerationStore:
             raise GenerationStoreError(f"generation {label} is invalid")
         return value
 
+    @classmethod
+    def validate_enqueue_options(
+        cls,
+        owner_id: str,
+        provider: str,
+        model: str,
+        max_retries: int,
+    ) -> None:
+        """Validate caller-controlled queue options before project mutation."""
+        cls.validate_identifier(owner_id, "owner")
+        cls.validate_identifier(provider, "provider")
+        cls.validate_identifier(model, "model")
+        if isinstance(max_retries, bool) or not 0 <= max_retries <= 10:
+            raise GenerationStoreError("generation retry limit is invalid")
+
     @staticmethod
     def validate_job_id(job_id: str) -> str:
         if not isinstance(job_id, str) or _JOB_ID.fullmatch(job_id) is None:
@@ -168,11 +183,7 @@ class GenerationStore:
         max_retries: int,
         now: int,
     ) -> GenerationJob:
-        self.validate_identifier(owner_id, "owner")
-        self.validate_identifier(provider, "provider")
-        self.validate_identifier(model, "model")
-        if isinstance(max_retries, bool) or not 0 <= max_retries <= 10:
-            raise GenerationStoreError("generation retry limit is invalid")
+        self.validate_enqueue_options(owner_id, provider, model, max_retries)
         request_json = serialize_request(request)
         key = self.idempotency_key(owner_id, request_json, provider, model, auth_mode)
         job_id = key

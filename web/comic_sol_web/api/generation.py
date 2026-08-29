@@ -76,14 +76,17 @@ def _revision(body: dict[str, object]) -> int:
 
 
 _POLL_DELAY_SECONDS = 0.05
+_MAX_POLLING_RESULTS_PER_REQUEST = 4
+_MAX_RUN_ATTEMPTS_PER_REQUEST = 64
 
 
 async def _consume_queue(service: Any) -> None:
-    """Drain eligible work, isolating resumable conflicts per durable job."""
+    """Drain eligible work within one bounded request-background budget."""
     from comic_sol_web.engine_gateway import StaleProjectRevisionError
     from comic_sol_web.generation.service import GenerationConflictError
 
-    while True:
+    polling_results = 0
+    for _attempt in range(_MAX_RUN_ATTEMPTS_PER_REQUEST):
         try:
             completed = await service.run_once("web-request-worker")
         except (GenerationConflictError, StaleProjectRevisionError):
@@ -91,6 +94,9 @@ async def _consume_queue(service: Any) -> None:
         if completed is None:
             return
         if completed.state.value == "polling":
+            polling_results += 1
+            if polling_results >= _MAX_POLLING_RESULTS_PER_REQUEST:
+                return
             await asyncio.sleep(_POLL_DELAY_SECONDS)
 
 

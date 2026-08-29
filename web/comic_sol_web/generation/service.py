@@ -133,6 +133,12 @@ class GenerationService:
             mode = auth_mode if isinstance(auth_mode, AuthMode) else AuthMode(auth_mode)
         except (TypeError, ValueError):
             raise ValueError("generation authentication mode is invalid") from None
+        self._store.validate_enqueue_options(
+            principal.user_id,
+            provider,
+            model,
+            max_retries,
+        )
         # Lookup proves there is an explicit provider selection. The service
         # never catches this to choose another provider.
         self._providers.get(provider)
@@ -458,6 +464,65 @@ class GenerationService:
             )
         return self._store.from_row(current)
 
+    def _committed_promotion(
+        self,
+        principal: SessionPrincipal,
+        job: GenerationJob,
+    ) -> tuple[int, bool] | None:
+        """Prove that WP3 already retained this job's exact staged raster."""
+        if job.result_checksum is None:
+            return None
+        snapshot = self._projects.snapshot(principal, job.project_id)
+        current_revision = getattr(snapshot, "revision", None)
+        root = getattr(snapshot, "root", None)
+        if (
+            isinstance(current_revision, bool)
+            or not isinstance(current_revision, int)
+            or current_revision <= job.project_revision
+            or not isinstance(root, Path)
+        ):
+            return None
+
+        for ordinal in range(1, 4):
+            try:
+                receipt_id = _handoff.attempt_id(
+                    job_id=job.request.job_id,
+                    attempt=ordinal,
+                )
+            except ValueError:
+                return None
+            try:
+                receipt = _project_io.read_contained_json(
+                    root,
+                    f"generation/receipts/{receipt_id}.json",
+                )
+            except FileNotFoundError:
+                continue
+            if not isinstance(receipt, Mapping) or _handoff.validate_generation_receipt(receipt):
+                continue
+            if (
+                receipt.get("outcome") != "success"
+                or receipt.get("job_id") != job.request.job_id
+                or receipt.get("raster_sha256") != job.result_checksum
+            ):
+                continue
+            retained_path = receipt.get("raster_path")
+            if not isinstance(retained_path, str):
+                continue
+            try:
+                retained = _project_io.read_contained_bytes(
+                    root,
+                    retained_path,
+                    max_bytes=_raster_limits.MAX_ENCODED_RASTER_BYTES,
+                )
+            except FileNotFoundError:
+                continue
+            if hashlib.sha256(retained).hexdigest() != job.result_checksum:
+                continue
+            accepted_revision = job.project_revision + 1
+            return accepted_revision, current_revision == accepted_revision
+        return None
+
     def submit_staged_raster(
         self,
         principal: SessionPrincipal,
@@ -499,9 +564,9 @@ class GenerationService:
                 ),
             ).rowcount
             if updated != 1:
-                current = self._store.row(connection, job_id)
-                if current is not None and current["state"] == JobState.ACCEPTED.value:
-                    return self._store.from_row(current)
+                claimed = self._store.row(connection, job_id)
+                if claimed is not None and claimed["state"] == JobState.ACCEPTED.value:
+                    return self._store.from_row(claimed)
                 raise GenerationConflictError("staged raster promotion is already claimed")
 
         capabilities = {
@@ -511,14 +576,26 @@ class GenerationService:
         }
         revision = job.project_revision
         try:
-            snapshot = self._projects.submit_raster(
-                principal,
-                job.project_id,
-                revision,
-                job.request.job_id,
-                staged,
-                "image/png",
-                capabilities,
+            committed = self._committed_promotion(principal, job)
+            if committed is None:
+                snapshot = self._projects.submit_raster(
+                    principal,
+                    job.project_id,
+                    revision,
+                    job.request.job_id,
+                    staged,
+                    "image/png",
+                    capabilities,
+                )
+                accepted_revision = cast(int, getattr(snapshot, "revision"))
+                rebind_siblings = accepted_revision == revision + 1
+            else:
+                accepted_revision, rebind_siblings = committed
+            current = self._finish_promotion(
+                job,
+                token,
+                accepted_revision,
+                rebind_siblings=rebind_siblings,
             )
         except _handoff.HandoffResultError as error:
             if self._is_raster_validation_error(error):
@@ -540,7 +617,18 @@ class GenerationService:
             self._release_promotion(job_id, token)
             raise
 
-        accepted_revision = cast(int, getattr(snapshot, "revision"))
+        staged.unlink(missing_ok=True)
+        return current
+
+    def _finish_promotion(
+        self,
+        job: GenerationJob,
+        token: str,
+        accepted_revision: int,
+        *,
+        rebind_siblings: bool,
+    ) -> GenerationJob:
+        """Atomically finish queue state after a proven canonical acceptance."""
         with self._store.database.transaction() as connection:
             updated = connection.execute(
                 """
@@ -554,42 +642,41 @@ class GenerationService:
                     JobState.ACCEPTED.value,
                     accepted_revision,
                     self._clock(),
-                    job_id,
-                    principal.user_id,
+                    job.job_id,
+                    job.owner_id,
                     JobState.VALIDATING.value,
                     token,
                 ),
             ).rowcount
             if updated != 1:
-                current = self._store.row(connection, job_id)
+                current = self._store.row(connection, job.job_id)
                 if current is None or current["state"] != JobState.ACCEPTED.value:
                     raise GenerationConflictError("staged raster promotion lost its claim")
             else:
-                current = self._store.row(connection, job_id)
+                current = self._store.row(connection, job.job_id)
                 assert current is not None
                 event_time = self._clock()
                 self._store.append_attempt(connection, current, JobState.ACCEPTED, event_time)
-                # This exact revision was produced by the accepted raster above,
-                # so only siblings prepared against its immediate predecessor
-                # may advance. An unrelated later project edit remains stale.
-                connection.execute(
-                    """
-                    UPDATE generation_jobs
-                    SET project_revision = ?, updated_at = ?
-                    WHERE owner_id = ? AND project_id = ? AND project_revision = ?
-                      AND job_id <> ? AND state <> ?
-                    """,
-                    (
-                        accepted_revision,
-                        event_time,
-                        principal.user_id,
-                        job.project_id,
-                        revision,
-                        job_id,
-                        JobState.ACCEPTED.value,
-                    ),
-                )
-        staged.unlink(missing_ok=True)
+                if rebind_siblings:
+                    # Only the immediate revision produced by this accepted
+                    # raster can advance siblings. Later edits remain stale.
+                    connection.execute(
+                        """
+                        UPDATE generation_jobs
+                        SET project_revision = ?, updated_at = ?
+                        WHERE owner_id = ? AND project_id = ? AND project_revision = ?
+                          AND job_id <> ? AND state <> ?
+                        """,
+                        (
+                            accepted_revision,
+                            event_time,
+                            job.owner_id,
+                            job.project_id,
+                            job.project_revision,
+                            job.job_id,
+                            JobState.ACCEPTED.value,
+                        ),
+                    )
         assert current is not None
         return self._store.from_row(current)
 

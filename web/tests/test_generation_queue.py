@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -16,7 +18,7 @@ from fastapi.testclient import TestClient
 from web.tests import support as _support  # noqa: F401  # Checkout import path setup.
 
 from comic_sol_product.cli import _load_engine_module
-from comic_sol_web.api.generation import create_generation_router
+from comic_sol_web.api.generation import _consume_queue, create_generation_router
 from comic_sol_web.auth import SessionPrincipal, require_principal
 from comic_sol_web.database import Database
 from comic_sol_web.engine_gateway import StaleProjectRevisionError
@@ -29,6 +31,7 @@ from comic_sol_web.generation.service import (
     GenerationUnavailableError,
     RetryLimitError,
 )
+from comic_sol_web.generation.store import GenerationJob
 from comic_sol_web.generation.types import (
     AuthMode,
     ErrorCategory,
@@ -92,6 +95,30 @@ class FailOnceProvider(FakeProvider):
                 usage={},
             )
         return await super().generate(request, model, credential)
+
+
+class NeverCompletingProvider(FakeProvider):
+    """Keep one asynchronous provider job polling until the drain budget ends."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.poll_calls = 0
+
+    async def poll(
+        self,
+        external_job_id: str,
+        credential: str | None,
+    ) -> GenerationResult:
+        del credential
+        self.poll_calls += 1
+        return GenerationResult(
+            external_job_id=external_job_id,
+            state=JobState.POLLING,
+            raster_bytes=None,
+            media_type=None,
+            effective_parameters={},
+            usage={},
+        )
 
 
 class RevisionAdvancingProvider(FakeProvider):
@@ -213,9 +240,12 @@ class FakeProjects:
 
     def __init__(self, staging_root: Path) -> None:
         self.staging_root = staging_root
+        self.project_root = staging_root.parent / "project"
+        self.project_root.mkdir()
         self.owner_id = "alice-id"
         self.project_id = "project-1"
         self.revision = 3
+        self.prepare_calls = 0
         self.request_ids: tuple[str, ...] = ("engine-job-1",)
         self.fixtures: dict[str, str] = {}
         self.raster_rejection: str | None = None
@@ -229,6 +259,7 @@ class FakeProjects:
         project_id: str,
         expected_revision: int,
     ) -> tuple[GenerationRequest, ...]:
+        self.prepare_calls += 1
         self._authorize(principal, project_id, expected_revision)
         return tuple(
             make_request(
@@ -269,8 +300,44 @@ class FakeProjects:
         payload = raster.read_bytes()
         self.submissions.append((raster, payload))
         self.accepted_raster = payload
+        self._record_canonical_acceptance(job_id, payload)
         self.revision += 1
-        return type("Snapshot", (), {"revision": self.revision})()
+        return type(
+            "Snapshot",
+            (),
+            {"revision": self.revision, "root": self.project_root},
+        )()
+
+    def _record_canonical_acceptance(self, job_id: str, payload: bytes) -> None:
+        if len(job_id) != 64 or any(character not in "0123456789abcdef" for character in job_id):
+            return
+        handoff = _load_engine_module("handoff")
+        raster_relative = "panels/attempts/p01-01/initial-001.png"
+        raster = self.project_root / raster_relative
+        raster.parent.mkdir(parents=True, exist_ok=True)
+        raster.write_bytes(payload)
+        receipt = handoff.build_generation_receipt(
+            attempt_id=handoff.attempt_id(job_id=job_id, attempt=1),
+            job_id=job_id,
+            job_sha256="a" * 64,
+            raster_path=raster_relative,
+            raster_sha256=hashlib.sha256(payload).hexdigest(),
+            executor_kind="external-tool",
+            executor_id="comic-sol-web",
+            provider=None,
+            model=None,
+            capabilities_used=CAPABILITIES_USED,
+            outcome="success",
+            category="accepted",
+        )
+        receipt_path = (
+            self.project_root / "generation" / "receipts" / f"{receipt['attempt_id']}.json"
+        )
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        receipt_path.write_text(
+            json.dumps(receipt, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
 
     def snapshot(
         self,
@@ -282,7 +349,11 @@ class FakeProjects:
             raise ValueError("project unavailable")
         if expected_revision is not None and expected_revision != self.revision:
             raise ValueError("project revision is stale")
-        return type("Snapshot", (), {"revision": self.revision})()
+        return type(
+            "Snapshot",
+            (),
+            {"revision": self.revision, "root": self.project_root},
+        )()
 
     def _authorize(
         self, principal: SessionPrincipal, project_id: str, expected_revision: int
@@ -295,6 +366,30 @@ class FakeProjects:
     def assert_contained(self, raster: Path) -> None:
         resolved = raster.resolve(strict=True)
         resolved.relative_to(self.staging_root.resolve(strict=True))
+
+
+class FailingPromotionBookkeepingService(GenerationService):
+    """Simulate a process failure after WP3 commits but before queue bookkeeping."""
+
+    fail_bookkeeping_once = True
+
+    def _finish_promotion(
+        self,
+        job: GenerationJob,
+        token: str,
+        accepted_revision: int,
+        *,
+        rebind_siblings: bool,
+    ) -> GenerationJob:
+        if self.fail_bookkeeping_once:
+            self.fail_bookkeeping_once = False
+            raise sqlite3.OperationalError("simulated queue bookkeeping failure")
+        return super()._finish_promotion(
+            job,
+            token,
+            accepted_revision,
+            rebind_siblings=rebind_siblings,
+        )
 
 
 class GenerationQueueFixture(unittest.TestCase):
@@ -384,6 +479,35 @@ class GenerationQueueFixture(unittest.TestCase):
 
 
 class DurableQueueTests(GenerationQueueFixture):
+    def test_queue_options_are_validated_before_project_preparation(self) -> None:
+        cases = (
+            (self.alice, "fake-raster-v1", 11),
+            (self.alice, "malformed model", 2),
+            (SessionPrincipal("malformed owner", "alice"), "fake-raster-v1", 2),
+        )
+        for principal, model, max_retries in cases:
+            with self.subTest(
+                owner=principal.user_id,
+                model=model,
+                max_retries=max_retries,
+            ):
+                prepare_calls = self.projects.prepare_calls
+                revision = self.projects.revision
+
+                with self.assertRaises(ValueError):
+                    self.service.queue(
+                        principal,
+                        self.projects.project_id,
+                        revision,
+                        provider="fake",
+                        model=model,
+                        auth_mode=AuthMode.AGENT,
+                        max_retries=max_retries,
+                    )
+
+                self.assertEqual(prepare_calls, self.projects.prepare_calls)
+                self.assertEqual(revision, self.projects.revision)
+
     def test_duplicate_enqueue_is_idempotent(self) -> None:
         first = self.queue()
         second = self.queue()
@@ -726,7 +850,52 @@ class DurableQueueTests(GenerationQueueFixture):
         with self.assertRaises(GenerationConflictError):
             self.service.pause_for_switch(self.alice, queued.job_id, 2)
 
+    def test_committed_promotion_recovers_after_queue_bookkeeping_failure(self) -> None:
+        self.projects.request_ids = ("a" * 64,)
+        queued = self.queue()
+        lease = self.service.lease_next("promotion-gap-worker", lease_seconds=30)
+        assert lease is not None
+        validating = self.service.record_result(
+            queued.job_id,
+            lease.lease_token,
+            self.accepted_result(),
+        )
+        assert validating.staged_raster is not None
+        failing = FailingPromotionBookkeepingService(
+            self.database,
+            self.projects,
+            ProviderRegistry((FakeProvider(),)),
+            self.staging_root,
+            credentials=self.credentials,
+            clock=self.clock,
+        )
+
+        with self.assertRaisesRegex(sqlite3.OperationalError, "bookkeeping"):
+            failing.submit_staged_raster(self.alice, queued.job_id, 3)
+
+        stranded = failing.get(self.alice, queued.job_id)
+        self.assertEqual(JobState.VALIDATING, stranded.state)
+        self.assertEqual(4, self.projects.revision)
+        self.assertEqual(1, len(self.projects.submissions))
+        self.assertTrue(validating.staged_raster.exists())
+
+        self.clock.value += 301
+        restarted = self.make_service()
+        recovered = restarted.submit_staged_raster(self.alice, queued.job_id, 3)
+
+        self.assertEqual(JobState.ACCEPTED, recovered.state)
+        self.assertEqual(4, recovered.accepted_project_revision)
+        self.assertEqual(1, len(self.projects.submissions))
+        self.assertFalse(validating.staged_raster.exists())
+        accepted_attempts = [
+            attempt
+            for attempt in restarted.attempts(queued.job_id)
+            if attempt["state"] == JobState.ACCEPTED.value
+        ]
+        self.assertEqual(1, len(accepted_attempts))
+
     def test_promotion_failure_releases_claim_without_rebinding_revision(self) -> None:
+        self.projects.request_ids = ("b" * 64,)
         queued = self.queue()
         lease = self.service.lease_next("worker", lease_seconds=30)
         assert lease is not None
@@ -990,6 +1159,19 @@ class DurableQueueTests(GenerationQueueFixture):
         job_id = response.json()["jobs"][0]["job_id"]
         self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, job_id).state)
         self.assertEqual(PNG, self.projects.accepted_raster)
+
+    def test_request_queue_drain_bounds_recurring_provider_polling(self) -> None:
+        provider = NeverCompletingProvider()
+        self.service = self.make_service(provider)
+        self.projects.fixtures["engine-job-1"] = "async"
+        queued = self.queue()
+
+        asyncio.run(asyncio.wait_for(_consume_queue(self.service), timeout=0.5))
+
+        polling = self.service.get(self.alice, queued.job_id)
+        self.assertEqual(JobState.POLLING, polling.state)
+        self.assertGreater(provider.poll_calls, 0)
+        self.assertLessEqual(provider.poll_calls, 4)
 
     def test_queue_request_continues_until_an_async_job_is_accepted(self) -> None:
         self.projects.fixtures["engine-job-1"] = "async"
