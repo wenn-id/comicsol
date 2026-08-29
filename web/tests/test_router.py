@@ -612,7 +612,6 @@ class ApprovalApiTests(ProviderSwitchFixture):
             )
             approved = client.post(
                 f"/api/approvals/{proposal.proposal_id}/approve",
-                json={},
                 headers=write_headers(),
             )
         self.assertEqual(400, missing_headers.status_code)
