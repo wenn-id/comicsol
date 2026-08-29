@@ -174,12 +174,110 @@ class WebApplicationTests(unittest.TestCase):
             {
                 ("/api/projects", frozenset({"POST"})),
                 ("/api/projects/import", frozenset({"POST"})),
+                ("/api/projects/current", frozenset({"GET"})),
                 ("/api/projects/{project_id}", frozenset({"GET"})),
             },
             routes,
         )
         self.assertFalse(data_root.exists())
         self.assertFalse(hasattr(app.state, "projects"))
+
+    def test_generation_routes_are_registered_without_constructing_queue_state(self):
+        from comic_sol_web.app import create_app
+        from comic_sol_web.config import WebConfig
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary) / "not-created"
+            app = create_app(WebConfig.from_env(valid_environment(data_root)))
+            routes = {
+                (route.path, frozenset(route.methods or ()))
+                for route in app.routes
+                if route.path.startswith("/api/generation")
+            }
+            self.assertEqual(
+                {
+                    ("/api/generation/queue", frozenset({"POST"})),
+                    ("/api/generation/{job_id}", frozenset({"GET"})),
+                    ("/api/generation/{job_id}/retry", frozenset({"POST"})),
+                    (
+                        "/api/generation/{job_id}/pause-for-switch",
+                        frozenset({"POST"}),
+                    ),
+                    (
+                        "/api/generation/{job_id}/submit-staged",
+                        frozenset({"POST"}),
+                    ),
+                },
+                routes,
+            )
+            self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "generation"))
+
+            from fastapi.testclient import TestClient
+
+            with TestClient(app) as client:
+                response = client.get(f"/api/generation/{'a' * 64}")
+            self.assertEqual(401, response.status_code)
+            self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "generation"))
+
+    def test_application_does_not_enable_the_test_fake_provider(self):
+        from types import SimpleNamespace
+
+        from comic_sol_web.app import _generation_service
+        from comic_sol_web.auth import SessionPrincipal
+        from comic_sol_web.config import WebConfig
+        from comic_sol_web.database import Database
+        from comic_sol_web.generation.types import AuthMode
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staging_root = root / "staging"
+            staging_root.mkdir()
+            config = WebConfig.from_env(valid_environment(root / "data"))
+            projects = SimpleNamespace(
+                gateway=SimpleNamespace(
+                    database=Database(root / "application.sqlite3"),
+                    staging_root=staging_root,
+                )
+            )
+            state = SimpleNamespace(web_config=config)
+            request = SimpleNamespace(app=SimpleNamespace(state=state))
+            with patch("comic_sol_web.app._project_service", return_value=projects):
+                service = _generation_service(request)
+
+            with self.assertRaises(KeyError):
+                service.queue(
+                    SessionPrincipal("owner-id", "owner"),
+                    "project-id",
+                    1,
+                    provider="fake",
+                    model="fake-raster-v1",
+                    auth_mode=AuthMode.AGENT,
+                )
+
+    def test_health_remains_database_filesystem_and_background_free_with_generation_routes(self):
+        from comic_sol_web.app import create_app
+        from comic_sol_web.config import WebConfig
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary) / "health-must-not-create"
+            app = create_app(WebConfig.from_env(valid_environment(data_root)))
+            with (
+                patch(
+                    "comic_sol_web.database.Database._connect",
+                    side_effect=AssertionError("database access"),
+                ),
+                patch("pathlib.Path.mkdir", side_effect=AssertionError("filesystem write")),
+                patch("socket.getaddrinfo", side_effect=AssertionError("network access")),
+            ):
+                with TestClient(app) as client:
+                    response = client.get("/healthz")
+            self.assertEqual(200, response.status_code)
+            self.assertEqual({"status": "ok"}, response.json())
+            self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "generation"))
 
     def test_anonymous_project_request_fails_before_lazy_storage_initialization(self):
         from comic_sol_web.app import create_app

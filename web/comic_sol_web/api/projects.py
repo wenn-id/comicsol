@@ -5,8 +5,19 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, NoReturn
+from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 
 from comic_sol_web.auth import AuthError, SessionPrincipal, require_principal
 
@@ -23,6 +34,10 @@ def _envelope(snapshot: Any) -> dict[str, object]:
         "status": snapshot.status,
         "summary": dict(snapshot.summary),
     }
+
+
+def _private_response(response: Response) -> None:
+    response.headers["Cache-Control"] = "private, no-store"
 
 
 def _reject(error: Exception) -> NoReturn:
@@ -52,6 +67,20 @@ def _require_csrf(request: Request, principal: SessionPrincipal) -> None:
             raise AuthError("authenticated identity changed")
     except AuthError as error:
         raise HTTPException(status_code=403, detail="CSRF validation failed") from error
+
+
+def _write_headers(request: Request, *, creation: bool) -> tuple[str, int]:
+    idempotency_key = request.headers.get("Idempotency-Key", "")
+    expected_value = request.headers.get("X-Expected-Revision", "")
+    try:
+        parsed_key = UUID(idempotency_key)
+        expected_revision = int(expected_value)
+    except (ValueError, TypeError) as error:
+        raise HTTPException(status_code=400, detail="project write headers are invalid") from error
+    valid_revision = expected_revision == 0 if creation else expected_revision >= 1
+    if str(parsed_key) != idempotency_key.lower() or not valid_revision:
+        raise HTTPException(status_code=400, detail="project write headers are invalid")
+    return idempotency_key.lower(), expected_revision
 
 
 def _resolve_service(source: Any, request: Request) -> ProjectService:
@@ -84,23 +113,51 @@ def create_projects_router(service_source: Any) -> APIRouter:
     @router.post("", status_code=status.HTTP_201_CREATED)
     async def create_project(
         request: Request,
+        response: Response,
         body: Annotated[dict[str, object], Body()],
         principal: Annotated[SessionPrincipal, Depends(require_principal)],
     ) -> dict[str, object]:
         _require_csrf(request, principal)
+        _private_response(response)
         try:
             service = _resolve_service(service_source, request)
-            return _envelope(service.create_project(principal, body))
+            if "project_id" in body or "plan" in body:
+                if set(body) != {"project_id", "plan"}:
+                    raise ValueError("Plan update envelope is invalid")
+                project_id = body["project_id"]
+                plan = body["plan"]
+                if not isinstance(project_id, str) or not isinstance(plan, dict):
+                    raise ValueError("Plan update envelope is invalid")
+                _idempotency_key, expected_revision = _write_headers(
+                    request,
+                    creation=False,
+                )
+                snapshot = service.update_plan(
+                    principal,
+                    project_id,
+                    expected_revision,
+                    plan,
+                )
+                response.status_code = status.HTTP_200_OK
+                return _envelope(snapshot)
+            idempotency_key, _expected_revision = _write_headers(request, creation=True)
+            snapshot = service.create_project(principal, body, idempotency_key)
+            return _envelope(service.read_plan(principal, snapshot.project_id, snapshot.revision))
+        except HTTPException:
+            raise
         except Exception as error:
             _reject(error)
 
     @router.post("/import", status_code=status.HTTP_201_CREATED)
     async def import_project(
         request: Request,
+        response: Response,
         archive: Annotated[UploadFile, File(...)],
         principal: Annotated[SessionPrincipal, Depends(require_principal)],
     ) -> dict[str, object]:
         _require_csrf(request, principal)
+        _private_response(response)
+        idempotency_key, _expected_revision = _write_headers(request, creation=True)
         from comic_sol_product.cli import _load_engine_module
 
         archive_suffix = _load_engine_module("handoff_archive").ARCHIVE_SUFFIX
@@ -112,7 +169,10 @@ def create_projects_router(service_source: Any) -> APIRouter:
                 staged = Path(temporary) / f"upload{archive_suffix}"
                 await _stage_archive(archive, staged)
                 service = _resolve_service(service_source, request)
-                return _envelope(service.import_project(principal, staged))
+                snapshot = service.import_project(principal, staged, idempotency_key)
+                return _envelope(
+                    service.read_plan(principal, snapshot.project_id, snapshot.revision)
+                )
         except HTTPException:
             raise
         except Exception as error:
@@ -120,15 +180,34 @@ def create_projects_router(service_source: Any) -> APIRouter:
         finally:
             await archive.close()
 
+    @router.get("/current", response_model=None)
+    async def get_current_project(
+        request: Request,
+        response: Response,
+        principal: Annotated[SessionPrincipal, Depends(require_principal)],
+    ) -> dict[str, object] | Response:
+        _private_response(response)
+        try:
+            service = _resolve_service(service_source, request)
+            snapshot = service.current_project(principal)
+            if snapshot is None:
+                response.status_code = status.HTTP_204_NO_CONTENT
+                return response
+            return _envelope(snapshot)
+        except Exception as error:
+            _reject(error)
+
     @router.get("/{project_id}")
     async def get_project(
         request: Request,
+        response: Response,
         project_id: str,
         principal: Annotated[SessionPrincipal, Depends(require_principal)],
     ) -> dict[str, object]:
+        _private_response(response)
         try:
             service = _resolve_service(service_source, request)
-            return _envelope(service.snapshot(principal, project_id))
+            return _envelope(service.read_plan(principal, project_id))
         except Exception as error:
             _reject(error)
 
