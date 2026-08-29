@@ -8,6 +8,11 @@ import {
 
 const MAX_SOURCE_BYTES = 200 * 1024;
 
+export function retryOperation(previous, identity) {
+  if (previous?.identity === identity) return previous;
+  return Object.freeze({ identity, idempotencyKey: crypto.randomUUID() });
+}
+
 function element(tag, attributes = {}, text = "") {
   const node = document.createElement(tag);
   for (const [name, value] of Object.entries(attributes)) {
@@ -47,6 +52,7 @@ function creationCard({ store, announce, navigate }) {
   const card = element("section", { className: "card", "aria-labelledby": "create-heading" });
   card.append(element("h3", { id: "create-heading" }, "Create a project"));
   const form = element("form", { id: "create-project-form" });
+  let retry = null;
 
   const title = element("input", {
     id: "project-title",
@@ -136,7 +142,9 @@ function creationCard({ store, announce, navigate }) {
       page_count: Number(pageCount.value),
     };
     try {
-      const project = await createProject(request);
+      const fingerprint = JSON.stringify(request);
+      retry = retryOperation(retry, fingerprint);
+      const project = await createProject(request, retry.idempotencyKey);
       store.setProject(project);
       announce("Project created. Plan is ready for review.", "success");
       navigate("plan");
@@ -157,6 +165,7 @@ function importCard({ store, announce, navigate }) {
     element("p", {}, "Open a portable .comic-sol-handoff archive. Validation and migration remain server-authoritative."),
   );
   const form = element("form", { id: "import-project-form" });
+  let retry = null;
   const archive = element("input", {
     id: "project-archive",
     name: "archive",
@@ -194,7 +203,8 @@ function importCard({ store, announce, navigate }) {
     setBusy(form, true);
     announce("Validating and importing archive…");
     try {
-      const project = await importProject(file);
+      retry = retryOperation(retry, file);
+      const project = await importProject(file, retry.idempotencyKey);
       store.setProject(project);
       announce("Archive imported. Review the current plan before continuing.", "success");
       navigate("plan");

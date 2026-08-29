@@ -178,6 +178,17 @@ class StudioContractTests(unittest.TestCase):
         self.assertRegex(self.api, r"updatePlan[\s\S]+writeRequest\(")
         self.assertRegex(self.api, r"expectedRevision:\s*0")
         self.assertIn('credentials: "same-origin"', self.api)
+        self.assertRegex(self.api, r'"Idempotency-Key": idempotencyKey \|\| crypto\.randomUUID\(\)')
+        self.assertRegex(
+            self.start,
+            r"retryOperation\(retry, fingerprint\)[\s\S]{0,120}"
+            r"createProject\(request, retry\.idempotencyKey\)",
+        )
+        self.assertRegex(
+            self.start,
+            r"retryOperation\(retry, file\)[\s\S]{0,120}"
+            r"importProject\(file, retry\.idempotencyKey\)",
+        )
 
     def test_client_uses_only_the_existing_wp3_project_api(self) -> None:
         self.assertIn('const PROJECTS_PATH = "/api/projects"', self.api)
@@ -249,6 +260,15 @@ class StudioContractTests(unittest.TestCase):
             r"refreshed\.revision\s*!==\s*previousRevision[\s\S]{0,300}"
             r"controls\[key\]\.value\s*=\s*store\.getState\(\)\.workingPlan\[key\]",
         )
+        self.assertIn('outcome: "project-changed"', self.plan)
+        self.assertRegex(
+            self.plan,
+            r"responseMatchesProject\(requestedProjectId, currentProject, refreshed\)\) return",
+        )
+        self.assertRegex(
+            self.plan,
+            r"editorDirty[\s\S]{0,160}Review or discard your typed edits",
+        )
 
     def test_deferred_plan_promotion_preserves_replacement_and_syncs_controls(self) -> None:
         node = shutil.which("node")
@@ -265,11 +285,23 @@ const moduleUrl = (source) =>
 const stateSource = readFileSync(new URL({json.dumps(state_uri)}), "utf8");
 const apiSource = readFileSync(new URL({json.dumps(api_uri)}), "utf8");
 const originalPlanSource = readFileSync(new URL({json.dumps(plan_uri)}), "utf8");
+const originalStartSource = readFileSync(
+  new URL({json.dumps((STATIC_ROOT / "views" / "start.js").as_uri())}),
+  "utf8",
+);
 const apiUrl = moduleUrl(apiSource);
 const planSource = originalPlanSource.replace('"../api.js"', JSON.stringify(apiUrl));
+const startSource = originalStartSource.replace('"../api.js"', JSON.stringify(apiUrl));
 if (planSource === originalPlanSource) throw new Error("Plan API import was not relocated");
+if (startSource === originalStartSource) throw new Error("Start API import was not relocated");
 const {{ createStore, restoreCurrentProject }} = await import(moduleUrl(stateSource));
-const {{ persistReviewedDraft, safeProposal }} = await import(moduleUrl(planSource));
+const {{
+  editorHasChanges,
+  persistReviewedDraft,
+  responseMatchesProject,
+  safeProposal,
+}} = await import(moduleUrl(planSource));
+const {{ retryOperation }} = await import(moduleUrl(startSource));
 
 function check(condition, message) {{
   if (!condition) throw new Error(message);
@@ -328,6 +360,50 @@ check(state.draft.expectedRevision === 2, "replacement draft was not rebound to 
 for (const key of Object.keys(replacementPlan)) {{
   check(state.draft.changes[key] === replacementPlan[key], `replacement field ${{key}} was lost`);
 }}
+
+const changedStore = createStore();
+changedStore.setProject(project(1, originalPlan));
+changedStore.createDraft(submittedPlan);
+const changedDraft = changedStore.getState().draft;
+let resolveChangedUpdate;
+const changedOperation = persistReviewedDraft(
+  changedStore,
+  changedDraft,
+  () => new Promise((resolve) => {{ resolveChangedUpdate = resolve; }}),
+);
+await Promise.resolve();
+changedStore.setProject(Object.freeze({{
+  ...project(1, replacementPlan),
+  project_id: "project_fedcba9876543210fedcba98",
+}}));
+resolveChangedUpdate(project(2, submittedPlan));
+const changedResult = await changedOperation;
+check(changedResult.outcome === "project-changed", "project replacement was not detected");
+check(
+  changedStore.getState().project.project_id === "project_fedcba9876543210fedcba98",
+  "completed save restored the superseded project",
+);
+check(
+  !responseMatchesProject(project(1, originalPlan).project_id, changedStore.getState().project, project(2, submittedPlan)),
+  "superseded refresh response was accepted",
+);
+
+const cleanControls = Object.fromEntries(
+  Object.entries(originalPlan).map(([key, value]) => [key, {{ value }}]),
+);
+check(!editorHasChanges(cleanControls, originalPlan), "clean editor was marked dirty");
+cleanControls.storyPlan.value = "typed edit";
+check(editorHasChanges(cleanControls, originalPlan), "typed editor change was not detected");
+
+const firstRetry = retryOperation(null, "same request");
+const repeatedRetry = retryOperation(firstRetry, "same request");
+const changedRetry = retryOperation(repeatedRetry, "changed request");
+check(firstRetry === repeatedRetry, "unchanged retry replaced its idempotency key");
+check(
+  firstRetry.idempotencyKey === repeatedRetry.idempotencyKey,
+  "unchanged retry sent a different idempotency key",
+);
+check(changedRetry.idempotencyKey !== firstRetry.idempotencyKey, "changed request reused its key");
 
 check(
   safeProposal({{ expectedRevision: 2, changes: {{ storyPlan: "incomplete" }} }}) === null,

@@ -64,8 +64,16 @@ function renderDraftDiff(container, current, draft) {
 }
 
 export async function persistReviewedDraft(store, draft, persist) {
+  const submittedProjectId = store.getState().project?.project_id;
   const persisted = await persist();
-  const currentDraft = store.getState().draft;
+  const current = store.getState();
+  if (
+    persisted.project_id !== submittedProjectId ||
+    current.project?.project_id !== submittedProjectId
+  ) {
+    return Object.freeze({ outcome: "project-changed", persisted });
+  }
+  const currentDraft = current.draft;
   if (currentDraft !== draft) {
     store.replaceProject(persisted);
     if (currentDraft) store.createDraft(currentDraft.changes, currentDraft.origin);
@@ -73,6 +81,15 @@ export async function persistReviewedDraft(store, draft, persist) {
   }
   const outcome = store.promoteDraft(persisted) ? "promoted" : "not-promoted";
   return Object.freeze({ outcome, persisted });
+}
+
+export function responseMatchesProject(requestedProjectId, currentProject, responseProject) {
+  return responseProject.project_id === requestedProjectId &&
+    currentProject?.project_id === requestedProjectId;
+}
+
+export function editorHasChanges(controls, workingPlan) {
+  return FIELDS.some(([key]) => controls[key].value !== workingPlan[key]);
 }
 
 export function renderPlanView({ store, announce }) {
@@ -166,8 +183,11 @@ export function renderPlanView({ store, announce }) {
     if (promotionPending && !force) return;
     announce("Refreshing project revision…");
     try {
-      const refreshed = await getProject(project.project_id);
-      const previousRevision = store.getState().project.revision;
+      const requestedProjectId = project.project_id;
+      const refreshed = await getProject(requestedProjectId);
+      const currentProject = store.getState().project;
+      if (!responseMatchesProject(requestedProjectId, currentProject, refreshed)) return;
+      const previousRevision = currentProject.revision;
       store.replaceProject(refreshed);
       if (refreshed.revision !== previousRevision) {
         store.clearDraft();
@@ -211,6 +231,10 @@ export function renderPlanView({ store, announce }) {
         announce("The saved Plan was refreshed; newer edits remain a draft for review.", "error");
         return;
       }
+      if (result.outcome === "project-changed") {
+        announce("The Plan was saved, but another project is now active.", "error");
+        return;
+      }
       if (result.outcome === "promoted") {
         for (const [key] of FIELDS) controls[key].value = store.getState().workingPlan[key];
         updateDraft();
@@ -248,6 +272,12 @@ export function renderPlanView({ store, announce }) {
     }
     if (store.getState().draft) {
       announce("A draft is already waiting for review. Discard or promote it first.", "error");
+      return;
+    }
+    const current = store.getState().workingPlan;
+    const editorDirty = editorHasChanges(controls, current);
+    if (editorDirty) {
+      announce("Review or discard your typed edits before opening an agent proposal.", "error");
       return;
     }
     store.createDraft(proposal.changes, "agent");

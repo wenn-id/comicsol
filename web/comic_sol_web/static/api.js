@@ -89,14 +89,14 @@ async function readEnvelope(response, { archive = false } = {}) {
   }
 }
 
-async function writeRequest(path, { body, expectedRevision, archive = false }) {
+async function writeRequest(path, { body, expectedRevision, archive = false, idempotencyKey }) {
   const csrf = cookieValue("comic_sol_csrf");
   if (!csrf) {
     throw new StudioApiError("Your Studio session is unavailable. Sign in again and retry.", 403);
   }
   const headers = {
     "X-CSRF-Token": csrf,
-    "Idempotency-Key": crypto.randomUUID(),
+    "Idempotency-Key": idempotencyKey || crypto.randomUUID(),
     "X-Expected-Revision": String(expectedRevision),
   };
   if (!(body instanceof FormData)) {
@@ -111,20 +111,22 @@ async function writeRequest(path, { body, expectedRevision, archive = false }) {
   return readEnvelope(response, { archive });
 }
 
-export function createProject(request) {
+export function createProject(request, idempotencyKey) {
   return writeRequest(PROJECTS_PATH, {
     body: request,
     expectedRevision: 0,
+    idempotencyKey,
   });
 }
 
-export function importProject(archive) {
+export function importProject(archive, idempotencyKey) {
   const body = new FormData();
   body.append("archive", archive, archive.name);
   return writeRequest(`${PROJECTS_PATH}/import`, {
     body,
     expectedRevision: 0,
     archive: true,
+    idempotencyKey,
   });
 }
 
