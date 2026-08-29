@@ -444,6 +444,80 @@ class EngineGatewayContractTests(GatewayFixture):
         self.assertFalse(updater.is_alive())
         self.assertEqual([], errors)
 
+    def test_plan_update_response_is_serialized_with_the_next_update(self) -> None:
+        snapshot = self.import_prepared()
+        first_candidate = plan_payload(snapshot.root)
+        first_story = json.loads(first_candidate["storyPlan"])
+        first_story["theme"] = "The first response keeps its own committed Plan."
+        first_candidate["storyPlan"] = json.dumps(first_story)
+        second_candidate = dict(first_candidate)
+        second_story = dict(first_story)
+        second_story["theme"] = "A later update publishes only after the first response."
+        second_candidate["storyPlan"] = json.dumps(second_story)
+        response_read_started = threading.Event()
+        release_response_read = threading.Event()
+        second_finished = threading.Event()
+        results: dict[str, ProjectSnapshot] = {}
+        errors: list[BaseException] = []
+        original_summary = EngineGateway._plan_summary
+
+        def blocking_summary(root: Path) -> dict[str, str]:
+            if threading.current_thread().name == "first-plan-updater":
+                response_read_started.set()
+                if not release_response_read.wait(5):
+                    raise TimeoutError("test did not release the first Plan response")
+            return original_summary(root)
+
+        def first_update() -> None:
+            try:
+                results["first"] = self.gateway.update_plan(
+                    snapshot.project_id,
+                    snapshot.revision,
+                    first_candidate,
+                )
+            except BaseException as error:
+                errors.append(error)
+
+        def second_update() -> None:
+            try:
+                results["second"] = self.gateway.update_plan(
+                    snapshot.project_id,
+                    snapshot.revision + 1,
+                    second_candidate,
+                )
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                second_finished.set()
+
+        with mock.patch.object(
+            EngineGateway,
+            "_plan_summary",
+            new=staticmethod(blocking_summary),
+        ):
+            first = threading.Thread(target=first_update, name="first-plan-updater")
+            second = threading.Thread(target=second_update, name="second-plan-updater")
+            first.start()
+            self.assertTrue(response_read_started.wait(2))
+            second.start()
+            try:
+                self.assertFalse(second_finished.wait(0.2))
+            finally:
+                release_response_read.set()
+            first.join(5)
+            second.join(5)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual([], errors)
+        self.assertEqual(snapshot.revision + 1, results["first"].revision)
+        first_plan = cast(Mapping[str, str], results["first"].summary["plan"])
+        self.assertEqual(first_story, json.loads(first_plan["storyPlan"]))
+        self.assertEqual(snapshot.revision + 2, results["second"].revision)
+        self.assertEqual(
+            second_story,
+            json.loads((snapshot.root / "plan/story-plan.json").read_bytes()),
+        )
+
     def test_plan_update_commits_canonical_bytes_and_survives_gateway_reload(self) -> None:
         snapshot = self.import_prepared()
         candidate = plan_payload(snapshot.root)

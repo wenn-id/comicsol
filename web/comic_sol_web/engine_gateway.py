@@ -520,61 +520,62 @@ class EngineGateway:
         root = self._root_from_row(initial)
         revision = expected_revision
         changed = False
-        with ProjectTransaction(root, "studio-plan-update") as transaction:
-            prior_state = self._engine_state(root)
-            with self.database.transaction() as connection:
-                row = self._reconcile_row(connection, project_id, prior_state)
-                self._check_revision(cast(int, row["revision"]), expected_revision)
-                revision = cast(int, row["revision"])
-            story, character_bible, storyboard, identity_pack, first_plan = self._plan_candidate(
-                root, plan
-            )
-            panel_ids = self._validate_plan_candidate(
-                root,
-                story,
-                character_bible,
-                storyboard,
-                identity_pack,
-                first_plan=first_plan,
-            )
-            payloads = {
-                "storyPlan": canonical_artifact_bytes(story),
-                "characterBible": canonical_artifact_bytes(character_bible),
-                "storyboard": canonical_artifact_bytes(storyboard),
-                "visualIdentityPack": canonical_artifact_bytes(identity_pack),
-            }
-            if first_plan:
-                for field, relative in _PLAN_FIELDS.items():
-                    transaction.stage_bytes(relative, payloads[field])
-                transaction.stage_bytes(
-                    "project.json",
-                    self._initial_plan_manifest(
-                        root,
-                        payloads,
-                        panel_ids,
-                    ),
+        with ProjectLock(root):
+            with ProjectTransaction(root, "studio-plan-update") as transaction:
+                prior_state = self._engine_state(root)
+                with self.database.transaction() as connection:
+                    row = self._reconcile_row(connection, project_id, prior_state)
+                    self._check_revision(cast(int, row["revision"]), expected_revision)
+                    revision = cast(int, row["revision"])
+                story, character_bible, storyboard, identity_pack, first_plan = (
+                    self._plan_candidate(root, plan)
                 )
-                changed = True
-            else:
-                changed_fields = [
-                    field
-                    for field, relative in _PLAN_FIELDS.items()
-                    if read_contained_bytes(root, relative) != payloads[field]
-                ]
-                if changed_fields:
-                    comic_sol._invalidate_from_locked(root, "planning", transaction)
-                    for field in changed_fields:
-                        transaction.stage_bytes(_PLAN_FIELDS[field], payloads[field])
+                panel_ids = self._validate_plan_candidate(
+                    root,
+                    story,
+                    character_bible,
+                    storyboard,
+                    identity_pack,
+                    first_plan=first_plan,
+                )
+                payloads = {
+                    "storyPlan": canonical_artifact_bytes(story),
+                    "characterBible": canonical_artifact_bytes(character_bible),
+                    "storyboard": canonical_artifact_bytes(storyboard),
+                    "visualIdentityPack": canonical_artifact_bytes(identity_pack),
+                }
+                if first_plan:
+                    for field, relative in _PLAN_FIELDS.items():
+                        transaction.stage_bytes(relative, payloads[field])
+                    transaction.stage_bytes(
+                        "project.json",
+                        self._initial_plan_manifest(
+                            root,
+                            payloads,
+                            panel_ids,
+                        ),
+                    )
                     changed = True
-        if changed:
-            revision += 1
-            self._ensure_revision(project_id, expected_revision, revision, root)
-        return self._snapshot_for(
-            project_id,
-            revision,
-            root,
-            extra_summary={"plan": self._plan_summary(root)},
-        )
+                else:
+                    changed_fields = [
+                        field
+                        for field, relative in _PLAN_FIELDS.items()
+                        if read_contained_bytes(root, relative) != payloads[field]
+                    ]
+                    if changed_fields:
+                        comic_sol._invalidate_from_locked(root, "planning", transaction)
+                        for field in changed_fields:
+                            transaction.stage_bytes(_PLAN_FIELDS[field], payloads[field])
+                        changed = True
+            if changed:
+                revision += 1
+                self._ensure_revision(project_id, expected_revision, revision, root)
+            return self._snapshot_for(
+                project_id,
+                revision,
+                root,
+                extra_summary={"plan": self._plan_summary(root)},
+            )
 
     @staticmethod
     def _request_from_job(
