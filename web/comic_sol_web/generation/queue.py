@@ -8,7 +8,7 @@ import sqlite3
 from collections.abc import Callable
 
 from comic_sol_web.generation.store import GenerationJob, GenerationStore, LeasedJob
-from comic_sol_web.generation.types import JobState
+from comic_sol_web.generation.types import ErrorCategory, JobState
 
 MAX_LEASE_SECONDS = 300
 _WORKER_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}\Z")
@@ -39,6 +39,7 @@ class DurableGenerationQueue:
             raise ValueError("generation worker identifier is invalid")
 
     def lease_next(self, worker_id: str, *, lease_seconds: int) -> LeasedJob | None:
+        """Claim one eligible job and bound recovery of expired work."""
         self._validate_worker(worker_id)
         if (
             isinstance(lease_seconds, bool)
@@ -50,50 +51,94 @@ class DurableGenerationQueue:
         expires_at = now + lease_seconds
         token = secrets.token_urlsafe(32)
         with self.store.database.transaction() as connection:
-            row = connection.execute(
-                """
-                SELECT * FROM generation_jobs
-                WHERE state IN ('queued', 'polling')
-                   OR (state = 'running' AND lease_expires_at <= ?)
-                ORDER BY created_at, job_id
-                LIMIT 1
-                """,
-                (now,),
-            ).fetchone()
-            if row is None:
-                return None
-            updated = connection.execute(
-                """
-                UPDATE generation_jobs
-                SET state = ?, lease_token = ?, lease_owner = ?,
-                    lease_expires_at = ?, updated_at = ?
-                WHERE job_id = ? AND (
-                    state IN ('queued', 'polling')
-                    OR (state = 'running' AND lease_expires_at <= ?)
+            while True:
+                row = connection.execute(
+                    """
+                    SELECT * FROM generation_jobs
+                    WHERE state IN ('queued', 'polling')
+                       OR (state = 'running' AND lease_expires_at <= ?)
+                    ORDER BY created_at, job_id
+                    LIMIT 1
+                    """,
+                    (now,),
+                ).fetchone()
+                if row is None:
+                    return None
+
+                if (
+                    row["state"] == JobState.RUNNING.value
+                    and row["retry_count"] >= row["max_retries"]
+                ):
+                    failed = connection.execute(
+                        """
+                        UPDATE generation_jobs
+                        SET state = ?, lease_token = NULL, lease_owner = NULL,
+                            lease_expires_at = NULL, updated_at = ?
+                        WHERE job_id = ? AND state = ? AND lease_expires_at <= ?
+                          AND retry_count >= max_retries
+                        """,
+                        (
+                            JobState.FAILED.value,
+                            now,
+                            row["job_id"],
+                            JobState.RUNNING.value,
+                            now,
+                        ),
+                    ).rowcount
+                    if failed != 1:
+                        continue
+                    current = self.store.row(connection, row["job_id"])
+                    assert current is not None
+                    self.store.append_attempt(
+                        connection,
+                        current,
+                        JobState.FAILED,
+                        now,
+                        error_category=ErrorCategory.TIMEOUT.value,
+                        external_job_id=current["external_job_id"],
+                    )
+                    continue
+
+                updated = connection.execute(
+                    """
+                    UPDATE generation_jobs
+                    SET state = ?,
+                        attempt_number = attempt_number + CASE
+                            WHEN state = 'running' THEN 1 ELSE 0 END,
+                        retry_count = retry_count + CASE
+                            WHEN state = 'running' THEN 1 ELSE 0 END,
+                        lease_token = ?, lease_owner = ?, lease_expires_at = ?,
+                        updated_at = ?
+                    WHERE job_id = ? AND (
+                        state IN ('queued', 'polling')
+                        OR (
+                            state = 'running' AND lease_expires_at <= ?
+                            AND retry_count < max_retries
+                        )
+                    )
+                    """,
+                    (
+                        JobState.RUNNING.value,
+                        token,
+                        worker_id,
+                        expires_at,
+                        now,
+                        row["job_id"],
+                        now,
+                    ),
+                ).rowcount
+                if updated != 1:
+                    continue
+                current = self.store.row(connection, row["job_id"])
+                assert current is not None
+                self.store.append_attempt(
+                    connection,
+                    current,
+                    JobState.RUNNING,
+                    now,
+                    external_job_id=current["external_job_id"],
                 )
-                """,
-                (
-                    JobState.RUNNING.value,
-                    token,
-                    worker_id,
-                    expires_at,
-                    now,
-                    row["job_id"],
-                    now,
-                ),
-            ).rowcount
-            if updated != 1:
-                return None
-            current = self.store.row(connection, row["job_id"])
-            assert current is not None
-            self.store.append_attempt(
-                connection,
-                current,
-                JobState.RUNNING,
-                now,
-                external_job_id=current["external_job_id"],
-            )
-        return LeasedJob(self.store.from_row(current), token, expires_at)
+                return LeasedJob(self.store.from_row(current), token, expires_at)
 
     def get_owned(self, owner_id: str, job_id: str) -> GenerationJob:
         try:

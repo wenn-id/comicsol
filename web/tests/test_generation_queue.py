@@ -13,9 +13,10 @@ from web.tests import support as _support  # noqa: F401  # Checkout import path 
 
 from comic_sol_web.auth import SessionPrincipal
 from comic_sol_web.database import Database
-from comic_sol_web.generation.providers.base import ProviderRegistry
+from comic_sol_web.engine_gateway import StaleProjectRevisionError
+from comic_sol_web.generation.providers.base import ProviderError, ProviderRegistry
 from comic_sol_web.generation.providers.fake import FakeProvider
-from comic_sol_web.generation.receipts import AUTHORIZED_RECEIPT_FIELDS
+from comic_sol_web.generation.receipts import AUTHORIZED_RECEIPT_FIELDS, sanitize_usage
 from comic_sol_web.generation.service import (
     GenerationConflictError,
     GenerationService,
@@ -24,6 +25,7 @@ from comic_sol_web.generation.service import (
 )
 from comic_sol_web.generation.types import (
     AuthMode,
+    ErrorCategory,
     GenerationRequest,
     GenerationResult,
     JobState,
@@ -41,6 +43,48 @@ CAPABILITIES_USED = {
     "localized_edit": False,
     "reference_images": False,
 }
+
+
+class ErrorProvider(FakeProvider):
+    """Deterministic provider that raises one normalized category."""
+
+    def __init__(self, category: ErrorCategory) -> None:
+        super().__init__()
+        self.category = category
+
+    async def generate(
+        self,
+        request: GenerationRequest,
+        model: str,
+        credential: str | None,
+    ) -> GenerationResult:
+        del request, model, credential
+        raise ProviderError(self.category)
+
+
+class HangingProvider(FakeProvider):
+    """Deterministic provider that waits until its caller cancels it."""
+
+    async def generate(
+        self,
+        request: GenerationRequest,
+        model: str,
+        credential: str | None,
+    ) -> GenerationResult:
+        del request, model, credential
+        await asyncio.Event().wait()
+        raise AssertionError("cancelled provider call resumed")
+
+
+class LeaseBoundaryClock:
+    """Advance to the lease boundary after the lease is issued."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self) -> int:
+        self.calls += 1
+        return 1_000 if self.calls == 1 else 1_001
 
 
 class MutableClock:
@@ -109,7 +153,7 @@ class FakeProjects:
         if principal.user_id != self.owner_id or project_id != self.project_id:
             raise ValueError("project unavailable")
         if expected_revision != self.revision:
-            raise ValueError("project revision is stale")
+            raise StaleProjectRevisionError(expected_revision, self.revision)
 
     def assert_contained(self, raster: Path) -> None:
         resolved = raster.resolve(strict=True)
@@ -131,11 +175,11 @@ class GenerationQueueFixture(unittest.TestCase):
         self.bob = SessionPrincipal("bob-id", "bob")
         self.service = self.make_service()
 
-    def make_service(self) -> GenerationService:
+    def make_service(self, provider: FakeProvider | None = None) -> GenerationService:
         return GenerationService(
             self.database,
             self.projects,
-            ProviderRegistry((FakeProvider(),)),
+            ProviderRegistry((FakeProvider() if provider is None else provider,)),
             self.staging_root,
             clock=self.clock,
         )
@@ -216,6 +260,28 @@ class DurableQueueTests(GenerationQueueFixture):
         assert recovered is not None
         self.assertEqual(queued.job_id, recovered.job.job_id)
         self.assertNotEqual(first.lease_token, recovered.lease_token)
+        self.assertEqual(2, recovered.job.attempt_number)
+        self.assertEqual(1, recovered.job.retry_count)
+
+    def test_expired_leases_stop_at_the_retry_ceiling(self) -> None:
+        queued = self.queue(max_retries=1)
+        first = self.service.lease_next("worker-a", lease_seconds=5)
+        assert first is not None
+        self.clock.value += 6
+        recovered = self.service.lease_next("worker-b", lease_seconds=5)
+        assert recovered is not None
+        self.assertEqual(2, recovered.job.attempt_number)
+        self.assertEqual(1, recovered.job.retry_count)
+
+        self.clock.value += 6
+        self.assertIsNone(self.service.lease_next("worker-c", lease_seconds=5))
+        failed = self.service.get(self.alice, queued.job_id)
+        self.assertEqual(JobState.FAILED, failed.state)
+        self.assertEqual(2, failed.attempt_number)
+        self.assertEqual(1, failed.retry_count)
+        attempts = self.service.attempts(queued.job_id)
+        self.assertEqual(JobState.FAILED.value, attempts[-1]["state"])
+        self.assertEqual(ErrorCategory.TIMEOUT.value, attempts[-1]["error_category"])
 
     def test_restart_recovers_an_expired_running_job(self) -> None:
         queued = self.queue()
@@ -266,6 +332,31 @@ class DurableQueueTests(GenerationQueueFixture):
         self.assertEqual(1, len(receipts))
         usage = cast(Mapping[str, object], receipts[0]["usage"])
         self.assertEqual(1, usage["images"])
+
+    def test_failed_poll_preserves_the_external_provider_job_id(self) -> None:
+        queued = self.queue()
+        initial = self.service.lease_next("worker", lease_seconds=30)
+        assert initial is not None
+        external_job_id = "fake:preserved-after-poll-failure"
+        self.service.record_result(
+            queued.job_id,
+            initial.lease_token,
+            self.polling_result(external_job_id),
+        )
+        polling = self.service.lease_next("poll-worker", lease_seconds=30)
+        assert polling is not None
+
+        failed = self.service.record_result(
+            queued.job_id,
+            polling.lease_token,
+            self.failed_result(),
+        )
+
+        self.assertEqual(JobState.FAILED, failed.state)
+        self.assertEqual(external_job_id, failed.external_job_id)
+        self.assertEqual(
+            external_job_id, self.service.attempts(queued.job_id)[-1]["external_job_id"]
+        )
 
     def test_same_provider_retry_has_a_hard_ceiling(self) -> None:
         queued = self.queue(max_retries=1)
@@ -330,6 +421,24 @@ class DurableQueueTests(GenerationQueueFixture):
             )
         self.assertNotIn(secret, persisted)
 
+    def test_receipt_accounting_strings_require_canonical_formats(self) -> None:
+        self.assertEqual(
+            {"currency": "USD", "unit": "image", "quantity": 1},
+            dict(sanitize_usage({"currency": "USD", "unit": "image", "quantity": 1})),
+        )
+        secret = "api_key=raw-provider-secret"
+        sanitized = dict(
+            sanitize_usage(
+                {
+                    "currency": secret,
+                    "unit": "account-identifier",
+                    "images": secret,
+                }
+            )
+        )
+        self.assertEqual({}, sanitized)
+        self.assertNotIn(secret, repr(sanitized))
+
     def test_stale_revisions_fail_before_queue_or_state_mutation(self) -> None:
         with self.assertRaises(ValueError):
             self.service.queue(
@@ -348,6 +457,37 @@ class DurableQueueTests(GenerationQueueFixture):
             self.service.retry_same_provider(self.alice, queued.job_id, 2)
         with self.assertRaises(GenerationConflictError):
             self.service.pause_for_switch(self.alice, queued.job_id, 2)
+
+    def test_promotion_failure_releases_claim_without_rebinding_revision(self) -> None:
+        queued = self.queue()
+        lease = self.service.lease_next("worker", lease_seconds=30)
+        assert lease is not None
+        validating = self.service.record_result(
+            queued.job_id,
+            lease.lease_token,
+            self.accepted_result(),
+        )
+        self.projects.revision += 1
+
+        with self.assertRaises(StaleProjectRevisionError):
+            self.service.submit_staged_raster(self.alice, queued.job_id, 3)
+
+        current = self.service.get(self.alice, queued.job_id)
+        self.assertEqual(JobState.VALIDATING, current.state)
+        self.assertEqual(validating.staged_raster, current.staged_raster)
+        assert current.staged_raster is not None
+        self.assertEqual(PNG, current.staged_raster.read_bytes())
+        with self.database.read() as connection:
+            row = connection.execute(
+                "SELECT lease_token, lease_owner, lease_expires_at "
+                "FROM generation_jobs WHERE job_id = ?",
+                (queued.job_id,),
+            ).fetchone()
+        assert row is not None
+        self.assertIsNone(row["lease_token"])
+        self.assertIsNone(row["lease_owner"])
+        self.assertIsNone(row["lease_expires_at"])
+        self.assertEqual([], self.projects.submissions)
 
     def test_owner_isolation_applies_to_reads_retries_pauses_and_submission(self) -> None:
         queued = self.queue()
@@ -379,7 +519,10 @@ class DurableQueueTests(GenerationQueueFixture):
         self.projects.assert_contained(validating.staged_raster)
         self.assertEqual(PNG, validating.staged_raster.read_bytes())
         self.service.submit_staged_raster(self.alice, queued.job_id, 3)
-        self.assertEqual([(validating.staged_raster, PNG)], self.projects.submissions)
+        self.assertEqual(1, len(self.projects.submissions))
+        submitted, payload = self.projects.submissions[0]
+        self.assertIsInstance(submitted, Path)
+        self.assertEqual(PNG, payload)
 
     def test_failed_or_duplicate_completion_preserves_last_accepted_raster_bytes(self) -> None:
         queued = self.queue()
@@ -400,6 +543,55 @@ class DurableQueueTests(GenerationQueueFixture):
             self.service.record_result(queued.job_id, lease.lease_token, self.failed_result())
         self.assertEqual(accepted, self.projects.accepted_raster)
         self.assertEqual(1, len(self.projects.submissions))
+
+    def test_worker_pauses_when_the_persisted_provider_is_unavailable(self) -> None:
+        queued = self.queue()
+        unavailable = GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry(()),
+            self.staging_root,
+            clock=self.clock,
+        )
+
+        paused = asyncio.run(unavailable.run_once("missing-provider-worker"))
+
+        assert paused is not None
+        self.assertEqual(queued.job_id, paused.job_id)
+        self.assertEqual(JobState.AWAITING_PROVIDER_CONFIRMATION, paused.state)
+        attempt = unavailable.attempts(queued.job_id)[-1]
+        self.assertEqual(ErrorCategory.CAPABILITY_MISSING.value, attempt["error_category"])
+
+    def test_worker_preserves_provider_cancellation_as_terminal_state(self) -> None:
+        self.service = self.make_service(ErrorProvider(ErrorCategory.CANCELLED))
+        queued = self.queue()
+
+        cancelled = asyncio.run(self.service.run_once("cancelled-worker"))
+
+        assert cancelled is not None
+        self.assertEqual(queued.job_id, cancelled.job_id)
+        self.assertEqual(JobState.CANCELLED, cancelled.state)
+        self.assertEqual(
+            ErrorCategory.CANCELLED.value,
+            self.service.attempts(queued.job_id)[-1]["error_category"],
+        )
+
+    def test_worker_bounds_provider_call_by_remaining_lease_lifetime(self) -> None:
+        self.service = self.make_service(HangingProvider())
+        queued = self.queue()
+        boundary_clock = LeaseBoundaryClock()
+        self.service._clock = boundary_clock
+        self.service._queue.clock = boundary_clock
+
+        timed_out = asyncio.run(self.service.run_once("timeout-worker", lease_seconds=1))
+
+        assert timed_out is not None
+        self.assertEqual(queued.job_id, timed_out.job_id)
+        self.assertEqual(JobState.FAILED, timed_out.state)
+        self.assertEqual(
+            ErrorCategory.TIMEOUT.value,
+            self.service.attempts(queued.job_id)[-1]["error_category"],
+        )
 
     def test_worker_executes_the_wp4_fake_provider_offline(self) -> None:
         queued = self.queue()

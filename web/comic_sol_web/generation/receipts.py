@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from types import MappingProxyType
 from typing import Mapping
 
@@ -24,6 +25,20 @@ _AUTHORIZED_USAGE_FIELDS = frozenset(
         "duration_ms",
     }
 )
+_NUMERIC_USAGE_FIELDS = _AUTHORIZED_USAGE_FIELDS - {"currency", "unit"}
+_CURRENCY = re.compile(r"[A-Z]{3}\Z")
+_USAGE_UNITS = frozenset(
+    {
+        "image",
+        "images",
+        "token",
+        "tokens",
+        "second",
+        "seconds",
+        "millisecond",
+        "milliseconds",
+    }
+)
 
 
 def sanitize_usage(
@@ -33,17 +48,20 @@ def sanitize_usage(
     sanitized: dict[str, int | float | str] = {}
     for key in sorted(set(usage) & _AUTHORIZED_USAGE_FIELDS):
         value = usage[key]
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, int):
-            if 0 <= value <= 10**15:
+        if key in _NUMERIC_USAGE_FIELDS:
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int):
+                if 0 <= value <= 10**15:
+                    sanitized[key] = value
+                continue
+            if isinstance(value, float) and math.isfinite(value) and 0 <= value <= 10**15:
                 sanitized[key] = value
             continue
-        if isinstance(value, float):
-            if math.isfinite(value) and 0 <= value <= 10**15:
-                sanitized[key] = value
+        if key == "currency" and isinstance(value, str) and _CURRENCY.fullmatch(value):
+            sanitized[key] = value
             continue
-        if isinstance(value, str) and len(value) <= 32 and value.isprintable():
+        if key == "unit" and isinstance(value, str) and value in _USAGE_UNITS:
             sanitized[key] = value
     return MappingProxyType(sanitized)
 
