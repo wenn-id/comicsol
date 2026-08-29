@@ -39,6 +39,37 @@ Every CLI command also accepts `--output-root PATH` to select a different
 explicit root; the happy path in [`docs/onboarding.md`](onboarding.md) pins one
 so the first run does not depend on the default at all.
 
+## Surface-freeze governance
+
+A **new surface** is a new distribution, installation, integration, or execution surface.
+It requires exactly one of these review records:
+
+1. a link to a published adoption summary that satisfies the real evidence gate; or
+2. an explicit waiver from a named maintainer, recorded in both the relevant issue and the
+   pull request.
+
+The adoption gate requires at least 10 verified external comic creators and 20–50 valid,
+consented, non-duplicate real-project reports. Current tooling, fixtures, CI runs,
+maintainers, automated identities, fabricated submissions, and deterministic samples do
+not satisfy the adoption gate. No qualifying adoption summary exists merely because these
+tools or samples exist.
+
+Security, correctness, compatibility, and maintenance work on existing surfaces remains
+allowed without adoption evidence or a waiver.
+
+Two approved boundaries are not additional standalone surfaces:
+
+- [#245](https://github.com/wenn-id/comicsol/issues/245) is one universal, host-neutral
+  Agent Skills portability initiative, not a separate surface for every AI host.
+- [#244](https://github.com/wenn-id/comicsol/issues/244) ComfyUI support is one reference
+  executor under the existing `external-tool` contract, not a new standalone product
+  surface.
+
+An agent, bot, reviewer, or implementation tool cannot infer a waiver, cannot
+self-authorize a waiver, and cannot treat its own comment as maintainer approval. This is
+governance for human review. A keyword scanner, blocking CI grep, bot, network check, or
+automated waiver inference must not be implemented as enforcement.
+
 ## Codex Skill placement
 
 The installed package places the canonical verified Agent Skill payload with

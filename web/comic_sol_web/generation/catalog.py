@@ -10,13 +10,74 @@ CATALOG: tuple[ProviderModel, ...] = (
         enabled=True,
     ),
     ProviderModel(
-        provider="bfl",
-        model="flux-1.1-pro",
+        provider="openai",
+        model="gpt-image-1",
         capabilities=frozenset(
             {
                 "custom_dimensions",
                 "image_to_image",
                 "reference_images",
+                "text_to_image",
+            }
+        ),
+        enabled=True,
+    ),
+    ProviderModel(
+        provider="google",
+        model="gemini-2.5-flash-image",
+        capabilities=frozenset(
+            {
+                "image_to_image",
+                "reference_images",
+                "text_to_image",
+            }
+        ),
+        enabled=True,
+    ),
+    ProviderModel(
+        provider="bfl",
+        model="flux-1.1-pro",
+        capabilities=frozenset(
+            {
+                "async_jobs",
+                "custom_dimensions",
+                "text_to_image",
+            }
+        ),
+        enabled=True,
+    ),
+    ProviderModel(
+        provider="replicate",
+        model="black-forest-labs/flux-1.1-pro",
+        capabilities=frozenset(
+            {
+                "async_jobs",
+                "cancellation",
+                "custom_dimensions",
+                "text_to_image",
+            }
+        ),
+        enabled=True,
+    ),
+    ProviderModel(
+        provider="fal",
+        model="fal-ai/flux-pro/v1.1",
+        capabilities=frozenset(
+            {
+                "async_jobs",
+                "cancellation",
+                "custom_dimensions",
+                "text_to_image",
+            }
+        ),
+        enabled=True,
+    ),
+    ProviderModel(
+        provider="cloudflare",
+        model="@cf/black-forest-labs/flux-1-schnell",
+        capabilities=frozenset(
+            {
+                "custom_dimensions",
                 "text_to_image",
             }
         ),

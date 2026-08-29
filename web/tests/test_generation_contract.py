@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import inspect
+import json
 import unittest
 from pathlib import Path
 from types import MappingProxyType
@@ -262,7 +263,12 @@ class CatalogAndRegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             (
                 ("fake", "fake-raster-v1", True),
+                ("openai", "gpt-image-1", True),
+                ("google", "gemini-2.5-flash-image", True),
                 ("bfl", "flux-1.1-pro", True),
+                ("replicate", "black-forest-labs/flux-1.1-pro", True),
+                ("fal", "fal-ai/flux-pro/v1.1", True),
+                ("cloudflare", "@cf/black-forest-labs/flux-1-schnell", True),
             ),
             tuple((entry.provider, entry.model, entry.enabled) for entry in CATALOG),
         )
@@ -338,6 +344,95 @@ class BoundedHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ErrorCategory.INVALID_OUTPUT, caught.exception.category)
         self.assertEqual(2, stream.yielded)
         self.assertNotIn("must-not-be-read", str(caught.exception))
+
+    async def test_post_json_is_bounded_and_refuses_redirects(self) -> None:
+        stream = CountingStream((b'{"value":"', b"oversized", b'"}'))
+
+        async def oversized(request: httpx.Request) -> httpx.Response:
+            self.assertEqual("POST", request.method)
+            self.assertEqual({"request": "sanitized"}, json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                stream=stream,
+                request=request,
+            )
+
+        async with BoundedHTTPClient(
+            make_policy(max_response_bytes=12),
+            transport=httpx.MockTransport(oversized),
+        ) as client:
+            with self.assertRaises(ProviderError) as caught:
+                await client.post_json(
+                    "https://allowed.example/generate",
+                    payload={"request": "sanitized"},
+                )
+        self.assertEqual(ErrorCategory.INVALID_OUTPUT, caught.exception.category)
+        self.assertEqual(2, stream.yielded)
+
+        secret = "post-redirect-canary"
+
+        async def redirected(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                307,
+                headers={"location": f"https://allowed.example/result?token={secret}"},
+                request=request,
+            )
+
+        async with BoundedHTTPClient(
+            make_policy(), transport=httpx.MockTransport(redirected)
+        ) as client:
+            with self.assertRaises(ProviderError) as redirected_error:
+                await client.post_json("https://allowed.example/generate", payload={})
+        self.assertEqual(ErrorCategory.PROVIDER_ERROR, redirected_error.exception.category)
+        self.assertNotIn(secret, repr(redirected_error.exception))
+
+    async def test_json_transport_rejects_wrong_mime_and_normalizes_cancellation(self) -> None:
+        async def wrong_mime(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                content=b'{"looks":"json"}',
+                headers={"content-type": "text/html"},
+                request=request,
+            )
+
+        async with BoundedHTTPClient(
+            make_policy(), transport=httpx.MockTransport(wrong_mime)
+        ) as client:
+            with self.assertRaises(ProviderError) as malformed:
+                await client.post_json("https://allowed.example/generate", payload={})
+        self.assertEqual(ErrorCategory.INVALID_OUTPUT, malformed.exception.category)
+
+        secret = "cancelled-transport-canary"
+
+        async def cancelled(request: httpx.Request) -> httpx.Response:
+            raise asyncio.CancelledError(secret)
+
+        async with BoundedHTTPClient(
+            make_policy(), transport=httpx.MockTransport(cancelled)
+        ) as client:
+            with self.assertRaises(ProviderError) as cancelled_error:
+                await client.post_json("https://allowed.example/generate", payload={})
+        self.assertEqual(ErrorCategory.CANCELLED, cancelled_error.exception.category)
+        self.assertNotIn(secret, repr(cancelled_error.exception))
+
+    async def test_caller_cancellation_is_re_raised_without_normalization(self) -> None:
+        started = asyncio.Event()
+
+        async def blocked(request: httpx.Request) -> httpx.Response:
+            started.set()
+            await asyncio.Future()
+            raise AssertionError("unreachable")
+
+        async with BoundedHTTPClient(
+            make_policy(), transport=httpx.MockTransport(blocked)
+        ) as client:
+            task = asyncio.create_task(client.get_bytes("https://allowed.example/output"))
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertTrue(task.cancelled())
 
     async def test_redirect_is_refused_and_location_is_redacted(self) -> None:
         secret = "redirect-secret-token"
