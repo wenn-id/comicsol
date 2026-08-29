@@ -23,6 +23,7 @@ from comic_sol_web.api.generation import create_generation_router
 from comic_sol_web.api.projects import create_projects_router
 
 if TYPE_CHECKING:
+    from comic_sol_web.assets import AssetStore
     from comic_sol_web.config import WebConfig
     from comic_sol_web.projects import ProjectService
 
@@ -65,7 +66,7 @@ def _project_service(request: Request) -> "ProjectService":
     return service
 
 
-def _asset_store(request: Request) -> object:
+def _asset_store(request: Request) -> "AssetStore":
     """Construct and cache bounded page-owned asset storage on demand."""
     existing = getattr(request.app.state, "assets", None)
     if existing is not None:
