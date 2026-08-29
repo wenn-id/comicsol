@@ -266,6 +266,8 @@ class CatalogAndRegistryTests(unittest.IsolatedAsyncioTestCase):
                 ("openai", "gpt-image-1", True),
                 ("google", "gemini-2.5-flash-image", True),
                 ("bfl", "flux-1.1-pro", True),
+                ("xai", "grok-imagine-image-2.0", True),
+                ("stability", "sd3.5-large", True),
             ),
             tuple((entry.provider, entry.model, entry.enabled) for entry in CATALOG),
         )

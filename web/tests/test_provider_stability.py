@@ -29,7 +29,7 @@ def make_request(
     *,
     job_id: str = "job-stability",
     references: tuple[Path, ...] = (),
-    required_capabilities: frozenset[str] = frozenset({"text_to_image", "async_jobs"}),
+    required_capabilities: frozenset[str] = frozenset({"text_to_image"}),
     width: int = 1024,
     height: int = 1024,
 ) -> GenerationRequest:
@@ -64,16 +64,14 @@ class StabilityCatalogTests(unittest.TestCase):
         capabilities = frozenset(_MODEL.capabilities)
         for unsupported in {
             "cancellation",
+            "custom_dimensions",
             "seed",
             "negative_prompt",
             "image_to_image",
             "reference_images",
         }:
             self.assertNotIn(unsupported, capabilities)
-        self.assertEqual(
-            frozenset({"async_jobs", "custom_dimensions", "text_to_image"}),
-            capabilities,
-        )
+        self.assertEqual(frozenset({"text_to_image"}), capabilities)
 
 
 class StabilityProviderTests(unittest.IsolatedAsyncioTestCase):
@@ -87,103 +85,56 @@ class StabilityProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_MODEL_ID, models[0].model)
         self.assertEqual("stability", models[0].provider)
 
-    async def test_generate_sends_form_submit_and_returns_polling(self) -> None:
+    async def test_generate_uses_documented_sd3_endpoint_and_returns_raster(self) -> None:
         seen: list[httpx.Request] = []
 
         async def handler(request: httpx.Request) -> httpx.Response:
             seen.append(request)
             body = b"".join(request.stream)
-            # The async submit endpoint always sends a multipart body with the
-            # curated text fields and an explicit empty "none" part, and the
-            # canary secret never appears in the body.
             self.assertIn(b'name="none"', body)
             self.assertIn(b'name="prompt"', body)
             self.assertIn(b"private stability prompt", body)
             self.assertIn(b'name="aspect_ratio"', body)
             self.assertIn(b"1:1", body)
+            self.assertIn(b'name="model"', body)
+            self.assertIn(_MODEL_ID.encode(), body)
             self.assertIn(b'name="output_format"', body)
             self.assertIn(b"png", body)
             self.assertNotIn(CANARY.encode(), body)
             return httpx.Response(
                 200,
-                headers={"content-type": "application/json"},
-                content=json.dumps({"generation_id": "generation-123"}).encode(),
+                headers={"content-type": "application/json; type=image/png"},
+                content=json.dumps(
+                    {
+                        "finish_reason": "SUCCESS",
+                        "image": _b64_png(),
+                        "seed": 343940597,
+                    }
+                ).encode(),
                 request=request,
             )
 
         provider = StabilityProvider(transport=httpx.MockTransport(handler))
         result = await provider.generate(make_request(), _MODEL_ID, CANARY)
-        self.assertEqual(JobState.POLLING, result.state)
-        self.assertEqual("generation-123", result.external_job_id)
-        self.assertIsNone(result.raster_bytes)
+        self.assertEqual(JobState.ACCEPTED, result.state)
+        self.assertIsNone(result.external_job_id)
+        self.assertEqual(PNG, result.raster_bytes)
+        self.assertEqual("image/png", result.media_type)
         self.assertEqual(
             {"aspect_ratio": "1:1", "model": _MODEL_ID},
             dict(result.effective_parameters),
         )
-        self.assertEqual({}, dict(result.usage))
+        self.assertEqual({"images": 1}, dict(result.usage))
         self.assertEqual(1, len(seen))
         self.assertEqual(f"Bearer {CANARY}", seen[0].headers["authorization"])
+        self.assertEqual("application/json", seen[0].headers["accept"])
         self.assertEqual(
-            f"https://api.stability.ai/v2beta/stable-image/generate/async/{_MODEL_ID}",
+            "https://api.stability.ai/v2beta/stable-image/generate/sd3",
             str(seen[0].url),
         )
         self.assertEqual("POST", seen[0].method)
 
-    async def test_poll_transitions_in_progress_then_accepts_b64_raster(self) -> None:
-        seen: list[httpx.Request] = []
-        poll_count = 0
-        poll_path = "/v2beta/results/generation-123"
-
-        async def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal poll_count
-            seen.append(request)
-            if request.url.path == poll_path:
-                poll_count += 1
-                if poll_count == 1:
-                    return httpx.Response(
-                        202,
-                        headers={"content-type": "application/json"},
-                        content=json.dumps({"status": "FETCH_IN_PROGRESS"}).encode(),
-                        request=request,
-                    )
-                return httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    content=json.dumps(
-                        {
-                            "status": "FETCH_SUCCESS",
-                            "finish_reason": "SUCCESS",
-                            "image": _b64_png(),
-                            "aspect_ratio": "1:1",
-                        }
-                    ).encode(),
-                    request=request,
-                )
-            self.fail(f"unexpected fixture request: {request.method} {request.url}")
-
-        provider = StabilityProvider(transport=httpx.MockTransport(handler))
-        pending = await provider.poll("generation-123", CANARY)
-        accepted = await provider.poll("generation-123", CANARY)
-        self.assertEqual(JobState.POLLING, pending.state)
-        self.assertIsNone(pending.raster_bytes)
-        self.assertEqual("generation-123", pending.external_job_id)
-        self.assertEqual(JobState.ACCEPTED, accepted.state)
-        self.assertEqual(PNG, accepted.raster_bytes)
-        self.assertEqual("image/png", accepted.media_type)
-        self.assertEqual(
-            {"aspect_ratio": "1:1", "model": _MODEL_ID}, dict(accepted.effective_parameters)
-        )
-        self.assertEqual({"images": 1}, dict(accepted.usage))
-        poll_requests = [request for request in seen if request.url.path == poll_path]
-        self.assertEqual(2, len(poll_requests))
-        self.assertTrue(
-            all(request.headers["authorization"] == f"Bearer {CANARY}" for request in poll_requests)
-        )
-        self.assertTrue(
-            all(request.headers["accept"] == "application/json" for request in poll_requests)
-        )
-
-    async def test_cancel_returns_capability_missing(self) -> None:
+    async def test_poll_and_cancel_return_capability_missing(self) -> None:
         provider = StabilityProvider(
             transport=httpx.MockTransport(lambda request: httpx.Response(200, request=request))
         )
@@ -192,13 +143,24 @@ class StabilityProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ErrorCategory.CAPABILITY_MISSING, cancel_error.exception.category)
         with self.assertRaises(ProviderError) as poll_error:
             await provider.poll(f"generation?token={CANARY}", CANARY)
-        self.assertEqual(ErrorCategory.PROVIDER_ERROR, poll_error.exception.category)
+        self.assertEqual(ErrorCategory.CAPABILITY_MISSING, poll_error.exception.category)
         self.assertNotIn(CANARY, repr(poll_error.exception))
 
-    async def test_seed_negative_prompt_and_references_are_rejected(self) -> None:
+    async def test_custom_dimensions_seed_negative_prompt_and_references_are_rejected(self) -> None:
         provider = StabilityProvider(
             transport=httpx.MockTransport(lambda request: httpx.Response(200, request=request))
         )
+        with self.assertRaises(ProviderError) as dimensions_error:
+            await provider.generate(
+                make_request(
+                    width=1600,
+                    height=900,
+                    required_capabilities=frozenset({"text_to_image", "custom_dimensions"}),
+                ),
+                _MODEL_ID,
+                CANARY,
+            )
+        self.assertEqual(ErrorCategory.CAPABILITY_MISSING, dimensions_error.exception.category)
         with self.assertRaises(ProviderError) as caught:
             await provider.generate(
                 GenerationRequest(
@@ -212,7 +174,7 @@ class StabilityProviderTests(unittest.IsolatedAsyncioTestCase):
                     references=(),
                     width=1024,
                     height=1024,
-                    required_capabilities=frozenset({"text_to_image", "async_jobs"}),
+                    required_capabilities=frozenset({"text_to_image"}),
                     provider_options={"seed": 42},
                 ),
                 _MODEL_ID,
@@ -226,7 +188,7 @@ class StabilityProviderTests(unittest.IsolatedAsyncioTestCase):
                 await provider.generate(
                     make_request(
                         references=(reference,),
-                        required_capabilities=frozenset({"text_to_image", "async_jobs"}),
+                        required_capabilities=frozenset({"text_to_image"}),
                     ),
                     _MODEL_ID,
                     CANARY,
@@ -239,7 +201,7 @@ class StabilityProviderTests(unittest.IsolatedAsyncioTestCase):
         async def handler(request: httpx.Request) -> httpx.Response:
             nonlocal calls
             calls += 1
-            return httpx.Response(200, json={"generation_id": "unexpected"}, request=request)
+            return httpx.Response(200, json={"finish_reason": "unexpected"}, request=request)
 
         with self.assertRaises(ProviderError) as caught:
             await StabilityProvider(transport=httpx.MockTransport(handler)).generate(
@@ -286,16 +248,14 @@ class StabilityProviderTests(unittest.IsolatedAsyncioTestCase):
         async def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,
-                headers={"content-type": "application/json"},
-                content=json.dumps(
-                    {"status": "FETCH_SUCCESS", "finish_reason": "CONTENT_FILTERED"}
-                ).encode(),
+                headers={"content-type": "application/json; type=image/png"},
+                content=json.dumps({"finish_reason": "CONTENT_FILTERED"}).encode(),
                 request=request,
             )
 
         provider = StabilityProvider(transport=httpx.MockTransport(handler))
         with self.assertRaises(ProviderError) as caught:
-            await provider.poll("generation-123", CANARY)
+            await provider.generate(make_request(), _MODEL_ID, CANARY)
         self.assertEqual(ErrorCategory.MODERATED, caught.exception.category)
         self.assertNotIn(CANARY, f"{caught.exception!s} {caught.exception!r}")
 
@@ -326,7 +286,6 @@ class StabilityProviderTests(unittest.IsolatedAsyncioTestCase):
                 headers={"content-type": "application/json"},
                 content=json.dumps(
                     {
-                        "status": "FETCH_SUCCESS",
                         "finish_reason": "SUCCESS",
                         "image": base64.b64encode(b"not-an-image").decode(),
                     }
@@ -335,24 +294,24 @@ class StabilityProviderTests(unittest.IsolatedAsyncioTestCase):
             )
 
         with self.assertRaises(ProviderError) as invalid:
-            await StabilityProvider(transport=httpx.MockTransport(bad_raster)).poll(
-                "generation-123", CANARY
+            await StabilityProvider(transport=httpx.MockTransport(bad_raster)).generate(
+                make_request(), _MODEL_ID, CANARY
             )
         self.assertEqual(ErrorCategory.INVALID_OUTPUT, invalid.exception.category)
 
-    async def test_failed_poll_state_is_provider_error(self) -> None:
+    async def test_unknown_finish_reason_is_invalid_output(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(
                 200,
                 headers={"content-type": "application/json"},
-                content=json.dumps({"status": "FETCH_FAILED"}).encode(),
+                content=json.dumps({"finish_reason": "FAILED"}).encode(),
                 request=request,
             )
 
         provider = StabilityProvider(transport=httpx.MockTransport(handler))
         with self.assertRaises(ProviderError) as caught:
-            await provider.poll("generation-123", CANARY)
-        self.assertEqual(ErrorCategory.PROVIDER_ERROR, caught.exception.category)
+            await provider.generate(make_request(), _MODEL_ID, CANARY)
+        self.assertEqual(ErrorCategory.INVALID_OUTPUT, caught.exception.category)
 
 
 if __name__ == "__main__":

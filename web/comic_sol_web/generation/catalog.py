@@ -46,4 +46,22 @@ CATALOG: tuple[ProviderModel, ...] = (
         ),
         enabled=True,
     ),
+    ProviderModel(
+        provider="xai",
+        model="grok-imagine-image-2.0",
+        capabilities=frozenset(
+            {
+                "image_to_image",
+                "reference_images",
+                "text_to_image",
+            }
+        ),
+        enabled=True,
+    ),
+    ProviderModel(
+        provider="stability",
+        model="sd3.5-large",
+        capabilities=frozenset({"text_to_image"}),
+        enabled=True,
+    ),
 )

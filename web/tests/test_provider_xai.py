@@ -12,11 +12,7 @@ import httpx
 from web.tests import support as _support  # noqa: F401  # Checkout import path setup.
 
 from comic_sol_web.generation.providers.base import ProviderError
-from comic_sol_web.generation.providers.xai import (
-    XAIProvider,
-    _EDIT_MODEL,
-    _GENERATE_MODEL,
-)
+from comic_sol_web.generation.providers.xai import XAIProvider, _MODEL
 from comic_sol_web.generation.types import ErrorCategory, GenerationRequest, JobState
 
 CANARY = "xai-canary-secret-that-must-never-escape"
@@ -26,8 +22,7 @@ PNG = (
     b"\x00\x00\x00\x05\x00\x01\xa5\xf6E@\x00\x00\x00\x00IEND\xaeB`\x82"
 )
 
-_GENERATE_ID = _GENERATE_MODEL.model
-_EDIT_ID = _EDIT_MODEL.model
+_MODEL_ID = _MODEL.model
 
 
 def make_request(
@@ -59,24 +54,25 @@ def _b64_png() -> str:
 
 
 class XAICatalogTests(unittest.TestCase):
-    def test_curated_xai_models_are_pinned(self) -> None:
-        self.assertEqual("xai", _GENERATE_MODEL.provider)
-        self.assertEqual("xai", _EDIT_MODEL.provider)
-        self.assertEqual({_GENERATE_ID, _EDIT_ID}, {_GENERATE_MODEL.model, _EDIT_MODEL.model})
-        for entry in (_GENERATE_MODEL, _EDIT_MODEL):
-            self.assertTrue(entry.enabled)
-            self.assertTrue(entry.capabilities)
+    def test_curated_xai_model_is_pinned(self) -> None:
+        self.assertEqual("xai", _MODEL.provider)
+        self.assertEqual("grok-imagine-image-2.0", _MODEL_ID)
+        self.assertTrue(_MODEL.enabled)
+        self.assertTrue(_MODEL.capabilities)
 
     def test_curated_capabilities_omit_unsupported_surface(self) -> None:
-        generate_caps = frozenset(_GENERATE_MODEL.capabilities)
-        edit_caps = frozenset(_EDIT_MODEL.capabilities)
-        for unsupported in {"async_jobs", "cancellation", "seed", "negative_prompt"}:
-            self.assertNotIn(unsupported, generate_caps)
-            self.assertNotIn(unsupported, edit_caps)
-        self.assertEqual(frozenset({"text_to_image", "custom_dimensions"}), generate_caps)
+        capabilities = frozenset(_MODEL.capabilities)
+        for unsupported in {
+            "async_jobs",
+            "cancellation",
+            "custom_dimensions",
+            "seed",
+            "negative_prompt",
+        }:
+            self.assertNotIn(unsupported, capabilities)
         self.assertEqual(
-            frozenset({"text_to_image", "image_to_image", "reference_images", "custom_dimensions"}),
-            edit_caps,
+            frozenset({"text_to_image", "image_to_image", "reference_images"}),
+            capabilities,
         )
 
 
@@ -85,7 +81,8 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
         provider = XAIProvider(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
         self.assertEqual("xai", provider.provider_id)
         models = await provider.list_models()
-        self.assertEqual({_GENERATE_ID, _EDIT_ID}, {model.model for model in models})
+        self.assertEqual(1, len(models))
+        self.assertEqual(_MODEL_ID, models[0].model)
 
     async def test_generate_translates_text_to_image_request(self) -> None:
         seen: list[httpx.Request] = []
@@ -110,13 +107,13 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
 
         provider = XAIProvider(transport=httpx.MockTransport(handler))
         request = make_request()
-        result = await provider.generate(request, _GENERATE_ID, CANARY)
+        result = await provider.generate(request, _MODEL_ID, CANARY)
         self.assertEqual(JobState.ACCEPTED, result.state)
         self.assertIsNone(result.external_job_id)
         self.assertEqual(PNG, result.raster_bytes)
         self.assertEqual("image/png", result.media_type)
         self.assertEqual(
-            {"height": 1024, "model": _GENERATE_ID, "width": 1024},
+            {"aspect_ratio": "1:1", "model": _MODEL_ID, "resolution": "1k"},
             dict(result.effective_parameters),
         )
         self.assertEqual(
@@ -131,31 +128,42 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(CANARY, str(request_call.url))
         self.assertEqual(
             {
-                "model": _GENERATE_ID,
+                "aspect_ratio": "1:1",
+                "model": _MODEL_ID,
                 "n": 1,
                 "prompt": "private xai prompt",
-                "response_format": {"type": "b64_json"},
-                "size": "1024x1024",
+                "resolution": "1k",
+                "response_format": "b64_json",
             },
             json.loads(request_call.content),
         )
 
-    async def test_edit_translates_reference_images_via_multipart(self) -> None:
+    async def test_edit_translates_up_to_three_reference_images_via_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            reference = Path(directory) / "reference.png"
-            reference.write_bytes(PNG)
+            references = tuple(Path(directory) / f"reference-{index}.png" for index in range(3))
+            for reference in references:
+                reference.write_bytes(PNG)
             seen: list[httpx.Request] = []
 
             async def handler(request_call: httpx.Request) -> httpx.Response:
                 seen.append(request_call)
-                body = b"".join(request_call.stream)
-                self.assertIn(b'name="model"', body)
-                self.assertIn(_GENERATE_ID.encode(), body)
-                self.assertIn(b'name="prompt"', body)
-                self.assertIn(b"private xai prompt", body)
-                self.assertIn(b"filename=", body)
-                self.assertIn(b"Content-Type: image/png", body)
-                self.assertNotIn(CANARY.encode(), body)
+                payload = json.loads(request_call.content)
+                self.assertEqual("application/json", request_call.headers["content-type"])
+                self.assertEqual(_MODEL_ID, payload["model"])
+                self.assertEqual("private xai prompt", payload["prompt"])
+                self.assertEqual("b64_json", payload["response_format"])
+                self.assertEqual(3, len(payload["images"]))
+                self.assertTrue(
+                    all(
+                        image
+                        == {
+                            "type": "image_url",
+                            "url": f"data:image/png;base64,{_b64_png()}",
+                        }
+                        for image in payload["images"]
+                    )
+                )
+                self.assertNotIn(CANARY.encode(), request_call.content)
                 return httpx.Response(
                     200,
                     headers={"content-type": "application/json"},
@@ -165,18 +173,45 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
 
             provider = XAIProvider(transport=httpx.MockTransport(handler))
             request = make_request(
-                references=(reference,),
+                references=references,
                 required_capabilities=frozenset(
                     {"text_to_image", "image_to_image", "reference_images"}
                 ),
             )
-            result = await provider.generate(request, _EDIT_ID, CANARY)
+            result = await provider.generate(request, _MODEL_ID, CANARY)
             self.assertEqual(JobState.ACCEPTED, result.state)
             self.assertEqual(PNG, result.raster_bytes)
-            self.assertEqual(_EDIT_ID, dict(result.effective_parameters)["model"])
+            self.assertEqual(_MODEL_ID, dict(result.effective_parameters)["model"])
             self.assertEqual(1, len(seen))
             self.assertEqual(f"Bearer {CANARY}", seen[0].headers["authorization"])
             self.assertEqual("https://api.x.ai/v1/images/edits", str(seen[0].url))
+
+    async def test_edit_rejects_more_than_three_references_before_transport(self) -> None:
+        calls = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(200, request=request)
+
+        with tempfile.TemporaryDirectory() as directory:
+            references = tuple(Path(directory) / f"reference-{index}.png" for index in range(4))
+            for reference in references:
+                reference.write_bytes(PNG)
+            provider = XAIProvider(transport=httpx.MockTransport(handler))
+            with self.assertRaises(ProviderError) as caught:
+                await provider.generate(
+                    make_request(
+                        references=references,
+                        required_capabilities=frozenset(
+                            {"text_to_image", "image_to_image", "reference_images"}
+                        ),
+                    ),
+                    _MODEL_ID,
+                    CANARY,
+                )
+        self.assertEqual(ErrorCategory.CAPABILITY_MISSING, caught.exception.category)
+        self.assertEqual(0, calls)
 
     async def test_poll_and_cancel_return_capability_missing(self) -> None:
         provider = XAIProvider(
@@ -201,7 +236,7 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(required_capabilities=caps):
                 with self.assertRaises(ProviderError) as caught:
                     await provider.generate(
-                        make_request(required_capabilities=caps), _GENERATE_ID, CANARY
+                        make_request(required_capabilities=caps), _MODEL_ID, CANARY
                     )
                 self.assertEqual(ErrorCategory.CAPABILITY_MISSING, caught.exception.category)
 
@@ -210,7 +245,7 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
             transport=httpx.MockTransport(lambda request: httpx.Response(200, request=request))
         )
         with self.assertRaises(ProviderError) as caught:
-            await provider.generate(make_request(), _GENERATE_ID, None)
+            await provider.generate(make_request(), _MODEL_ID, None)
         self.assertEqual(ErrorCategory.INVALID_CREDENTIALS, caught.exception.category)
 
     async def test_status_codes_normalize_moderation_quota_rate_and_unavailable(self) -> None:
@@ -243,7 +278,7 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(status=status_code, category=category):
                 provider = XAIProvider(transport=httpx.MockTransport(handler))
                 with self.assertRaises(ProviderError) as caught:
-                    await provider.generate(make_request(), _GENERATE_ID, CANARY)
+                    await provider.generate(make_request(), _MODEL_ID, CANARY)
                 self.assertEqual(category, caught.exception.category)
                 self.assertNotIn(CANARY, f"{caught.exception!s} {caught.exception!r}")
 
@@ -253,7 +288,7 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(ProviderError) as timed_out:
             await XAIProvider(transport=httpx.MockTransport(timeout)).generate(
-                make_request(), _GENERATE_ID, CANARY
+                make_request(), _MODEL_ID, CANARY
             )
         self.assertEqual(ErrorCategory.TIMEOUT, timed_out.exception.category)
         self.assertNotIn(CANARY, repr(timed_out.exception))
@@ -263,7 +298,7 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(ProviderError) as cancelled_error:
             await XAIProvider(transport=httpx.MockTransport(cancelled)).generate(
-                make_request(), _GENERATE_ID, CANARY
+                make_request(), _MODEL_ID, CANARY
             )
         self.assertEqual(ErrorCategory.CANCELLED, cancelled_error.exception.category)
         self.assertNotIn(CANARY, repr(cancelled_error.exception))
@@ -285,7 +320,7 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
 
         provider = XAIProvider(transport=httpx.MockTransport(handler))
         with self.assertRaises(ProviderError) as caught:
-            await provider.generate(make_request(), _GENERATE_ID, CANARY)
+            await provider.generate(make_request(), _MODEL_ID, CANARY)
         self.assertEqual(ErrorCategory.MODERATED, caught.exception.category)
         self.assertNotIn(CANARY, f"{caught.exception!s} {caught.exception!r}")
 
@@ -324,7 +359,7 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(label=label):
                 provider = XAIProvider(transport=httpx.MockTransport(handler))
                 with self.assertRaises(ProviderError) as caught:
-                    await provider.generate(make_request(), _GENERATE_ID, CANARY)
+                    await provider.generate(make_request(), _MODEL_ID, CANARY)
                 self.assertEqual(ErrorCategory.INVALID_OUTPUT, caught.exception.category)
 
 
