@@ -13,6 +13,7 @@ from .http import BoundedHTTPClient, MultipartFile, TransportPolicy, validate_ra
 
 _API_ORIGIN = "https://api.stability.ai"
 _ASYNC_GENERATE_URL = f"{_API_ORIGIN}/v2beta/stable-image/generate/async/sd3.5-large"
+_RESULTS_URL = f"{_API_ORIGIN}/v2beta/results"
 _GENERATION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
 _MODEL = ProviderModel(
     provider="stability",
@@ -99,7 +100,7 @@ class StabilityProvider:
         if _GENERATION_ID.fullmatch(external_job_id) is None:
             raise ProviderError(ErrorCategory.PROVIDER_ERROR)
         headers = _credential_headers(credential)
-        url = f"{_ASYNC_GENERATE_URL}/{external_job_id}"
+        url = f"{_RESULTS_URL}/{external_job_id}"
         async with BoundedHTTPClient(self._policy, transport=self._transport) as client:
             response = await client.get_json(
                 url,
@@ -165,7 +166,9 @@ def _gcd(a: int, b: int) -> int:
 def _credential_headers(credential: str | None) -> Mapping[str, str]:
     if not isinstance(credential, str) or not credential:
         raise ProviderError(ErrorCategory.INVALID_CREDENTIALS)
-    return {"authorization": f"Bearer {credential}"}
+    # Stability uses content negotiation for result retrieval. Requesting JSON
+    # keeps the response inside the bounded JSON/base64 transport path.
+    return {"accept": "application/json", "authorization": f"Bearer {credential}"}
 
 
 def _classify_error(status_code: int, payload: Mapping[str, object]) -> ErrorCategory | None:
