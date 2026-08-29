@@ -163,6 +163,8 @@ class AgentProvider:
             raise ValueError("active agent capabilities are invalid")
         self.active_capabilities = capabilities
         self.max_package_bytes = max_package_bytes
+        # This is a disposable in-process cache only. Durable jobs reconstruct
+        # the same bounded bytes from their persisted immutable request.
         self._packages: dict[str, bytes] = {}
         self._cancelled: set[str] = set()
 
@@ -181,6 +183,25 @@ class AgentProvider:
     ) -> GenerationResult:
         del credential
         self._validate_capability(request, model)
+        external_job_id, _package = self._restore(request, None)
+        self._cancelled.discard(external_job_id)
+        return self._waiting_result(external_job_id)
+
+    def restore_package(
+        self,
+        request: GenerationRequest,
+        external_job_id: str,
+    ) -> Mapping[str, object]:
+        """Reconstruct a bounded package and bind it to its durable external ID."""
+        self._validate_capability(request, AGENT_MODEL)
+        _external_job_id, package = self._restore(request, external_job_id)
+        return package
+
+    def _restore(
+        self,
+        request: GenerationRequest,
+        external_job_id: str | None,
+    ) -> tuple[str, Mapping[str, object]]:
         try:
             package = build_agent_package(request)
             payload = _canonical_bytes(package)
@@ -188,10 +209,11 @@ class AgentProvider:
             raise ProviderError(ErrorCategory.INVALID_OUTPUT) from error
         if len(payload) > self.max_package_bytes:
             raise ProviderError(ErrorCategory.INVALID_OUTPUT)
-        external_job_id = f"agent:{package['job_checksum']}"
-        self._packages[external_job_id] = payload
-        self._cancelled.discard(external_job_id)
-        return self._waiting_result(external_job_id)
+        expected_external_job_id = f"agent:{package['job_checksum']}"
+        if external_job_id is not None and external_job_id != expected_external_job_id:
+            raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+        self._packages[expected_external_job_id] = payload
+        return expected_external_job_id, json.loads(payload)
 
     async def poll(
         self,

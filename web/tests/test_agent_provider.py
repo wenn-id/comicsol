@@ -139,6 +139,23 @@ class AgentProviderTests(unittest.IsolatedAsyncioTestCase):
             1, len({agent_job_checksum(self.make_request()) for _ in account_canaries})
         )
 
+    async def test_package_and_polling_are_reconstructed_after_provider_restart(self) -> None:
+        capabilities = frozenset({"text_to_image", "custom_dimensions"})
+        request = self.make_request()
+        started = await AgentProvider(capabilities).generate(request, AGENT_MODEL, None)
+        assert started.external_job_id is not None
+
+        restarted = AgentProvider(capabilities)
+        restored = restarted.restore_package(request, started.external_job_id)
+        waiting = await restarted.poll(started.external_job_id, None)
+
+        self.assertEqual(started, waiting)
+        self.assertEqual(request.prompt, restored["prompt"])
+        self.assertEqual(agent_job_checksum(request), restored["job_checksum"])
+        rendered = json.dumps(restored, sort_keys=True)
+        self.assertNotIn("ignored_path", rendered)
+        self.assertNotIn("token", rendered)
+
     async def test_poll_waits_and_cancel_is_idempotent(self) -> None:
         provider = AgentProvider(frozenset({"text_to_image", "custom_dimensions"}))
         started = await provider.generate(self.make_request(), AGENT_MODEL, None)

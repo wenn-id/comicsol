@@ -32,6 +32,15 @@ if TYPE_CHECKING:
 # once when the application is built; it is a Python packaging resource, not
 # application or database state.
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+_AGENT_IMAGE_CAPABILITIES = frozenset(
+    {
+        "custom_dimensions",
+        "image_to_image",
+        "negative_prompt",
+        "reference_images",
+        "text_to_image",
+    }
+)
 
 
 class FutureStaticFiles(StaticFiles):
@@ -105,9 +114,7 @@ def _generation_service(request: Request) -> object:
         master_key_references=config.master_key_references,
         active_key_id=config.active_credential_key_id,
     )
-    active_agent_capabilities = frozenset(
-        getattr(request.app.state, "agent_image_capabilities", frozenset())
-    )
+    active_agent_capabilities = request.app.state.agent_image_capabilities
     service = GenerationService(
         gateway.database,
         projects,
@@ -120,15 +127,27 @@ def _generation_service(request: Request) -> object:
     return service
 
 
-def create_app(_config: "WebConfig") -> FastAPI:
+def create_app(
+    _config: "WebConfig",
+    *,
+    active_agent_image_capabilities: frozenset[str] = frozenset(),
+) -> FastAPI:
     """Return a configured FastAPI application.
 
-    Startup creates no application filesystem state. The first authenticated
-    project request lazily creates the data root, SQLite database, and project
-    directories. `/healthz` remains deterministic, bounded, and provider-free.
+    Active-agent capabilities come only from this trusted construction call;
+    request data can neither assert nor expand them. Startup creates no
+    application filesystem state. The first authenticated project request
+    lazily creates the data root, SQLite database, and project directories.
+    `/healthz` remains deterministic, bounded, and provider-free.
     """
+    if (
+        not isinstance(active_agent_image_capabilities, frozenset)
+        or not active_agent_image_capabilities <= _AGENT_IMAGE_CAPABILITIES
+    ):
+        raise ValueError("active agent image capabilities are invalid")
     app = FastAPI(title="Comic Sol Web", docs_url=None, redoc_url=None)
     app.state.web_config = _config
+    app.state.agent_image_capabilities = active_agent_image_capabilities
     app.include_router(create_projects_router(_project_service))
     app.include_router(create_generation_router(_generation_service))
     app.include_router(create_assets_router(_asset_store, _generation_service))

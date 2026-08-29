@@ -19,6 +19,7 @@ from comic_sol_web.api.assets import create_assets_router
 from comic_sol_web.assets import HAS_DIRECTORY_HANDLES, AssetError, AssetStore
 from comic_sol_web.auth import SessionPrincipal, require_principal
 from comic_sol_web.database import Database
+from comic_sol_web.generation.service import GenerationConflictError, GenerationUnavailableError
 from comic_sol_web.generation.types import JobState
 from comic_sol_web.migrations import apply_migrations
 from web.tests.support import make_symlink
@@ -53,6 +54,34 @@ class FakeAuth:
 class RecordingAgentSubmission:
     def __init__(self) -> None:
         self.calls: list[tuple[SessionPrincipal, str, str, int]] = []
+        self.package_calls: list[tuple[SessionPrincipal, str, str, int]] = []
+        self.package_error: Exception | None = None
+
+    def agent_package(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        job_id: str,
+        expected_revision: int,
+    ) -> dict[str, object]:
+        self.package_calls.append((principal, project_id, job_id, expected_revision))
+        if self.package_error is not None:
+            raise self.package_error
+        return {
+            "contract_version": "1.0",
+            "provider_id": "agent",
+            "project_id": project_id,
+            "project_revision": expected_revision,
+            "job_id": "b" * 64,
+            "job_checksum": "c" * 64,
+            "locked_scope_digest": "d" * 64,
+            "prompt": "bounded prompt",
+            "negative_prompt": None,
+            "dimensions": {"width": 2, "height": 2},
+            "references": [],
+            "required_capabilities": ["text_to_image"],
+            "subject": {"kind": "panel", "id": "p01-01"},
+        }
 
     def submit_agent_asset(
         self,
@@ -228,6 +257,74 @@ class AssetRouteTests(unittest.TestCase):
         self.store = AssetStore(self.database, self.data_root)
         self.alice = SessionPrincipal("alice-id", "alice")
         self.bob = SessionPrincipal("bob-id", "bob")
+
+    def test_agent_package_route_is_owner_bound_and_never_cached(self) -> None:
+        service = RecordingAgentSubmission()
+        app = FastAPI()
+        app.include_router(
+            create_assets_router(lambda _request: self.store, lambda _request: service)
+        )
+        app.dependency_overrides[require_principal] = lambda: self.alice
+        generation_job_id = "a" * 64
+
+        with TestClient(app) as client:
+            response = client.get(
+                f"/api/assets/agent-handoff/{generation_job_id}",
+                params={"project_id": "project-1", "expected_revision": 7},
+            )
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("bounded prompt", response.json()["prompt"])
+        self.assertEqual("private, no-store", response.headers["cache-control"])
+        self.assertEqual("nosniff", response.headers["x-content-type-options"])
+        self.assertEqual(
+            [(self.alice, "project-1", generation_job_id, 7)],
+            service.package_calls,
+        )
+        rendered = response.text
+        for forbidden in ("provider_options", "https://", "file://", "/tmp/", "token"):
+            self.assertNotIn(forbidden, rendered)
+
+    def test_agent_package_route_rejects_unbound_input_with_sanitized_response(self) -> None:
+        service = RecordingAgentSubmission()
+        app = FastAPI()
+        app.include_router(
+            create_assets_router(lambda _request: self.store, lambda _request: service)
+        )
+        app.dependency_overrides[require_principal] = lambda: self.alice
+
+        with TestClient(app) as client:
+            malformed = client.get(
+                "/api/assets/agent-handoff/not-a-job",
+                params={"project_id": "../outside", "expected_revision": 0},
+            )
+
+        self.assertEqual(400, malformed.status_code)
+        self.assertEqual({"detail": "generation request rejected"}, malformed.json())
+        self.assertEqual([], service.package_calls)
+
+    def test_agent_package_route_sanitizes_wrong_owner_and_stale_scope(self) -> None:
+        service = RecordingAgentSubmission()
+        app = FastAPI()
+        app.include_router(
+            create_assets_router(lambda _request: self.store, lambda _request: service)
+        )
+        app.dependency_overrides[require_principal] = lambda: self.alice
+        path = f"/api/assets/agent-handoff/{'a' * 64}"
+        parameters = {"project_id": "project-1", "expected_revision": 7}
+
+        with TestClient(app) as client:
+            service.package_error = GenerationUnavailableError("private owner detail")
+            wrong_owner = client.get(path, params=parameters)
+            service.package_error = GenerationConflictError("private stale scope detail")
+            stale = client.get(path, params=parameters)
+
+        self.assertEqual(404, wrong_owner.status_code)
+        self.assertEqual({"detail": "generation job unavailable"}, wrong_owner.json())
+        self.assertNotIn("private owner detail", wrong_owner.text)
+        self.assertEqual(409, stale.status_code)
+        self.assertEqual({"detail": "generation state conflict"}, stale.json())
+        self.assertNotIn("private stale scope detail", stale.text)
 
     def test_agent_submission_route_binds_auth_csrf_revision_and_asset_handle(self) -> None:
         service = RecordingAgentSubmission()

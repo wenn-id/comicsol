@@ -240,6 +240,10 @@ class WebApplicationTests(unittest.TestCase):
                     ("/api/assets", frozenset({"POST"})),
                     ("/api/assets/{asset_id}", frozenset({"GET"})),
                     (
+                        "/api/assets/agent-handoff/{job_id}",
+                        frozenset({"GET"}),
+                    ),
+                    (
                         "/api/assets/{asset_id}/submit-agent",
                         frozenset({"POST"}),
                     ),
@@ -258,6 +262,50 @@ class WebApplicationTests(unittest.TestCase):
             self.assertFalse(data_root.exists())
             self.assertFalse(hasattr(app.state, "assets"))
             self.assertFalse(hasattr(app.state, "generation"))
+
+    def test_trusted_agent_capabilities_are_explicit_disabled_and_validated(self):
+        from types import SimpleNamespace
+
+        from comic_sol_web.app import _generation_service, create_app
+        from comic_sol_web.config import WebConfig
+        from comic_sol_web.database import Database
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = WebConfig.from_env(valid_environment(root / "data"))
+            disabled = create_app(config)
+            self.assertEqual(frozenset(), disabled.state.agent_image_capabilities)
+
+            with self.assertRaises(ValueError):
+                create_app(
+                    config,
+                    active_agent_image_capabilities=frozenset({"not-an-image-capability"}),
+                )
+
+            enabled = create_app(
+                config,
+                active_agent_image_capabilities=frozenset({"text_to_image", "custom_dimensions"}),
+            )
+            self.assertEqual(
+                frozenset({"text_to_image", "custom_dimensions"}),
+                enabled.state.agent_image_capabilities,
+            )
+            staging_root = root / "staging"
+            staging_root.mkdir()
+            projects = SimpleNamespace(
+                gateway=SimpleNamespace(
+                    database=Database(root / "application.sqlite3"),
+                    staging_root=staging_root,
+                )
+            )
+            request = SimpleNamespace(app=enabled)
+            with patch("comic_sol_web.app._project_service", return_value=projects):
+                service = _generation_service(request)
+            provider = service._providers.get("agent")
+            self.assertEqual(
+                frozenset({"text_to_image", "custom_dimensions"}),
+                provider.active_capabilities,
+            )
 
     def test_application_does_not_enable_the_test_fake_provider(self):
         from types import SimpleNamespace
@@ -279,7 +327,10 @@ class WebApplicationTests(unittest.TestCase):
                     staging_root=staging_root,
                 )
             )
-            state = SimpleNamespace(web_config=config)
+            state = SimpleNamespace(
+                web_config=config,
+                agent_image_capabilities=frozenset(),
+            )
             request = SimpleNamespace(app=SimpleNamespace(state=state))
             with patch("comic_sol_web.app._project_service", return_value=projects):
                 service = _generation_service(request)

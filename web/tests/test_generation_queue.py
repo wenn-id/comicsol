@@ -28,7 +28,12 @@ from comic_sol_web.api.generation import _consume_queue, create_generation_route
 from comic_sol_web.auth import SessionPrincipal, require_principal
 from comic_sol_web.database import Database
 from comic_sol_web.engine_gateway import StaleProjectRevisionError
-from comic_sol_web.generation.providers.agent import AGENT_MODEL, AgentProvider
+from comic_sol_web.generation.providers.agent import (
+    AGENT_MODEL,
+    AgentProvider,
+    agent_job_checksum,
+    agent_locked_scope_digest,
+)
 from comic_sol_web.generation.providers.base import ProviderError, ProviderRegistry
 from comic_sol_web.generation.providers.fake import FakeProvider
 from comic_sol_web.generation.receipts import AUTHORIZED_RECEIPT_FIELDS, sanitize_usage
@@ -1061,7 +1066,7 @@ class DurableQueueTests(GenerationQueueFixture):
         rebound_second = self.service.get(self.alice, second.job_id)
         self.assertEqual(4, promoted_first.accepted_project_revision)
         self.assertEqual(4, rebound_second.project_revision)
-        self.assertEqual(3, rebound_second.request.project_revision)
+        self.assertEqual(4, rebound_second.request.project_revision)
 
         promoted_second = self.service.submit_staged_raster(self.alice, second.job_id, 4)
 
@@ -1452,6 +1457,138 @@ class AgentSubmissionTests(GenerationQueueFixture):
                 for event in self.service.attempts(queued.job_id)
             ),
         )
+
+    def test_two_sibling_agent_rasters_promote_sequentially_with_bound_requests(self) -> None:
+        self.projects.request_ids = ("a" * 64, "b" * 64)
+        queued = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="agent",
+            model=AGENT_MODEL,
+            auth_mode=AuthMode.AGENT,
+        )
+        for index in range(2):
+            waiting = asyncio.run(self.service.run_once(f"agent-package-{index}"))
+            assert waiting is not None
+            self.assertEqual(JobState.POLLING, waiting.state)
+
+        first_before, second_before = (self.service.get(self.alice, job.job_id) for job in queued)
+        first_checksum = agent_job_checksum(first_before.request)
+        second_checksum = agent_job_checksum(second_before.request)
+        locked_scope = agent_locked_scope_digest(second_before.request)
+        first_asset = self.upload(self.alice, bounded_png(channel=1))
+        second_asset = self.upload(self.alice, bounded_png(channel=2))
+
+        first = self.service.submit_agent_asset(
+            self.alice,
+            first_before.job_id,
+            first_asset.asset_id,
+            first_before.project_revision,
+        )
+        rebound = self.service.get(self.alice, second_before.job_id)
+        second = self.service.submit_agent_asset(
+            self.alice,
+            rebound.job_id,
+            second_asset.asset_id,
+            rebound.project_revision,
+        )
+
+        self.assertEqual(JobState.ACCEPTED, first.state)
+        self.assertEqual(JobState.ACCEPTED, second.state)
+        self.assertEqual(first.accepted_project_revision, rebound.project_revision)
+        self.assertEqual(rebound.project_revision, rebound.request.project_revision)
+        self.assertEqual(first_checksum, agent_job_checksum(first_before.request))
+        self.assertEqual(second_checksum, agent_job_checksum(rebound.request))
+        self.assertEqual(locked_scope, agent_locked_scope_digest(rebound.request))
+        self.assertEqual(2, len(self.projects.submissions))
+        self.assertEqual(bounded_png(channel=2), self.projects.accepted_raster)
+
+    def test_restart_restores_polling_package_and_accepts_asset(self) -> None:
+        queued = self.queue_agent()
+        external_job_id = self.service.get(self.alice, queued.job_id).external_job_id
+        restarted_provider = AgentProvider(frozenset({"text_to_image"}))
+        self.service = GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry((restarted_provider,)),
+            self.staging_root,
+            credentials=self.credentials,
+            assets=self.assets,
+            clock=self.clock,
+        )
+
+        polled = asyncio.run(self.service.run_once("post-restart-poll"))
+        assert polled is not None
+        package = self.service.agent_package(
+            self.alice,
+            queued.project_id,
+            queued.job_id,
+            queued.project_revision,
+        )
+        handle = self.upload(self.alice)
+        accepted = self.service.submit_agent_asset(
+            self.alice,
+            queued.job_id,
+            handle.asset_id,
+            queued.project_revision,
+        )
+
+        self.assertEqual(JobState.POLLING, polled.state)
+        self.assertEqual(external_job_id, polled.external_job_id)
+        self.assertEqual(queued.request.job_id, package["job_id"])
+        self.assertEqual(queued.request.prompt, package["prompt"])
+        self.assertEqual(JobState.ACCEPTED, accepted.state)
+        self.assertEqual(1, len(self.projects.submissions))
+
+    def test_agent_package_is_owner_project_revision_and_scope_authorized(self) -> None:
+        queued = self.queue_agent()
+
+        package = self.service.agent_package(
+            self.alice,
+            queued.project_id,
+            queued.job_id,
+            queued.project_revision,
+        )
+
+        self.assertEqual(queued.request.prompt, package["prompt"])
+        self.assertEqual(
+            {"height": queued.request.height, "width": queued.request.width},
+            package["dimensions"],
+        )
+        self.assertEqual(
+            {"id": queued.request.subject_id, "kind": queued.request.subject_kind},
+            package["subject"],
+        )
+        self.assertEqual(queued.project_revision, package["project_revision"])
+        self.assertEqual(agent_job_checksum(queued.request), package["job_checksum"])
+        self.assertEqual(agent_locked_scope_digest(queued.request), package["locked_scope_digest"])
+        rendered = json.dumps(package, sort_keys=True)
+        for forbidden in ("provider_options", "/private/", "https://", "token", "cookie"):
+            self.assertNotIn(forbidden, rendered)
+
+        with self.assertRaises(GenerationUnavailableError):
+            self.service.agent_package(
+                self.bob,
+                queued.project_id,
+                queued.job_id,
+                queued.project_revision,
+            )
+        with self.assertRaises(GenerationConflictError):
+            self.service.agent_package(
+                self.alice,
+                "project-other",
+                queued.job_id,
+                queued.project_revision,
+            )
+        self.projects.revision += 1
+        with self.assertRaises(GenerationConflictError):
+            self.service.agent_package(
+                self.alice,
+                queued.project_id,
+                queued.job_id,
+                queued.project_revision,
+            )
 
     def test_submission_validates_owner_project_revision_and_locked_scope_first(self) -> None:
         wrong_owner = self.queue_agent()
