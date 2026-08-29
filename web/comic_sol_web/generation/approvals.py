@@ -30,6 +30,7 @@ _PROPOSABLE_STATES = frozenset(
         JobState.POLLING.value,
         JobState.FAILED.value,
         JobState.PAUSED.value,
+        JobState.AWAITING_PROVIDER_CONFIRMATION.value,
     }
 )
 
@@ -91,18 +92,18 @@ class ProviderSwitchApprovals:
     def _job_ids(values: Sequence[str]) -> tuple[str, ...]:
         if isinstance(values, str | bytes):
             raise ApprovalRequestError("provider switch request is invalid")
-        job_ids = tuple(sorted(values))
+        job_ids = tuple(values)
         if (
             not job_ids
             or len(job_ids) > _MAX_PROPOSAL_JOBS
-            or len(set(job_ids)) != len(job_ids)
             or any(
                 not isinstance(job_id, str) or _JOB_ID.fullmatch(job_id) is None
                 for job_id in job_ids
             )
+            or len(set(job_ids)) != len(job_ids)
         ):
             raise ApprovalRequestError("provider switch request is invalid")
-        return job_ids
+        return tuple(sorted(job_ids))
 
     @staticmethod
     def _revision(value: int) -> int:
@@ -175,6 +176,123 @@ class ProviderSwitchApprovals:
         ).fetchall()
         return tuple(rows)
 
+    @classmethod
+    def _expire_proposal(
+        cls,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        now: int,
+    ) -> None:
+        proposal = cls._proposal_from_row(row)
+        rows = cls._job_rows(connection, proposal.job_ids)
+        if len(rows) != len(proposal.job_ids) or any(
+            job["owner_id"] != row["owner_id"]
+            or job["project_id"] != proposal.project_id
+            or job["project_revision"] != proposal.project_revision
+            or job["provider"] != row["from_provider"]
+            or job["model"] != row["from_model"]
+            or job["state"]
+            not in (
+                JobState.AWAITING_PROVIDER_CONFIRMATION.value,
+                JobState.PAUSED.value,
+            )
+            for job in rows
+        ):
+            raise ApprovalConflictError("provider switch proposal conflicts with current state")
+        awaiting = tuple(
+            job for job in rows if job["state"] == JobState.AWAITING_PROVIDER_CONFIRMATION.value
+        )
+        if awaiting and len(awaiting) != len(rows):
+            raise ApprovalConflictError("provider switch proposal conflicts with current state")
+        for job in awaiting:
+            updated = connection.execute(
+                """
+                UPDATE generation_jobs
+                SET state = ?, lease_token = NULL, lease_owner = NULL,
+                    lease_expires_at = NULL, updated_at = ?
+                WHERE job_id = ? AND owner_id = ? AND project_id = ?
+                  AND project_revision = ? AND provider = ? AND model = ? AND state = ?
+                """,
+                (
+                    JobState.PAUSED.value,
+                    now,
+                    job["job_id"],
+                    row["owner_id"],
+                    proposal.project_id,
+                    proposal.project_revision,
+                    row["from_provider"],
+                    row["from_model"],
+                    JobState.AWAITING_PROVIDER_CONFIRMATION.value,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise ApprovalConflictError("provider switch proposal conflicts with current state")
+            current = connection.execute(
+                "SELECT * FROM generation_jobs WHERE job_id = ?", (job["job_id"],)
+            ).fetchone()
+            assert current is not None
+            GenerationStore.append_attempt(connection, current, JobState.PAUSED, now)
+        connection.execute(
+            """
+            INSERT INTO provider_switch_decisions (
+                proposal_id, decision, idempotency_key, decided_at
+            ) VALUES (?, 'expired', ?, ?)
+            """,
+            (row["proposal_id"], row["idempotency_key"], now),
+        )
+
+    @classmethod
+    def _release_expired_for_jobs(
+        cls,
+        connection: sqlite3.Connection,
+        owner_id: str,
+        project_id: str,
+        job_ids: tuple[str, ...],
+        now: int,
+    ) -> None:
+        rows = connection.execute(
+            """
+            SELECT proposal.*
+            FROM provider_switch_proposals AS proposal
+            LEFT JOIN provider_switch_decisions AS decision
+              ON decision.proposal_id = proposal.proposal_id
+            WHERE proposal.owner_id = ? AND proposal.project_id = ?
+              AND proposal.expires_at <= ? AND decision.proposal_id IS NULL
+            ORDER BY proposal.created_at, proposal.proposal_id
+            """,
+            (owner_id, project_id, now),
+        ).fetchall()
+        requested = frozenset(job_ids)
+        for row in rows:
+            proposal = cls._proposal_from_row(row)
+            if requested.intersection(proposal.job_ids):
+                cls._expire_proposal(connection, row, now)
+
+    @classmethod
+    def _require_no_active_overlap(
+        cls,
+        connection: sqlite3.Connection,
+        owner_id: str,
+        project_id: str,
+        job_ids: tuple[str, ...],
+        now: int,
+    ) -> None:
+        rows = connection.execute(
+            """
+            SELECT proposal.*
+            FROM provider_switch_proposals AS proposal
+            LEFT JOIN provider_switch_decisions AS decision
+              ON decision.proposal_id = proposal.proposal_id
+            WHERE proposal.owner_id = ? AND proposal.project_id = ?
+              AND proposal.expires_at > ? AND decision.proposal_id IS NULL
+            ORDER BY proposal.created_at, proposal.proposal_id
+            """,
+            (owner_id, project_id, now),
+        ).fetchall()
+        requested = frozenset(job_ids)
+        if any(requested.intersection(cls._proposal_from_row(row).job_ids) for row in rows):
+            raise ApprovalConflictError("provider switch proposal conflicts with current state")
+
     def propose_switch(
         self,
         principal: SessionPrincipal,
@@ -213,6 +331,13 @@ class ProviderSwitchApprovals:
         jobs_json = json.dumps(jobs, separators=(",", ":"))
 
         with self._database.transaction() as connection:
+            self._release_expired_for_jobs(
+                connection,
+                principal.user_id,
+                project_id,
+                jobs,
+                now,
+            )
             existing = connection.execute(
                 """
                 SELECT * FROM provider_switch_proposals
@@ -250,6 +375,13 @@ class ProviderSwitchApprovals:
                     )
                 return self._proposal_from_row(existing)
 
+            self._require_no_active_overlap(
+                connection,
+                principal.user_id,
+                project_id,
+                jobs,
+                now,
+            )
             project = self._project_row(connection, principal.user_id, project_id)
             if project["revision"] != revision:
                 raise ApprovalConflictError("provider switch project revision is stale")
@@ -298,6 +430,8 @@ class ProviderSwitchApprovals:
                 ),
             )
             for row in rows:
+                if row["state"] == JobState.AWAITING_PROVIDER_CONFIRMATION.value:
+                    continue
                 updated = connection.execute(
                     """
                     UPDATE generation_jobs
@@ -352,6 +486,7 @@ class ProviderSwitchApprovals:
         revision = self._revision(expected_revision)
         key = self._idempotency_key(idempotency_key)
         now = self._clock()
+        expired = False
         with self._database.transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM provider_switch_proposals WHERE proposal_id = ?",
@@ -359,105 +494,116 @@ class ProviderSwitchApprovals:
             ).fetchone()
             if row is None or row["owner_id"] != principal.user_id:
                 raise ApprovalUnavailableError("provider switch proposal is unavailable")
+            proposal = self._proposal_from_row(row)
+            if row["project_revision"] != revision:
+                raise ApprovalConflictError("provider switch project revision is stale")
             consumed = connection.execute(
-                "SELECT 1 FROM provider_switch_decisions WHERE proposal_id = ?",
+                """
+                SELECT decision, idempotency_key
+                FROM provider_switch_decisions WHERE proposal_id = ?
+                """,
                 (identifier,),
             ).fetchone()
             if consumed is not None:
+                if consumed["decision"] == decision and consumed["idempotency_key"] == key:
+                    return proposal
                 raise ApprovalConflictError("provider switch proposal was already consumed")
             if row["expires_at"] <= now:
-                raise ApprovalConflictError("provider switch proposal expired")
-            if row["project_revision"] != revision:
-                raise ApprovalConflictError("provider switch project revision is stale")
-            project = self._project_row(
-                connection,
-                principal.user_id,
-                cast(str, row["project_id"]),
-            )
-            if project["revision"] != revision:
-                raise ApprovalConflictError("provider switch project revision is stale")
-            proposal = self._proposal_from_row(row)
-            rows = self._job_rows(connection, proposal.job_ids)
-            if len(rows) != len(proposal.job_ids) or any(
-                job["owner_id"] != principal.user_id
-                or job["project_id"] != proposal.project_id
-                or job["project_revision"] != revision
-                or job["provider"] != row["from_provider"]
-                or job["model"] != row["from_model"]
-                or job["state"] != JobState.AWAITING_PROVIDER_CONFIRMATION.value
-                for job in rows
-            ):
-                raise ApprovalConflictError("provider switch proposal conflicts with current state")
-
-            for job in rows:
-                if decision == "approved":
-                    updated = connection.execute(
-                        """
-                        UPDATE generation_jobs
-                        SET state = ?, provider = ?, model = ?, auth_mode = ?,
-                            attempt_number = attempt_number + 1, retry_count = 0,
-                            external_job_id = NULL, lease_token = NULL, lease_owner = NULL,
-                            lease_expires_at = NULL, updated_at = ?
-                        WHERE job_id = ? AND owner_id = ? AND project_id = ?
-                          AND project_revision = ? AND provider = ? AND model = ?
-                          AND state = ?
-                        """,
-                        (
-                            JobState.QUEUED.value,
-                            row["to_provider"],
-                            row["to_model"],
-                            row["to_auth_mode"],
-                            now,
-                            job["job_id"],
-                            principal.user_id,
-                            proposal.project_id,
-                            revision,
-                            row["from_provider"],
-                            row["from_model"],
-                            JobState.AWAITING_PROVIDER_CONFIRMATION.value,
-                        ),
-                    ).rowcount
-                    next_state = JobState.QUEUED
-                else:
-                    updated = connection.execute(
-                        """
-                        UPDATE generation_jobs
-                        SET state = ?, lease_token = NULL, lease_owner = NULL,
-                            lease_expires_at = NULL, updated_at = ?
-                        WHERE job_id = ? AND owner_id = ? AND project_id = ?
-                          AND project_revision = ? AND provider = ? AND model = ?
-                          AND state = ?
-                        """,
-                        (
-                            JobState.PAUSED.value,
-                            now,
-                            job["job_id"],
-                            principal.user_id,
-                            proposal.project_id,
-                            revision,
-                            row["from_provider"],
-                            row["from_model"],
-                            JobState.AWAITING_PROVIDER_CONFIRMATION.value,
-                        ),
-                    ).rowcount
-                    next_state = JobState.PAUSED
-                if updated != 1:
+                self._expire_proposal(connection, row, now)
+                expired = True
+            else:
+                project = self._project_row(
+                    connection,
+                    principal.user_id,
+                    cast(str, row["project_id"]),
+                )
+                if project["revision"] != revision:
+                    raise ApprovalConflictError("provider switch project revision is stale")
+                rows = self._job_rows(connection, proposal.job_ids)
+                if len(rows) != len(proposal.job_ids) or any(
+                    job["owner_id"] != principal.user_id
+                    or job["project_id"] != proposal.project_id
+                    or job["project_revision"] != revision
+                    or job["provider"] != row["from_provider"]
+                    or job["model"] != row["from_model"]
+                    or job["state"] != JobState.AWAITING_PROVIDER_CONFIRMATION.value
+                    for job in rows
+                ):
                     raise ApprovalConflictError(
                         "provider switch proposal conflicts with current state"
                     )
-                current = connection.execute(
-                    "SELECT * FROM generation_jobs WHERE job_id = ?", (job["job_id"],)
-                ).fetchone()
-                assert current is not None
-                GenerationStore.append_attempt(connection, current, next_state, now)
-            connection.execute(
-                """
-                INSERT INTO provider_switch_decisions (
-                    proposal_id, decision, idempotency_key, decided_at
-                ) VALUES (?, ?, ?, ?)
-                """,
-                (identifier, decision, key, now),
-            )
+
+                for job in rows:
+                    if decision == "approved":
+                        updated = connection.execute(
+                            """
+                            UPDATE generation_jobs
+                            SET state = ?, provider = ?, model = ?, auth_mode = ?,
+                                attempt_number = attempt_number + 1, retry_count = 0,
+                                external_job_id = NULL, lease_token = NULL, lease_owner = NULL,
+                                lease_expires_at = NULL, updated_at = ?
+                            WHERE job_id = ? AND owner_id = ? AND project_id = ?
+                              AND project_revision = ? AND provider = ? AND model = ?
+                              AND state = ?
+                            """,
+                            (
+                                JobState.QUEUED.value,
+                                row["to_provider"],
+                                row["to_model"],
+                                row["to_auth_mode"],
+                                now,
+                                job["job_id"],
+                                principal.user_id,
+                                proposal.project_id,
+                                revision,
+                                row["from_provider"],
+                                row["from_model"],
+                                JobState.AWAITING_PROVIDER_CONFIRMATION.value,
+                            ),
+                        ).rowcount
+                        next_state = JobState.QUEUED
+                    else:
+                        updated = connection.execute(
+                            """
+                            UPDATE generation_jobs
+                            SET state = ?, lease_token = NULL, lease_owner = NULL,
+                                lease_expires_at = NULL, updated_at = ?
+                            WHERE job_id = ? AND owner_id = ? AND project_id = ?
+                              AND project_revision = ? AND provider = ? AND model = ?
+                              AND state = ?
+                            """,
+                            (
+                                JobState.PAUSED.value,
+                                now,
+                                job["job_id"],
+                                principal.user_id,
+                                proposal.project_id,
+                                revision,
+                                row["from_provider"],
+                                row["from_model"],
+                                JobState.AWAITING_PROVIDER_CONFIRMATION.value,
+                            ),
+                        ).rowcount
+                        next_state = JobState.PAUSED
+                    if updated != 1:
+                        raise ApprovalConflictError(
+                            "provider switch proposal conflicts with current state"
+                        )
+                    current = connection.execute(
+                        "SELECT * FROM generation_jobs WHERE job_id = ?", (job["job_id"],)
+                    ).fetchone()
+                    assert current is not None
+                    GenerationStore.append_attempt(connection, current, next_state, now)
+                connection.execute(
+                    """
+                    INSERT INTO provider_switch_decisions (
+                        proposal_id, decision, idempotency_key, decided_at
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (identifier, decision, key, now),
+                )
+        if expired:
+            raise ApprovalConflictError("provider switch proposal expired")
         return proposal
 
     def approve(

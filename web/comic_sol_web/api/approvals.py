@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Any, NoReturn
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request
 
 from comic_sol_web.auth import AuthError, SessionPrincipal, require_principal
 
@@ -67,13 +67,17 @@ def _envelope(proposal: Any, decision: str) -> dict[str, object]:
     }
 
 
-def create_approvals_router(service_source: Any) -> APIRouter:
+def create_approvals_router(
+    service_source: Any,
+    generation_source: Any | None = None,
+) -> APIRouter:
     """Register decision routes without constructing proposal storage."""
     router = APIRouter(prefix="/api/approvals", tags=["approvals"])
 
     @router.post("/{proposal_id}/approve")
     async def approve_provider_switch(
         request: Request,
+        background_tasks: BackgroundTasks,
         proposal_id: str,
         principal: Annotated[SessionPrincipal, Depends(require_principal)],
         body: Annotated[dict[str, object] | None, Body()] = None,
@@ -90,6 +94,11 @@ def create_approvals_router(service_source: Any) -> APIRouter:
                 expected_revision=revision,
                 idempotency_key=key,
             )
+            if generation_source is not None:
+                from comic_sol_web.api.generation import _consume_queue
+
+                generation = _resolve_service(generation_source, request)
+                background_tasks.add_task(_consume_queue, generation)
             return _envelope(proposal, "approved")
         except HTTPException:
             raise

@@ -204,12 +204,12 @@ def recommend(
             ranked.append(
                 _RankedRecommendation(
                     rank=(
+                        availability_rank,
                         capability_excess,
                         reference_rank,
-                        mode.value,
-                        availability_rank,
                         cost_rank,
                         latency_rank,
+                        mode.value,
                         entry.provider,
                         entry.model,
                     ),

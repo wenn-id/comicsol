@@ -9,6 +9,7 @@ import threading
 import unittest
 import uuid
 from pathlib import Path
+from typing import cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -18,8 +19,10 @@ from web.tests import support as _support  # noqa: F401  # Checkout import path 
 from comic_sol_web.api.approvals import create_approvals_router
 from comic_sol_web.auth import SessionPrincipal, require_principal
 from comic_sol_web.database import Database
+from comic_sol_web.engine_gateway import EngineGateway
 from comic_sol_web.generation.approvals import (
     ApprovalConflictError,
+    ApprovalRequestError,
     ApprovalUnavailableError,
     ProviderSwitchApprovals,
     SwitchProposal,
@@ -192,6 +195,47 @@ class AssistedRouterTests(unittest.TestCase):
                 self.assertEqual("google", recommendations[0].provider)
                 self.assertIn(category.value, " ".join(recommendations[-1].reasons))
 
+    def test_hard_availability_precedes_capability_excess_across_providers(self) -> None:
+        recommendations = recommend(
+            self.request(),
+            {"cloudflare": AuthMode.HOSTED, "google": AuthMode.HOSTED},
+            {
+                ("cloudflare", "@cf/black-forest-labs/flux-1-schnell"): {
+                    "last_error": ErrorCategory.UNAVAILABLE,
+                },
+                ("google", "gemini-2.5-flash-image"): {"available": True},
+            },
+        )
+
+        self.assertEqual("google", recommendations[0].provider)
+        self.assertEqual("cloudflare", recommendations[-1].provider)
+
+    def test_availability_cost_and_latency_precede_auth_mode_tie_breaker(self) -> None:
+        recommendations = recommend(
+            self.request(),
+            {"bfl": AuthMode.BYOK, "google": AuthMode.HOSTED},
+            {
+                ("bfl", "flux-1.1-pro"): {
+                    "available": False,
+                    "estimated_cost": {"amount": 0.01, "currency": "USD", "unit": "image"},
+                    "latency_class": "low",
+                },
+                ("google", "gemini-2.5-flash-image"): {
+                    "available": True,
+                    "estimated_cost": {"amount": 0.02, "currency": "USD", "unit": "image"},
+                    "latency_class": "high",
+                },
+            },
+        )
+
+        self.assertEqual(
+            ("google", AuthMode.HOSTED),
+            (
+                recommendations[0].provider,
+                recommendations[0].auth_mode,
+            ),
+        )
+
 
 class FakeAuth:
     def __init__(self, principal: SessionPrincipal) -> None:
@@ -363,6 +407,22 @@ class ProviderSwitchApprovalTests(ProviderSwitchFixture):
                 idempotency_key=key,
             )
 
+    def test_mixed_type_job_ids_fail_with_a_sanitized_request_error(self) -> None:
+        job = self.enqueue()
+        mixed_job_ids = cast(tuple[str, ...], (job.job_id, 7))
+
+        with self.assertRaisesRegex(ApprovalRequestError, "provider switch request is invalid"):
+            propose_switch(
+                self.approvals,
+                self.alice,
+                "project-1",
+                3,
+                mixed_job_ids,
+                self.recommendation,
+                ErrorCategory.QUOTA_EXHAUSTED,
+                idempotency_key=str(uuid.uuid4()),
+            )
+
     def test_same_provider_bounded_retry_remains_the_wp5_transition(self) -> None:
         job = self.enqueue()
         queue = DurableGenerationQueue(self.store, self.clock)
@@ -396,11 +456,55 @@ class ProviderSwitchApprovalTests(ProviderSwitchFixture):
                 idempotency_key=str(uuid.uuid4()),
             )
 
-    def test_expired_stale_wrong_user_and_tampered_job_set_fail_closed(self) -> None:
-        expired_job = self.enqueue("expired")
-        expired = self.propose(expired_job, ttl_seconds=1)
+    def test_identical_decision_replay_returns_the_original_result(self) -> None:
+        for suffix, operation, opposite in (
+            ("approve-replay", approve, reject),
+            ("reject-replay", reject, approve),
+        ):
+            with self.subTest(operation=operation.__name__):
+                job = self.enqueue(suffix)
+                proposal = self.propose(job)
+                key = str(uuid.uuid4())
+
+                first = operation(
+                    self.approvals,
+                    self.alice,
+                    proposal.proposal_id,
+                    expected_revision=3,
+                    idempotency_key=key,
+                )
+                replayed = operation(
+                    self.approvals,
+                    self.alice,
+                    proposal.proposal_id,
+                    expected_revision=3,
+                    idempotency_key=key,
+                )
+
+                self.assertEqual(first, replayed)
+                with self.assertRaises(ApprovalConflictError):
+                    operation(
+                        self.approvals,
+                        self.alice,
+                        proposal.proposal_id,
+                        expected_revision=3,
+                        idempotency_key=str(uuid.uuid4()),
+                    )
+                with self.assertRaises(ApprovalConflictError):
+                    opposite(
+                        self.approvals,
+                        self.alice,
+                        proposal.proposal_id,
+                        expected_revision=3,
+                        idempotency_key=key,
+                    )
+
+    def test_expiry_atomically_pauses_exact_jobs_and_allows_replacement(self) -> None:
+        job = self.enqueue("expiry-release")
+        expired = self.propose(job, ttl_seconds=1)
         self.clock.value += 1
-        with self.assertRaises(ApprovalConflictError):
+
+        with self.assertRaisesRegex(ApprovalConflictError, "proposal expired"):
             approve(
                 self.approvals,
                 self.alice,
@@ -409,7 +513,24 @@ class ProviderSwitchApprovalTests(ProviderSwitchFixture):
                 idempotency_key=str(uuid.uuid4()),
             )
 
-        self.clock.value += 1
+        self.assertEqual(JobState.PAUSED.value, self.row(job.job_id)["state"])
+        with self.database.read() as connection:
+            decision = connection.execute(
+                "SELECT decision FROM provider_switch_decisions WHERE proposal_id = ?",
+                (expired.proposal_id,),
+            ).fetchone()
+        self.assertIsNotNone(decision)
+        assert decision is not None
+        self.assertEqual("expired", decision["decision"])
+
+        replacement = self.propose(job, key=str(uuid.uuid4()))
+        self.assertNotEqual(expired.proposal_id, replacement.proposal_id)
+        self.assertEqual(
+            JobState.AWAITING_PROVIDER_CONFIRMATION.value,
+            self.row(job.job_id)["state"],
+        )
+
+    def test_stale_wrong_user_and_tampered_job_set_fail_closed(self) -> None:
         stale_job = self.enqueue("stale")
         stale = self.propose(stale_job)
         with self.database.transaction() as connection:
@@ -566,13 +687,14 @@ class ProviderSwitchApprovalTests(ProviderSwitchFixture):
 
 
 class ApprovalMigrationTests(unittest.TestCase):
-    def test_proposal_migration_is_exactly_the_next_contiguous_version(self) -> None:
-        self.assertEqual(7, PROVIDER_SWITCH_PROPOSAL_MIGRATION.version)
+    def test_engine_gateway_then_approval_migrations_are_contiguous(self) -> None:
+        self.assertEqual(8, PROVIDER_SWITCH_PROPOSAL_MIGRATION.version)
         with tempfile.TemporaryDirectory() as temporary:
-            database = Database(Path(temporary) / "application.sqlite3")
-            self.assertEqual(tuple(range(1, 8)), apply_migrations(database, APPROVAL_MIGRATIONS))
-            self.assertEqual((), apply_migrations(database, APPROVAL_MIGRATIONS))
-            with database.read() as connection:
+            data_root = Path(temporary) / "application-data"
+            gateway = EngineGateway.open(data_root)
+            ProviderSwitchApprovals(gateway.database)
+            self.assertEqual((), apply_migrations(gateway.database, APPROVAL_MIGRATIONS))
+            with gateway.database.read() as connection:
                 versions = tuple(
                     row[0]
                     for row in connection.execute(
@@ -585,7 +707,10 @@ class ApprovalMigrationTests(unittest.TestCase):
                         "SELECT name FROM sqlite_master WHERE type = 'table'"
                     )
                 }
-            self.assertEqual(tuple(range(1, 8)), versions)
+            self.assertEqual(tuple(range(1, 9)), versions)
+            self.assertIn("generation_jobs", tables)
+            self.assertIn("generation_attempts", tables)
+            self.assertIn("generation_receipts", tables)
             self.assertIn("provider_switch_proposals", tables)
             self.assertIn("provider_switch_decisions", tables)
 
@@ -623,8 +748,8 @@ class ApprovalApiTests(ProviderSwitchFixture):
         self.assertEqual(3, auth.csrf_checks)
 
     def test_public_errors_are_sanitized(self) -> None:
-        app, _auth = self.app_for(self.alice)
-        secret = "credential=canary prompt=private /private/path raw-provider-response"
+        app, auth = self.app_for(self.alice)
+        secret = "credential-canary-prompt-private-private-path-raw-provider-response"
         with TestClient(app) as client:
             response = client.post(
                 f"/api/approvals/{secret}/reject",
@@ -632,6 +757,7 @@ class ApprovalApiTests(ProviderSwitchFixture):
                 headers=write_headers(),
             )
         self.assertEqual(404, response.status_code)
+        self.assertEqual(1, auth.csrf_checks)
         rendered = response.text.lower()
         for forbidden in ("credential", "prompt", "private", "raw-provider"):
             self.assertNotIn(forbidden, rendered)

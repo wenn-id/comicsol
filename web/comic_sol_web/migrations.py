@@ -113,8 +113,27 @@ _GENERATION_PROJECT_BRIDGE = Migration(
     ),
 )
 
-GENERATION_SCHEMA_MIGRATION = Migration(
+# WP3 also owns the version-6 project-creation idempotency table. Repeat its
+# accepted SQL so a queue-only database has the same contiguous prerequisite
+# chain, while an EngineGateway-initialized database skips the recorded version
+# and continues with generation at version 7.
+_GENERATION_PROJECT_IDEMPOTENCY_BRIDGE = Migration(
     6,
+    (
+        """
+        CREATE TABLE web_project_creations (
+            owner_id TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            project_id TEXT NOT NULL REFERENCES web_projects(project_id) ON DELETE CASCADE,
+            PRIMARY KEY (owner_id, idempotency_key),
+            UNIQUE (project_id)
+        )
+        """,
+    ),
+)
+
+GENERATION_SCHEMA_MIGRATION = Migration(
+    7,
     (
         """
         CREATE TABLE generation_jobs (
@@ -211,7 +230,7 @@ GENERATION_SCHEMA_MIGRATION = Migration(
 )
 
 PROVIDER_SWITCH_PROPOSAL_MIGRATION = Migration(
-    7,
+    8,
     (
         """
         CREATE TABLE provider_switch_proposals (
@@ -242,7 +261,7 @@ PROVIDER_SWITCH_PROPOSAL_MIGRATION = Migration(
         CREATE TABLE provider_switch_decisions (
             proposal_id TEXT PRIMARY KEY REFERENCES provider_switch_proposals(proposal_id)
                 ON DELETE RESTRICT,
-            decision TEXT NOT NULL CHECK (decision IN ('approved', 'rejected')),
+            decision TEXT NOT NULL CHECK (decision IN ('approved', 'rejected', 'expired')),
             idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) = 36),
             decided_at INTEGER NOT NULL
         )
@@ -281,6 +300,7 @@ PROVIDER_SWITCH_PROPOSAL_MIGRATION = Migration(
 GENERATION_MIGRATIONS = (
     *APPLICATION_MIGRATIONS,
     _GENERATION_PROJECT_BRIDGE,
+    _GENERATION_PROJECT_IDEMPOTENCY_BRIDGE,
     GENERATION_SCHEMA_MIGRATION,
 )
 

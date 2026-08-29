@@ -99,8 +99,15 @@ def _generation_service(request: Request) -> object:
         gateway.staging_root,
         credentials=credentials,
     )
+    request.app.state.generation_credentials = credentials
     request.app.state.generation = service
     return service
+
+
+def _generation_credentials(request: Request) -> object:
+    """Return the lazily constructed broker without exposing credential values."""
+    _generation_service(request)
+    return request.app.state.generation_credentials
 
 
 def _approval_service(request: Request) -> object:
@@ -127,8 +134,14 @@ def create_app(_config: "WebConfig") -> FastAPI:
     app = FastAPI(title="Comic Sol Web", docs_url=None, redoc_url=None)
     app.state.web_config = _config
     app.include_router(create_projects_router(_project_service))
-    app.include_router(create_generation_router(_generation_service))
-    app.include_router(create_approvals_router(_approval_service))
+    app.include_router(
+        create_generation_router(
+            _generation_service,
+            _approval_service,
+            _generation_credentials,
+        )
+    )
+    app.include_router(create_approvals_router(_approval_service, _generation_service))
 
     @app.get("/healthz")
     def healthz() -> Response:
