@@ -8,13 +8,14 @@ import tempfile
 import unittest
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncContextManager, AsyncIterator, Mapping, cast
+from typing import AsyncContextManager, AsyncIterator, Callable, Mapping, cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from web.tests import support as _support  # noqa: F401  # Checkout import path setup.
 
+from comic_sol_product.cli import _load_engine_module
 from comic_sol_web.api.generation import create_generation_router
 from comic_sol_web.auth import SessionPrincipal, require_principal
 from comic_sol_web.database import Database
@@ -65,6 +66,49 @@ class ErrorProvider(FakeProvider):
     ) -> GenerationResult:
         del request, model, credential
         raise ProviderError(self.category)
+
+
+class FailOnceProvider(FakeProvider):
+    """Fail the first generation call and accept the explicit retry."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    async def generate(
+        self,
+        request: GenerationRequest,
+        model: str,
+        credential: str | None,
+    ) -> GenerationResult:
+        self.calls += 1
+        if self.calls == 1:
+            return GenerationResult(
+                external_job_id=None,
+                state=JobState.FAILED,
+                raster_bytes=None,
+                media_type=None,
+                effective_parameters={},
+                usage={},
+            )
+        return await super().generate(request, model, credential)
+
+
+class RevisionAdvancingProvider(FakeProvider):
+    """Simulate a sibling promotion while this leased provider call runs."""
+
+    def __init__(self, advance_revision: Callable[[], None]) -> None:
+        super().__init__()
+        self.advance_revision = advance_revision
+
+    async def generate(
+        self,
+        request: GenerationRequest,
+        model: str,
+        credential: str | None,
+    ) -> GenerationResult:
+        self.advance_revision()
+        return await super().generate(request, model, credential)
 
 
 class HangingProvider(FakeProvider):
@@ -173,6 +217,8 @@ class FakeProjects:
         self.project_id = "project-1"
         self.revision = 3
         self.request_ids: tuple[str, ...] = ("engine-job-1",)
+        self.fixtures: dict[str, str] = {}
+        self.raster_rejection: str | None = None
         self.submissions: list[tuple[Path, bytes]] = []
         self.accepted_raster: bytes | None = None
 
@@ -188,6 +234,7 @@ class FakeProjects:
                 project_revision=self.revision,
                 job_id=job_id,
                 subject_id=f"panel-{index}",
+                fixture=self.fixtures.get(job_id, "success"),
             )
             for index, job_id in enumerate(self.request_ids, start=1)
         )
@@ -204,6 +251,12 @@ class FakeProjects:
     ) -> object:
         self._authorize(principal, project_id, expected_revision)
         self.assert_contained(raster)
+        if self.raster_rejection == "handoff":
+            handoff = _load_engine_module("handoff")
+            raise handoff.HandoffResultError(["result raster: must be a readable PNG"])
+        if self.raster_rejection == "resource-limit":
+            input_limits = _load_engine_module("input_limits")
+            raise input_limits.InputResourceLimitError("decoded raster pixel limit")
         if media_type != "image/png" or capabilities_used != CAPABILITIES_USED:
             raise ValueError("invalid staged raster")
         payload = raster.read_bytes()
@@ -697,6 +750,55 @@ class DurableQueueTests(GenerationQueueFixture):
         self.assertIsNone(row["lease_expires_at"])
         self.assertEqual([], self.projects.submissions)
 
+    def test_canonical_raster_rejection_fails_durably_as_invalid_output(self) -> None:
+        for rejection in ("handoff", "resource-limit"):
+            with self.subTest(rejection=rejection):
+                self.projects.request_ids = (f"invalid-raster-{rejection}",)
+                queued = self.queue()
+                lease = self.service.lease_next(
+                    f"invalid-raster-worker-{rejection}", lease_seconds=30
+                )
+                assert lease is not None
+                validating = self.service.record_result(
+                    queued.job_id,
+                    lease.lease_token,
+                    self.accepted_result(),
+                )
+                assert validating.staged_raster is not None
+                self.projects.raster_rejection = rejection
+
+                failed = self.service.submit_staged_raster(self.alice, queued.job_id, 3)
+
+                self.assertEqual(JobState.FAILED, failed.state)
+                self.assertIsNone(failed.staged_raster)
+                self.assertFalse(validating.staged_raster.exists())
+                attempt = self.service.attempts(queued.job_id)[-1]
+                self.assertEqual(ErrorCategory.INVALID_OUTPUT.value, attempt["error_category"])
+                self.assertEqual([], self.projects.submissions)
+                self.projects.raster_rejection = None
+
+    def test_worker_uses_the_queue_reconciled_revision_for_promotion(self) -> None:
+        def advance_revision() -> None:
+            with self.database.transaction() as connection:
+                updated = connection.execute(
+                    "UPDATE generation_jobs SET project_revision = 4 "
+                    "WHERE state = 'running' AND project_revision = 3"
+                ).rowcount
+            self.assertEqual(1, updated)
+            self.projects.revision = 4
+
+        self.service = self.make_service(RevisionAdvancingProvider(advance_revision))
+        queued = self.queue()
+
+        completed = asyncio.run(self.service.run_once("revision-refresh-worker"))
+
+        assert completed is not None
+        self.assertEqual(queued.job_id, completed.job_id)
+        self.assertEqual(JobState.ACCEPTED, completed.state)
+        self.assertEqual(4, completed.project_revision)
+        self.assertEqual(5, completed.accepted_project_revision)
+        self.assertEqual(1, len(self.projects.submissions))
+
     def test_sibling_jobs_follow_only_each_successful_batch_promotion_revision(self) -> None:
         self.projects.request_ids = ("engine-job-1", "engine-job-2")
         first, second = self.service.queue(
@@ -784,6 +886,24 @@ class DurableQueueTests(GenerationQueueFixture):
         self.assertEqual(accepted, self.projects.accepted_raster)
         self.assertEqual(1, len(self.projects.submissions))
 
+    def test_queued_jobs_are_consumed_before_older_polling_jobs(self) -> None:
+        self.projects.request_ids = ("older-async-job",)
+        self.projects.fixtures["older-async-job"] = "async"
+        older = self.queue()
+        polling = asyncio.run(self.service.run_once("initial-async-worker"))
+        assert polling is not None
+        self.assertEqual(JobState.POLLING, polling.state)
+
+        self.clock.value += 1
+        self.projects.request_ids = ("newer-queued-job",)
+        newer = self.queue()
+        completed = asyncio.run(self.service.run_once("fair-queue-worker"))
+
+        assert completed is not None
+        self.assertEqual(newer.job_id, completed.job_id)
+        self.assertEqual(JobState.ACCEPTED, completed.state)
+        self.assertEqual(JobState.POLLING, self.service.get(self.alice, older.job_id).state)
+
     def test_worker_resolves_credentials_after_leasing_each_job_owner(self) -> None:
         provider = CredentialRecordingProvider()
         resolver = RecordingCredentialResolver(
@@ -839,6 +959,62 @@ class DurableQueueTests(GenerationQueueFixture):
         job_id = response.json()["jobs"][0]["job_id"]
         self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, job_id).state)
         self.assertEqual(PNG, self.projects.accepted_raster)
+
+    def test_queue_request_continues_until_an_async_job_is_accepted(self) -> None:
+        self.projects.fixtures["engine-job-1"] = "async"
+        app = FastAPI()
+        app.state.auth = FakeAuth(self.alice)
+        app.include_router(create_generation_router(self.service))
+        app.dependency_overrides[require_principal] = lambda: self.alice
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/generation/queue",
+                json={
+                    "project_id": self.projects.project_id,
+                    "expected_revision": self.projects.revision,
+                    "provider": "fake",
+                    "model": "fake-raster-v1",
+                    "auth_mode": "agent",
+                },
+            )
+
+        self.assertEqual(201, response.status_code)
+        job_id = response.json()["jobs"][0]["job_id"]
+        self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, job_id).state)
+        self.assertEqual(PNG, self.projects.accepted_raster)
+
+    def test_retry_request_schedules_the_failed_job_for_consumption(self) -> None:
+        provider = FailOnceProvider()
+        self.service = self.make_service(provider)
+        app = FastAPI()
+        app.state.auth = FakeAuth(self.alice)
+        app.include_router(create_generation_router(self.service))
+        app.dependency_overrides[require_principal] = lambda: self.alice
+
+        with TestClient(app) as client:
+            queued = client.post(
+                "/api/generation/queue",
+                json={
+                    "project_id": self.projects.project_id,
+                    "expected_revision": self.projects.revision,
+                    "provider": "fake",
+                    "model": "fake-raster-v1",
+                    "auth_mode": "agent",
+                },
+            )
+            self.assertEqual(201, queued.status_code)
+            job_id = queued.json()["jobs"][0]["job_id"]
+            self.assertEqual(JobState.FAILED, self.service.get(self.alice, job_id).state)
+
+            retried = client.post(
+                f"/api/generation/{job_id}/retry",
+                json={"expected_revision": self.projects.revision},
+            )
+
+        self.assertEqual(200, retried.status_code)
+        self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, job_id).state)
+        self.assertEqual(2, provider.calls)
 
     def test_worker_pauses_when_the_persisted_provider_is_unavailable(self) -> None:
         queued = self.queue()
@@ -905,6 +1081,7 @@ def make_request(
     project_revision: int,
     job_id: str = "engine-job-1",
     subject_id: str = "panel-1",
+    fixture: str = "success",
 ) -> GenerationRequest:
     return GenerationRequest(
         job_id=job_id,
@@ -918,7 +1095,7 @@ def make_request(
         width=1024,
         height=1024,
         required_capabilities=frozenset({"text_to_image"}),
-        provider_options={"fixture": "success"},
+        provider_options={"fixture": fixture},
     )
 
 

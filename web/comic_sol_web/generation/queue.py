@@ -57,7 +57,13 @@ class DurableGenerationQueue:
                     SELECT * FROM generation_jobs
                     WHERE state IN ('queued', 'polling')
                        OR (state = 'running' AND lease_expires_at <= ?)
-                    ORDER BY created_at, job_id
+                    ORDER BY CASE state
+                                 WHEN 'queued' THEN 0
+                                 WHEN 'running' THEN 1
+                                 ELSE 2
+                             END,
+                             CASE WHEN state = 'polling' THEN updated_at ELSE created_at END,
+                             job_id
                     LIMIT 1
                     """,
                     (now,),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, Any, NoReturn
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, status
@@ -74,11 +75,17 @@ def _revision(body: dict[str, object]) -> int:
     return value
 
 
-async def _consume_registered_jobs(service: Any, count: int) -> None:
-    """Run one durable worker iteration for each job registered by a request."""
-    for _ in range(count):
-        if await service.run_once("web-request-worker") is None:
+_POLL_DELAY_SECONDS = 0.05
+
+
+async def _consume_queue(service: Any) -> None:
+    """Drain eligible work, yielding briefly between asynchronous polls."""
+    while True:
+        completed = await service.run_once("web-request-worker")
+        if completed is None:
             return
+        if completed.state.value == "polling":
+            await asyncio.sleep(_POLL_DELAY_SECONDS)
 
 
 def create_generation_router(service_source: Any) -> APIRouter:
@@ -113,7 +120,7 @@ def create_generation_router(service_source: Any) -> APIRouter:
                 auth_mode=auth_mode,
                 max_retries=max_retries,
             )
-            background_tasks.add_task(_consume_registered_jobs, service, len(jobs))
+            background_tasks.add_task(_consume_queue, service)
             return {"jobs": [_job_envelope(job) for job in jobs]}
         except HTTPException:
             raise
@@ -135,6 +142,7 @@ def create_generation_router(service_source: Any) -> APIRouter:
     @router.post("/{job_id}/retry")
     async def retry_generation(
         request: Request,
+        background_tasks: BackgroundTasks,
         job_id: str,
         body: Annotated[dict[str, object], Body()],
         principal: Annotated[SessionPrincipal, Depends(require_principal)],
@@ -142,7 +150,9 @@ def create_generation_router(service_source: Any) -> APIRouter:
         _require_csrf(request, principal)
         try:
             service = _resolve_service(service_source, request)
-            return _job_envelope(service.retry_same_provider(principal, job_id, _revision(body)))
+            job = service.retry_same_provider(principal, job_id, _revision(body))
+            background_tasks.add_task(_consume_queue, service)
+            return _job_envelope(job)
         except HTTPException:
             raise
         except Exception as error:
