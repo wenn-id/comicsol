@@ -141,9 +141,15 @@ class StudioContractTests(unittest.TestCase):
         self.assertRegex(self.start, r"(?:archive|file)\.size\s*>\s*MAX_ARCHIVE_BYTES")
         self.assertRegex(self.start, r"required")
 
-    def test_start_honors_engine_page_bounds_and_selected_source_mode(self) -> None:
+    def test_start_honors_engine_page_source_and_byte_bounds(self) -> None:
         self.assertRegex(self.start, r'name:\s*["\']page_count["\'][\s\S]{0,160}max:\s*["\']4["\']')
         self.assertNotIn('max: "64"', self.start)
+        self.assertIn('maxlength: "204800"', self.start)
+        self.assertIn("const MAX_SOURCE_BYTES = 200 * 1024", self.start)
+        self.assertRegex(
+            self.start,
+            r"new TextEncoder\(\)\.encode\(sourceValue\)\.byteLength\s*>\s*MAX_SOURCE_BYTES",
+        )
         self.assertIn('"short_prompt"', self.start)
         self.assertIn('"pasted_story"', self.start)
         self.assertRegex(self.start, r"mode:\s*form\.elements\.source_mode\.value")
@@ -201,6 +207,39 @@ class StudioContractTests(unittest.TestCase):
         self.assertLess(promotion_position, success_position)
         self.assertRegex(self.state, r"summary\?\.plan")
         self.assertRegex(self.state, r"promoteDraft\(project\)")
+
+    def test_deferred_plan_promotion_preserves_replacement_and_syncs_controls(self) -> None:
+        self.assertIn("let promotionPending = false", self.plan)
+        self.assertGreaterEqual(self.plan.count("if (promotionPending) return"), 3)
+        self.assertIn("if (promotionPending && !force) return", self.plan)
+        self.assertIn(
+            'querySelector("#refresh-project").addEventListener("click", () => refreshProject())',
+            self.plan,
+        )
+        self.assertRegex(
+            self.plan,
+            r"for \(const control of form\.elements\) control\.disabled = promotionPending",
+        )
+        self.assertRegex(
+            self.plan,
+            r"promotionPending\s*=\s*true[\s\S]{0,500}await updatePlan",
+        )
+        self.assertRegex(
+            self.plan,
+            r"await updatePlan[\s\S]{0,500}currentDraft\s*!==\s*draft"
+            r"[\s\S]{0,300}store\.replaceProject\(persisted\)"
+            r"[\s\S]{0,200}store\.createDraft\(currentDraft\.changes, currentDraft\.origin\)"
+            r"[\s\S]{0,300}store\.promoteDraft\(persisted\)",
+        )
+        self.assertRegex(
+            self.plan,
+            r"finally\s*\{[\s\S]{0,160}promotionPending\s*=\s*false",
+        )
+        self.assertRegex(
+            self.plan,
+            r"refreshed\.revision\s*!==\s*previousRevision[\s\S]{0,300}"
+            r"controls\[key\]\.value\s*=\s*store\.getState\(\)\.workingPlan\[key\]",
+        )
 
     def test_proposal_listener_survives_bad_events_and_preserves_pending_review(self) -> None:
         self.assertNotIn("{ once: true }", self.plan)

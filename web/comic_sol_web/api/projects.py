@@ -36,6 +36,10 @@ def _envelope(snapshot: Any) -> dict[str, object]:
     }
 
 
+def _private_response(response: Response) -> None:
+    response.headers["Cache-Control"] = "private, no-store"
+
+
 def _reject(error: Exception) -> NoReturn:
     # Import the engine-owning boundary only after a project endpoint is called.
     from comic_sol_web.engine_gateway import (
@@ -113,6 +117,7 @@ def create_projects_router(service_source: Any) -> APIRouter:
         principal: Annotated[SessionPrincipal, Depends(require_principal)],
     ) -> dict[str, object]:
         _require_csrf(request, principal)
+        _private_response(response)
         try:
             service = _resolve_service(service_source, request)
             if "project_id" in body or "plan" in body:
@@ -141,10 +146,12 @@ def create_projects_router(service_source: Any) -> APIRouter:
     @router.post("/import", status_code=status.HTTP_201_CREATED)
     async def import_project(
         request: Request,
+        response: Response,
         archive: Annotated[UploadFile, File(...)],
         principal: Annotated[SessionPrincipal, Depends(require_principal)],
     ) -> dict[str, object]:
         _require_csrf(request, principal)
+        _private_response(response)
         from comic_sol_product.cli import _load_engine_module
 
         archive_suffix = _load_engine_module("handoff_archive").ARCHIVE_SUFFIX
@@ -170,9 +177,11 @@ def create_projects_router(service_source: Any) -> APIRouter:
     @router.get("/{project_id}")
     async def get_project(
         request: Request,
+        response: Response,
         project_id: str,
         principal: Annotated[SessionPrincipal, Depends(require_principal)],
     ) -> dict[str, object]:
+        _private_response(response)
         try:
             service = _resolve_service(service_source, request)
             return _envelope(service.read_plan(principal, project_id))

@@ -10,6 +10,7 @@ import json
 import shutil
 import sqlite3
 import tempfile
+import threading
 import unittest
 import zipfile
 from pathlib import Path
@@ -71,6 +72,22 @@ def plan_payload(root: Path) -> dict[str, str]:
         "visualIdentityPack": (root / "plan/character-identity-pack.json").read_text(
             encoding="utf-8"
         ),
+    }
+
+
+def first_plan_payload() -> dict[str, str]:
+    story = valid_story()
+    for scene in story["scenes"]:
+        scene["characters"] = []
+    storyboard = valid_storyboard()
+    panel = storyboard["pages"][0]["panels"][0]
+    panel["characters"] = []
+    panel["continuity"] = []
+    panel["text"] = []
+    return {
+        "storyPlan": json.dumps(story),
+        "storyboard": json.dumps(storyboard),
+        "visualIdentityPack": json.dumps({"characters": [], "schema_version": "1.0"}),
     }
 
 
@@ -354,6 +371,83 @@ class EngineGatewayContractTests(GatewayFixture):
         self.assertEqual(valid_storyboard(), json.loads(plan["storyboard"]))
         self.assertNotIn(str(snapshot.root), json.dumps(dict(plan), sort_keys=True))
 
+    def test_first_plan_update_publishes_canonical_artifacts_atomically(self) -> None:
+        snapshot = self.create()
+        candidate = first_plan_payload()
+
+        updated = self.service.update_plan(
+            self.alice,
+            snapshot.project_id,
+            snapshot.revision,
+            candidate,
+        )
+
+        self.assertEqual(snapshot.revision + 1, updated.revision)
+        self.assertEqual(candidate.keys(), plan_payload(snapshot.root).keys())
+        self.assertEqual(
+            {"characters": [], "schema_version": "1.0"},
+            json.loads((snapshot.root / "plan/character-bible.json").read_bytes()),
+        )
+        manifest = read_project_manifest(snapshot.root / "project.json")
+        self.assertEqual(1, manifest["settings"]["panel_count"])
+        self.assertEqual(["p01-01"], manifest["panels"])
+        self.assertEqual(
+            {"story_plan", "character_bible", "storyboard"},
+            set(manifest["artifacts"]),
+        )
+        self.assertEqual([], validate_project(snapshot.root, "storyboard"))
+
+    def test_plan_read_serializes_complete_snapshot_with_updates(self) -> None:
+        snapshot = self.import_prepared()
+        candidate = plan_payload(snapshot.root)
+        story = json.loads(candidate["storyPlan"])
+        story["theme"] = "A concurrent update remains one coherent snapshot."
+        candidate["storyPlan"] = json.dumps(story)
+        read_started = threading.Event()
+        release_read = threading.Event()
+        update_finished = threading.Event()
+        errors: list[BaseException] = []
+        original_summary = EngineGateway._plan_summary
+
+        def blocking_summary(root: Path) -> dict[str, str]:
+            if threading.current_thread().name == "plan-reader":
+                read_started.set()
+                if not release_read.wait(5):
+                    raise TimeoutError("test did not release Plan read")
+            return original_summary(root)
+
+        def read() -> None:
+            try:
+                self.gateway.read_plan(snapshot.project_id, snapshot.revision)
+            except BaseException as error:
+                errors.append(error)
+
+        def update() -> None:
+            try:
+                self.gateway.update_plan(snapshot.project_id, snapshot.revision, candidate)
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                update_finished.set()
+
+        with mock.patch.object(
+            EngineGateway,
+            "_plan_summary",
+            new=staticmethod(blocking_summary),
+        ):
+            reader = threading.Thread(target=read, name="plan-reader")
+            updater = threading.Thread(target=update, name="plan-updater")
+            reader.start()
+            self.assertTrue(read_started.wait(2))
+            updater.start()
+            self.assertFalse(update_finished.wait(0.2))
+            release_read.set()
+            reader.join(5)
+            updater.join(5)
+        self.assertFalse(reader.is_alive())
+        self.assertFalse(updater.is_alive())
+        self.assertEqual([], errors)
+
     def test_plan_update_commits_canonical_bytes_and_survives_gateway_reload(self) -> None:
         snapshot = self.import_prepared()
         candidate = plan_payload(snapshot.root)
@@ -384,6 +478,27 @@ class EngineGatewayContractTests(GatewayFixture):
             plan_payload(snapshot.root),
             dict(cast(Mapping[str, str], persisted.summary["plan"])),
         )
+
+    def test_plan_edits_fail_closed_until_prompts_are_rebuilt(self) -> None:
+        snapshot = self.import_prepared()
+        candidate = plan_payload(snapshot.root)
+        storyboard = json.loads(candidate["storyboard"])
+        storyboard["pages"][0]["panels"][0]["beat"] = "A newly reviewed beat."
+        candidate["storyboard"] = json.dumps(storyboard)
+        prompt = snapshot.root / "prompts/panels/p01-01.txt"
+        prompt_before = prompt.read_bytes()
+
+        updated = self.gateway.update_plan(
+            snapshot.project_id,
+            snapshot.revision,
+            candidate,
+        )
+
+        self.assertEqual("INIT", updated.status)
+        self.assertEqual(prompt_before, prompt.read_bytes())
+        with self.assertRaisesRegex(GatewayInputError, "planning and storyboard"):
+            self.gateway.prepare_generation(snapshot.project_id, updated.revision)
+        self.assertEqual(prompt_before, prompt.read_bytes())
 
     def test_failed_plan_updates_preserve_project_bytes_and_web_revision_exactly(self) -> None:
         snapshot = self.import_prepared()
@@ -908,11 +1023,13 @@ class ProjectApiTests(GatewayFixture):
                 json={"title": "API Project", "prompt": "A precise API project.", "page_count": 1},
             )
             self.assertEqual(201, created.status_code)
+            self.assertEqual("private, no-store", created.headers.get("cache-control"))
             created_body = created.json()
             self.assertEqual({"project_id", "revision", "status", "summary"}, set(created_body))
             self.assertEqual(1, created_body["revision"])
             fetched = client.get(f"/api/projects/{created_body['project_id']}")
             self.assertEqual(200, fetched.status_code)
+            self.assertEqual("private, no-store", fetched.headers.get("cache-control"))
             self.assertEqual(created_body, fetched.json())
 
             imported = client.post(
@@ -926,6 +1043,7 @@ class ProjectApiTests(GatewayFixture):
                 },
             )
             self.assertEqual(201, imported.status_code)
+            self.assertEqual("private, no-store", imported.headers.get("cache-control"))
             imported_body = imported.json()
             self.assertEqual({"project_id", "revision", "status", "summary"}, set(imported_body))
             self.assertEqual(1, imported_body["revision"])
@@ -957,6 +1075,7 @@ class ProjectApiTests(GatewayFixture):
                 },
             )
         self.assertEqual(200, updated.status_code)
+        self.assertEqual("private, no-store", updated.headers.get("cache-control"))
         body = updated.json()
         self.assertEqual(snapshot.revision + 1, body["revision"])
         self.assertEqual(plan_payload(snapshot.root), body["summary"]["plan"])

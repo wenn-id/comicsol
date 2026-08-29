@@ -358,27 +358,43 @@ class EngineGateway:
         return plan
 
     def read_plan(self, project_id: str, expected_revision: int | None = None) -> ProjectSnapshot:
-        row = self._row(project_id)
-        revision = cast(int, row["revision"])
-        self._check_revision(revision, expected_revision)
-        root = self._root_from_row(row)
-        return self._snapshot_for(
-            project_id,
-            revision,
-            root,
-            extra_summary={"plan": self._plan_summary(root)},
-        )
+        initial = self._row(project_id)
+        root = self._root_from_row(initial)
+        with ProjectLock(root):
+            ProjectTransaction.recover(root)
+            state = self._engine_state(root)
+            with self.database.transaction() as connection:
+                row = self._reconcile_row(connection, project_id, state)
+                revision = cast(int, row["revision"])
+                self._check_revision(revision, expected_revision)
+            return self._snapshot_for(
+                project_id,
+                revision,
+                root,
+                extra_summary={"plan": self._plan_summary(root)},
+            )
 
     @staticmethod
     def _plan_candidate(
         root: Path, plan: Mapping[str, object]
-    ) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    ) -> tuple[
+        dict[str, object],
+        dict[str, object],
+        dict[str, object],
+        dict[str, object],
+        bool,
+    ]:
         if not isinstance(plan, Mapping) or set(plan) != set(_PLAN_FIELDS):
             raise GatewayInputError("Plan request must contain the complete canonical envelope")
+        canonical_paths = [*_PLAN_FIELDS.values(), "plan/character-bible.json"]
+        existing = [
+            contained_project_path(root, relative).is_file() for relative in canonical_paths
+        ]
+        first_plan = not any(existing)
+        if not first_plan and not all(existing):
+            raise GatewayInputError("Plan update requires a complete canonical artifact set")
         documents: dict[str, dict[str, object]] = {}
         for field, relative in _PLAN_FIELDS.items():
-            if not contained_project_path(root, relative).is_file():
-                raise GatewayInputError("Plan update requires existing canonical artifacts")
             payload = plan[field]
             if not isinstance(payload, str):
                 raise GatewayInputError("Plan document must be JSON text")
@@ -389,22 +405,34 @@ class EngineGateway:
             if not isinstance(document, dict):
                 raise GatewayInputError("Plan document must contain a JSON object")
             documents[field] = cast(dict[str, object], document)
+        if first_plan:
+            character_bible: dict[str, object] = {
+                "characters": [],
+                "schema_version": "1.0",
+            }
+        else:
+            existing_bible = read_contained_json(root, "plan/character-bible.json")
+            if not isinstance(existing_bible, dict):
+                raise GatewayInputError("canonical character bible is invalid")
+            character_bible = cast(dict[str, object], existing_bible)
         return (
             documents["storyPlan"],
+            character_bible,
             documents["storyboard"],
             documents["visualIdentityPack"],
+            first_plan,
         )
 
     @staticmethod
     def _validate_plan_candidate(
         root: Path,
         story: dict[str, object],
+        character_bible: dict[str, object],
         storyboard: dict[str, object],
         identity_pack: dict[str, object],
-    ) -> None:
-        character_bible = read_contained_json(root, "plan/character-bible.json")
-        if not isinstance(character_bible, dict):
-            raise GatewayInputError("canonical character bible is invalid")
+        *,
+        first_plan: bool,
+    ) -> list[str]:
         issues: list[object] = []
         issues.extend(validate_story_plan(story))
         issues.extend(validate_character_bible(character_bible))
@@ -416,9 +444,12 @@ class EngineGateway:
             )
         )
 
+        character_items = character_bible.get("characters")
+        if not isinstance(character_items, list):
+            character_items = []
         known_characters = {
             item.get("id")
-            for item in character_bible.get("characters", [])
+            for item in character_items
             if isinstance(item, dict) and isinstance(item.get("id"), str)
         }
         scenes = story.get("scenes")
@@ -437,24 +468,56 @@ class EngineGateway:
         settings = manifest.get("settings")
         pages = storyboard.get("pages")
         manifest_panels = manifest.get("panels")
+        panel_ids: list[str] = []
         if isinstance(settings, dict) and isinstance(pages, list):
-            panel_ids = [
-                panel.get("id")
-                for page in pages
-                if isinstance(page, dict)
-                for panel in page.get("panels", [])
-                if isinstance(panel, dict)
-            ]
+            for page in pages:
+                if not isinstance(page, dict):
+                    continue
+                panels = page.get("panels")
+                if not isinstance(panels, list):
+                    continue
+                panel_ids.extend(
+                    panel["id"]
+                    for panel in panels
+                    if isinstance(panel, dict) and isinstance(panel.get("id"), str)
+                )
             if settings.get("page_count") != len(pages):
                 issues.append("storyboard page count does not match project settings")
-            if settings.get("panel_count") != len(panel_ids):
+            if not first_plan and settings.get("panel_count") != len(panel_ids):
                 issues.append("storyboard panel count does not match project settings")
-            if manifest_panels != panel_ids:
+            if not first_plan and manifest_panels != panel_ids:
                 issues.append("storyboard panel order does not match the project manifest")
         else:
             issues.append("project settings or storyboard pages are invalid")
         if issues:
             raise GatewayInputError("Plan candidate failed canonical validation")
+        return panel_ids
+
+    @staticmethod
+    def _initial_plan_manifest(
+        root: Path,
+        payloads: Mapping[str, bytes],
+        character_bible: bytes,
+        panel_ids: list[str],
+    ) -> bytes:
+        manifest = read_project_manifest(root / "project.json", normalize_legacy=False)
+        artifacts = manifest.get("artifacts")
+        settings = manifest.get("settings")
+        if manifest.get("status") != "INIT" or artifacts != {} or not isinstance(settings, dict):
+            raise GatewayInputError("first Plan requires a newly initialized canonical project")
+        settings["panel_count"] = len(panel_ids)
+        manifest["panels"] = panel_ids
+        artifact_payloads = {
+            "story_plan": ("plan/story-plan.json", payloads["storyPlan"]),
+            "character_bible": ("plan/character-bible.json", character_bible),
+            "storyboard": ("plan/storyboard.json", payloads["storyboard"]),
+        }
+        manifest["artifacts"] = {
+            name: {"path": relative, "sha256": hashlib.sha256(payload).hexdigest()}
+            for name, (relative, payload) in artifact_payloads.items()
+        }
+        manifest["updated_at"] = comic_sol._utc_now()
+        return canonical_artifact_bytes(manifest)
 
     def update_plan(
         self,
@@ -473,23 +536,48 @@ class EngineGateway:
                 row = self._reconcile_row(connection, project_id, prior_state)
                 self._check_revision(cast(int, row["revision"]), expected_revision)
                 revision = cast(int, row["revision"])
-            story, storyboard, identity_pack = self._plan_candidate(root, plan)
-            self._validate_plan_candidate(root, story, storyboard, identity_pack)
+            story, character_bible, storyboard, identity_pack, first_plan = self._plan_candidate(
+                root, plan
+            )
+            panel_ids = self._validate_plan_candidate(
+                root,
+                story,
+                character_bible,
+                storyboard,
+                identity_pack,
+                first_plan=first_plan,
+            )
             payloads = {
                 "storyPlan": canonical_artifact_bytes(story),
                 "storyboard": canonical_artifact_bytes(storyboard),
                 "visualIdentityPack": canonical_artifact_bytes(identity_pack),
             }
-            changed_fields = [
-                field
-                for field, relative in _PLAN_FIELDS.items()
-                if read_contained_bytes(root, relative) != payloads[field]
-            ]
-            if changed_fields:
-                comic_sol._invalidate_from_locked(root, "planning", transaction)
-                for field in changed_fields:
-                    transaction.stage_bytes(_PLAN_FIELDS[field], payloads[field])
+            if first_plan:
+                character_bible_payload = canonical_artifact_bytes(character_bible)
+                for field, relative in _PLAN_FIELDS.items():
+                    transaction.stage_bytes(relative, payloads[field])
+                transaction.stage_bytes("plan/character-bible.json", character_bible_payload)
+                transaction.stage_bytes(
+                    "project.json",
+                    self._initial_plan_manifest(
+                        root,
+                        payloads,
+                        character_bible_payload,
+                        panel_ids,
+                    ),
+                )
                 changed = True
+            else:
+                changed_fields = [
+                    field
+                    for field, relative in _PLAN_FIELDS.items()
+                    if read_contained_bytes(root, relative) != payloads[field]
+                ]
+                if changed_fields:
+                    comic_sol._invalidate_from_locked(root, "planning", transaction)
+                    for field in changed_fields:
+                        transaction.stage_bytes(_PLAN_FIELDS[field], payloads[field])
+                    changed = True
         if changed:
             revision += 1
             self._ensure_revision(project_id, expected_revision, revision, root)
@@ -664,6 +752,11 @@ class EngineGateway:
                     row = self._reconcile_row(connection, project_id, prior_state)
                     self._check_revision(cast(int, row["revision"]), expected_revision)
                     revision = cast(int, row["revision"])
+                manifest = read_project_manifest(root / "project.json")
+                if manifest.get("status") in {"INIT", "PLANNED", "SCRIPTED"}:
+                    raise GatewayInputError(
+                        "generation requires canonical planning and storyboard stages to be rebuilt"
+                    )
                 prepared = comic_sol.prepare_handoff(root)
                 if prepared.get("changed") is True:
                     engine_changed = True

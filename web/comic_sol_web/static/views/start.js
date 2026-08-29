@@ -6,6 +6,8 @@ import {
   importProject,
 } from "../api.js";
 
+const MAX_SOURCE_BYTES = 200 * 1024;
+
 function element(tag, attributes = {}, text = "") {
   const node = document.createElement(tag);
   for (const [name, value] of Object.entries(attributes)) {
@@ -58,7 +60,7 @@ function creationCard({ store, announce, navigate }) {
     id: "project-source",
     name: "source",
     required: true,
-    maxlength: "1048576",
+    maxlength: "204800",
     "aria-describedby": "project-source-help",
   });
   const language = element("input", {
@@ -106,7 +108,7 @@ function creationCard({ store, announce, navigate }) {
       "project-source",
       "Prompt or story",
       source,
-      "Use a concise prompt or paste story text. Content is sent only to the project API.",
+      "At most 200 KiB of UTF-8. Content is sent only to the project API.",
     ),
     field("project-language", "Language code", language),
     field("project-page-count", "Page count", pageCount),
@@ -118,11 +120,17 @@ function creationCard({ store, announce, navigate }) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!form.reportValidity()) return;
+    const sourceValue = source.value.trim();
+    if (new TextEncoder().encode(sourceValue).byteLength > MAX_SOURCE_BYTES) {
+      announce("The prompt or story must be at most 200 KiB of UTF-8.", "error");
+      source.focus();
+      return;
+    }
     setBusy(form, true);
     announce("Creating project…");
     const request = {
       title: title.value.trim(),
-      prompt: source.value.trim(),
+      prompt: sourceValue,
       language: language.value.trim(),
       mode: form.elements.source_mode.value,
       page_count: Number(pageCount.value),

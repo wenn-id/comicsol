@@ -128,22 +128,27 @@ export function renderPlanView({ store, announce }) {
   layout.append(editor, review);
   view.append(heading, summary, layout);
 
+  let promotionPending = false;
+
   function updateDraft() {
     const latest = store.getState();
     renderDraftDiff(diff, latest.workingPlan, latest.draft);
-    promote.disabled = !latest.draft;
-    discard.disabled = !latest.draft;
+    for (const control of form.elements) control.disabled = promotionPending;
+    promote.disabled = promotionPending || !latest.draft;
+    discard.disabled = promotionPending || !latest.draft;
   }
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (promotionPending) return;
     store.createDraft(Object.fromEntries(FIELDS.map(([key]) => [key, controls[key].value])));
     updateDraft();
     announce("Draft created. Review the differences before promotion.");
     review.focus?.();
   });
 
-  async function refreshProject() {
+  async function refreshProject(force = false) {
+    if (promotionPending && !force) return;
     announce("Refreshing project revision…");
     try {
       const refreshed = await getProject(project.project_id);
@@ -151,6 +156,7 @@ export function renderPlanView({ store, announce }) {
       store.replaceProject(refreshed);
       if (refreshed.revision !== previousRevision) {
         store.clearDraft();
+        for (const [key] of FIELDS) controls[key].value = store.getState().workingPlan[key];
         updateDraft();
         announce("Revision changed. The stale draft was discarded; review the refreshed project.", "error");
       } else {
@@ -164,8 +170,9 @@ export function renderPlanView({ store, announce }) {
     }
   }
 
-  form.querySelector("#refresh-project").addEventListener("click", refreshProject);
+  form.querySelector("#refresh-project").addEventListener("click", () => refreshProject());
   promote.addEventListener("click", async () => {
+    if (promotionPending) return;
     const latest = store.getState();
     const draft = latest.draft;
     if (!draft) return;
@@ -175,8 +182,8 @@ export function renderPlanView({ store, announce }) {
       announce("Revision changed. The stale draft was discarded; refresh before editing.", "error");
       return;
     }
-    promote.disabled = true;
-    discard.disabled = true;
+    promotionPending = true;
+    updateDraft();
     announce("Saving the reviewed Plan to the canonical project…");
     try {
       const persisted = await updatePlan(
@@ -184,6 +191,14 @@ export function renderPlanView({ store, announce }) {
         draft.changes,
         draft.expectedRevision,
       );
+      const currentDraft = store.getState().draft;
+      if (currentDraft !== draft) {
+        store.replaceProject(persisted);
+        if (currentDraft) store.createDraft(currentDraft.changes, currentDraft.origin);
+        updateDraft();
+        announce("The saved Plan was refreshed; newer edits remain a draft for review.", "error");
+        return;
+      }
       if (store.promoteDraft(persisted)) {
         for (const [key] of FIELDS) controls[key].value = store.getState().workingPlan[key];
         updateDraft();
@@ -191,7 +206,7 @@ export function renderPlanView({ store, announce }) {
       }
     } catch (error) {
       if (error instanceof StaleRevisionError) {
-        await refreshProject();
+        await refreshProject(true);
       } else {
         announce(
           error instanceof StudioApiError
@@ -201,10 +216,12 @@ export function renderPlanView({ store, announce }) {
         );
       }
     } finally {
+      promotionPending = false;
       updateDraft();
     }
   });
   discard.addEventListener("click", () => {
+    if (promotionPending) return;
     store.clearDraft();
     updateDraft();
     announce("Draft discarded.");
