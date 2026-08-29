@@ -281,6 +281,11 @@ class WebApplicationTests(unittest.TestCase):
                     config,
                     active_agent_image_capabilities=frozenset({"not-an-image-capability"}),
                 )
+            with self.assertRaises(ValueError):
+                create_app(
+                    config,
+                    active_agent_image_capabilities=frozenset({"reference_images"}),
+                )
 
             enabled = create_app(
                 config,

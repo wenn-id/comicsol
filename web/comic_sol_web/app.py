@@ -35,9 +35,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 _AGENT_IMAGE_CAPABILITIES = frozenset(
     {
         "custom_dimensions",
-        "image_to_image",
         "negative_prompt",
-        "reference_images",
         "text_to_image",
     }
 )

@@ -253,7 +253,48 @@ class GenerationService:
         job_id: str,
         expected_revision: int,
     ) -> GenerationJob:
-        return self._queue.retry_same_provider(principal.user_id, job_id, expected_revision)
+        job = self._queue.get_owned(principal.user_id, job_id)
+        if job.state is not JobState.AWAITING_PROVIDER_CONFIRMATION:
+            return self._queue.retry_same_provider(principal.user_id, job_id, expected_revision)
+        if job.project_revision != expected_revision:
+            raise GenerationConflictError("generation project revision is stale")
+        if job.provider != "agent" or job.auth_mode is not AuthMode.AGENT:
+            raise GenerationConflictError("generation capability is not resumable")
+        try:
+            provider = self._providers.get("agent")
+        except KeyError:
+            raise GenerationConflictError("generation capability is unavailable") from None
+        if not isinstance(provider, AgentProvider) or not provider.capability_available(
+            job.request,
+            job.model,
+        ):
+            raise GenerationConflictError("generation capability is unavailable")
+
+        now = self._clock()
+        with self._store.database.transaction() as connection:
+            updated = connection.execute(
+                """
+                UPDATE generation_jobs
+                SET state = ?, external_job_id = NULL,
+                    lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
+                    staged_raster_name = NULL, result_checksum = NULL, updated_at = ?
+                WHERE job_id = ? AND owner_id = ? AND project_revision = ? AND state = ?
+                """,
+                (
+                    JobState.QUEUED.value,
+                    now,
+                    job_id,
+                    principal.user_id,
+                    expected_revision,
+                    JobState.AWAITING_PROVIDER_CONFIRMATION.value,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise GenerationConflictError("generation resume lost a state race")
+            current = self._store.row(connection, job_id)
+            assert current is not None
+            self._store.append_attempt(connection, current, JobState.QUEUED, now)
+        return self._store.from_row(current)
 
     def pause_for_switch(
         self,

@@ -49,13 +49,8 @@ class AgentProviderTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_package_is_deterministic_bounded_and_contains_no_paths_or_urls(self) -> None:
-        provider = AgentProvider(
-            frozenset({"text_to_image", "custom_dimensions", "reference_images"})
-        )
-        request = self.make_request(
-            references=(Path("/private/project/reference.png"),),
-            capabilities=frozenset({"text_to_image", "custom_dimensions", "reference_images"}),
-        )
+        provider = AgentProvider(frozenset({"text_to_image", "custom_dimensions"}))
+        request = self.make_request()
 
         first = await provider.generate(request, AGENT_MODEL, "ignored-agent-token")
         first_bytes = provider.package_bytes(first.external_job_id)
@@ -72,7 +67,7 @@ class AgentProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request.project_revision, package["project_revision"])
         self.assertEqual(agent_job_checksum(request), package["job_checksum"])
         self.assertEqual(agent_locked_scope_digest(request), package["locked_scope_digest"])
-        self.assertEqual([{"ordinal": 1}], package["references"])
+        self.assertEqual([], package["references"])
         rendered = first_bytes.decode("utf-8")
         for forbidden in (
             "/private/project/reference.png",
@@ -85,6 +80,22 @@ class AgentProviderTests(unittest.IsolatedAsyncioTestCase):
             "quota",
         ):
             self.assertNotIn(forbidden, rendered)
+
+    async def test_reference_jobs_fail_before_issuing_an_unusable_package(self) -> None:
+        provider = AgentProvider(frozenset({"text_to_image", "reference_images"}))
+        request = self.make_request(
+            references=(Path("/private/project/reference.png"),),
+            capabilities=frozenset({"text_to_image", "reference_images"}),
+        )
+
+        with self.assertRaises(ProviderError) as caught:
+            await provider.generate(request, AGENT_MODEL, None)
+
+        self.assertEqual(ErrorCategory.CAPABILITY_MISSING, caught.exception.category)
+        models = await provider.list_models()
+        self.assertNotIn("image_to_image", models[0].capabilities)
+        self.assertNotIn("reference_images", models[0].capabilities)
+        self.assertEqual({}, provider._packages)
 
     async def test_canonical_engine_digests_are_preserved_in_the_package(self) -> None:
         provider = AgentProvider(frozenset({"text_to_image", "custom_dimensions"}))

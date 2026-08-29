@@ -1432,6 +1432,40 @@ class AgentSubmissionTests(GenerationQueueFixture):
             ErrorCategory.CAPABILITY_MISSING.value,
             self.service.attempts(queued.job_id)[-1]["error_category"],
         )
+        with self.assertRaises(GenerationConflictError):
+            self.service.retry_same_provider(
+                self.alice,
+                queued.job_id,
+                queued.project_revision,
+            )
+
+        self.service = GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry((AgentProvider(frozenset({"text_to_image"})),)),
+            self.staging_root,
+            credentials=self.credentials,
+            assets=self.assets,
+            clock=self.clock,
+        )
+        with self.assertRaises(GenerationUnavailableError):
+            self.service.retry_same_provider(
+                self.bob,
+                queued.job_id,
+                queued.project_revision,
+            )
+        resumed = self.service.retry_same_provider(
+            self.alice,
+            queued.job_id,
+            queued.project_revision,
+        )
+        polling = asyncio.run(self.service.run_once("restored-agent-capability"))
+
+        assert polling is not None
+        self.assertEqual(JobState.QUEUED, resumed.state)
+        self.assertEqual(JobState.POLLING, polling.state)
+        self.assertEqual(0, polling.retry_count)
+        self.assertEqual([], self.credentials.resolutions)
 
     def test_agent_asset_submission_promotes_exactly_once_without_credentials(self) -> None:
         queued = self.queue_agent()

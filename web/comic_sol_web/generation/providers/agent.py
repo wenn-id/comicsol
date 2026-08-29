@@ -24,7 +24,7 @@ _AGENT_LOCKED_SCOPE_OPTION = "_agent_locked_scope_sha256"
 _MAX_REFERENCES = 16
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _JOB_ID = re.compile(r"[0-9a-f]{64}\Z")
-_AGENT_CAPABILITIES = frozenset(
+_AGENT_ACTIVE_CAPABILITIES = frozenset(
     {
         "custom_dimensions",
         "image_to_image",
@@ -33,10 +33,16 @@ _AGENT_CAPABILITIES = frozenset(
         "text_to_image",
     }
 )
+# Reference-image jobs cannot be issued until the package has a bounded,
+# owner-authorized content/handle transport. Ordinals alone are not usable.
+_AGENT_HANDOFF_CAPABILITIES = _AGENT_ACTIVE_CAPABILITIES - {
+    "image_to_image",
+    "reference_images",
+}
 _MODEL = ProviderModel(
     provider="agent",
     model=AGENT_MODEL,
-    capabilities=_AGENT_CAPABILITIES,
+    capabilities=_AGENT_HANDOFF_CAPABILITIES,
     enabled=True,
 )
 
@@ -159,7 +165,7 @@ class AgentProvider:
         if max_package_bytes <= 0:
             raise ValueError("agent package limit must be positive")
         capabilities = frozenset(active_capabilities)
-        if not capabilities <= _AGENT_CAPABILITIES:
+        if not capabilities <= _AGENT_ACTIVE_CAPABILITIES:
             raise ValueError("active agent capabilities are invalid")
         self.active_capabilities = capabilities
         self.max_package_bytes = max_package_bytes
@@ -248,8 +254,22 @@ class AgentProvider:
     def package(self, external_job_id: str | None) -> Mapping[str, object]:
         return MappingProxyType(json.loads(self.package_bytes(external_job_id)))
 
+    def capability_available(self, request: GenerationRequest, model: str) -> bool:
+        """Report only capabilities this handoff can issue as a usable package."""
+        try:
+            self._validate_capability(request, model)
+        except ProviderError as error:
+            if error.category is ErrorCategory.CAPABILITY_MISSING:
+                return False
+            raise
+        return True
+
     def _validate_capability(self, request: GenerationRequest, model: str) -> None:
-        if model != AGENT_MODEL or not request.required_capabilities <= _AGENT_CAPABILITIES:
+        if (
+            model != AGENT_MODEL
+            or request.references
+            or not request.required_capabilities <= _AGENT_HANDOFF_CAPABILITIES
+        ):
             raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
         if not request.required_capabilities <= self.active_capabilities:
             raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
