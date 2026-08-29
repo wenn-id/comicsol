@@ -132,7 +132,7 @@ class StabilityProviderTests(unittest.IsolatedAsyncioTestCase):
     async def test_poll_transitions_in_progress_then_accepts_b64_raster(self) -> None:
         seen: list[httpx.Request] = []
         poll_count = 0
-        poll_path = f"/v2beta/stable-image/generate/async/{_MODEL_ID}/generation-123"
+        poll_path = "/v2beta/results/generation-123"
 
         async def handler(request: httpx.Request) -> httpx.Response:
             nonlocal poll_count
@@ -178,6 +178,9 @@ class StabilityProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(2, len(poll_requests))
         self.assertTrue(
             all(request.headers["authorization"] == f"Bearer {CANARY}" for request in poll_requests)
+        )
+        self.assertTrue(
+            all(request.headers["accept"] == "application/json" for request in poll_requests)
         )
 
     async def test_cancel_returns_capability_missing(self) -> None:
