@@ -4,16 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import secrets
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Protocol, cast
+from typing import AsyncContextManager, Protocol, cast
 
 from comic_sol_product.cli import _load_engine_module
 
 from comic_sol_web.auth import SessionPrincipal
 from comic_sol_web.database import Database
+from comic_sol_web.generation.credentials import (
+    CredentialBrokerError,
+    CredentialUnavailableError,
+)
 from comic_sol_web.generation.providers.base import ProviderError, ProviderRegistry
 from comic_sol_web.generation.queue import (
     MAX_LEASE_SECONDS,
@@ -38,6 +43,21 @@ _raster_limits = _load_engine_module("raster_limits")
 GenerationUnavailableError = QueueUnavailableError
 GenerationConflictError = QueueConflictError
 RetryLimitError = QueueRetryLimitError
+
+_EXTERNAL_JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_SENSITIVE_EXTERNAL_ID = re.compile(
+    r"(?:authorization|bearer|credential|password|secret|token|api[_-]?key|account|acct|email)",
+    re.IGNORECASE,
+)
+
+
+class CredentialResolver(Protocol):
+    def resolve(
+        self,
+        user_id: str,
+        provider: str,
+        auth_mode: AuthMode | str,
+    ) -> AsyncContextManager[str | None]: ...
 
 
 class ProjectGenerationBoundary(Protocol):
@@ -77,11 +97,13 @@ class GenerationService:
         providers: ProviderRegistry,
         staging_root: Path,
         *,
+        credentials: CredentialResolver,
         clock: Callable[[], int] = lambda: int(time.time()),
     ) -> None:
         apply_migrations(database, GENERATION_MIGRATIONS)
         self._projects = projects
         self._providers = providers
+        self._credentials = credentials
         self._clock = clock
         self._staging_root = Path(staging_root)
         if not self._staging_root.is_absolute() or not self._staging_root.is_dir():
@@ -171,6 +193,14 @@ class GenerationService:
         _project_io.durable_atomic_write(path, payload)
         return path
 
+    @staticmethod
+    def _external_job_id_is_safe(value: str) -> bool:
+        """Accept only short opaque IDs that cannot carry account or secret text."""
+        return (
+            _EXTERNAL_JOB_ID.fullmatch(value) is not None
+            and _SENSITIVE_EXTERNAL_ID.search(value) is None
+        )
+
     def record_result(
         self,
         job_id: str,
@@ -216,10 +246,17 @@ class GenerationService:
         ):
             raise GenerationConflictError("generation completion has the wrong external job ID")
 
+        external_job_id = result.external_job_id
+        if external_job_id is not None and not self._external_job_id_is_safe(external_job_id):
+            return self._record_invalid_result(job_id, lease_token, None)
+
         if result.state is JobState.ACCEPTED:
             if result.raster_bytes is None or result.media_type != "image/png" or checksum is None:
-                raise GenerationConflictError("accepted provider result has no valid raster")
-            staged = self._stage_raster(job, result.raster_bytes, checksum)
+                return self._record_invalid_result(job_id, lease_token, external_job_id)
+            try:
+                staged = self._stage_raster(job, result.raster_bytes, checksum)
+            except GenerationConflictError:
+                return self._record_invalid_result(job_id, lease_token, external_job_id)
             try:
                 return self._record_accepted_result(
                     job_id,
@@ -236,20 +273,70 @@ class GenerationService:
                     staged.unlink(missing_ok=True)
                 raise
         if result.raster_bytes is not None:
-            raise GenerationConflictError("non-terminal provider result carried raster bytes")
-        assert lease_token is not None
+            return self._record_invalid_result(job_id, lease_token, external_job_id)
         if result.state is JobState.POLLING:
-            if not result.external_job_id:
-                raise GenerationConflictError("polling provider result has no external job ID")
+            if external_job_id is None:
+                return self._record_invalid_result(job_id, lease_token, None)
+            assert lease_token is not None
             return self._record_simple_result(
                 job_id,
                 lease_token,
                 JobState.POLLING,
-                external_job_id=result.external_job_id,
+                external_job_id=external_job_id,
             )
         if result.state in (JobState.FAILED, JobState.CANCELLED):
+            assert lease_token is not None
             return self._record_simple_result(job_id, lease_token, result.state)
-        raise GenerationConflictError("provider result state is not recordable")
+        return self._record_invalid_result(job_id, lease_token, external_job_id)
+
+    def _record_invalid_result(
+        self,
+        job_id: str,
+        lease_token: str | None,
+        callback_external_job_id: str | None,
+    ) -> GenerationJob:
+        """Fail malformed output without retaining any provider-supplied value."""
+        if lease_token is not None:
+            return self._record_simple_result(
+                job_id,
+                lease_token,
+                JobState.FAILED,
+                error_category=ErrorCategory.INVALID_OUTPUT,
+            )
+        if callback_external_job_id is None:
+            raise GenerationConflictError("generation callback is not bound to this attempt")
+
+        now = self._clock()
+        with self._store.database.transaction() as connection:
+            updated = connection.execute(
+                """
+                UPDATE generation_jobs
+                SET state = ?, lease_token = NULL, lease_owner = NULL,
+                    lease_expires_at = NULL, updated_at = ?
+                WHERE job_id = ? AND state IN (?, ?) AND external_job_id = ?
+                """,
+                (
+                    JobState.FAILED.value,
+                    now,
+                    job_id,
+                    JobState.POLLING.value,
+                    JobState.RUNNING.value,
+                    callback_external_job_id,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise GenerationConflictError("generation result lost a lease race")
+            current = self._store.row(connection, job_id)
+            assert current is not None
+            self._store.append_attempt(
+                connection,
+                current,
+                JobState.FAILED,
+                now,
+                error_category=ErrorCategory.INVALID_OUTPUT.value,
+                external_job_id=current["external_job_id"],
+            )
+        return self._store.from_row(current)
 
     def _record_accepted_result(
         self,
@@ -457,7 +544,28 @@ class GenerationService:
             else:
                 current = self._store.row(connection, job_id)
                 assert current is not None
-                self._store.append_attempt(connection, current, JobState.ACCEPTED, self._clock())
+                event_time = self._clock()
+                self._store.append_attempt(connection, current, JobState.ACCEPTED, event_time)
+                # This exact revision was produced by the accepted raster above,
+                # so only siblings prepared against its immediate predecessor
+                # may advance. An unrelated later project edit remains stale.
+                connection.execute(
+                    """
+                    UPDATE generation_jobs
+                    SET project_revision = ?, updated_at = ?
+                    WHERE owner_id = ? AND project_id = ? AND project_revision = ?
+                      AND job_id <> ? AND state <> ?
+                    """,
+                    (
+                        accepted_revision,
+                        event_time,
+                        principal.user_id,
+                        job.project_id,
+                        revision,
+                        job_id,
+                        JobState.ACCEPTED.value,
+                    ),
+                )
         staged.unlink(missing_ok=True)
         assert current is not None
         return self._store.from_row(current)
@@ -478,10 +586,9 @@ class GenerationService:
         self,
         worker_id: str,
         *,
-        credential: str | None = None,
         lease_seconds: int = 30,
     ) -> GenerationJob | None:
-        """Execute one deterministic worker iteration; callers schedule loops."""
+        """Lease first, then resolve only that job owner's scoped credential."""
         leased = self.lease_next(worker_id, lease_seconds=lease_seconds)
         if leased is None:
             return None
@@ -496,13 +603,32 @@ class GenerationService:
                 error_category=ErrorCategory.CAPABILITY_MISSING,
             )
         try:
-            remaining_lease = max(0, leased.lease_expires_at - self._clock())
-            async with asyncio.timeout(remaining_lease):
-                if job.external_job_id:
-                    result = await provider.poll(job.external_job_id, credential)
-                else:
-                    result = await provider.generate(job.request, job.model, credential)
+            async with self._credentials.resolve(
+                job.owner_id,
+                job.provider,
+                job.auth_mode,
+            ) as credential:
+                remaining_lease = max(0, leased.lease_expires_at - self._clock())
+                async with asyncio.timeout(remaining_lease):
+                    if job.external_job_id:
+                        result = await provider.poll(job.external_job_id, credential)
+                    else:
+                        result = await provider.generate(job.request, job.model, credential)
             recorded = self.record_result(job.job_id, leased.lease_token, result)
+        except CredentialUnavailableError:
+            return self._record_simple_result(
+                job.job_id,
+                leased.lease_token,
+                JobState.FAILED,
+                error_category=ErrorCategory.INVALID_CREDENTIALS,
+            )
+        except CredentialBrokerError:
+            return self._record_simple_result(
+                job.job_id,
+                leased.lease_token,
+                JobState.FAILED,
+                error_category=ErrorCategory.UNAVAILABLE,
+            )
         except TimeoutError:
             return self._record_simple_result(
                 job.job_id,

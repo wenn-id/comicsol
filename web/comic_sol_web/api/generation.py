@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, NoReturn
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, status
 
 from comic_sol_web.auth import AuthError, SessionPrincipal, require_principal
 
@@ -74,6 +74,13 @@ def _revision(body: dict[str, object]) -> int:
     return value
 
 
+async def _consume_registered_jobs(service: Any, count: int) -> None:
+    """Run one durable worker iteration for each job registered by a request."""
+    for _ in range(count):
+        if await service.run_once("web-request-worker") is None:
+            return
+
+
 def create_generation_router(service_source: Any) -> APIRouter:
     """Register routes without constructing storage, providers, or workers."""
     router = APIRouter(prefix="/api/generation", tags=["generation"])
@@ -81,6 +88,7 @@ def create_generation_router(service_source: Any) -> APIRouter:
     @router.post("/queue", status_code=status.HTTP_201_CREATED)
     async def queue_generation(
         request: Request,
+        background_tasks: BackgroundTasks,
         body: Annotated[dict[str, object], Body()],
         principal: Annotated[SessionPrincipal, Depends(require_principal)],
     ) -> dict[str, object]:
@@ -105,6 +113,7 @@ def create_generation_router(service_source: Any) -> APIRouter:
                 auth_mode=auth_mode,
                 max_retries=max_retries,
             )
+            background_tasks.add_task(_consume_registered_jobs, service, len(jobs))
             return {"jobs": [_job_envelope(job) for job in jobs]}
         except HTTPException:
             raise

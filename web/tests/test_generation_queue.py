@@ -6,12 +6,17 @@ import asyncio
 import sqlite3
 import tempfile
 import unittest
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Mapping, cast
+from typing import AsyncContextManager, AsyncIterator, Mapping, cast
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from web.tests import support as _support  # noqa: F401  # Checkout import path setup.
 
-from comic_sol_web.auth import SessionPrincipal
+from comic_sol_web.api.generation import create_generation_router
+from comic_sol_web.auth import SessionPrincipal, require_principal
 from comic_sol_web.database import Database
 from comic_sol_web.engine_gateway import StaleProjectRevisionError
 from comic_sol_web.generation.providers.base import ProviderError, ProviderRegistry
@@ -76,6 +81,70 @@ class HangingProvider(FakeProvider):
         raise AssertionError("cancelled provider call resumed")
 
 
+class CredentialRecordingProvider(FakeProvider):
+    """Record which owner-scoped credential reaches each provider call."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.credentials: list[str | None] = []
+
+    async def generate(
+        self,
+        request: GenerationRequest,
+        model: str,
+        credential: str | None,
+    ) -> GenerationResult:
+        del request, model
+        self.credentials.append(credential)
+        return GenerationResult(
+            external_job_id=None,
+            state=JobState.FAILED,
+            raster_bytes=None,
+            media_type=None,
+            effective_parameters={},
+            usage={},
+        )
+
+
+class RecordingCredentialResolver:
+    """Yield credentials only for the exact leased owner/provider/mode tuple."""
+
+    def __init__(
+        self,
+        credentials: Mapping[tuple[str, str, AuthMode], str | None] | None = None,
+    ) -> None:
+        self.credentials = {} if credentials is None else dict(credentials)
+        self.resolutions: list[tuple[str, str, AuthMode]] = []
+
+    def resolve(
+        self,
+        user_id: str,
+        provider: str,
+        auth_mode: AuthMode | str,
+    ) -> AsyncContextManager[str | None]:
+        return self._resolve(user_id, provider, auth_mode)
+
+    @asynccontextmanager
+    async def _resolve(
+        self,
+        user_id: str,
+        provider: str,
+        auth_mode: AuthMode | str,
+    ) -> AsyncIterator[str | None]:
+        mode = auth_mode if isinstance(auth_mode, AuthMode) else AuthMode(auth_mode)
+        key = (user_id, provider, mode)
+        self.resolutions.append(key)
+        yield self.credentials.get(key)
+
+
+class FakeAuth:
+    def __init__(self, principal: SessionPrincipal) -> None:
+        self.principal = principal
+
+    def require_csrf(self, _request: object) -> SessionPrincipal:
+        return self.principal
+
+
 class LeaseBoundaryClock:
     """Advance to the lease boundary after the lease is issued."""
 
@@ -103,6 +172,7 @@ class FakeProjects:
         self.owner_id = "alice-id"
         self.project_id = "project-1"
         self.revision = 3
+        self.request_ids: tuple[str, ...] = ("engine-job-1",)
         self.submissions: list[tuple[Path, bytes]] = []
         self.accepted_raster: bytes | None = None
 
@@ -113,7 +183,14 @@ class FakeProjects:
         expected_revision: int,
     ) -> tuple[GenerationRequest, ...]:
         self._authorize(principal, project_id, expected_revision)
-        return (make_request(project_revision=self.revision),)
+        return tuple(
+            make_request(
+                project_revision=self.revision,
+                job_id=job_id,
+                subject_id=f"panel-{index}",
+            )
+            for index, job_id in enumerate(self.request_ids, start=1)
+        )
 
     def submit_raster(
         self,
@@ -173,25 +250,36 @@ class GenerationQueueFixture(unittest.TestCase):
         self.projects = FakeProjects(self.staging_root)
         self.alice = SessionPrincipal("alice-id", "alice")
         self.bob = SessionPrincipal("bob-id", "bob")
+        self.credentials = RecordingCredentialResolver()
         self.service = self.make_service()
 
-    def make_service(self, provider: FakeProvider | None = None) -> GenerationService:
+    def make_service(
+        self,
+        provider: FakeProvider | None = None,
+        credentials: RecordingCredentialResolver | None = None,
+    ) -> GenerationService:
         return GenerationService(
             self.database,
             self.projects,
             ProviderRegistry((FakeProvider() if provider is None else provider,)),
             self.staging_root,
+            credentials=self.credentials if credentials is None else credentials,
             clock=self.clock,
         )
 
-    def queue(self, *, max_retries: int = 2):
+    def queue(
+        self,
+        *,
+        max_retries: int = 2,
+        auth_mode: AuthMode = AuthMode.AGENT,
+    ):
         return self.service.queue(
             self.alice,
             self.projects.project_id,
             self.projects.revision,
             provider="fake",
             model="fake-raster-v1",
-            auth_mode=AuthMode.AGENT,
+            auth_mode=auth_mode,
             max_retries=max_retries,
         )[0]
 
@@ -358,6 +446,126 @@ class DurableQueueTests(GenerationQueueFixture):
             external_job_id, self.service.attempts(queued.job_id)[-1]["external_job_id"]
         )
 
+    def test_malformed_provider_results_fail_durably_as_invalid_output(self) -> None:
+        malformed_results = (
+            GenerationResult(
+                external_job_id=None,
+                state=JobState.ACCEPTED,
+                raster_bytes=PNG,
+                media_type="image/jpeg",
+                effective_parameters={},
+                usage={},
+            ),
+            GenerationResult(
+                external_job_id=None,
+                state=JobState.POLLING,
+                raster_bytes=None,
+                media_type=None,
+                effective_parameters={},
+                usage={},
+            ),
+            GenerationResult(
+                external_job_id=None,
+                state=JobState.FAILED,
+                raster_bytes=PNG,
+                media_type="image/png",
+                effective_parameters={},
+                usage={},
+            ),
+        )
+        for index, result in enumerate(malformed_results, start=1):
+            with self.subTest(state=result.state, media_type=result.media_type):
+                self.projects.request_ids = (f"malformed-result-{index}",)
+                queued = self.queue()
+                lease = self.service.lease_next(f"malformed-worker-{index}", lease_seconds=30)
+                assert lease is not None
+
+                failed = self.service.record_result(queued.job_id, lease.lease_token, result)
+
+                self.assertEqual(JobState.FAILED, failed.state)
+                attempt = self.service.attempts(queued.job_id)[-1]
+                self.assertEqual(JobState.FAILED.value, attempt["state"])
+                self.assertEqual(ErrorCategory.INVALID_OUTPUT.value, attempt["error_category"])
+
+    def test_external_provider_ids_are_bounded_opaque_and_non_sensitive(self) -> None:
+        invalid_ids = (
+            "api_key=raw-provider-secret",
+            "account@example.com",
+            "line\nbreak",
+            "x" * 129,
+        )
+        for index, external_job_id in enumerate(invalid_ids, start=1):
+            with self.subTest(external_job_id=repr(external_job_id)):
+                self.projects.request_ids = (f"invalid-external-id-{index}",)
+                queued = self.queue()
+                lease = self.service.lease_next(f"external-id-worker-{index}", lease_seconds=30)
+                assert lease is not None
+
+                failed = self.service.record_result(
+                    queued.job_id,
+                    lease.lease_token,
+                    self.polling_result(external_job_id),
+                )
+
+                self.assertEqual(JobState.FAILED, failed.state)
+                self.assertIsNone(failed.external_job_id)
+                attempt = self.service.attempts(queued.job_id)[-1]
+                self.assertEqual(ErrorCategory.INVALID_OUTPUT.value, attempt["error_category"])
+                self.assertIsNone(attempt["external_job_id"])
+
+        with self.database.read() as connection:
+            persisted = repr(
+                tuple(connection.execute("SELECT * FROM generation_jobs").fetchall())
+                + tuple(connection.execute("SELECT * FROM generation_attempts").fetchall())
+            )
+        for external_job_id in invalid_ids:
+            self.assertNotIn(external_job_id, persisted)
+
+        self.projects.request_ids = ("valid-external-id",)
+        queued = self.queue()
+        lease = self.service.lease_next("valid-external-id-worker", lease_seconds=30)
+        assert lease is not None
+        polling = self.service.record_result(
+            queued.job_id,
+            lease.lease_token,
+            self.polling_result("fake:job_123-abc"),
+        )
+        self.assertEqual("fake:job_123-abc", polling.external_job_id)
+
+    def test_malformed_callback_fails_without_overwriting_a_lease_race(self) -> None:
+        queued = self.queue()
+        lease = self.service.lease_next("callback-worker", lease_seconds=30)
+        assert lease is not None
+        external_job_id = "fake:callback-validation"
+        self.service.record_result(
+            queued.job_id,
+            lease.lease_token,
+            self.polling_result(external_job_id),
+        )
+
+        with self.assertRaises(GenerationConflictError):
+            self.service.record_result(
+                queued.job_id,
+                None,
+                self.accepted_result(external_job_id="fake:different-job"),
+            )
+        self.assertEqual(JobState.POLLING, self.service.get(self.alice, queued.job_id).state)
+
+        malformed = GenerationResult(
+            external_job_id=external_job_id,
+            state=JobState.ACCEPTED,
+            raster_bytes=PNG,
+            media_type="image/jpeg",
+            effective_parameters={},
+            usage={},
+        )
+        failed = self.service.record_result(queued.job_id, None, malformed)
+        self.assertEqual(JobState.FAILED, failed.state)
+        self.assertEqual(
+            ErrorCategory.INVALID_OUTPUT.value,
+            self.service.attempts(queued.job_id)[-1]["error_category"],
+        )
+
     def test_same_provider_retry_has_a_hard_ceiling(self) -> None:
         queued = self.queue(max_retries=1)
         lease = self.service.lease_next("worker", lease_seconds=30)
@@ -489,6 +697,38 @@ class DurableQueueTests(GenerationQueueFixture):
         self.assertIsNone(row["lease_expires_at"])
         self.assertEqual([], self.projects.submissions)
 
+    def test_sibling_jobs_follow_only_each_successful_batch_promotion_revision(self) -> None:
+        self.projects.request_ids = ("engine-job-1", "engine-job-2")
+        first, second = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="fake",
+            model="fake-raster-v1",
+            auth_mode=AuthMode.AGENT,
+        )
+        for worker in ("first-worker", "second-worker"):
+            lease = self.service.lease_next(worker, lease_seconds=30)
+            assert lease is not None
+            self.service.record_result(
+                lease.job.job_id,
+                lease.lease_token,
+                self.accepted_result(),
+            )
+
+        promoted_first = self.service.submit_staged_raster(self.alice, first.job_id, 3)
+        rebound_second = self.service.get(self.alice, second.job_id)
+        self.assertEqual(4, promoted_first.accepted_project_revision)
+        self.assertEqual(4, rebound_second.project_revision)
+        self.assertEqual(3, rebound_second.request.project_revision)
+
+        promoted_second = self.service.submit_staged_raster(self.alice, second.job_id, 4)
+
+        self.assertEqual(JobState.ACCEPTED, promoted_first.state)
+        self.assertEqual(JobState.ACCEPTED, promoted_second.state)
+        self.assertEqual(5, promoted_second.accepted_project_revision)
+        self.assertEqual(2, len(self.projects.submissions))
+
     def test_owner_isolation_applies_to_reads_retries_pauses_and_submission(self) -> None:
         queued = self.queue()
         for operation in (
@@ -544,6 +784,62 @@ class DurableQueueTests(GenerationQueueFixture):
         self.assertEqual(accepted, self.projects.accepted_raster)
         self.assertEqual(1, len(self.projects.submissions))
 
+    def test_worker_resolves_credentials_after_leasing_each_job_owner(self) -> None:
+        provider = CredentialRecordingProvider()
+        resolver = RecordingCredentialResolver(
+            {
+                ("alice-id", "fake", AuthMode.BYOK): "alice-credential",
+                ("bob-id", "fake", AuthMode.BYOK): "bob-credential",
+            }
+        )
+        self.service = self.make_service(provider, resolver)
+        self.queue(auth_mode=AuthMode.BYOK)
+        self.clock.value += 1
+        self.projects.owner_id = self.bob.user_id
+        self.service.queue(
+            self.bob,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="fake",
+            model="fake-raster-v1",
+            auth_mode=AuthMode.BYOK,
+        )
+
+        asyncio.run(self.service.run_once("credential-worker-1"))
+        asyncio.run(self.service.run_once("credential-worker-2"))
+
+        self.assertEqual(
+            [
+                ("alice-id", "fake", AuthMode.BYOK),
+                ("bob-id", "fake", AuthMode.BYOK),
+            ],
+            resolver.resolutions,
+        )
+        self.assertEqual(["alice-credential", "bob-credential"], provider.credentials)
+
+    def test_queue_request_schedules_application_job_consumption(self) -> None:
+        app = FastAPI()
+        app.state.auth = FakeAuth(self.alice)
+        app.include_router(create_generation_router(self.service))
+        app.dependency_overrides[require_principal] = lambda: self.alice
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/generation/queue",
+                json={
+                    "project_id": self.projects.project_id,
+                    "expected_revision": self.projects.revision,
+                    "provider": "fake",
+                    "model": "fake-raster-v1",
+                    "auth_mode": "agent",
+                },
+            )
+
+        self.assertEqual(201, response.status_code)
+        job_id = response.json()["jobs"][0]["job_id"]
+        self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, job_id).state)
+        self.assertEqual(PNG, self.projects.accepted_raster)
+
     def test_worker_pauses_when_the_persisted_provider_is_unavailable(self) -> None:
         queued = self.queue()
         unavailable = GenerationService(
@@ -551,6 +847,7 @@ class DurableQueueTests(GenerationQueueFixture):
             self.projects,
             ProviderRegistry(()),
             self.staging_root,
+            credentials=self.credentials,
             clock=self.clock,
         )
 
@@ -603,13 +900,18 @@ class DurableQueueTests(GenerationQueueFixture):
         self.assertEqual(PNG, self.projects.accepted_raster)
 
 
-def make_request(*, project_revision: int) -> GenerationRequest:
+def make_request(
+    *,
+    project_revision: int,
+    job_id: str = "engine-job-1",
+    subject_id: str = "panel-1",
+) -> GenerationRequest:
     return GenerationRequest(
-        job_id="engine-job-1",
+        job_id=job_id,
         project_id="project-1",
         project_revision=project_revision,
         subject_kind="panel",
-        subject_id="panel-1",
+        subject_id=subject_id,
         prompt="private generation prompt",
         negative_prompt=None,
         references=(),

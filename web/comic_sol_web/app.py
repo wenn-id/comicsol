@@ -70,19 +70,31 @@ def _generation_service(request: Request) -> object:
     if existing is not None:
         return existing
 
-    # Keep provider, queue, migration, and engine imports outside application
-    # construction so /healthz remains a pure in-memory response.
+    # Keep provider, credential, queue, migration, and engine imports outside
+    # application construction so /healthz remains a pure in-memory response.
+    import os
+
+    from comic_sol_web.generation.credentials import CredentialBroker
     from comic_sol_web.generation.providers.base import ProviderRegistry
     from comic_sol_web.generation.providers.fake import FakeProvider
     from comic_sol_web.generation.service import GenerationService
 
     projects = _project_service(request)
     gateway = projects.gateway
+    config = request.app.state.web_config
+    credentials = CredentialBroker(
+        gateway.database,
+        deployment_environment=os.environ,
+        hosted_secret_references=config.hosted_secret_references,
+        master_key_references=config.master_key_references,
+        active_key_id=config.active_credential_key_id,
+    )
     service = GenerationService(
         gateway.database,
         projects,
         ProviderRegistry((FakeProvider(),)),
         gateway.staging_root,
+        credentials=credentials,
     )
     request.app.state.generation = service
     return service
