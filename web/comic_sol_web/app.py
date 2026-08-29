@@ -18,6 +18,7 @@ from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 
+from comic_sol_web.api.assets import create_assets_router
 from comic_sol_web.api.generation import create_generation_router
 from comic_sol_web.api.projects import create_projects_router
 
@@ -64,6 +65,20 @@ def _project_service(request: Request) -> "ProjectService":
     return service
 
 
+def _asset_store(request: Request) -> object:
+    """Construct and cache bounded page-owned asset storage on demand."""
+    existing = getattr(request.app.state, "assets", None)
+    if existing is not None:
+        return existing
+
+    from comic_sol_web.assets import AssetStore
+
+    projects = _project_service(request)
+    service = AssetStore(projects.gateway.database, request.app.state.web_config.data_root)
+    request.app.state.assets = service
+    return service
+
+
 def _generation_service(request: Request) -> object:
     """Construct and cache provider-neutral queue storage on demand."""
     existing = getattr(request.app.state, "generation", None)
@@ -75,6 +90,7 @@ def _generation_service(request: Request) -> object:
     import os
 
     from comic_sol_web.generation.credentials import CredentialBroker
+    from comic_sol_web.generation.providers.agent import AgentProvider
     from comic_sol_web.generation.providers.base import ProviderRegistry
     from comic_sol_web.generation.service import GenerationService
 
@@ -88,15 +104,16 @@ def _generation_service(request: Request) -> object:
         master_key_references=config.master_key_references,
         active_key_id=config.active_credential_key_id,
     )
+    active_agent_capabilities = frozenset(
+        getattr(request.app.state, "agent_image_capabilities", frozenset())
+    )
     service = GenerationService(
         gateway.database,
         projects,
-        # Provider adapters are registered by their owning work packages. The
-        # deterministic FakeProvider remains test-only because its tiny fixture
-        # intentionally does not satisfy the canonical engine raster boundary.
-        ProviderRegistry(()),
+        ProviderRegistry((AgentProvider(active_agent_capabilities),)),
         gateway.staging_root,
         credentials=credentials,
+        assets=_asset_store(request),
     )
     request.app.state.generation = service
     return service
@@ -113,6 +130,7 @@ def create_app(_config: "WebConfig") -> FastAPI:
     app.state.web_config = _config
     app.include_router(create_projects_router(_project_service))
     app.include_router(create_generation_router(_generation_service))
+    app.include_router(create_assets_router(_asset_store, _generation_service))
 
     @app.get("/healthz")
     def healthz() -> Response:

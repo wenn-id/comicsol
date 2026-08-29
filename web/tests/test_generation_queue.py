@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import binascii
 import hashlib
+import io
 import json
 import sqlite3
+import struct
 import tempfile
+import threading
 import unittest
+import zlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncContextManager, AsyncIterator, Callable, Mapping, cast
@@ -18,10 +23,12 @@ from fastapi.testclient import TestClient
 from web.tests import support as _support  # noqa: F401  # Checkout import path setup.
 
 from comic_sol_product.cli import _load_engine_module
+from comic_sol_web.assets import AssetStore
 from comic_sol_web.api.generation import _consume_queue, create_generation_router
 from comic_sol_web.auth import SessionPrincipal, require_principal
 from comic_sol_web.database import Database
 from comic_sol_web.engine_gateway import StaleProjectRevisionError
+from comic_sol_web.generation.providers.agent import AGENT_MODEL, AgentProvider
 from comic_sol_web.generation.providers.base import ProviderError, ProviderRegistry
 from comic_sol_web.generation.providers.fake import FakeProvider
 from comic_sol_web.generation.receipts import AUTHORIZED_RECEIPT_FIELDS, sanitize_usage
@@ -47,6 +54,32 @@ PNG = (
     b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDAT\x08\xd7c\xf8\xcf\xc0"
     b"\xf0\x1f\x00\x05\x00\x01\xff\x89\x99=\x1d\x00\x00\x00\x00IEND\xaeB`\x82"
 )
+
+
+def bounded_png(
+    width: int = 1,
+    height: int = 1,
+    *,
+    channel: int = 0,
+    trailing_decompressed: int = 0,
+) -> bytes:
+    signature = b"\x89PNG\r\n\x1a\n"
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        checksum = binascii.crc32(kind + payload) & 0xFFFFFFFF
+        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    rows = b"".join(b"\x00" + bytes((channel, 64, 128)) * width for _ in range(height))
+    rows += b"x" * trailing_decompressed
+    return (
+        signature
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(rows))
+        + chunk(b"IEND", b"")
+    )
+
+
 CAPABILITIES_USED = {
     "dimensions": False,
     "localized_edit": False,
@@ -248,6 +281,9 @@ class FakeProjects:
         self.prepare_calls = 0
         self.request_ids: tuple[str, ...] = ("engine-job-1",)
         self.fixtures: dict[str, str] = {}
+        self.prompt = "private generation prompt"
+        self.request_width = 1024
+        self.request_height = 1024
         self.raster_rejection: str | None = None
         self.promotion_conflict_once = False
         self.submissions: list[tuple[Path, bytes]] = []
@@ -267,6 +303,9 @@ class FakeProjects:
                 job_id=job_id,
                 subject_id=f"panel-{index}",
                 fixture=self.fixtures.get(job_id, "success"),
+                prompt=self.prompt,
+                width=self.request_width,
+                height=self.request_height,
             )
             for index, job_id in enumerate(self.request_ids, start=1)
         )
@@ -1317,12 +1356,295 @@ class DurableQueueTests(GenerationQueueFixture):
         self.assertEqual(PNG, self.projects.accepted_raster)
 
 
+class AgentSubmissionTests(GenerationQueueFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        self.projects.request_ids = ("a" * 64,)
+        self.projects.request_width = 1
+        self.projects.request_height = 1
+        self.assets = AssetStore(
+            self.database,
+            self.root / "asset-data",
+            max_upload_bytes=4096,
+            max_pixels=100,
+            max_decoded_bytes=4096,
+        )
+        self.agent = AgentProvider(frozenset({"text_to_image"}))
+        self.service = GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry((self.agent,)),
+            self.staging_root,
+            credentials=self.credentials,
+            assets=self.assets,
+            clock=self.clock,
+        )
+
+    def queue_agent(self) -> GenerationJob:
+        queued = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="agent",
+            model=AGENT_MODEL,
+            auth_mode=AuthMode.AGENT,
+        )[0]
+        waiting = asyncio.run(self.service.run_once("agent-package-worker"))
+        assert waiting is not None
+        self.assertEqual(JobState.POLLING, waiting.state)
+        return queued
+
+    def upload(self, principal: SessionPrincipal, payload: bytes | None = None):
+        content = bounded_png() if payload is None else payload
+        return self.assets.create_upload(principal, io.BytesIO(content), "image/png")
+
+    def test_missing_agent_capability_is_resumable_without_resolving_credentials(self) -> None:
+        self.service = GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry((AgentProvider(frozenset()),)),
+            self.staging_root,
+            credentials=self.credentials,
+            assets=self.assets,
+            clock=self.clock,
+        )
+        queued = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="agent",
+            model=AGENT_MODEL,
+            auth_mode=AuthMode.AGENT,
+        )[0]
+
+        blocked = asyncio.run(self.service.run_once("missing-agent-capability"))
+
+        assert blocked is not None
+        self.assertEqual(queued.job_id, blocked.job_id)
+        self.assertEqual(JobState.AWAITING_PROVIDER_CONFIRMATION, blocked.state)
+        self.assertEqual([], self.credentials.resolutions)
+        self.assertEqual(
+            ErrorCategory.CAPABILITY_MISSING.value,
+            self.service.attempts(queued.job_id)[-1]["error_category"],
+        )
+
+    def test_agent_asset_submission_promotes_exactly_once_without_credentials(self) -> None:
+        queued = self.queue_agent()
+        handle = self.upload(self.alice)
+
+        accepted = self.service.submit_agent_asset(
+            self.alice, queued.job_id, handle.asset_id, queued.project_revision
+        )
+        duplicate = self.service.submit_agent_asset(
+            self.alice, queued.job_id, handle.asset_id, queued.project_revision
+        )
+
+        self.assertEqual(JobState.ACCEPTED, accepted.state)
+        self.assertEqual(accepted, duplicate)
+        self.assertEqual([], self.credentials.resolutions)
+        self.assertEqual(1, len(self.projects.submissions))
+        self.assertEqual(bounded_png(), self.projects.accepted_raster)
+        self.assertEqual(1, len(self.service.receipts(queued.job_id)))
+        self.assertEqual(
+            1,
+            sum(
+                event["state"] == JobState.ACCEPTED.value
+                for event in self.service.attempts(queued.job_id)
+            ),
+        )
+
+    def test_submission_validates_owner_project_revision_and_locked_scope_first(self) -> None:
+        wrong_owner = self.queue_agent()
+        owner_handle = self.upload(self.alice)
+        with self.assertRaises(GenerationUnavailableError):
+            self.service.submit_agent_asset(
+                self.bob,
+                wrong_owner.job_id,
+                owner_handle.asset_id,
+                wrong_owner.project_revision,
+            )
+
+        self.projects.request_ids = ("b" * 64,)
+        wrong_project = self.queue_agent()
+        project_handle = self.upload(self.alice)
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE generation_jobs SET project_id = ? WHERE job_id = ?",
+                ("project-other", wrong_project.job_id),
+            )
+        with self.assertRaises(GenerationConflictError):
+            self.service.submit_agent_asset(
+                self.alice,
+                wrong_project.job_id,
+                project_handle.asset_id,
+                wrong_project.project_revision,
+            )
+
+        self.projects.request_ids = ("c" * 64,)
+        stale_revision = self.queue_agent()
+        revision_handle = self.upload(self.alice)
+        self.projects.revision += 1
+        with self.assertRaises(GenerationConflictError):
+            self.service.submit_agent_asset(
+                self.alice,
+                stale_revision.job_id,
+                revision_handle.asset_id,
+                stale_revision.project_revision,
+            )
+        self.projects.revision -= 1
+
+        self.projects.request_ids = ("d" * 64,)
+        stale_scope = self.queue_agent()
+        scope_handle = self.upload(self.alice)
+        self.projects.prompt = "changed locked scope"
+        with self.assertRaises(GenerationConflictError):
+            self.service.submit_agent_asset(
+                self.alice,
+                stale_scope.job_id,
+                scope_handle.asset_id,
+                stale_scope.project_revision,
+            )
+
+        for job_id in (
+            wrong_owner.job_id,
+            wrong_project.job_id,
+            stale_revision.job_id,
+            stale_scope.job_id,
+        ):
+            self.assertEqual(JobState.POLLING, self.service.get(self.alice, job_id).state)
+        self.assertEqual([], self.projects.submissions)
+
+        with self.assertRaises(GenerationUnavailableError):
+            self.service.submit_agent_asset(self.alice, "0" * 64, "A" * 32, 3)
+
+    def test_submission_refuses_nonopaque_handles_and_invalid_rasters_before_wp3(self) -> None:
+        queued = self.queue_agent()
+        for asset_id in (
+            "../outside.png",
+            "/etc/passwd",
+            "C:\\Windows\\system.ini",
+            "https://example.test/image.png",
+            "file:///tmp/image.png",
+        ):
+            with self.subTest(asset_id=asset_id), self.assertRaises(GenerationConflictError):
+                self.service.submit_agent_asset(
+                    self.alice, queued.job_id, asset_id, queued.project_revision
+                )
+        self.assertEqual(JobState.POLLING, self.service.get(self.alice, queued.job_id).state)
+
+        wrong_dimensions = self.upload(self.alice, bounded_png(2, 1))
+        with self.assertRaises(GenerationConflictError):
+            self.service.submit_agent_asset(
+                self.alice,
+                queued.job_id,
+                wrong_dimensions.asset_id,
+                queued.project_revision,
+            )
+
+        malformed = self.upload(self.alice, bounded_png())
+        owner = self.assets.owner_storage_id(self.alice)
+        malformed_path = self.assets.assets_root / owner / f"{malformed.asset_id}.png"
+        malformed_bytes = b"x" * malformed.byte_size
+        malformed_path.write_bytes(malformed_bytes)
+        with self.assertRaises(GenerationConflictError):
+            self.service.submit_agent_asset(
+                self.alice, queued.job_id, malformed.asset_id, queued.project_revision
+            )
+
+        bomb = self.upload(self.alice, bounded_png(channel=3))
+        bomb_bytes = bounded_png(channel=3, trailing_decompressed=5000)
+        bomb_path = self.assets.assets_root / owner / f"{bomb.asset_id}.png"
+        bomb_path.write_bytes(bomb_bytes)
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE assets SET byte_size = ? WHERE asset_id = ?",
+                (len(bomb_bytes), bomb.asset_id),
+            )
+        with self.assertRaises(GenerationConflictError):
+            self.service.submit_agent_asset(
+                self.alice, queued.job_id, bomb.asset_id, queued.project_revision
+            )
+
+        wrong_mime = self.upload(self.alice, bounded_png(channel=1))
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE assets SET media_type = 'image/jpeg' WHERE asset_id = ?",
+                (wrong_mime.asset_id,),
+            )
+        with self.assertRaises(GenerationConflictError):
+            self.service.submit_agent_asset(
+                self.alice, queued.job_id, wrong_mime.asset_id, queued.project_revision
+            )
+
+        self.assertEqual(JobState.POLLING, self.service.get(self.alice, queued.job_id).state)
+        self.assertEqual([], self.projects.submissions)
+        self.assertEqual(2, len(self.service.attempts(queued.job_id)))
+        self.assertEqual(0, len(self.service.receipts(queued.job_id)))
+
+    def test_duplicate_checksum_mismatch_preserves_last_accepted_raster(self) -> None:
+        queued = self.queue_agent()
+        first = self.upload(self.alice, bounded_png(channel=1))
+        accepted = self.service.submit_agent_asset(
+            self.alice, queued.job_id, first.asset_id, queued.project_revision
+        )
+        accepted_bytes = self.projects.accepted_raster
+        second = self.upload(self.alice, bounded_png(channel=2))
+
+        with self.assertRaises(GenerationConflictError):
+            self.service.submit_agent_asset(
+                self.alice, queued.job_id, second.asset_id, queued.project_revision
+            )
+
+        self.assertEqual(JobState.ACCEPTED, accepted.state)
+        self.assertEqual(accepted_bytes, self.projects.accepted_raster)
+        self.assertEqual(1, len(self.projects.submissions))
+        self.assertEqual(1, len(self.service.receipts(queued.job_id)))
+
+    def test_concurrent_duplicate_submission_has_one_canonical_promotion(self) -> None:
+        queued = self.queue_agent()
+        handle = self.upload(self.alice)
+        rendezvous = threading.Barrier(2)
+        results: list[GenerationJob] = []
+        errors: list[BaseException] = []
+
+        def submit() -> None:
+            try:
+                rendezvous.wait(timeout=5)
+                results.append(
+                    self.service.submit_agent_asset(
+                        self.alice,
+                        queued.job_id,
+                        handle.asset_id,
+                        queued.project_revision,
+                    )
+                )
+            except BaseException as error:
+                errors.append(error)
+
+        workers = [threading.Thread(target=submit) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(10)
+
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertTrue(results)
+        self.assertTrue(all(item.state is JobState.ACCEPTED for item in results))
+        self.assertTrue(all(isinstance(error, GenerationConflictError) for error in errors))
+        self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, queued.job_id).state)
+        self.assertEqual(1, len(self.projects.submissions))
+        self.assertEqual(1, len(self.service.receipts(queued.job_id)))
+
+
 def make_request(
     *,
     project_revision: int,
     job_id: str = "engine-job-1",
     subject_id: str = "panel-1",
     fixture: str = "success",
+    prompt: str = "private generation prompt",
+    width: int = 1024,
+    height: int = 1024,
 ) -> GenerationRequest:
     return GenerationRequest(
         job_id=job_id,
@@ -1330,11 +1652,11 @@ def make_request(
         project_revision=project_revision,
         subject_kind="panel",
         subject_id=subject_id,
-        prompt="private generation prompt",
+        prompt=prompt,
         negative_prompt=None,
         references=(),
-        width=1024,
-        height=1024,
+        width=width,
+        height=height,
         required_capabilities=frozenset({"text_to_image"}),
         provider_options={"fixture": fixture},
     )

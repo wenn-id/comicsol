@@ -212,6 +212,7 @@ class WebApplicationTests(unittest.TestCase):
             )
             self.assertFalse(data_root.exists())
             self.assertFalse(hasattr(app.state, "generation"))
+            self.assertFalse(hasattr(app.state, "assets"))
 
             from fastapi.testclient import TestClient
 
@@ -219,6 +220,43 @@ class WebApplicationTests(unittest.TestCase):
                 response = client.get(f"/api/generation/{'a' * 64}")
             self.assertEqual(401, response.status_code)
             self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "generation"))
+            self.assertFalse(hasattr(app.state, "assets"))
+
+    def test_asset_and_agent_routes_are_registered_without_constructing_state(self):
+        from comic_sol_web.app import create_app
+        from comic_sol_web.config import WebConfig
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary) / "not-created"
+            app = create_app(WebConfig.from_env(valid_environment(data_root)))
+            routes = {
+                (route.path, frozenset(route.methods or ()))
+                for route in app.routes
+                if route.path.startswith("/api/assets")
+            }
+            self.assertEqual(
+                {
+                    ("/api/assets", frozenset({"POST"})),
+                    ("/api/assets/{asset_id}", frozenset({"GET"})),
+                    (
+                        "/api/assets/{asset_id}/submit-agent",
+                        frozenset({"POST"}),
+                    ),
+                },
+                routes,
+            )
+            self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "assets"))
+            self.assertFalse(hasattr(app.state, "generation"))
+
+            from fastapi.testclient import TestClient
+
+            with TestClient(app) as client:
+                response = client.get(f"/api/assets/{'A' * 32}")
+            self.assertEqual(401, response.status_code)
+            self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "assets"))
             self.assertFalse(hasattr(app.state, "generation"))
 
     def test_application_does_not_enable_the_test_fake_provider(self):
@@ -246,6 +284,7 @@ class WebApplicationTests(unittest.TestCase):
             with patch("comic_sol_web.app._project_service", return_value=projects):
                 service = _generation_service(request)
 
+            self.assertEqual("agent", service._providers.get("agent").provider_id)
             with self.assertRaises(KeyError):
                 service.queue(
                     SessionPrincipal("owner-id", "owner"),
@@ -278,6 +317,7 @@ class WebApplicationTests(unittest.TestCase):
             self.assertEqual({"status": "ok"}, response.json())
             self.assertFalse(data_root.exists())
             self.assertFalse(hasattr(app.state, "generation"))
+            self.assertFalse(hasattr(app.state, "assets"))
 
     def test_anonymous_project_request_fails_before_lazy_storage_initialization(self):
         from comic_sol_web.app import create_app
