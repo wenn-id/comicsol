@@ -168,7 +168,7 @@ class HostSmokeContractTests(unittest.TestCase):
         for field in required_fields:
             self.assertRegex(self.format, rf"(?m)^- \*\*{re.escape(field)}:\*\*")
 
-    def test_all_named_hosts_are_explicitly_experimental_without_evidence(self):
+    def test_all_named_hosts_are_explicitly_experimental(self):
         rows = {
             cells[0]: cells[1:]
             for line in self.status.splitlines()
@@ -183,7 +183,12 @@ class HostSmokeContractTests(unittest.TestCase):
         for host, cells in rows.items():
             with self.subTest(host=host):
                 self.assertEqual("Experimental", cells[0])
-                self.assertEqual("No retained live smoke record", cells[1])
+                # Either there is no retained live smoke record, or there is one whose
+                # status stayed Experimental because durable evidence links are missing.
+                self.assertTrue(
+                    cells[1] == "No retained live smoke record" or cells[1].startswith("Retained "),
+                    cells[1],
+                )
 
     def test_no_host_is_fabricated_as_verified(self):
         self.assertNotRegex(self.status, r"(?im)^\|[^\n]+\|\s*Verified\s*\|")
