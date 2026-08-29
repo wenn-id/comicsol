@@ -215,6 +215,8 @@ class GenerationStore:
             )
             row = self._row(connection, job_id)
             if row is None:
+                row = self._row_by_idempotency(connection, key)
+            if row is None:
                 raise GenerationStoreError("generation enqueue failed")
             if row["idempotency_key"] != key:
                 raise GenerationStoreError("generation job identity collision")
@@ -224,6 +226,12 @@ class GenerationStore:
     def _row(connection: sqlite3.Connection, job_id: str) -> sqlite3.Row | None:
         return connection.execute(
             "SELECT * FROM generation_jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
+
+    @staticmethod
+    def _row_by_idempotency(connection: sqlite3.Connection, key: str) -> sqlite3.Row | None:
+        return connection.execute(
+            "SELECT * FROM generation_jobs WHERE idempotency_key = ?", (key,)
         ).fetchone()
 
     def row(self, connection: sqlite3.Connection, job_id: str) -> sqlite3.Row | None:

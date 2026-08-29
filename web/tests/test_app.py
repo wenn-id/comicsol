@@ -212,6 +212,7 @@ class WebApplicationTests(unittest.TestCase):
             )
             self.assertFalse(data_root.exists())
             self.assertFalse(hasattr(app.state, "generation"))
+            self.assertFalse(hasattr(app.state, "assets"))
 
             from fastapi.testclient import TestClient
 
@@ -220,6 +221,96 @@ class WebApplicationTests(unittest.TestCase):
             self.assertEqual(401, response.status_code)
             self.assertFalse(data_root.exists())
             self.assertFalse(hasattr(app.state, "generation"))
+            self.assertFalse(hasattr(app.state, "assets"))
+
+    def test_asset_and_agent_routes_are_registered_without_constructing_state(self):
+        from comic_sol_web.app import create_app
+        from comic_sol_web.config import WebConfig
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary) / "not-created"
+            app = create_app(WebConfig.from_env(valid_environment(data_root)))
+            routes = {
+                (route.path, frozenset(route.methods or ()))
+                for route in app.routes
+                if route.path.startswith("/api/assets")
+            }
+            self.assertEqual(
+                {
+                    ("/api/assets", frozenset({"POST"})),
+                    ("/api/assets/{asset_id}", frozenset({"GET"})),
+                    (
+                        "/api/assets/agent-handoff/{job_id}",
+                        frozenset({"GET"}),
+                    ),
+                    (
+                        "/api/assets/{asset_id}/submit-agent",
+                        frozenset({"POST"}),
+                    ),
+                },
+                routes,
+            )
+            self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "assets"))
+            self.assertFalse(hasattr(app.state, "generation"))
+
+            from fastapi.testclient import TestClient
+
+            with TestClient(app) as client:
+                response = client.get(f"/api/assets/{'A' * 32}")
+            self.assertEqual(401, response.status_code)
+            self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "assets"))
+            self.assertFalse(hasattr(app.state, "generation"))
+
+    def test_trusted_agent_capabilities_are_explicit_disabled_and_validated(self):
+        from types import SimpleNamespace
+
+        from comic_sol_web.app import _generation_service, create_app
+        from comic_sol_web.config import WebConfig
+        from comic_sol_web.database import Database
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = WebConfig.from_env(valid_environment(root / "data"))
+            disabled = create_app(config)
+            self.assertEqual(frozenset(), disabled.state.agent_image_capabilities)
+
+            with self.assertRaises(ValueError):
+                create_app(
+                    config,
+                    active_agent_image_capabilities=frozenset({"not-an-image-capability"}),
+                )
+            with self.assertRaises(ValueError):
+                create_app(
+                    config,
+                    active_agent_image_capabilities=frozenset({"reference_images"}),
+                )
+
+            enabled = create_app(
+                config,
+                active_agent_image_capabilities=frozenset({"text_to_image", "custom_dimensions"}),
+            )
+            self.assertEqual(
+                frozenset({"text_to_image", "custom_dimensions"}),
+                enabled.state.agent_image_capabilities,
+            )
+            staging_root = root / "staging"
+            staging_root.mkdir()
+            projects = SimpleNamespace(
+                gateway=SimpleNamespace(
+                    database=Database(root / "application.sqlite3"),
+                    staging_root=staging_root,
+                )
+            )
+            request = SimpleNamespace(app=enabled)
+            with patch("comic_sol_web.app._project_service", return_value=projects):
+                service = _generation_service(request)
+            provider = service._providers.get("agent")
+            self.assertEqual(
+                frozenset({"text_to_image", "custom_dimensions"}),
+                provider.active_capabilities,
+            )
 
     def test_approval_routes_are_registered_without_constructing_proposal_state(self):
         from comic_sol_web.app import create_app
@@ -304,11 +395,15 @@ class WebApplicationTests(unittest.TestCase):
                     staging_root=staging_root,
                 )
             )
-            state = SimpleNamespace(web_config=config)
+            state = SimpleNamespace(
+                web_config=config,
+                agent_image_capabilities=frozenset(),
+            )
             request = SimpleNamespace(app=SimpleNamespace(state=state))
             with patch("comic_sol_web.app._project_service", return_value=projects):
                 service = _generation_service(request)
 
+            self.assertEqual("agent", service._providers.get("agent").provider_id)
             with self.assertRaises(KeyError):
                 service.queue(
                     SessionPrincipal("owner-id", "owner"),
@@ -341,6 +436,7 @@ class WebApplicationTests(unittest.TestCase):
             self.assertEqual({"status": "ok"}, response.json())
             self.assertFalse(data_root.exists())
             self.assertFalse(hasattr(app.state, "generation"))
+            self.assertFalse(hasattr(app.state, "assets"))
 
     def test_anonymous_project_request_fails_before_lazy_storage_initialization(self):
         from comic_sol_web.app import create_app
