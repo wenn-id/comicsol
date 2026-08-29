@@ -8,16 +8,24 @@ import re
 import secrets
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import AsyncContextManager, Protocol, cast
 
 from comic_sol_product.cli import _load_engine_module
 
+from comic_sol_web.assets import AssetError, AssetStore, _png_dimensions_and_decode_size
 from comic_sol_web.auth import SessionPrincipal
 from comic_sol_web.database import Database
 from comic_sol_web.generation.credentials import (
     CredentialBrokerError,
     CredentialUnavailableError,
+)
+from comic_sol_web.generation.providers.agent import (
+    AgentProvider,
+    agent_job_checksum,
+    agent_locked_scope_digest,
+    bind_agent_request,
 )
 from comic_sol_web.generation.providers.base import ProviderError, ProviderRegistry
 from comic_sol_web.generation.queue import (
@@ -27,7 +35,13 @@ from comic_sol_web.generation.queue import (
     QueueRetryLimitError,
     QueueUnavailableError,
 )
-from comic_sol_web.generation.store import GenerationJob, GenerationStore, LeasedJob
+from comic_sol_web.generation.store import (
+    GenerationJob,
+    GenerationStore,
+    LeasedJob,
+    deserialize_request,
+    serialize_request,
+)
 from comic_sol_web.generation.types import (
     AuthMode,
     ErrorCategory,
@@ -47,6 +61,7 @@ GenerationConflictError = QueueConflictError
 RetryLimitError = QueueRetryLimitError
 
 _EXTERNAL_JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_ASSET_HANDLE = re.compile(r"[A-Za-z0-9_-]{32,64}\Z")
 _SENSITIVE_EXTERNAL_ID = re.compile(
     r"(?:authorization|bearer|credential|password|secret|token|api[_-]?key|account|acct|email)",
     re.IGNORECASE,
@@ -100,12 +115,14 @@ class GenerationService:
         staging_root: Path,
         *,
         credentials: CredentialResolver,
+        assets: AssetStore | None = None,
         clock: Callable[[], int] = lambda: int(time.time()),
     ) -> None:
         apply_migrations(database, GENERATION_MIGRATIONS)
         self._projects = projects
         self._providers = providers
         self._credentials = credentials
+        self._assets = assets
         self._clock = clock
         self._staging_root = Path(staging_root)
         if not self._staging_root.is_absolute() or not self._staging_root.is_dir():
@@ -116,6 +133,66 @@ class GenerationService:
         _project_io.contained_project_path(self._staging_root, ".")
         self._store = GenerationStore(database, self._staging_root)
         self._queue = DurableGenerationQueue(self._store, clock)
+
+    def _bind_agent_requests(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        requests: tuple[GenerationRequest, ...],
+    ) -> tuple[GenerationRequest, ...]:
+        """Bind packages to canonical handoff digests without exposing paths."""
+        if not requests:
+            return requests
+        revision = requests[0].project_revision
+        snapshot = self._projects.snapshot(principal, project_id, revision)
+        root = getattr(snapshot, "root", None)
+        if not isinstance(root, Path):
+            raise GenerationConflictError("agent handoff snapshot is invalid")
+        try:
+            manifest = _project_io.read_contained_json(root, "handoff/manifest.json")
+        except FileNotFoundError:
+            # Protocol test doubles need not materialize engine files. Freeze
+            # deterministic fallback digests now so sibling revision rebinding
+            # cannot silently change an already-issued package identity.
+            try:
+                return tuple(
+                    bind_agent_request(
+                        request,
+                        locked_scope_sha256=agent_locked_scope_digest(
+                            replace(request, project_revision=1)
+                        ),
+                        job_sha256=agent_job_checksum(replace(request, project_revision=1)),
+                    )
+                    for request in requests
+                )
+            except ProviderError as error:
+                raise GenerationConflictError("agent handoff binding is invalid") from error
+        if not isinstance(manifest, Mapping) or _handoff.validate_handoff_manifest(manifest):
+            raise GenerationConflictError("agent handoff manifest is invalid")
+        locked_scope = manifest.get("locked_scope_sha256")
+        descriptors = manifest.get("jobs")
+        if not isinstance(locked_scope, str) or not isinstance(descriptors, list):
+            raise GenerationConflictError("agent handoff binding is invalid")
+        by_job: dict[str, str] = {}
+        for descriptor in descriptors:
+            if not isinstance(descriptor, Mapping):
+                raise GenerationConflictError("agent handoff job binding is invalid")
+            job_id = descriptor.get("job_id")
+            checksum = descriptor.get("sha256")
+            if not isinstance(job_id, str) or not isinstance(checksum, str):
+                raise GenerationConflictError("agent handoff job binding is invalid")
+            by_job[job_id] = checksum
+        try:
+            return tuple(
+                bind_agent_request(
+                    request,
+                    locked_scope_sha256=locked_scope,
+                    job_sha256=by_job[request.job_id],
+                )
+                for request in requests
+            )
+        except (KeyError, ProviderError) as error:
+            raise GenerationConflictError("agent handoff job binding is invalid") from error
 
     def queue(
         self,
@@ -142,7 +219,11 @@ class GenerationService:
         # Lookup proves there is an explicit provider selection. The service
         # never catches this to choose another provider.
         self._providers.get(provider)
+        if provider == "agent" and mode is not AuthMode.AGENT:
+            raise ValueError("agent generation requires agent authentication mode")
         requests = self._projects.prepare_generation(principal, project_id, expected_revision)
+        if provider == "agent":
+            requests = self._bind_agent_requests(principal, project_id, requests)
         now = self._clock()
         return tuple(
             self._store.enqueue(
@@ -174,7 +255,49 @@ class GenerationService:
         job_id: str,
         expected_revision: int,
     ) -> GenerationJob:
-        return self._queue.retry_same_provider(principal.user_id, job_id, expected_revision)
+        job = self._queue.get_owned(principal.user_id, job_id)
+        if job.state is not JobState.AWAITING_PROVIDER_CONFIRMATION:
+            return self._queue.retry_same_provider(principal.user_id, job_id, expected_revision)
+        if job.project_revision != expected_revision:
+            raise GenerationConflictError("generation project revision is stale")
+        if job.provider != "agent" or job.auth_mode is not AuthMode.AGENT:
+            raise GenerationConflictError("generation capability is not resumable")
+        try:
+            provider = self._providers.get("agent")
+        except KeyError:
+            raise GenerationConflictError("generation capability is unavailable") from None
+        if not isinstance(provider, AgentProvider) or not provider.capability_available(
+            job.request,
+            job.model,
+        ):
+            raise GenerationConflictError("generation capability is unavailable")
+        self._validate_agent_locked_scope(principal, job, expected_revision)
+
+        now = self._clock()
+        with self._store.database.transaction() as connection:
+            updated = connection.execute(
+                """
+                UPDATE generation_jobs
+                SET state = ?, external_job_id = NULL,
+                    lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL,
+                    staged_raster_name = NULL, result_checksum = NULL, updated_at = ?
+                WHERE job_id = ? AND owner_id = ? AND project_revision = ? AND state = ?
+                """,
+                (
+                    JobState.QUEUED.value,
+                    now,
+                    job_id,
+                    principal.user_id,
+                    expected_revision,
+                    JobState.AWAITING_PROVIDER_CONFIRMATION.value,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise GenerationConflictError("generation resume lost a state race")
+            current = self._store.row(connection, job_id)
+            assert current is not None
+            self._store.append_attempt(connection, current, JobState.QUEUED, now)
+        return self._store.from_row(current)
 
     def pause_for_switch(
         self,
@@ -523,6 +646,183 @@ class GenerationService:
             return accepted_revision, current_revision == accepted_revision
         return None
 
+    @staticmethod
+    def _canonical_asset_handle(asset_id: str) -> str:
+        """Stop request taint before the owner-bound asset store path boundary."""
+        if not isinstance(asset_id, str) or _ASSET_HANDLE.fullmatch(asset_id) is None:
+            raise GenerationConflictError("agent asset handle is invalid")
+        return asset_id
+
+    def agent_package(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        job_id: str,
+        expected_revision: int,
+    ) -> Mapping[str, object]:
+        """Return one bounded, owner-authorized, current agent handoff package."""
+        if (
+            not isinstance(project_id, str)
+            or isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or expected_revision < 1
+        ):
+            raise GenerationConflictError("agent package binding is invalid")
+        job = self._queue.get_owned(principal.user_id, job_id)
+        if (
+            job.provider != "agent"
+            or job.auth_mode is not AuthMode.AGENT
+            or job.state is not JobState.POLLING
+            or job.project_id != project_id
+            or job.project_id != job.request.project_id
+            or job.project_revision != expected_revision
+            or job.project_revision != job.request.project_revision
+            or job.external_job_id is None
+        ):
+            raise GenerationConflictError("generation job is not an active agent handoff")
+        self._validate_agent_scope(principal, job, expected_revision)
+        try:
+            provider = self._providers.get("agent")
+        except KeyError:
+            raise GenerationUnavailableError("agent handoff is unavailable") from None
+        if not isinstance(provider, AgentProvider):
+            raise GenerationUnavailableError("agent handoff is unavailable")
+        try:
+            return provider.restore_package(job.request, job.external_job_id)
+        except ProviderError as error:
+            if error.category is ErrorCategory.CAPABILITY_MISSING:
+                raise GenerationConflictError("agent capability is unavailable") from error
+            raise GenerationConflictError("agent package cannot be restored") from error
+
+    def _agent_asset_payload(
+        self,
+        principal: SessionPrincipal,
+        job: GenerationJob,
+        asset_id: str,
+    ) -> tuple[bytes, str]:
+        if self._assets is None:
+            raise GenerationUnavailableError("agent asset submission is unavailable")
+        try:
+            canonical_asset_id = self._canonical_asset_handle(asset_id)
+            handle = self._assets.get(principal, canonical_asset_id)
+            # The path-bearing read is keyed only by the owner-authorized ID
+            # returned from durable metadata, never the request path segment.
+            payload = self._assets.read_bytes(principal, handle.asset_id)
+            width, height = _png_dimensions_and_decode_size(
+                payload,
+                self._assets.max_decoded_bytes,
+            )
+        except AssetError as error:
+            raise GenerationConflictError("agent asset failed bounded validation") from error
+        if (
+            handle.media_type != "image/png"
+            or handle.byte_size != len(payload)
+            or handle.width != width
+            or handle.height != height
+            or len(payload) > _raster_limits.MAX_ENCODED_RASTER_BYTES
+            or width * height > self._assets.max_pixels
+            or width * height > _raster_limits.MAX_DECODED_PIXELS
+            or width != job.request.width
+            or height != job.request.height
+            or width * job.request.height != height * job.request.width
+        ):
+            raise GenerationConflictError("agent asset does not match the prepared job")
+        return payload, hashlib.sha256(payload).hexdigest()
+
+    def _validate_agent_scope(
+        self,
+        principal: SessionPrincipal,
+        job: GenerationJob,
+        expected_revision: int,
+    ) -> None:
+        expected_external_id = f"agent:{agent_job_checksum(job.request)}"
+        if job.external_job_id != expected_external_id:
+            raise GenerationConflictError("agent package checksum is stale")
+        self._validate_agent_locked_scope(principal, job, expected_revision)
+
+    def _validate_agent_locked_scope(
+        self,
+        principal: SessionPrincipal,
+        job: GenerationJob,
+        expected_revision: int,
+    ) -> None:
+        """Prove an issued agent request still matches the canonical project."""
+        try:
+            current_requests = self._projects.prepare_generation(
+                principal,
+                job.project_id,
+                expected_revision,
+            )
+            current_requests = self._bind_agent_requests(
+                principal,
+                job.project_id,
+                current_requests,
+            )
+        except ValueError as error:
+            raise GenerationConflictError("agent project scope is stale") from error
+        current = next(
+            (request for request in current_requests if request.job_id == job.request.job_id),
+            None,
+        )
+        if (
+            current is None
+            or current.project_id != job.project_id
+            or current.project_revision != expected_revision
+            or agent_job_checksum(current) != agent_job_checksum(job.request)
+            or agent_locked_scope_digest(current) != agent_locked_scope_digest(job.request)
+        ):
+            raise GenerationConflictError("agent locked scope is stale")
+
+    def submit_agent_asset(
+        self,
+        principal: SessionPrincipal,
+        job_id: str,
+        asset_id: str,
+        expected_revision: int,
+    ) -> GenerationJob:
+        """Validate a page-owned asset and promote it only through WP5 and WP3."""
+        if (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or expected_revision < 1
+        ):
+            raise GenerationConflictError("agent project revision is invalid")
+        job = self._queue.get_owned(principal.user_id, job_id)
+        if (
+            job.provider != "agent"
+            or job.auth_mode is not AuthMode.AGENT
+            or job.project_id != job.request.project_id
+            or job.project_revision != job.request.project_revision
+            or job.project_revision != expected_revision
+        ):
+            raise GenerationConflictError("generation job is not an eligible agent handoff")
+
+        payload, checksum = self._agent_asset_payload(principal, job, asset_id)
+        if job.state is JobState.ACCEPTED:
+            if job.result_checksum == checksum:
+                return job
+            raise GenerationConflictError("agent submission conflicts with accepted raster")
+        if job.state is not JobState.POLLING:
+            raise GenerationConflictError("generation job is not awaiting an agent asset")
+
+        self._validate_agent_scope(principal, job, expected_revision)
+        assert job.external_job_id is not None
+        validating = self.record_result(
+            job.job_id,
+            None,
+            GenerationResult(
+                external_job_id=job.external_job_id,
+                state=JobState.ACCEPTED,
+                raster_bytes=payload,
+                media_type="image/png",
+                effective_parameters={},
+                usage={"images": 1},
+            ),
+        )
+        if validating.state is JobState.ACCEPTED:
+            return validating
+        return self.submit_staged_raster(principal, job.job_id, expected_revision)
+
     def submit_staged_raster(
         self,
         principal: SessionPrincipal,
@@ -658,25 +958,108 @@ class GenerationService:
                 event_time = self._clock()
                 self._store.append_attempt(connection, current, JobState.ACCEPTED, event_time)
                 if rebind_siblings:
-                    # Only the immediate revision produced by this accepted
-                    # raster can advance siblings. Later edits remain stale.
-                    connection.execute(
+                    # Only the immediate canonical revision produced by this
+                    # accepted raster can advance siblings. Re-serialize each
+                    # request with the same provider options so its locked-scope
+                    # and job digests remain exactly the issued bindings.
+                    siblings = connection.execute(
                         """
-                        UPDATE generation_jobs
-                        SET project_revision = ?, updated_at = ?
+                        SELECT job_id, request_json, provider, model, auth_mode
+                        FROM generation_jobs
                         WHERE owner_id = ? AND project_id = ? AND project_revision = ?
                           AND job_id <> ? AND state <> ?
                         """,
                         (
-                            accepted_revision,
-                            event_time,
                             job.owner_id,
                             job.project_id,
                             job.project_revision,
                             job.job_id,
                             JobState.ACCEPTED.value,
                         ),
-                    )
+                    ).fetchall()
+                    for sibling in siblings:
+                        request = deserialize_request(sibling["request_json"])
+                        if (
+                            request.project_id != job.project_id
+                            or request.project_revision != job.project_revision
+                        ):
+                            raise GenerationConflictError(
+                                "generation sibling request binding is invalid"
+                            )
+                        rebound_json = serialize_request(
+                            replace(request, project_revision=accepted_revision)
+                        )
+                        rebound_key = self._store.idempotency_key(
+                            job.owner_id,
+                            rebound_json,
+                            sibling["provider"],
+                            sibling["model"],
+                            AuthMode(sibling["auth_mode"]),
+                        )
+                        collision = self._store._row_by_idempotency(connection, rebound_key)
+                        if collision is not None and collision["job_id"] != sibling["job_id"]:
+                            # Enqueue can observe the newly accepted canonical
+                            # revision before this transaction rebinds its
+                            # already-issued sibling.  That row has not entered
+                            # execution yet, so discard it and preserve the
+                            # original handoff identity rather than allowing the
+                            # UNIQUE key collision to strand the accepted job.
+                            removed = connection.execute(
+                                """
+                                DELETE FROM generation_jobs
+                                WHERE job_id = ? AND owner_id = ? AND project_id = ?
+                                  AND project_revision = ? AND request_json = ?
+                                  AND provider = ? AND model = ? AND auth_mode = ?
+                                  AND state = ?
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM generation_attempts
+                                      WHERE generation_attempts.job_id = generation_jobs.job_id
+                                  )
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM generation_receipts
+                                      WHERE generation_receipts.job_id = generation_jobs.job_id
+                                  )
+                                """,
+                                (
+                                    collision["job_id"],
+                                    job.owner_id,
+                                    job.project_id,
+                                    accepted_revision,
+                                    rebound_json,
+                                    sibling["provider"],
+                                    sibling["model"],
+                                    sibling["auth_mode"],
+                                    JobState.QUEUED.value,
+                                ),
+                            ).rowcount
+                            if removed != 1:
+                                raise GenerationConflictError(
+                                    "generation sibling revision has an active duplicate"
+                                )
+                        rebound = connection.execute(
+                            """
+                            UPDATE generation_jobs
+                            SET project_revision = ?, request_json = ?, idempotency_key = ?,
+                                updated_at = ?
+                            WHERE job_id = ? AND owner_id = ? AND project_id = ?
+                              AND project_revision = ? AND state <> ?
+                            """,
+                            (
+                                accepted_revision,
+                                rebound_json,
+                                rebound_key,
+                                event_time,
+                                sibling["job_id"],
+                                job.owner_id,
+                                job.project_id,
+                                job.project_revision,
+                                JobState.ACCEPTED.value,
+                            ),
+                        ).rowcount
+                        if rebound != 1:
+                            raise GenerationConflictError(
+                                "generation sibling revision lost its claim"
+                            )
         assert current is not None
         return self._store.from_row(current)
 
@@ -748,17 +1131,27 @@ class GenerationService:
                 error_category=ErrorCategory.CAPABILITY_MISSING,
             )
         try:
-            async with self._credentials.resolve(
-                job.owner_id,
-                job.provider,
-                job.auth_mode,
-            ) as credential:
-                remaining_lease = max(0, leased.lease_expires_at - self._clock())
-                async with asyncio.timeout(remaining_lease):
+            remaining_lease = max(0, leased.lease_expires_at - self._clock())
+            async with asyncio.timeout(remaining_lease):
+                if job.auth_mode is AuthMode.AGENT:
                     if job.external_job_id:
-                        result = await provider.poll(job.external_job_id, credential)
+                        if job.provider == "agent":
+                            if not isinstance(provider, AgentProvider):
+                                raise ProviderError(ErrorCategory.PROVIDER_ERROR)
+                            provider.restore_package(job.request, job.external_job_id)
+                        result = await provider.poll(job.external_job_id, None)
                     else:
-                        result = await provider.generate(job.request, job.model, credential)
+                        result = await provider.generate(job.request, job.model, None)
+                else:
+                    async with self._credentials.resolve(
+                        job.owner_id,
+                        job.provider,
+                        job.auth_mode,
+                    ) as credential:
+                        if job.external_job_id:
+                            result = await provider.poll(job.external_job_id, credential)
+                        else:
+                            result = await provider.generate(job.request, job.model, credential)
             recorded = self.record_result(job.job_id, leased.lease_token, result)
         except CredentialUnavailableError:
             return self._record_simple_result(

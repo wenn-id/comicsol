@@ -19,10 +19,12 @@ from fastapi.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 
 from comic_sol_web.api.approvals import create_approvals_router
+from comic_sol_web.api.assets import create_assets_router
 from comic_sol_web.api.generation import create_generation_router
 from comic_sol_web.api.projects import create_projects_router
 
 if TYPE_CHECKING:
+    from comic_sol_web.assets import AssetStore
     from comic_sol_web.config import WebConfig
     from comic_sol_web.projects import ProjectService
 
@@ -31,6 +33,13 @@ if TYPE_CHECKING:
 # once when the application is built; it is a Python packaging resource, not
 # application or database state.
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+_AGENT_IMAGE_CAPABILITIES = frozenset(
+    {
+        "custom_dimensions",
+        "negative_prompt",
+        "text_to_image",
+    }
+)
 
 
 class FutureStaticFiles(StaticFiles):
@@ -65,6 +74,20 @@ def _project_service(request: Request) -> "ProjectService":
     return service
 
 
+def _asset_store(request: Request) -> "AssetStore":
+    """Construct and cache bounded page-owned asset storage on demand."""
+    existing = getattr(request.app.state, "assets", None)
+    if existing is not None:
+        return existing
+
+    from comic_sol_web.assets import AssetStore
+
+    projects = _project_service(request)
+    service = AssetStore(projects.gateway.database, request.app.state.web_config.data_root)
+    request.app.state.assets = service
+    return service
+
+
 def _generation_service(request: Request) -> object:
     """Construct and cache provider-neutral queue storage on demand."""
     existing = getattr(request.app.state, "generation", None)
@@ -76,6 +99,7 @@ def _generation_service(request: Request) -> object:
     import os
 
     from comic_sol_web.generation.credentials import CredentialBroker
+    from comic_sol_web.generation.providers.agent import AgentProvider
     from comic_sol_web.generation.providers.base import ProviderRegistry
     from comic_sol_web.generation.service import GenerationService
 
@@ -89,15 +113,14 @@ def _generation_service(request: Request) -> object:
         master_key_references=config.master_key_references,
         active_key_id=config.active_credential_key_id,
     )
+    active_agent_capabilities = request.app.state.agent_image_capabilities
     service = GenerationService(
         gateway.database,
         projects,
-        # Provider adapters are registered by their owning work packages. The
-        # deterministic FakeProvider remains test-only because its tiny fixture
-        # intentionally does not satisfy the canonical engine raster boundary.
-        ProviderRegistry(()),
+        ProviderRegistry((AgentProvider(active_agent_capabilities),)),
         gateway.staging_root,
         credentials=credentials,
+        assets=_asset_store(request),
     )
     request.app.state.generation_credentials = credentials
     request.app.state.generation = service
@@ -124,15 +147,27 @@ def _approval_service(request: Request) -> object:
     return service
 
 
-def create_app(_config: "WebConfig") -> FastAPI:
+def create_app(
+    _config: "WebConfig",
+    *,
+    active_agent_image_capabilities: frozenset[str] = frozenset(),
+) -> FastAPI:
     """Return a configured FastAPI application.
 
-    Startup creates no application filesystem state. The first authenticated
-    project request lazily creates the data root, SQLite database, and project
-    directories. `/healthz` remains deterministic, bounded, and provider-free.
+    Active-agent capabilities come only from this trusted construction call;
+    request data can neither assert nor expand them. Startup creates no
+    application filesystem state. The first authenticated project request
+    lazily creates the data root, SQLite database, and project directories.
+    `/healthz` remains deterministic, bounded, and provider-free.
     """
+    if (
+        not isinstance(active_agent_image_capabilities, frozenset)
+        or not active_agent_image_capabilities <= _AGENT_IMAGE_CAPABILITIES
+    ):
+        raise ValueError("active agent image capabilities are invalid")
     app = FastAPI(title="Comic Sol Web", docs_url=None, redoc_url=None)
     app.state.web_config = _config
+    app.state.agent_image_capabilities = active_agent_image_capabilities
     app.include_router(create_projects_router(_project_service))
     app.include_router(
         create_generation_router(
@@ -142,6 +177,7 @@ def create_app(_config: "WebConfig") -> FastAPI:
         )
     )
     app.include_router(create_approvals_router(_approval_service, _generation_service))
+    app.include_router(create_assets_router(_asset_store, _generation_service))
 
     @app.get("/healthz")
     def healthz() -> Response:
