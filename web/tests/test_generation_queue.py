@@ -364,6 +364,7 @@ class FakeProjects:
         self.request_height = 1024
         self.raster_rejection: str | None = None
         self.promotion_conflict_once = False
+        self.after_accept: Callable[[], None] | None = None
         self.submissions: list[tuple[Path, bytes]] = []
         self.accepted_raster: bytes | None = None
 
@@ -419,6 +420,8 @@ class FakeProjects:
         self.accepted_raster = payload
         self._record_canonical_acceptance(job_id, payload)
         self.revision += 1
+        if self.after_accept is not None:
+            self.after_accept()
         return type(
             "Snapshot",
             (),
@@ -1651,6 +1654,48 @@ class AgentSubmissionTests(GenerationQueueFixture):
         self.assertEqual(0, polling.retry_count)
         self.assertEqual([], self.credentials.resolutions)
 
+    def test_stale_agent_capability_handoff_remains_blocked_on_resume(self) -> None:
+        self.service = GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry((AgentProvider(frozenset()),)),
+            self.staging_root,
+            credentials=self.credentials,
+            assets=self.assets,
+            clock=self.clock,
+        )
+        queued = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="agent",
+            model=AGENT_MODEL,
+            auth_mode=AuthMode.AGENT,
+        )[0]
+        blocked = asyncio.run(self.service.run_once("missing-agent-capability"))
+        assert blocked is not None
+        self.projects.revision += 1
+        self.service = GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry((AgentProvider(frozenset({"text_to_image"})),)),
+            self.staging_root,
+            credentials=self.credentials,
+            assets=self.assets,
+            clock=self.clock,
+        )
+
+        with self.assertRaises(GenerationConflictError):
+            self.service.retry_same_provider(
+                self.alice,
+                queued.job_id,
+                queued.project_revision,
+            )
+
+        current = self.service.get(self.alice, queued.job_id)
+        self.assertEqual(JobState.AWAITING_PROVIDER_CONFIRMATION, current.state)
+        self.assertEqual([], self.credentials.resolutions)
+
     def test_agent_asset_submission_promotes_exactly_once_without_credentials(self) -> None:
         queued = self.queue_agent()
         handle = self.upload(self.alice)
@@ -1778,6 +1823,62 @@ class AgentSubmissionTests(GenerationQueueFixture):
         self.assertEqual(JobState.ACCEPTED, second.state)
         self.assertEqual(2, len(self.projects.submissions))
         self.assertEqual(bounded_png(channel=2), self.projects.accepted_raster)
+
+    def test_rebound_sibling_reconciles_enqueue_during_canonical_promotion(self) -> None:
+        self.projects.request_ids = ("a" * 64, "b" * 64)
+        first_before, second_before = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="agent",
+            model=AGENT_MODEL,
+            auth_mode=AuthMode.AGENT,
+        )
+        for index in range(2):
+            waiting = asyncio.run(self.service.run_once(f"agent-package-{index}"))
+            assert waiting is not None
+        first_asset = self.upload(self.alice, bounded_png(channel=1))
+        concurrent: list[GenerationJob] = []
+
+        def enqueue_after_accept() -> None:
+            self.projects.request_ids = ("b" * 64,)
+            self.projects.subject_ids["b" * 64] = "panel-2"
+            concurrent.extend(
+                self.service.queue(
+                    self.alice,
+                    self.projects.project_id,
+                    self.projects.revision,
+                    provider="agent",
+                    model=AGENT_MODEL,
+                    auth_mode=AuthMode.AGENT,
+                )
+            )
+
+        self.projects.after_accept = enqueue_after_accept
+        accepted = self.service.submit_agent_asset(
+            self.alice,
+            first_before.job_id,
+            first_asset.asset_id,
+            first_before.project_revision,
+        )
+
+        rebound = self.service.get(self.alice, second_before.job_id)
+        replay = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="agent",
+            model=AGENT_MODEL,
+            auth_mode=AuthMode.AGENT,
+        )[0]
+        self.assertEqual(JobState.ACCEPTED, accepted.state)
+        self.assertEqual(1, len(concurrent))
+        self.assertNotEqual(second_before.job_id, concurrent[0].job_id)
+        self.assertEqual(second_before.job_id, replay.job_id)
+        self.assertEqual(accepted.accepted_project_revision, rebound.project_revision)
+        with self.database.read() as connection:
+            rows = connection.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0]
+        self.assertEqual(2, rows)
 
     def test_restart_restores_polling_package_and_accepts_asset(self) -> None:
         queued = self.queue_agent()

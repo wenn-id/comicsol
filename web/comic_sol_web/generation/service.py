@@ -271,6 +271,7 @@ class GenerationService:
             job.model,
         ):
             raise GenerationConflictError("generation capability is unavailable")
+        self._validate_agent_locked_scope(principal, job, expected_revision)
 
         now = self._clock()
         with self._store.database.transaction() as connection:
@@ -737,6 +738,15 @@ class GenerationService:
         expected_external_id = f"agent:{agent_job_checksum(job.request)}"
         if job.external_job_id != expected_external_id:
             raise GenerationConflictError("agent package checksum is stale")
+        self._validate_agent_locked_scope(principal, job, expected_revision)
+
+    def _validate_agent_locked_scope(
+        self,
+        principal: SessionPrincipal,
+        job: GenerationJob,
+        expected_revision: int,
+    ) -> None:
+        """Prove an issued agent request still matches the canonical project."""
         try:
             current_requests = self._projects.prepare_generation(
                 principal,
@@ -986,6 +996,46 @@ class GenerationService:
                             sibling["model"],
                             AuthMode(sibling["auth_mode"]),
                         )
+                        collision = self._store._row_by_idempotency(connection, rebound_key)
+                        if collision is not None and collision["job_id"] != sibling["job_id"]:
+                            # Enqueue can observe the newly accepted canonical
+                            # revision before this transaction rebinds its
+                            # already-issued sibling.  That row has not entered
+                            # execution yet, so discard it and preserve the
+                            # original handoff identity rather than allowing the
+                            # UNIQUE key collision to strand the accepted job.
+                            removed = connection.execute(
+                                """
+                                DELETE FROM generation_jobs
+                                WHERE job_id = ? AND owner_id = ? AND project_id = ?
+                                  AND project_revision = ? AND request_json = ?
+                                  AND provider = ? AND model = ? AND auth_mode = ?
+                                  AND state = ?
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM generation_attempts
+                                      WHERE generation_attempts.job_id = generation_jobs.job_id
+                                  )
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM generation_receipts
+                                      WHERE generation_receipts.job_id = generation_jobs.job_id
+                                  )
+                                """,
+                                (
+                                    collision["job_id"],
+                                    job.owner_id,
+                                    job.project_id,
+                                    accepted_revision,
+                                    rebound_json,
+                                    sibling["provider"],
+                                    sibling["model"],
+                                    sibling["auth_mode"],
+                                    JobState.QUEUED.value,
+                                ),
+                            ).rowcount
+                            if removed != 1:
+                                raise GenerationConflictError(
+                                    "generation sibling revision has an active duplicate"
+                                )
                         rebound = connection.execute(
                             """
                             UPDATE generation_jobs
