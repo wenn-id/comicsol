@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Annotated, Any, NoReturn
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, status
 
@@ -34,16 +35,30 @@ def _reject(error: Exception) -> NoReturn:
         ProjectUnavailableError,
         StaleProjectRevisionError,
     )
+    from comic_sol_web.generation.approvals import (
+        ApprovalConflictError,
+        ApprovalRequestError,
+        ApprovalUnavailableError,
+    )
     from comic_sol_web.generation.service import (
         GenerationConflictError,
         GenerationUnavailableError,
     )
 
-    if isinstance(error, (GenerationUnavailableError, ProjectUnavailableError)):
+    if isinstance(
+        error,
+        (GenerationUnavailableError, ProjectUnavailableError, ApprovalUnavailableError),
+    ):
         raise HTTPException(status_code=404, detail="generation job unavailable") from error
-    if isinstance(error, (GenerationConflictError, StaleProjectRevisionError)):
+    if isinstance(
+        error,
+        (GenerationConflictError, StaleProjectRevisionError, ApprovalConflictError),
+    ):
         raise HTTPException(status_code=409, detail="generation state conflict") from error
-    if isinstance(error, (GatewayError, KeyError, TypeError, ValueError)):
+    if isinstance(
+        error,
+        (GatewayError, ApprovalRequestError, KeyError, TypeError, ValueError),
+    ):
         raise HTTPException(status_code=400, detail="generation request rejected") from error
     raise error
 
@@ -75,6 +90,69 @@ def _revision(body: dict[str, object]) -> int:
     return value
 
 
+def _idempotency_key(request: Request) -> str:
+    value = request.headers.get("Idempotency-Key", "")
+    try:
+        parsed = UUID(value)
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=400, detail="generation request rejected") from error
+    canonical = str(parsed)
+    if value.lower() != canonical:
+        raise HTTPException(status_code=400, detail="generation request rejected")
+    return canonical
+
+
+def _proposal_envelope(proposal: Any) -> dict[str, object]:
+    return {
+        "proposal_id": proposal.proposal_id,
+        "job_ids": list(proposal.job_ids),
+        "project_id": proposal.project_id,
+        "project_revision": proposal.project_revision,
+        "from_provider": proposal.from_provider,
+        "to_provider": proposal.to_provider,
+        "to_model": proposal.to_model,
+        "reason": proposal.reason.value,
+        "expires_at": proposal.expires_at,
+    }
+
+
+def _switch_reason(service: Any, job_id: str) -> Any:
+    from comic_sol_web.generation.types import ErrorCategory
+
+    for attempt in reversed(service.attempts(job_id)):
+        value = attempt.get("error_category")
+        try:
+            if value is not None:
+                return ErrorCategory(value)
+        except (TypeError, ValueError):
+            continue
+    raise HTTPException(status_code=409, detail="generation state conflict")
+
+
+async def _available_routing_credentials(
+    source: Any,
+    request: Request,
+    principal: SessionPrincipal,
+) -> dict[str, tuple[object, ...]]:
+    from comic_sol_web.generation.catalog import CATALOG
+    from comic_sol_web.generation.credentials import CredentialBrokerError
+    from comic_sol_web.generation.types import AuthMode
+
+    resolver = _resolve_service(source, request)
+    available: dict[str, tuple[object, ...]] = {}
+    for provider in sorted({entry.provider for entry in CATALOG if entry.provider != "fake"}):
+        modes: list[AuthMode] = []
+        for mode in (AuthMode.HOSTED, AuthMode.BYOK):
+            try:
+                async with resolver.resolve(principal.user_id, provider, mode):
+                    modes.append(mode)
+            except CredentialBrokerError:
+                continue
+        if modes:
+            available[provider] = tuple(modes)
+    return available
+
+
 _POLL_DELAY_SECONDS = 0.05
 _MAX_POLLING_RESULTS_PER_REQUEST = 4
 _MAX_RUN_ATTEMPTS_PER_REQUEST = 64
@@ -100,7 +178,11 @@ async def _consume_queue(service: Any) -> None:
             await asyncio.sleep(_POLL_DELAY_SECONDS)
 
 
-def create_generation_router(service_source: Any) -> APIRouter:
+def create_generation_router(
+    service_source: Any,
+    approval_source: Any | None = None,
+    credential_source: Any | None = None,
+) -> APIRouter:
     """Register routes without constructing storage, providers, or workers."""
     router = APIRouter(prefix="/api/generation", tags=["generation"])
 
@@ -178,9 +260,46 @@ def create_generation_router(service_source: Any) -> APIRouter:
         principal: Annotated[SessionPrincipal, Depends(require_principal)],
     ) -> dict[str, object]:
         _require_csrf(request, principal)
+        if set(body) != {"expected_revision"}:
+            raise HTTPException(status_code=400, detail="generation request rejected")
+        if approval_source is None or credential_source is None:
+            raise HTTPException(status_code=409, detail="generation state conflict")
         try:
+            revision = _revision(body)
             service = _resolve_service(service_source, request)
-            return _job_envelope(service.pause_for_switch(principal, job_id, _revision(body)))
+            job = service.get(principal, job_id)
+            if job.project_revision != revision:
+                raise HTTPException(status_code=409, detail="generation state conflict")
+            reason = _switch_reason(service, job_id)
+            credentials = await _available_routing_credentials(
+                credential_source,
+                request,
+                principal,
+            )
+            from comic_sol_web.generation.router import recommend
+
+            recommendations = recommend(
+                job.request,
+                credentials,
+                {(job.provider, job.model): {"last_error": reason}},
+            )
+            recommendation = next(
+                (item for item in recommendations if item.provider != job.provider),
+                None,
+            )
+            if recommendation is None:
+                raise HTTPException(status_code=409, detail="generation state conflict")
+            approvals = _resolve_service(approval_source, request)
+            proposal = approvals.propose_switch(
+                principal,
+                job.project_id,
+                revision,
+                (job.job_id,),
+                recommendation,
+                reason,
+                idempotency_key=_idempotency_key(request),
+            )
+            return _proposal_envelope(proposal)
         except HTTPException:
             raise
         except Exception as error:
