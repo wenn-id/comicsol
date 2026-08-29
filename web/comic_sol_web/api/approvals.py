@@ -75,8 +75,8 @@ def create_approvals_router(service_source: Any) -> APIRouter:
     async def approve_provider_switch(
         request: Request,
         proposal_id: str,
-        body: Annotated[dict[str, object], Body()],
         principal: Annotated[SessionPrincipal, Depends(require_principal)],
+        body: Annotated[dict[str, object] | None, Body()] = None,
     ) -> dict[str, object]:
         _require_csrf(request, principal)
         if body:
@@ -100,8 +100,8 @@ def create_approvals_router(service_source: Any) -> APIRouter:
     async def reject_provider_switch(
         request: Request,
         proposal_id: str,
-        body: Annotated[dict[str, object], Body()],
         principal: Annotated[SessionPrincipal, Depends(require_principal)],
+        body: Annotated[dict[str, object] | None, Body()] = None,
     ) -> dict[str, object]:
         _require_csrf(request, principal)
         if body:
