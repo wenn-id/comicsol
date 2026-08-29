@@ -219,6 +219,7 @@ class FakeProjects:
         self.request_ids: tuple[str, ...] = ("engine-job-1",)
         self.fixtures: dict[str, str] = {}
         self.raster_rejection: str | None = None
+        self.promotion_conflict_once = False
         self.submissions: list[tuple[Path, bytes]] = []
         self.accepted_raster: bytes | None = None
 
@@ -251,12 +252,18 @@ class FakeProjects:
     ) -> object:
         self._authorize(principal, project_id, expected_revision)
         self.assert_contained(raster)
+        if self.promotion_conflict_once:
+            self.promotion_conflict_once = False
+            raise StaleProjectRevisionError(expected_revision, expected_revision + 1)
         if self.raster_rejection == "handoff":
             handoff = _load_engine_module("handoff")
             raise handoff.HandoffResultError(["result raster: must be a readable PNG"])
         if self.raster_rejection == "resource-limit":
             input_limits = _load_engine_module("input_limits")
             raise input_limits.InputResourceLimitError("decoded raster pixel limit")
+        if self.raster_rejection == "handoff-state":
+            handoff = _load_engine_module("handoff")
+            raise handoff.HandoffResultError(["job is completed and cannot accept a result"])
         if media_type != "image/png" or capabilities_used != CAPABILITIES_USED:
             raise ValueError("invalid staged raster")
         payload = raster.read_bytes()
@@ -777,6 +784,30 @@ class DurableQueueTests(GenerationQueueFixture):
                 self.assertEqual([], self.projects.submissions)
                 self.projects.raster_rejection = None
 
+    def test_handoff_state_conflict_retains_valid_staged_raster(self) -> None:
+        queued = self.queue()
+        lease = self.service.lease_next("handoff-conflict-worker", lease_seconds=30)
+        assert lease is not None
+        validating = self.service.record_result(
+            queued.job_id,
+            lease.lease_token,
+            self.accepted_result(),
+        )
+        assert validating.staged_raster is not None
+        self.projects.raster_rejection = "handoff-state"
+
+        with self.assertRaises(GenerationConflictError):
+            self.service.submit_staged_raster(self.alice, queued.job_id, 3)
+
+        current = self.service.get(self.alice, queued.job_id)
+        self.assertEqual(JobState.VALIDATING, current.state)
+        self.assertEqual(validating.staged_raster, current.staged_raster)
+        self.assertEqual(PNG, validating.staged_raster.read_bytes())
+        self.assertNotEqual(
+            ErrorCategory.INVALID_OUTPUT.value,
+            self.service.attempts(queued.job_id)[-1]["error_category"],
+        )
+
     def test_worker_uses_the_queue_reconciled_revision_for_promotion(self) -> None:
         def advance_revision() -> None:
             with self.database.transaction() as connection:
@@ -983,6 +1014,34 @@ class DurableQueueTests(GenerationQueueFixture):
         job_id = response.json()["jobs"][0]["job_id"]
         self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, job_id).state)
         self.assertEqual(PNG, self.projects.accepted_raster)
+
+    def test_queue_drain_continues_after_one_promotion_conflict(self) -> None:
+        self.projects.request_ids = ("conflicted-job", "accepted-sibling")
+        self.projects.promotion_conflict_once = True
+        app = FastAPI()
+        app.state.auth = FakeAuth(self.alice)
+        app.include_router(create_generation_router(self.service))
+        app.dependency_overrides[require_principal] = lambda: self.alice
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/generation/queue",
+                json={
+                    "project_id": self.projects.project_id,
+                    "expected_revision": self.projects.revision,
+                    "provider": "fake",
+                    "model": "fake-raster-v1",
+                    "auth_mode": "agent",
+                },
+            )
+
+        self.assertEqual(201, response.status_code)
+        jobs = [self.service.get(self.alice, item["job_id"]) for item in response.json()["jobs"]]
+        self.assertEqual(
+            [JobState.ACCEPTED, JobState.VALIDATING],
+            sorted((job.state for job in jobs), key=lambda state: state.value),
+        )
+        self.assertEqual(1, len(self.projects.submissions))
 
     def test_retry_request_schedules_the_failed_job_for_consumption(self) -> None:
         provider = FailOnceProvider()

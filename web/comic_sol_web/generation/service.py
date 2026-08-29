@@ -203,6 +203,14 @@ class GenerationService:
             and _SENSITIVE_EXTERNAL_ID.search(value) is None
         )
 
+    @staticmethod
+    def _is_raster_validation_error(error: Exception) -> bool:
+        """Recognize only canonical handoff findings about the raster bytes."""
+        issues = getattr(error, "issues", ())
+        return bool(issues) and all(
+            isinstance(issue, str) and issue.startswith("result raster:") for issue in issues
+        )
+
     def record_result(
         self,
         job_id: str,
@@ -512,7 +520,16 @@ class GenerationService:
                 "image/png",
                 capabilities,
             )
-        except (_handoff.HandoffResultError, _input_limits.InputResourceLimitError):
+        except _handoff.HandoffResultError as error:
+            if self._is_raster_validation_error(error):
+                failed = self._fail_invalid_staged_raster(job_id, token)
+                staged.unlink(missing_ok=True)
+                return failed
+            self._release_promotion(job_id, token)
+            raise GenerationConflictError(
+                "staged raster conflicts with canonical handoff state"
+            ) from error
+        except _input_limits.InputResourceLimitError:
             failed = self._fail_invalid_staged_raster(job_id, token)
             staged.unlink(missing_ok=True)
             return failed

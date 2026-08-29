@@ -65,7 +65,7 @@ def _project_service(request: Request) -> "ProjectService":
 
 
 def _generation_service(request: Request) -> object:
-    """Construct and cache queue storage and the offline provider on demand."""
+    """Construct and cache provider-neutral queue storage on demand."""
     existing = getattr(request.app.state, "generation", None)
     if existing is not None:
         return existing
@@ -76,7 +76,6 @@ def _generation_service(request: Request) -> object:
 
     from comic_sol_web.generation.credentials import CredentialBroker
     from comic_sol_web.generation.providers.base import ProviderRegistry
-    from comic_sol_web.generation.providers.fake import FakeProvider
     from comic_sol_web.generation.service import GenerationService
 
     projects = _project_service(request)
@@ -92,7 +91,10 @@ def _generation_service(request: Request) -> object:
     service = GenerationService(
         gateway.database,
         projects,
-        ProviderRegistry((FakeProvider(),)),
+        # Provider adapters are registered by their owning work packages. The
+        # deterministic FakeProvider remains test-only because its tiny fixture
+        # intentionally does not satisfy the canonical engine raster boundary.
+        ProviderRegistry(()),
         gateway.staging_root,
         credentials=credentials,
     )

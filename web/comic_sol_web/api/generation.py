@@ -79,9 +79,15 @@ _POLL_DELAY_SECONDS = 0.05
 
 
 async def _consume_queue(service: Any) -> None:
-    """Drain eligible work, yielding briefly between asynchronous polls."""
+    """Drain eligible work, isolating resumable conflicts per durable job."""
+    from comic_sol_web.engine_gateway import StaleProjectRevisionError
+    from comic_sol_web.generation.service import GenerationConflictError
+
     while True:
-        completed = await service.run_once("web-request-worker")
+        try:
+            completed = await service.run_once("web-request-worker")
+        except (GenerationConflictError, StaleProjectRevisionError):
+            continue
         if completed is None:
             return
         if completed.state.value == "polling":

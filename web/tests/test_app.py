@@ -220,6 +220,41 @@ class WebApplicationTests(unittest.TestCase):
             self.assertFalse(data_root.exists())
             self.assertFalse(hasattr(app.state, "generation"))
 
+    def test_application_does_not_enable_the_test_fake_provider(self):
+        from types import SimpleNamespace
+
+        from comic_sol_web.app import _generation_service
+        from comic_sol_web.auth import SessionPrincipal
+        from comic_sol_web.config import WebConfig
+        from comic_sol_web.database import Database
+        from comic_sol_web.generation.types import AuthMode
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staging_root = root / "staging"
+            staging_root.mkdir()
+            config = WebConfig.from_env(valid_environment(root / "data"))
+            projects = SimpleNamespace(
+                gateway=SimpleNamespace(
+                    database=Database(root / "application.sqlite3"),
+                    staging_root=staging_root,
+                )
+            )
+            state = SimpleNamespace(web_config=config)
+            request = SimpleNamespace(app=SimpleNamespace(state=state))
+            with patch("comic_sol_web.app._project_service", return_value=projects):
+                service = _generation_service(request)
+
+            with self.assertRaises(KeyError):
+                service.queue(
+                    SessionPrincipal("owner-id", "owner"),
+                    "project-id",
+                    1,
+                    provider="fake",
+                    model="fake-raster-v1",
+                    auth_mode=AuthMode.AGENT,
+                )
+
     def test_health_remains_database_filesystem_and_background_free_with_generation_routes(self):
         from comic_sol_web.app import create_app
         from comic_sol_web.config import WebConfig
