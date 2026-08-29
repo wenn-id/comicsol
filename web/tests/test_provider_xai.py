@@ -62,7 +62,8 @@ class XAICatalogTests(unittest.TestCase):
     def test_curated_xai_models_are_pinned(self) -> None:
         self.assertEqual("xai", _GENERATE_MODEL.provider)
         self.assertEqual("xai", _EDIT_MODEL.provider)
-        self.assertEqual({_GENERATE_ID, _EDIT_ID}, {_GENERATE_MODEL.model, _EDIT_MODEL.model})
+        self.assertEqual("grok-imagine-image-2.0", _GENERATE_MODEL.model)
+        self.assertEqual("grok-imagine-image-2.0", _EDIT_MODEL.model)
         for entry in (_GENERATE_MODEL, _EDIT_MODEL):
             self.assertTrue(entry.enabled)
             self.assertTrue(entry.capabilities)
@@ -134,13 +135,13 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
                 "model": _GENERATE_ID,
                 "n": 1,
                 "prompt": "private xai prompt",
-                "response_format": {"type": "b64_json"},
+                "response_format": "b64_json",
                 "size": "1024x1024",
             },
             json.loads(request_call.content),
         )
 
-    async def test_edit_translates_reference_images_via_multipart(self) -> None:
+    async def test_edit_translates_reference_images_to_json_data_uri(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             reference = Path(directory) / "reference.png"
             reference.write_bytes(PNG)
@@ -148,14 +149,18 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
 
             async def handler(request_call: httpx.Request) -> httpx.Response:
                 seen.append(request_call)
-                body = b"".join(request_call.stream)
-                self.assertIn(b'name="model"', body)
-                self.assertIn(_GENERATE_ID.encode(), body)
-                self.assertIn(b'name="prompt"', body)
-                self.assertIn(b"private xai prompt", body)
-                self.assertIn(b"filename=", body)
-                self.assertIn(b"Content-Type: image/png", body)
-                self.assertNotIn(CANARY.encode(), body)
+                payload = json.loads(request_call.content)
+                self.assertEqual(_EDIT_ID, payload["model"])
+                self.assertEqual("private xai prompt", payload["prompt"])
+                self.assertEqual("b64_json", payload["response_format"])
+                self.assertEqual(
+                    {
+                        "type": "image_url",
+                        "url": f"data:image/png;base64,{_b64_png()}",
+                    },
+                    payload["image"],
+                )
+                self.assertNotIn(CANARY, request_call.content.decode())
                 return httpx.Response(
                     200,
                     headers={"content-type": "application/json"},
@@ -177,6 +182,7 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(1, len(seen))
             self.assertEqual(f"Bearer {CANARY}", seen[0].headers["authorization"])
             self.assertEqual("https://api.x.ai/v1/images/edits", str(seen[0].url))
+            self.assertEqual("application/json", seen[0].headers["content-type"])
 
     async def test_poll_and_cancel_return_capability_missing(self) -> None:
         provider = XAIProvider(
@@ -279,6 +285,23 @@ class XAIProviderTests(unittest.IsolatedAsyncioTestCase):
                         "error": CANARY,
                         "data": [],
                     }
+                ).encode(),
+                request=request,
+            )
+
+        provider = XAIProvider(transport=httpx.MockTransport(handler))
+        with self.assertRaises(ProviderError) as caught:
+            await provider.generate(make_request(), _GENERATE_ID, CANARY)
+        self.assertEqual(ErrorCategory.MODERATED, caught.exception.category)
+        self.assertNotIn(CANARY, f"{caught.exception!s} {caught.exception!r}")
+
+    async def test_structured_policy_violation_http_error_is_moderated(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                400,
+                headers={"content-type": "application/json"},
+                content=json.dumps(
+                    {"error": {"code": "policy_violation", "message": CANARY}}
                 ).encode(),
                 request=request,
             )

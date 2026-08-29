@@ -10,7 +10,6 @@ from ..types import ErrorCategory, GenerationRequest, GenerationResult, JobState
 from .base import ProviderError
 from .http import (
     BoundedHTTPClient,
-    MultipartFile,
     TransportPolicy,
     read_reference_raster,
     validate_raster,
@@ -21,13 +20,13 @@ _GENERATIONS_URL = f"{_API_ORIGIN}/v1/images/generations"
 _EDITS_URL = f"{_API_ORIGIN}/v1/images/edits"
 _GENERATE_MODEL = ProviderModel(
     provider="xai",
-    model="grok-2-image",
+    model="grok-imagine-image-2.0",
     capabilities=frozenset({"custom_dimensions", "text_to_image"}),
     enabled=True,
 )
 _EDIT_MODEL = ProviderModel(
     provider="xai",
-    model="grok-2-image-edit",
+    model="grok-imagine-image-2.0",
     capabilities=frozenset(
         {"custom_dimensions", "image_to_image", "reference_images", "text_to_image"}
     ),
@@ -35,7 +34,7 @@ _EDIT_MODEL = ProviderModel(
 )
 _MODELS = (_GENERATE_MODEL, _EDIT_MODEL)
 _ALLOWED_DIMENSIONS = frozenset({(1024, 1024), (1024, 1536), (1536, 1024)})
-_MAX_REFERENCES = 16
+_MAX_REFERENCES = 3
 _DEFAULT_MAX_RESPONSE_BYTES = 20 * 1024 * 1024
 
 
@@ -75,19 +74,23 @@ class XAIProvider:
         self._validate_request(request, model)
         headers = _credential_headers(credential)
         size = f"{request.width}x{request.height}"
-        reference_files = self._reference_files(request) if request.references else None
+        reference_images = self._reference_images(request) if request.references else None
         async with BoundedHTTPClient(self._policy, transport=self._transport) as client:
-            if reference_files is not None:
-                response = await client.post_multipart(
+            if reference_images is not None:
+                image_field = "image" if len(reference_images) == 1 else "images"
+                response = await client.post_json(
                     _EDITS_URL,
                     headers=headers,
-                    fields={
+                    payload={
+                        image_field: reference_images[0]
+                        if len(reference_images) == 1
+                        else reference_images,
                         "model": model,
-                        "n": "1",
+                        "n": 1,
                         "prompt": request.prompt,
+                        "response_format": "b64_json",
                         "size": size,
                     },
-                    files=reference_files,
                     error_classifier=_classify_error,
                 )
             else:
@@ -98,7 +101,7 @@ class XAIProvider:
                         "model": model,
                         "n": 1,
                         "prompt": request.prompt,
-                        "response_format": {"type": "b64_json"},
+                        "response_format": "b64_json",
                         "size": size,
                     },
                     error_classifier=_classify_error,
@@ -133,7 +136,7 @@ class XAIProvider:
             raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
         if (request.width, request.height) not in _ALLOWED_DIMENSIONS:
             raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
-        if model == _GENERATE_MODEL.model:
+        if not request.references:
             if (
                 request.references
                 or not request.required_capabilities <= _GENERATE_MODEL.capabilities
@@ -147,17 +150,17 @@ class XAIProvider:
         if not request.required_capabilities <= _EDIT_MODEL.capabilities:
             raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
 
-    def _reference_files(self, request: GenerationRequest) -> tuple[MultipartFile, ...]:
-        files: list[MultipartFile] = []
+    def _reference_images(self, request: GenerationRequest) -> tuple[Mapping[str, str], ...]:
+        images: list[Mapping[str, str]] = []
         total = 0
-        for index, path in enumerate(request.references):
+        for path in request.references:
             content, media_type = read_reference_raster(path, self._policy.max_response_bytes)
             total += len(content)
             if total > self._policy.max_response_bytes:
                 raise ProviderError(ErrorCategory.INVALID_OUTPUT)
-            extension = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[media_type]
-            files.append(("image[]", (f"reference-{index}.{extension}", content, media_type)))
-        return tuple(files)
+            encoded = base64.b64encode(content).decode("ascii")
+            images.append({"type": "image_url", "url": f"data:{media_type};base64,{encoded}"})
+        return tuple(images)
 
 
 def _credential_headers(credential: str | None) -> Mapping[str, str]:
@@ -183,7 +186,11 @@ def _classify_error(status_code: int, payload: Mapping[str, object]) -> ErrorCat
             value = payload.get(key)
             if isinstance(value, str):
                 markers.append(value.lower())
-    if any(marker in markers for marker in ("policy", "moderation", "safety")):
+    if any(
+        substring in marker
+        for marker in markers
+        for substring in ("policy", "moderation", "safety")
+    ):
         return ErrorCategory.MODERATED
     return None
 

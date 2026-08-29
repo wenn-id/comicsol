@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import re
 from collections.abc import Mapping, Sequence
 
 import httpx
@@ -12,13 +11,11 @@ from .base import ProviderError
 from .http import BoundedHTTPClient, MultipartFile, TransportPolicy, validate_raster
 
 _API_ORIGIN = "https://api.stability.ai"
-_ASYNC_GENERATE_URL = f"{_API_ORIGIN}/v2beta/stable-image/generate/async/sd3.5-large"
-_RESULTS_URL = f"{_API_ORIGIN}/v2beta/results"
-_GENERATION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
+_GENERATE_URL = f"{_API_ORIGIN}/v2beta/stable-image/generate/sd3"
 _MODEL = ProviderModel(
     provider="stability",
     model="sd3.5-large",
-    capabilities=frozenset({"async_jobs", "custom_dimensions", "text_to_image"}),
+    capabilities=frozenset({"custom_dimensions", "text_to_image"}),
     enabled=True,
 )
 _ASPECT_RATIOS = frozenset({"16:9", "1:1", "9:16"})
@@ -26,7 +23,7 @@ _DEFAULT_MAX_RESPONSE_BYTES = 20 * 1024 * 1024
 
 
 class StabilityProvider:
-    """Direct bounded HTTP adapter for the curated Stability async image model."""
+    """Direct bounded HTTP adapter for the curated Stability image model."""
 
     provider_id = "stability"
 
@@ -62,34 +59,35 @@ class StabilityProvider:
         headers = _credential_headers(credential)
         fields: dict[str, str] = {
             "aspect_ratio": _aspect_ratio(request.width, request.height),
+            "model": model,
             "output_format": "png",
             "prompt": request.prompt,
         }
         files: tuple[MultipartFile, ...] = (("none", ("none", b"", "application/octet-stream")),)
         async with BoundedHTTPClient(self._policy, transport=self._transport) as client:
             response = await client.post_multipart(
-                _ASYNC_GENERATE_URL,
+                _GENERATE_URL,
                 headers=headers,
                 fields=fields,
                 files=files,
                 error_classifier=_classify_error,
             )
-            external_job_id = response.get("generation_id")
-            if (
-                not isinstance(external_job_id, str)
-                or _GENERATION_ID.fullmatch(external_job_id) is None
-            ):
-                raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+        reason = response.get("finish_reason")
+        if isinstance(reason, str) and any(
+            marker in reason.lower() for marker in ("content_filtered", "moderation", "safety")
+        ):
+            raise ProviderError(ErrorCategory.MODERATED)
+        raster = _response_raster(response, self._policy.max_response_bytes)
         return GenerationResult(
-            external_job_id=external_job_id,
-            state=JobState.POLLING,
-            raster_bytes=None,
-            media_type=None,
+            external_job_id=None,
+            state=JobState.ACCEPTED,
+            raster_bytes=raster,
+            media_type="image/png",
             effective_parameters={
                 "aspect_ratio": _aspect_ratio(request.width, request.height),
                 "model": model,
             },
-            usage={},
+            usage={"images": 1},
         )
 
     async def poll(
@@ -97,45 +95,8 @@ class StabilityProvider:
         external_job_id: str,
         credential: str | None,
     ) -> GenerationResult:
-        if _GENERATION_ID.fullmatch(external_job_id) is None:
-            raise ProviderError(ErrorCategory.PROVIDER_ERROR)
-        headers = _credential_headers(credential)
-        url = f"{_RESULTS_URL}/{external_job_id}"
-        async with BoundedHTTPClient(self._policy, transport=self._transport) as client:
-            response = await client.get_json(
-                url,
-                headers=headers,
-                error_classifier=_classify_error,
-            )
-            status = response.get("status")
-            if status in {"FETCH_IN_PROGRESS", "FETCH_PENDING", "running", "queued", "pending"}:
-                return GenerationResult(
-                    external_job_id=external_job_id,
-                    state=JobState.POLLING,
-                    raster_bytes=None,
-                    media_type=None,
-                    effective_parameters={"model": _MODEL.model},
-                    usage={},
-                )
-            reason = response.get("finish_reason")
-            if isinstance(reason, str) and any(
-                marker in reason.lower() for marker in ("content_filtered", "moderation", "safety")
-            ):
-                raise ProviderError(ErrorCategory.MODERATED)
-            if status != "FETCH_SUCCESS" or reason != "SUCCESS":
-                raise ProviderError(ErrorCategory.PROVIDER_ERROR)
-        raster = _response_raster(response, self._policy.max_response_bytes)
-        return GenerationResult(
-            external_job_id=external_job_id,
-            state=JobState.ACCEPTED,
-            raster_bytes=raster,
-            media_type="image/png",
-            effective_parameters={
-                "aspect_ratio": response.get("aspect_ratio") or "1:1",
-                "model": _MODEL.model,
-            },
-            usage={"images": 1},
-        )
+        del external_job_id, credential
+        raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
 
     async def cancel(self, external_job_id: str, credential: str | None) -> None:
         del external_job_id, credential
