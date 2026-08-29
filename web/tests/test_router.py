@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import json
+import secrets
 import sqlite3
 import tempfile
 import threading
@@ -35,8 +37,11 @@ from comic_sol_web.generation.router import RouterRecommendation, recommend
 from comic_sol_web.generation.store import GenerationStore
 from comic_sol_web.generation.types import AuthMode, ErrorCategory, GenerationRequest, JobState
 from comic_sol_web.migrations import (
+    APPLICATION_MIGRATIONS,
     APPROVAL_MIGRATIONS,
+    GENERATION_SCHEMA_MIGRATION,
     PROVIDER_SWITCH_PROPOSAL_MIGRATION,
+    Migration,
     apply_migrations,
 )
 
@@ -621,7 +626,7 @@ class ProviderSwitchApprovalTests(ProviderSwitchFixture):
         )
         self.assertEqual(proposal, rejected)
         row = self.row(switching.job_id)
-        self.assertEqual(JobState.PAUSED.value, row["state"])
+        self.assertEqual(JobState.FAILED.value, row["state"])
         self.assertEqual("retained.png", row["staged_raster_name"])
         self.assertEqual("b" * 64, row["result_checksum"])
         with self.database.read() as connection:
@@ -682,8 +687,95 @@ class ProviderSwitchApprovalTests(ProviderSwitchFixture):
                 (proposal.proposal_id,),
             ).fetchall()
         self.assertEqual([(winners[0],)], [tuple(row) for row in decisions])
-        expected_state = JobState.QUEUED if winners[0] == "approved" else JobState.PAUSED
+        expected_state = JobState.QUEUED if winners[0] == "approved" else JobState.FAILED
         self.assertEqual(expected_state.value, self.row(job.job_id)["state"])
+
+    def test_rejection_restores_each_job_to_its_pre_proposal_state(self) -> None:
+        failed = self.enqueue("failed", state=JobState.FAILED)
+        queued = self.enqueue("queued", state=JobState.QUEUED)
+        polling = self.enqueue("polling", state=JobState.POLLING)
+        proposal = self.propose(failed, queued, polling)
+        # Pre-proposal states must be captured when the proposal pauses jobs.
+        row = self.row(failed.job_id)
+        self.assertEqual(JobState.AWAITING_PROVIDER_CONFIRMATION.value, row["state"])
+        with self.database.read() as connection:
+            stored = connection.execute(
+                "SELECT job_ids_json FROM provider_switch_proposals WHERE proposal_id = ?",
+                (proposal.proposal_id,),
+            ).fetchone()
+        assert stored is not None
+        self.assertIn(failed.job_id, stored["job_ids_json"])
+        self.assertIn("failed", stored["job_ids_json"])
+        self.assertIn("queued", stored["job_ids_json"])
+        self.assertIn("polling", stored["job_ids_json"])
+
+        rejected = reject(
+            self.approvals,
+            self.alice,
+            proposal.proposal_id,
+            expected_revision=3,
+            idempotency_key=str(uuid.uuid4()),
+        )
+        self.assertEqual(proposal, rejected)
+        self.assertEqual(JobState.FAILED.value, self.row(failed.job_id)["state"])
+        self.assertEqual(JobState.QUEUED.value, self.row(queued.job_id)["state"])
+        self.assertEqual(JobState.POLLING.value, self.row(polling.job_id)["state"])
+        # Each rejection records an attempt with the restored state, not paused.
+        with self.database.read() as connection:
+            attempt_states = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT state FROM generation_attempts WHERE job_id IN (?, ?, ?) "
+                    "AND state = 'paused'",
+                    (failed.job_id, queued.job_id, polling.job_id),
+                )
+            }
+        self.assertEqual(set(), attempt_states)
+
+    def test_rejection_without_recorded_pre_state_falls_back_to_paused(self) -> None:
+        # Proposals persisted before pre-state capture store a plain job-id list.
+        # Rejecting one must not strand a job, so the fallback keeps the legacy
+        # paused state.
+        job = self.enqueue("legacy")
+        legacy_id = secrets.token_urlsafe(32)
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE generation_jobs SET state = ? WHERE job_id = ?",
+                (JobState.AWAITING_PROVIDER_CONFIRMATION.value, job.job_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO provider_switch_proposals (
+                    proposal_id, idempotency_key, owner_id, project_id, project_revision,
+                    job_ids_json, from_provider, from_model, to_provider, to_model,
+                    to_auth_mode, reason, expires_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    legacy_id,
+                    str(uuid.uuid4()),
+                    self.alice.user_id,
+                    "project-1",
+                    3,
+                    json.dumps([job.job_id], separators=(",", ":")),
+                    "bfl",
+                    "flux-1.1-pro",
+                    "google",
+                    "gemini-2.5-flash-image",
+                    AuthMode.HOSTED.value,
+                    ErrorCategory.QUOTA_EXHAUSTED.value,
+                    self.clock() + 60,
+                    self.clock(),
+                ),
+            )
+        reject(
+            self.approvals,
+            self.alice,
+            legacy_id,
+            expected_revision=3,
+            idempotency_key=str(uuid.uuid4()),
+        )
+        self.assertEqual(JobState.PAUSED.value, self.row(job.job_id)["state"])
 
 
 class ApprovalMigrationTests(unittest.TestCase):
@@ -713,6 +805,71 @@ class ApprovalMigrationTests(unittest.TestCase):
             self.assertIn("generation_receipts", tables)
             self.assertIn("provider_switch_proposals", tables)
             self.assertIn("provider_switch_decisions", tables)
+
+    def test_legacy_generation_version_six_database_upgrades_without_error(self) -> None:
+        # A database initialized before the numbering fix recorded the generation
+        # schema as version 6 and never created `web_project_creations`. Version 7
+        # must upgrade it in place instead of failing on the existing tables.
+        legacy_generation = Migration(6, GENERATION_SCHEMA_MIGRATION.statements[1:])
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Database(Path(temporary) / "legacy.sqlite3", timeout_seconds=10)
+            legacy = (
+                *APPLICATION_MIGRATIONS,
+                Migration(
+                    5,
+                    (
+                        """
+                        CREATE TABLE web_projects (
+                            project_id TEXT PRIMARY KEY,
+                            owner_id TEXT NOT NULL,
+                            storage_name TEXT NOT NULL UNIQUE,
+                            revision INTEGER NOT NULL CHECK (revision >= 1),
+                            engine_state TEXT NOT NULL
+                        )
+                        """,
+                        "CREATE INDEX web_projects_owner ON web_projects (owner_id, project_id)",
+                    ),
+                ),
+                legacy_generation,
+            )
+            self.assertEqual(tuple(range(1, 7)), apply_migrations(database, legacy))
+            with database.read() as connection:
+                legacy_tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+            self.assertIn("generation_jobs", legacy_tables)
+            self.assertNotIn("web_project_creations", legacy_tables)
+
+            self.assertEqual((7, 8), apply_migrations(database, APPROVAL_MIGRATIONS))
+            with database.read() as connection:
+                versions = tuple(
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT version FROM schema_migrations ORDER BY version"
+                    )
+                )
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                triggers = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+                    )
+                }
+            self.assertEqual(tuple(range(1, 9)), versions)
+            self.assertIn("web_project_creations", tables)
+            self.assertIn("generation_jobs", tables)
+            self.assertIn("provider_switch_proposals", tables)
+            self.assertIn("generation_attempts_no_update", triggers)
+            self.assertIn("generation_receipts_no_delete", triggers)
+            self.assertEqual((), apply_migrations(database, APPROVAL_MIGRATIONS))
 
 
 class ApprovalApiTests(ProviderSwitchFixture):
@@ -746,6 +903,28 @@ class ApprovalApiTests(ProviderSwitchFixture):
         self.assertEqual(proposal.proposal_id, approved.json()["proposal_id"])
         self.assertEqual("approved", approved.json()["decision"])
         self.assertEqual(3, auth.csrf_checks)
+
+    def test_committed_approval_survives_a_failed_queue_resolution(self) -> None:
+        def broken_generation_source(_: object) -> object:
+            raise RuntimeError("generation service is unavailable")
+
+        job = self.enqueue("queue-resolution")
+        proposal = self.propose(job)
+        app = FastAPI()
+        auth = FakeAuth(self.alice)
+        app.state.auth = auth
+        app.include_router(create_approvals_router(self.approvals, broken_generation_source))
+        app.dependency_overrides[require_principal] = lambda: self.alice
+
+        with TestClient(app) as client:
+            approved = client.post(
+                f"/api/approvals/{proposal.proposal_id}/approve",
+                headers=write_headers(),
+            )
+
+        self.assertEqual(200, approved.status_code)
+        self.assertEqual("approved", approved.json()["decision"])
+        self.assertEqual(JobState.QUEUED.value, self.row(job.job_id)["state"])
 
     def test_public_errors_are_sanitized(self) -> None:
         app, auth = self.app_for(self.alice)

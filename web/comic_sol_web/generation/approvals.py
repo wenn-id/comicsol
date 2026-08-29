@@ -8,7 +8,7 @@ import secrets
 import sqlite3
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
@@ -31,6 +31,18 @@ _PROPOSABLE_STATES = frozenset(
         JobState.FAILED.value,
         JobState.PAUSED.value,
         JobState.AWAITING_PROVIDER_CONFIRMATION.value,
+    }
+)
+# States a rejected switch may restore. A job that was already awaiting
+# confirmation when the proposal was created has no recorded pre-proposal state,
+# so it restores to `paused`, which is also the legacy behaviour for proposals
+# stored before pre-states were persisted.
+_RESTORABLE_STATES = frozenset(
+    {
+        JobState.QUEUED.value,
+        JobState.POLLING.value,
+        JobState.FAILED.value,
+        JobState.PAUSED.value,
     }
 )
 
@@ -89,6 +101,30 @@ class ProviderSwitchApprovals:
         return canonical
 
     @staticmethod
+    def _serialize_proposal_jobs(
+        job_ids: Sequence[str],
+        pre_states: Mapping[str, str],
+    ) -> str:
+        payload = {
+            "job_ids": list(job_ids),
+            "pre_states": {job_id: pre_states[job_id] for job_id in job_ids},
+        }
+        return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+    @staticmethod
+    def _proposal_pre_states(row: sqlite3.Row) -> dict[str, str]:
+        try:
+            decoded = json.loads(cast(str, row["job_ids_json"]))
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        if not isinstance(decoded, dict):
+            return {}
+        raw = decoded.get("pre_states", {})
+        if not isinstance(raw, dict):
+            return {}
+        return {str(key): str(value) for key, value in raw.items() if isinstance(value, str)}
+
+    @staticmethod
     def _job_ids(values: Sequence[str]) -> tuple[str, ...]:
         if isinstance(values, str | bytes):
             raise ApprovalRequestError("provider switch request is invalid")
@@ -132,7 +168,10 @@ class ProviderSwitchApprovals:
     def _proposal_from_row(cls, row: sqlite3.Row) -> SwitchProposal:
         try:
             decoded = json.loads(cast(str, row["job_ids_json"]))
-            job_ids = cls._job_ids(decoded)
+            if isinstance(decoded, dict):
+                job_ids = cls._job_ids(decoded.get("job_ids", ()))
+            else:
+                job_ids = cls._job_ids(decoded)
             reason = ErrorCategory(cast(str, row["reason"]))
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             raise ApprovalConflictError(
@@ -328,7 +367,6 @@ class ProviderSwitchApprovals:
         now = self._clock()
         expires_at = now + ttl_seconds
         proposal_id = secrets.token_urlsafe(32)
-        jobs_json = json.dumps(jobs, separators=(",", ":"))
 
         with self._database.transaction() as connection:
             self._release_expired_for_jobs(
@@ -351,23 +389,20 @@ class ProviderSwitchApprovals:
                     (existing["proposal_id"],),
                 ).fetchone()
                 expected = (
-                    jobs_json,
+                    jobs,
                     revision,
                     recommendation.provider,
                     recommendation.model,
                     mode.value,
                     category.value,
                 )
-                actual = tuple(
-                    existing[name]
-                    for name in (
-                        "job_ids_json",
-                        "project_revision",
-                        "to_provider",
-                        "to_model",
-                        "to_auth_mode",
-                        "reason",
-                    )
+                actual = (
+                    self._proposal_from_row(existing).job_ids,
+                    existing["project_revision"],
+                    existing["to_provider"],
+                    existing["to_model"],
+                    existing["to_auth_mode"],
+                    existing["reason"],
                 )
                 if consumed is not None or actual != expected:
                     raise ApprovalConflictError(
@@ -403,6 +438,8 @@ class ProviderSwitchApprovals:
             from_provider, from_model = current_pairs.pop()
             if recommendation.provider == from_provider:
                 raise ApprovalRequestError("provider switch request is invalid")
+            pre_states = {cast(str, row["job_id"]): cast(str, row["state"]) for row in rows}
+            jobs_json = self._serialize_proposal_jobs(jobs, pre_states)
 
             connection.execute(
                 """
@@ -533,6 +570,7 @@ class ProviderSwitchApprovals:
                         "provider switch proposal conflicts with current state"
                     )
 
+                pre_states = self._proposal_pre_states(row)
                 for job in rows:
                     if decision == "approved":
                         updated = connection.execute(
@@ -563,6 +601,9 @@ class ProviderSwitchApprovals:
                         ).rowcount
                         next_state = JobState.QUEUED
                     else:
+                        restore_state = pre_states.get(cast(str, job["job_id"]), "")
+                        if restore_state not in _RESTORABLE_STATES:
+                            restore_state = JobState.PAUSED.value
                         updated = connection.execute(
                             """
                             UPDATE generation_jobs
@@ -573,7 +614,7 @@ class ProviderSwitchApprovals:
                               AND state = ?
                             """,
                             (
-                                JobState.PAUSED.value,
+                                restore_state,
                                 now,
                                 job["job_id"],
                                 principal.user_id,
@@ -584,7 +625,7 @@ class ProviderSwitchApprovals:
                                 JobState.AWAITING_PROVIDER_CONFIRMATION.value,
                             ),
                         ).rowcount
-                        next_state = JobState.PAUSED
+                        next_state = JobState(restore_state)
                     if updated != 1:
                         raise ApprovalConflictError(
                             "provider switch proposal conflicts with current state"

@@ -94,16 +94,25 @@ def create_approvals_router(
                 expected_revision=revision,
                 idempotency_key=key,
             )
-            if generation_source is not None:
-                from comic_sol_web.api.generation import _consume_queue
-
-                generation = _resolve_service(generation_source, request)
-                background_tasks.add_task(_consume_queue, generation)
-            return _envelope(proposal, "approved")
+            envelope = _envelope(proposal, "approved")
         except HTTPException:
             raise
         except Exception as error:
             _reject(error)
+        # The decision is durable once `approve` returns. Queue scheduling is
+        # best effort so a resolution failure cannot report a 500 for an
+        # approval the client can no longer retry.
+        if generation_source is not None:
+            try:
+                from comic_sol_web.api.generation import _consume_queue
+
+                generation = _resolve_service(generation_source, request)
+            except Exception:
+                # The approval is already committed; a later queue drain or
+                # worker run resumes the switched job.
+                return envelope
+            background_tasks.add_task(_consume_queue, generation)
+        return envelope
 
     @router.post("/{proposal_id}/reject")
     async def reject_provider_switch(

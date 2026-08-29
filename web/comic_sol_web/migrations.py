@@ -132,11 +132,16 @@ _GENERATION_PROJECT_IDEMPOTENCY_BRIDGE = Migration(
     ),
 )
 
-GENERATION_SCHEMA_MIGRATION = Migration(
-    7,
-    (
-        """
-        CREATE TABLE generation_jobs (
+# Version 7 must be safe to apply to a database initialized by the parent
+# commit's GENERATION_MIGRATIONS, which already recorded v6 and created
+# `generation_jobs` and the related append-only tables. To keep that upgrade
+# path open without altering the historical version-6 migration, every DDL
+# statement here uses `IF NOT EXISTS` for tables and indexes and a
+# `DROP TRIGGER IF EXISTS` guard for triggers. A fresh EngineGateway path that
+# never saw v6 still lands at the same final schema.
+_GENERATION_SCHEMA_MIGRATION_DDL: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS generation_jobs (
             job_id TEXT PRIMARY KEY,
             idempotency_key TEXT NOT NULL UNIQUE,
             owner_id TEXT NOT NULL,
@@ -164,11 +169,11 @@ GENERATION_SCHEMA_MIGRATION = Migration(
             updated_at INTEGER NOT NULL
         )
         """,
-        "CREATE INDEX generation_jobs_owner ON generation_jobs (owner_id, job_id)",
-        "CREATE INDEX generation_jobs_lease ON generation_jobs "
-        "(state, lease_expires_at, created_at, job_id)",
-        """
-        CREATE TABLE generation_attempts (
+    "CREATE INDEX IF NOT EXISTS generation_jobs_owner ON generation_jobs (owner_id, job_id)",
+    "CREATE INDEX IF NOT EXISTS generation_jobs_lease ON generation_jobs "
+    "(state, lease_expires_at, created_at, job_id)",
+    """
+        CREATE TABLE IF NOT EXISTS generation_attempts (
             event_id INTEGER PRIMARY KEY AUTOINCREMENT,
             job_id TEXT NOT NULL REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
             attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
@@ -182,9 +187,9 @@ GENERATION_SCHEMA_MIGRATION = Migration(
             created_at INTEGER NOT NULL
         )
         """,
-        "CREATE INDEX generation_attempts_job ON generation_attempts (job_id, event_id)",
-        """
-        CREATE TABLE generation_receipts (
+    "CREATE INDEX IF NOT EXISTS generation_attempts_job ON generation_attempts (job_id, event_id)",
+    """
+        CREATE TABLE IF NOT EXISTS generation_receipts (
             receipt_id INTEGER PRIMARY KEY AUTOINCREMENT,
             job_id TEXT NOT NULL REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
             attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
@@ -197,36 +202,60 @@ GENERATION_SCHEMA_MIGRATION = Migration(
             UNIQUE (job_id, attempt_number, checksum)
         )
         """,
-        "CREATE INDEX generation_receipts_job ON generation_receipts (job_id, receipt_id)",
-        """
+    "CREATE INDEX IF NOT EXISTS generation_receipts_job "
+    "ON generation_receipts (job_id, receipt_id)",
+    "DROP TRIGGER IF EXISTS generation_attempts_no_update",
+    """
         CREATE TRIGGER generation_attempts_no_update
         BEFORE UPDATE ON generation_attempts
         BEGIN
             SELECT RAISE(ABORT, 'generation attempts are append-only');
         END
         """,
-        """
+    "DROP TRIGGER IF EXISTS generation_attempts_no_delete",
+    """
         CREATE TRIGGER generation_attempts_no_delete
         BEFORE DELETE ON generation_attempts
         BEGIN
             SELECT RAISE(ABORT, 'generation attempts are append-only');
         END
         """,
-        """
+    "DROP TRIGGER IF EXISTS generation_receipts_no_update",
+    """
         CREATE TRIGGER generation_receipts_no_update
         BEFORE UPDATE ON generation_receipts
         BEGIN
             SELECT RAISE(ABORT, 'generation receipts are append-only');
         END
         """,
-        """
+    "DROP TRIGGER IF EXISTS generation_receipts_no_delete",
+    """
         CREATE TRIGGER generation_receipts_no_delete
         BEFORE DELETE ON generation_receipts
         BEGIN
             SELECT RAISE(ABORT, 'generation receipts are append-only');
         END
         """,
-    ),
+)
+
+# Databases created before the numbering fix recorded the generation schema as
+# version 6 and never applied the version-6 project-idempotency bridge, so they
+# also lack `web_project_creations`. This bridge creates that table only when
+# absent; on a WP3/EngineGateway database version 6 is already recorded and the
+# whole migration is skipped.
+_GENERATION_PROJECT_IDEMPOTENCY_BRIDGE_SQL = """
+        CREATE TABLE IF NOT EXISTS web_project_creations (
+            owner_id TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            project_id TEXT NOT NULL REFERENCES web_projects(project_id) ON DELETE CASCADE,
+            PRIMARY KEY (owner_id, idempotency_key),
+            UNIQUE (project_id)
+        )
+        """
+
+GENERATION_SCHEMA_MIGRATION = Migration(
+    7,
+    (_GENERATION_PROJECT_IDEMPOTENCY_BRIDGE_SQL, *_GENERATION_SCHEMA_MIGRATION_DDL),
 )
 
 PROVIDER_SWITCH_PROPOSAL_MIGRATION = Migration(
