@@ -221,6 +221,69 @@ class WebApplicationTests(unittest.TestCase):
             self.assertFalse(data_root.exists())
             self.assertFalse(hasattr(app.state, "generation"))
 
+    def test_approval_routes_are_registered_without_constructing_proposal_state(self):
+        from comic_sol_web.app import create_app
+        from comic_sol_web.config import WebConfig
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary) / "not-created"
+            app = create_app(WebConfig.from_env(valid_environment(data_root)))
+            routes = {
+                (route.path, frozenset(route.methods or ()))
+                for route in app.routes
+                if route.path.startswith("/api/approvals")
+            }
+            self.assertEqual(
+                {
+                    (
+                        "/api/approvals/{proposal_id}/approve",
+                        frozenset({"POST"}),
+                    ),
+                    (
+                        "/api/approvals/{proposal_id}/reject",
+                        frozenset({"POST"}),
+                    ),
+                },
+                routes,
+            )
+            self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "approvals"))
+
+            from fastapi.testclient import TestClient
+
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/approvals/not-a-proposal/approve",
+                    json={},
+                )
+            self.assertEqual(401, response.status_code)
+            self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "approvals"))
+
+    def test_health_remains_isolated_after_approval_route_registration(self):
+        from comic_sol_web.app import create_app
+        from comic_sol_web.config import WebConfig
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary) / "approval-health-must-not-create"
+            app = create_app(WebConfig.from_env(valid_environment(data_root)))
+            with (
+                patch(
+                    "comic_sol_web.database.Database._connect",
+                    side_effect=AssertionError("database access"),
+                ),
+                patch("pathlib.Path.mkdir", side_effect=AssertionError("filesystem write")),
+                patch("socket.getaddrinfo", side_effect=AssertionError("network access")),
+                patch("asyncio.create_task", side_effect=AssertionError("background task")),
+            ):
+                with TestClient(app) as client:
+                    response = client.get("/healthz")
+            self.assertEqual(200, response.status_code)
+            self.assertEqual({"status": "ok"}, response.json())
+            self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "approvals"))
+
     def test_application_does_not_enable_the_test_fake_provider(self):
         from types import SimpleNamespace
 

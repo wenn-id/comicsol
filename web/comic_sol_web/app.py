@@ -18,6 +18,7 @@ from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 
+from comic_sol_web.api.approvals import create_approvals_router
 from comic_sol_web.api.generation import create_generation_router
 from comic_sol_web.api.projects import create_projects_router
 
@@ -102,6 +103,20 @@ def _generation_service(request: Request) -> object:
     return service
 
 
+def _approval_service(request: Request) -> object:
+    """Construct and cache proposal storage only after an authenticated request."""
+    existing = getattr(request.app.state, "approvals", None)
+    if existing is not None:
+        return existing
+
+    from comic_sol_web.generation.approvals import ProviderSwitchApprovals
+
+    projects = _project_service(request)
+    service = ProviderSwitchApprovals(projects.gateway.database)
+    request.app.state.approvals = service
+    return service
+
+
 def create_app(_config: "WebConfig") -> FastAPI:
     """Return a configured FastAPI application.
 
@@ -113,6 +128,7 @@ def create_app(_config: "WebConfig") -> FastAPI:
     app.state.web_config = _config
     app.include_router(create_projects_router(_project_service))
     app.include_router(create_generation_router(_generation_service))
+    app.include_router(create_approvals_router(_approval_service))
 
     @app.get("/healthz")
     def healthz() -> Response:

@@ -210,11 +210,81 @@ GENERATION_SCHEMA_MIGRATION = Migration(
     ),
 )
 
+PROVIDER_SWITCH_PROPOSAL_MIGRATION = Migration(
+    7,
+    (
+        """
+        CREATE TABLE provider_switch_proposals (
+            proposal_id TEXT PRIMARY KEY CHECK (length(proposal_id) BETWEEN 32 AND 128),
+            idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) = 36),
+            owner_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            project_revision INTEGER NOT NULL CHECK (project_revision >= 1),
+            job_ids_json TEXT NOT NULL CHECK (length(job_ids_json) BETWEEN 4 AND 1048576),
+            from_provider TEXT NOT NULL CHECK (length(from_provider) BETWEEN 1 AND 64),
+            from_model TEXT NOT NULL CHECK (length(from_model) BETWEEN 1 AND 128),
+            to_provider TEXT NOT NULL CHECK (length(to_provider) BETWEEN 1 AND 64),
+            to_model TEXT NOT NULL CHECK (length(to_model) BETWEEN 1 AND 128),
+            to_auth_mode TEXT NOT NULL CHECK (to_auth_mode IN ('agent', 'hosted', 'byok')),
+            reason TEXT NOT NULL CHECK (reason IN (
+                'invalid_credentials', 'quota_exhausted', 'rate_limited', 'moderated',
+                'capability_missing', 'timeout', 'cancelled', 'unavailable',
+                'invalid_output', 'provider_error'
+            )),
+            expires_at INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            UNIQUE (owner_id, project_id, idempotency_key)
+        )
+        """,
+        "CREATE INDEX provider_switch_proposals_owner "
+        "ON provider_switch_proposals (owner_id, proposal_id)",
+        """
+        CREATE TABLE provider_switch_decisions (
+            proposal_id TEXT PRIMARY KEY REFERENCES provider_switch_proposals(proposal_id)
+                ON DELETE RESTRICT,
+            decision TEXT NOT NULL CHECK (decision IN ('approved', 'rejected')),
+            idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) = 36),
+            decided_at INTEGER NOT NULL
+        )
+        """,
+        """
+        CREATE TRIGGER provider_switch_proposals_no_update
+        BEFORE UPDATE ON provider_switch_proposals
+        BEGIN
+            SELECT RAISE(ABORT, 'provider switch proposals are immutable');
+        END
+        """,
+        """
+        CREATE TRIGGER provider_switch_proposals_no_delete
+        BEFORE DELETE ON provider_switch_proposals
+        BEGIN
+            SELECT RAISE(ABORT, 'provider switch proposals are immutable');
+        END
+        """,
+        """
+        CREATE TRIGGER provider_switch_decisions_no_update
+        BEFORE UPDATE ON provider_switch_decisions
+        BEGIN
+            SELECT RAISE(ABORT, 'provider switch decisions are immutable');
+        END
+        """,
+        """
+        CREATE TRIGGER provider_switch_decisions_no_delete
+        BEFORE DELETE ON provider_switch_decisions
+        BEGIN
+            SELECT RAISE(ABORT, 'provider switch decisions are immutable');
+        END
+        """,
+    ),
+)
+
 GENERATION_MIGRATIONS = (
     *APPLICATION_MIGRATIONS,
     _GENERATION_PROJECT_BRIDGE,
     GENERATION_SCHEMA_MIGRATION,
 )
+
+APPROVAL_MIGRATIONS = (*GENERATION_MIGRATIONS, PROVIDER_SWITCH_PROPOSAL_MIGRATION)
 
 
 def _validate_migrations(migrations: Sequence[Migration]) -> None:
