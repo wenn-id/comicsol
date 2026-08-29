@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Comic Sol Studio</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#studio-main">Skip to Studio content</a>
+    <header class="site-header">
+      <div>
+        <p class="eyebrow">Comic Sol</p>
+        <h1>Studio</h1>
+      </div>
+      <nav aria-label="Studio steps">
+        <button id="start-tab" class="step-tab" type="button" data-view="start" aria-current="page">1. Start</button>
+        <button id="plan-tab" class="step-tab" type="button" data-view="plan" aria-current="false" disabled>2. Plan</button>
+      </nav>
+    </header>
+    <main id="studio-main" tabindex="-1">
+      <div id="studio-view"></div>
+    </main>
+    <div id="studio-status" class="status-region" role="status" aria-live="polite" aria-atomic="true"></div>
+    <footer>
+      <p>Private project content stays in this authenticated Studio session.</p>
+    </footer>
+    <noscript>Comic Sol Studio requires JavaScript to create or import a project.</noscript>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

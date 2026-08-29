@@ -34,3 +34,14 @@ version = { attr = "comic_sol_web.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["comic_sol_web*"]
+
+[tool.setuptools.package-data]
+comic_sol_web = [
+    "static/index.html",
+    "static/app.js",
+    "static/api.js",
+    "static/state.js",
+    "static/styles.css",
+    "static/views/start.js",
+    "static/views/plan.js",
+]
