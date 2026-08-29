@@ -174,6 +174,7 @@ class WebApplicationTests(unittest.TestCase):
             {
                 ("/api/projects", frozenset({"POST"})),
                 ("/api/projects/import", frozenset({"POST"})),
+                ("/api/projects/current", frozenset({"GET"})),
                 ("/api/projects/{project_id}", frozenset({"GET"})),
             },
             routes,
