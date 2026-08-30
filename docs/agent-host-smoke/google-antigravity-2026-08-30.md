@@ -48,7 +48,10 @@ inferred from the host, provider, model, or tool name.
   0 hard failures, and `exports/pdf-verification.json` confirms the exported PDF against
   the composed page with `mean_absolute_channel_error 0.578588` and
   `high_error_pixel_ratio 0.0`, both inside the published tolerance.
-- **Execution date supplied by the tester:** 2026-08-30.
+- **Execution date supplied by the tester:** 2026-08-30 (Asia/Jakarta, UTC+07:00).
+  The retained local Antigravity lane log starts with
+  `=== Antigravity live run started 2026-08-30T04:57:44+07:00 ===`. GitHub's
+  August 29 UTC display timestamp corresponds to August 30 in UTC+07:00.
 - **Known limitations:**
   - The retained artifacts live only on the tester's local machine. No durable,
     access-controlled external location was authorized for this run, so the required
@@ -58,7 +61,15 @@ inferred from the host, provider, model, or tool name.
   - Scope was the minimum honest smoke: one page, one panel, one character.
   - Visual QA was a bounded review by the host acting as reviewer; it is not an
     independent third-party assessment of illustration quality.
-  - No provider name, model name, credential, account identifier, endpoint, or raw
-    provider response is recorded in the project or in this record.
+  - The host invocation recorded the model flag `gemini-3.1-pro-high` (see the
+    agent-host field above); no credential, account identifier, endpoint, or raw
+    provider response was recorded. The retained Comic Sol project, generation
+    receipt, and acceptance record store `provider: null` and `model: null` because
+    Comic Sol itself does not introspect the host's image-generation call and the
+    `agent-image-generation` executor is an opaque host capability.
   - This record verifies the Antigravity host only. It does not verify any other host,
     provider, or model, and it makes no broad illustration-quality claim.
+- **Cross-host archive route:** this Antigravity host also executed the import,
+  generate, accept-result, and re-export leg (leg 2) of the same-day
+  Codex → Antigravity → Codex portable-handoff route; see
+  [cross-host-2026-08-30](cross-host-2026-08-30.md).
