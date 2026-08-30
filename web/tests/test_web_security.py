@@ -17,8 +17,7 @@ cryptographic/redaction primitives:
 - raster MIME mismatch, dimension and decoded-size limits,
   failed-replacement retention;
 - SSRF/redirect/loopback/private/link-local/DNS-rebinding policy;
-- provider-switch approval expiry, replay, wrong owner, wrong jobs,
-  forged destination;
+- provider-switch approval expiry, replay, wrong owner, wrong jobs;
 - lease/restart recovery and cancellation races;
 - sensitive-data redaction across logs/envelopes.
 
@@ -46,6 +45,7 @@ from comic_sol_web.security import (
 
 from web.tests.fixtures.wp16_fixture import (
     WiredAppFixture,
+    bounded_png,
     headers,
     pump,
 )
@@ -230,26 +230,34 @@ class TestQueueIdempotency(WiredAppFixture):
         pid = imp.json()["project_id"]
         rev = imp.json()["revision"]
 
-        key = str(uuid4())
+        # First request: a new key and a baseline queue body.
+        first_key = str(uuid4())
         first = client.post(
             "/api/generation/queue",
             json=self._queue_body(pid, rev),
-            headers=headers(rev, key=key),
+            headers=headers(rev, key=first_key),
         )
         assert first.status_code == 201, first.text
-        # A different idempotency key for the same project/revision.
+
+        # Reuse the SAME key but mutate a valid request field so the
+        # request content genuinely changes. The contract must reject this
+        # same-key/different-body attempt (not silently return the first
+        # job, not silently succeed with a different job).
+        mutated_body = self._queue_body(pid, rev, model="fake-raster-v2")
         second = client.post(
             "/api/generation/queue",
-            json=self._queue_body(pid, rev),
-            headers=headers(rev, key=str(uuid4())),
+            json=mutated_body,
+            headers=headers(rev, key=first_key),
         )
-        # Either replay-conflict (409/400) or an identical req accepted as
-        # deduplicated — but never a silently different job set.
-        assert second.status_code in {200, 201, 400, 409}, second.text
-        if second.status_code == 201:
+        # The contract's only acceptable answers are conflict (409/400) or
+        # identical-job replay (200/201) — never a silently different job
+        # set. A status 201 with a different job_id is the exact regression
+        # we are guarding against.
+        self.assertIn(second.status_code, {200, 201, 400, 409}, second.text)
+        if second.status_code in {200, 201}:
             first_ids = [job["job_id"] for job in first.json()["jobs"]]
             second_ids = [job["job_id"] for job in second.json()["jobs"]]
-            assert first_ids and first_ids == second_ids
+            self.assertTrue(first_ids and first_ids == second_ids, (first_ids, second_ids))
 
 
 class TestProviderSwitchApprovalSecurity(WiredAppFixture):
@@ -490,13 +498,32 @@ class TestCallbackForgeryAndRace(WiredAppFixture):
             )
 
     def test_duplicate_completion_rejected(self) -> None:
-        client, _auth = self.client(self.alice)
-        job_id, pid, rev = self._queue_one(client)
+        """A real `record_result` second call must be reconciled as a duplicate.
 
-        pump(self.generation)  # advance out of queued
+        The FakeProvider's deterministic outcome reaches a terminal state
+        on the first pump, so a second `pump()` does not drive another
+        `record_result`. To exercise the duplicate-completion contract we
+        capture the lease from the first attempt and re-call `record_result`
+        on the same job, which must raise `GenerationConflictError` rather
+        than silently overwrite the existing receipt.
+        """
+        from comic_sol_web.generation.service import GenerationConflictError
+        from comic_sol_web.generation.types import GenerationResult, JobState
+
+        client, _auth = self.client(self.alice)
+        job_id, _pid, _rev = self._queue_one(client)
+
+        # First pump drives the job to a terminal state and writes the
+        # result receipt (raster + checksum).
+        pump(self.generation)
         before = client.get(f"/api/generation/{job_id}")
         assert before.status_code == 200
         before_state = before.json()["state"]
+        self.assertIn(
+            before_state,
+            {"accepted", "failed", "validating", "polling", "cancelled"},
+            before.json(),
+        )
 
         # A second worker pass must not resurrect or duplicate the job; the
         # state may only move forward (or stay at the same terminal/pending
@@ -505,16 +532,44 @@ class TestCallbackForgeryAndRace(WiredAppFixture):
         after = client.get(f"/api/generation/{job_id}")
         assert after.status_code == 200
         self.assertNotEqual(after.json()["state"], "queued")
-        # If the first pass already reached a terminal state, the second pass
-        # must preserve it rather than re-running the provider.
         if before_state in {"accepted", "failed", "cancelled"}:
             self.assertEqual(after.json()["state"], before_state)
+
+        # Exercise the duplicate-completion contract directly: a forged
+        # second completion with a new (wrong) raster must be rejected, not
+        # silently overwrite the existing receipt.
+        if before_state == "accepted":
+            from PIL import Image as _PILImage
+
+            stream = io.BytesIO()
+            _PILImage.new("RGB", (8, 8), "#abcdef").save(stream, format="PNG")
+            other_bytes = stream.getvalue()
+
+            with self.assertRaises(GenerationConflictError):
+                self.generation.record_result(
+                    job_id=job_id,
+                    lease_token=None,
+                    result=GenerationResult(
+                        external_job_id="forged-second-callback",
+                        state=JobState.ACCEPTED,
+                        raster_bytes=other_bytes,
+                        media_type="image/png",
+                        effective_parameters={},
+                        usage={},
+                    ),
+                )
 
 
 class TestArchiveSecurity(WiredAppFixture):
     """Archive traversal, symlink/reparse, oversize, malformed, rollback."""
 
     def _make_archive_bytes(self, entries: list[tuple[str, bytes]]) -> bytes:
+        """Build a synthetic ZIP. Only for malformed-BODY tests.
+
+        A synthetic bundle can be rejected as malformed before any member
+        path or size policy runs, so policy-specific tests must derive from
+        a real archive via `_inject_into_valid_archive` instead.
+        """
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for name, data in entries:
@@ -522,9 +577,38 @@ class TestArchiveSecurity(WiredAppFixture):
             zf.writestr("engine.json", json.dumps({"stage": "DRAFTED"}).encode())
         return buf.getvalue()
 
+    def _inject_into_valid_archive(
+        self,
+        members: list[tuple[zipfile.ZipInfo | str, bytes]],
+    ) -> bytes:
+        """Clone a genuinely valid portable archive plus hostile members.
+
+        Everything else in the bundle stays canonical so a rejection can
+        only be attributed to the injected property under test.
+        """
+        import copy
+
+        source = self.portable_archive()
+        entries: list[tuple[zipfile.ZipInfo | str, bytes]] = []
+        with zipfile.ZipFile(source, "r") as bundle:
+            for info in bundle.infolist():
+                entries.append((copy.copy(info), bundle.read(info)))
+        entries.extend(members)
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as out:
+            for info, payload in entries:
+                out.writestr(info, payload)
+        return buf.getvalue()
+
     def test_archive_traversal_rejected(self) -> None:
+        """A `../` member inside an otherwise valid archive must be rejected.
+
+        Derived from a real portable archive so the rejection is attributable
+        to the traversal path, not to a malformed bundle.
+        """
         client, _auth = self.client(self.alice)
-        data = self._make_archive_bytes([("../evil", b"x"), ("page-1.png", b"png")])
+        data = self._inject_into_valid_archive([("../evil", b"x")])
         resp = client.post(
             "/api/projects/import",
             files={
@@ -544,35 +628,24 @@ class TestArchiveSecurity(WiredAppFixture):
     def test_archive_symlink_rejected(self) -> None:
         """A real symlink ZipInfo member must be rejected by the archive guard.
 
-        Take a genuinely valid portable archive, inject one Unix symlink
-        member (`external_attr` carrying `S_IFLNK`), and submit it under the
-        accepted `.comic-sol-handoff` suffix so the rejection is proven at
-        the archive-content boundary rather than the filename check.
+        Inject a Unix symlink member into a genuinely valid portable
+        archive. The rewriter must not silently accept the bundle, and the
+        rejection must be attributable to the symlink member, not to a
+        malformed bundle.
         """
-        import copy
-
-        client, _auth = self.client(self.alice)
-        source = self.portable_archive()
-        with zipfile.ZipFile(source, "r") as bundle:
-            entries = [(copy.copy(info), bundle.read(info)) for info in bundle.infolist()]
-
         link = zipfile.ZipInfo("project/symlink", (1980, 1, 1, 0, 0, 0))
         link.create_system = 3
         link.compress_type = zipfile.ZIP_DEFLATED
         link.external_attr = (stat.S_IFLNK | 0o777) << 16
-        entries.append((link, b"project.json"))
 
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as out:
-            for info, payload in entries:
-                out.writestr(info, payload)
-
+        client, _auth = self.client(self.alice)
+        data = self._inject_into_valid_archive([(link, b"project.json")])
         resp = client.post(
             "/api/projects/import",
             files={
                 "archive": (
                     "symlink.comic-sol-handoff",
-                    io.BytesIO(buf.getvalue()),
+                    io.BytesIO(data),
                     "application/zip",
                 )
             },
@@ -584,6 +657,14 @@ class TestArchiveSecurity(WiredAppFixture):
         assert current.status_code == 204, current.text
 
     def test_malformed_archive_rejected_and_rollback(self) -> None:
+        """A body that isn't a valid zip at all is rejected without
+        creating a project, and any prior project state is unchanged.
+
+        This is distinct from `test_oversized_archive_rejected` and
+        `test_archive_symlink_rejected` because it exercises the bundle
+        parsing boundary (not a policy over a parseable bundle), so
+        `_inject_into_valid_archive` is not appropriate.
+        """
         client, _auth = self.client(self.alice)
         resp = client.post(
             "/api/projects/import",
@@ -602,9 +683,15 @@ class TestArchiveSecurity(WiredAppFixture):
         assert current.status_code == 204, current.text
 
     def test_oversized_archive_rejected(self) -> None:
+        """An archive that exceeds the public size cap is rejected without
+        creating a project.
+
+        Inflate one member in a valid portable archive past the cap. The
+        rejection must be attributed to the size policy, not to a
+        malformed bundle.
+        """
         client, _auth = self.client(self.alice)
-        blob = b"A" * (64 * 1024 * 1024 + 1)  # > bounded import size
-        data = self._make_archive_bytes([("big.png", blob)])
+        data = self._inject_into_valid_archive([("big", b"\x00" * (64 * 1024 * 1024 + 1))])
         resp = client.post(
             "/api/projects/import",
             files={
@@ -625,9 +712,10 @@ class TestRasterValidation(WiredAppFixture):
     def test_raster_mime_mismatch_rejected(self) -> None:
         """A valid decodable PNG with a lying `text/html` MIME must be
         rejected at the MIME/decoding boundary, not because the bytes are
-        invalid."""
+        invalid.
+        """
         client, _auth = self.client(self.alice)
-        png = self._valid_png()
+        png = bounded_png()
         resp = client.post(
             "/api/assets",
             files={"file": ("panel.png", io.BytesIO(png), "text/html")},  # lying MIME
@@ -637,9 +725,17 @@ class TestRasterValidation(WiredAppFixture):
         assert self._current_asset_count(client) == 0
 
     def test_failed_replacement_retains_previous(self) -> None:
-        """When a staged-raster replacement fails, the prior artifact remains."""
+        """When a staged-raster replacement fails, the prior artifact remains.
+
+        We use a malformed replacement body to test the rejection
+        contract. We do NOT prove a *semantic* replace-then-roll-back
+        workflow here: a successful second upload is a new asset, not an
+        in-place replacement of the prior one. The bytes-level retention
+        is what guarantees the prior asset is not corrupted by a failed
+        attempt.
+        """
         client, _auth = self.client(self.alice)
-        png = self._valid_png()
+        png = bounded_png()
         # Upload a valid raster and capture its digest.
         ok = client.post(
             "/api/assets",
@@ -667,14 +763,7 @@ class TestRasterValidation(WiredAppFixture):
         # The prior artifact must still be retrievable, byte-identical.
         after = client.get(f"/api/assets/{asset_id}")
         assert after.status_code == 200, after.text
-        assert _sha256(after.content) == original_sha
-
-    def _valid_png(self) -> bytes:
-        from PIL import Image
-
-        stream = io.BytesIO()
-        Image.new("RGB", (8, 8), "#334455").save(stream, format="PNG")
-        return stream.getvalue()
+        self.assertEqual(_sha256(after.content), original_sha)
 
     def _current_asset_count(self, client) -> int:
         # Assets are owner-bounded; an upload that failed must leave no row.

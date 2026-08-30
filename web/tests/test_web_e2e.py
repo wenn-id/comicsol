@@ -14,6 +14,7 @@ without changes.
 
 from __future__ import annotations
 
+import io
 import tempfile
 from pathlib import Path
 from uuid import uuid4
@@ -24,20 +25,10 @@ from web.tests import support as _support  # noqa: F401
 
 from web.tests.fixtures.wp16_fixture import (
     WiredAppFixture,
+    bounded_png,
     headers,
     pump,
 )
-
-
-def _bounded_png(width: int = 8, height: int = 8) -> bytes:
-    """Minimal valid PNG image for raster accept tests."""
-    from PIL import Image
-
-    import io
-
-    stream = io.BytesIO()
-    Image.new("RGB", (width, height), "#334455").save(stream, format="PNG")
-    return stream.getvalue()
 
 
 class TestImportedArchiveFlow(WiredAppFixture):
@@ -309,7 +300,12 @@ class TestHealthzIsolation(WiredAppFixture):
             self.assertIn(resp.json().get("status"), {"ok", "healthy", "pass"})
 
     def test_healthz_independent_of_router_includes(self) -> None:
-        """healthz must respond even when only the projects router is wired."""
+        """healthz returns 404 when only the projects router is wired.
+
+        Registers only the projects router and no /healthz route, then
+        asserts 404. This proves the healthz isolation contract: a router
+        that does not register the route must not synthesize one.
+        """
         from fastapi import FastAPI
         from comic_sol_web.api.projects import create_projects_router
 
@@ -493,7 +489,7 @@ class TestWebMCPParity(WiredAppFixture):
         client_bob, _ = self.client(self.bob)
 
         # Upload as Alice.
-        png = _bounded_png()
+        png = bounded_png()
         upload_resp = client_alice.post(
             "/api/assets",
             files={"file": ("test.png", png, "image/png")},
@@ -504,3 +500,125 @@ class TestWebMCPParity(WiredAppFixture):
         # Download as Bob — must be denied.
         dl_resp = client_bob.get(f"/api/assets/{asset_id}")
         self.assertIn(dl_resp.status_code, {403, 404}, dl_resp.text)
+
+    def test_full_agent_native_e2e(self) -> None:
+        """Full agent-native flow: queue the agent provider, poll into
+        POLLING, upload a page-owned asset, bind it via submit-agent,
+        then verify the accepted artifact and ownership.
+
+        Drives the entire surface the agent path depends on, not just an
+        asset download check. If owner scope, project/job binding,
+        explicit promotion, or accepted-artifact retention regresses, any
+        of these assertions fails.
+        """
+        client, _auth = self.client(self.alice)
+
+        # 1. Create the project (import archive).
+        archive = self.portable_archive()
+        with archive.open("rb") as handle:
+            imp = client.post(
+                "/api/projects/import",
+                files={"archive": (archive.name, handle, "application/zip")},
+                headers=headers(0),
+            )
+        self.assertEqual(imp.status_code, 201, imp.text)
+        pid = imp.json()["project_id"]
+        rev = imp.json()["revision"]
+
+        # 2. Queue an agent job — provider=agent using the real agent model id.
+        from comic_sol_web.generation.providers.agent import AGENT_MODEL
+
+        queued = client.post(
+            "/api/generation/queue",
+            json={
+                "project_id": pid,
+                "expected_revision": rev,
+                "provider": "agent",
+                "model": AGENT_MODEL,
+                "auth_mode": "agent",
+            },
+            headers=headers(rev),
+        )
+        self.assertEqual(queued.status_code, 201, queued.text)
+        jobs = queued.json()["jobs"]
+        self.assertGreaterEqual(len(jobs), 1)
+        job_id = jobs[0]["job_id"]
+        self.assertEqual(jobs[0]["provider"], "agent")
+        self.assertEqual(jobs[0]["auth_mode"], "agent")
+
+        # 3. Pump the worker so the job advances to POLLING (waiting on
+        # agent asset). The AgentProvider returns a "waiting" result; the
+        # generation service must land the job in POLLING, not auto-promote.
+        pump(self.generation)
+        polled = client.get(f"/api/generation/{job_id}")
+        self.assertEqual(polled.status_code, 200, polled.text)
+        self.assertEqual(polled.json()["state"], "polling", polled.text)
+
+        # The agent job is bound to a specific prepared request. The asset
+        # we submit must match the job's requested dimensions; otherwise
+        # the service rejects the agent handoff as "not eligible" (409).
+        owned = self.generation._queue.get_owned(self.alice.user_id, job_id)
+        request_w = owned.request.width
+        request_h = owned.request.height
+
+        # 4. Upload a page-owned asset that the agent will hand back.
+        png = bounded_png(width=request_w, height=request_h)
+        upload_resp = client.post(
+            "/api/assets",
+            files={"file": ("agent.png", io.BytesIO(png), "image/png")},
+            headers=headers(0),
+        )
+        self.assertIn(upload_resp.status_code, {200, 201}, upload_resp.text)
+        asset_id = upload_resp.json()["asset_id"]
+
+        # 5. Bind the asset to the agent job via /submit-agent. The handoff
+        # validates owner scope, project/revision binding, and raster
+        # dimensions. It promotes the staged artifact and lands the job in
+        # VALIDATING with `artifact_state=staged` — i.e. the WP5 handoff
+        # succeeded; final WP3 promotion happens via /submit-staged.
+        bind = client.post(
+            f"/api/assets/{asset_id}/submit-agent",
+            json={"job_id": job_id, "expected_revision": rev},
+            headers=headers(rev),
+        )
+        self.assertEqual(bind.status_code, 200, bind.text)
+        bound = bind.json()
+        self.assertEqual(bound["state"], "validating", bound)
+        self.assertEqual(bound["artifact_state"], "staged", bound)
+        self.assertEqual(bound["job_id"], job_id)
+        self.assertEqual(bound["provider"], "agent")
+        self.assertEqual(bound["project_id"], pid)
+        self.assertEqual(bound["project_revision"], rev)
+
+        # 6. WP3 promotion: accept the staged agent asset through the
+        # /submit-staged route, exactly as the Web UI does. The job
+        # must transition to ACCEPTED and stay there.
+        accept = client.post(
+            f"/api/generation/{job_id}/submit-staged",
+            json={"expected_revision": rev},
+            headers=headers(rev),
+        )
+        self.assertEqual(accept.status_code, 200, accept.text)
+        accepted = accept.json()
+        self.assertEqual(accepted["state"], "accepted", accepted)
+        self.assertEqual(accepted["job_id"], job_id)
+
+        # 7. The accepted job must be retrievable and stay accepted after
+        # further pumps (no resurrection to validating).
+        pump(self.generation)
+        after = client.get(f"/api/generation/{job_id}")
+        self.assertEqual(after.status_code, 200, after.text)
+        self.assertEqual(after.json()["state"], "accepted", after.text)
+
+        # 8. Cross-owner cannot bind another agent asset to this job.
+        client_bob, _ = self.client(self.bob)
+        bob_attempt = client_bob.post(
+            f"/api/assets/{asset_id}/submit-agent",
+            json={"job_id": job_id, "expected_revision": rev},
+            headers=headers(rev),
+        )
+        self.assertIn(
+            bob_attempt.status_code,
+            {400, 403, 404, 409},
+            bob_attempt.text,
+        )

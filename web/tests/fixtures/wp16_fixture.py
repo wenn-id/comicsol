@@ -77,6 +77,17 @@ class FakeAuth:
         return self.impersonate or self.principal
 
 
+def bounded_png(width: int = 8, height: int = 8) -> bytes:
+    """Valid PNG bytes for raster tests, generated rather than hand-encoded."""
+    import io
+
+    from PIL import Image
+
+    stream = io.BytesIO()
+    Image.new("RGB", (width, height), "#334455").save(stream, format="PNG")
+    return stream.getvalue()
+
+
 def headers(revision: int = 0, *, key: str | None = None) -> dict[str, str]:
     return {
         "Idempotency-Key": key or str(uuid4()),
@@ -151,12 +162,18 @@ class WiredAppFixture(unittest.TestCase):
         return client, auth
 
     def portable_archive(self) -> Path:
-        from tests.test_handoff_lifecycle import HandoffLifecycleGoldenTests
-
-        _root, project = HandoffLifecycleGoldenTests._planner_project(self)
+        """Export a real golden handoff archive via the public engine surface."""
+        project = self.planner_project()
         comic_sol.prepare_handoff(project)
         archive_root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, archive_root, True)
         archive = archive_root / "golden.comic-sol-handoff"
         export_handoff_archive(project, archive)
         return archive
+
+    def planner_project(self) -> Path:
+        """Build a canonical planner project without depending on a private API."""
+        from tests.test_handoff_lifecycle import HandoffLifecycleGoldenTests
+
+        _root, project = HandoffLifecycleGoldenTests._planner_project(self)
+        return project
