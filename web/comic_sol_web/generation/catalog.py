@@ -101,4 +101,19 @@ CATALOG: tuple[ProviderModel, ...] = (
         capabilities=frozenset({"text_to_image"}),
         enabled=True,
     ),
+    ProviderModel(
+        provider="comfyui",
+        model="sdxl-base",
+        capabilities=frozenset(
+            {
+                "async_jobs",
+                "cancellation",
+                "custom_dimensions",
+                "negative_prompt",
+                "seed",
+                "text_to_image",
+            }
+        ),
+        enabled=True,
+    ),
 )

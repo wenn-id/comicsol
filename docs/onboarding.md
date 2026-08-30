@@ -111,8 +111,10 @@ passes no capability flags rather than guessing.
 
 Sessions differ even on the same agent host, so Comic Sol does not assume that
 Codex, Claude, Antigravity, ZCode, or any other platform exposes image generation.
-Those four named hosts remain experimental until a real host smoke record is linked;
-installer tests prove placement mechanics, not live compatibility. Host support and
+Those four named hosts remain experimental until **both** a linked real host
+execution smoke record **and** durable, inspectable links to the required sanitized
+output artifacts exist; a linked record without durable output evidence keeps the
+host Experimental. Installer tests prove placement mechanics, not live compatibility. Host support and
 image-generator support are separate claims. The resulting `image-capability` check is:
 
 | Result | Meaning |

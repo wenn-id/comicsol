@@ -20,8 +20,11 @@ Supported placements are Codex user, Claude user/project, Antigravity project, a
 ZCode user. Add `--project-root /absolute/project` for project scope. `--target auto`
 requires exactly one existing supported destination; it reports ambiguity without
 writing. Path-placement tests prove mechanics, not live host compatibility. Codex,
-Claude, Antigravity, and ZCode remain experimental until a real host smoke record is
-linked. Follow the [first-run walkthrough](../onboarding.md) for exact placement and
+Claude, Antigravity, and ZCode remain experimental until **both** a linked real host
+execution smoke record **and** durable, inspectable links to the required sanitized
+output artifacts (manifest, QA report, page PNG, PDF, and execution evidence) exist.
+A linked Markdown record without durable output evidence keeps the host Experimental.
+Follow the [first-run walkthrough](../onboarding.md) for exact placement and
 readiness details.
 
 ### Native core CLI

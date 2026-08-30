@@ -168,22 +168,132 @@ class HostSmokeContractTests(unittest.TestCase):
         for field in required_fields:
             self.assertRegex(self.format, rf"(?m)^- \*\*{re.escape(field)}:\*\*")
 
-    def test_all_named_hosts_are_explicitly_experimental_without_evidence(self):
-        rows = {
+    # Per-host name → supported slug used to discover its retained record under
+    # docs/agent-host-smoke/. The slug is the stem of the record Markdown file.
+    _HOST_RECORD_SLUG = {
+        "Codex": "codex",
+        "Claude Code": "claude-code",
+        "Google Antigravity": "google-antigravity",
+        "ZCode": "zcode",
+    }
+    _HOST_RECORD_REQUIRED_FIELDS = (
+        "Agent host name and version",
+        "Comic Sol commit or version",
+        "Installation target and scope",
+        "Filesystem capability",
+        "Shell/tool-execution capability",
+        "Image-generation route",
+        "Portable-handoff route",
+        "Output evidence",
+        "Execution date supplied by the tester",
+        "Known limitations",
+    )
+    _DURABLE_EVIDENCE_PHRASES = (
+        "durable",
+        "no durable",
+        "not available",
+        "experimental",
+    )
+
+    @classmethod
+    def _host_status_rows(cls):
+        return {
             cells[0]: cells[1:]
-            for line in self.status.splitlines()
+            for line in cls.status.splitlines()
             if line.startswith("|")
             for cells in [[cell.strip() for cell in line.strip("|").split("|")]]
-            if cells and cells[0] in {"Codex", "Claude Code", "Google Antigravity", "ZCode"}
+            if cells and cells[0] in cls._HOST_RECORD_SLUG
         }
-        self.assertEqual(
-            {"Codex", "Claude Code", "Google Antigravity", "ZCode"},
-            set(rows),
-        )
+
+    def test_all_named_hosts_are_explicitly_experimental(self):
+        rows = self._host_status_rows()
+        self.assertEqual(set(self._HOST_RECORD_SLUG), set(rows))
+        smoke_dir = ROOT / "docs" / "agent-host-smoke"
         for host, cells in rows.items():
             with self.subTest(host=host):
-                self.assertEqual("Experimental", cells[0])
-                self.assertEqual("No retained live smoke record", cells[1])
+                self.assertEqual("Experimental", cells[0], f"{host} status must be Experimental")
+                evidence_cell = cells[1]
+                # Two permitted states for an Experimental row:
+                # 1. "No retained live smoke record" → there is no linked Markdown file.
+                # 2. A repository-relative Markdown link to a retained record that
+                #    is verified to exist, names this host, includes every required
+                #    field, and states an explicit durable-evidence limitation.
+                if evidence_cell == "No retained live smoke record":
+                    # If a record for this host exists anyway, the cell is wrong.
+                    candidate = smoke_dir / f"{self._HOST_RECORD_SLUG[host]}-*.md"
+                    if any(candidate.parent.glob(candidate.name)):
+                        self.fail(
+                            f"{host} row says 'No retained live smoke record' but a "
+                            f"record exists matching {candidate}"
+                        )
+                    # Also reject bogus file existence for the "no record" state.
+                    if any(
+                        (ROOT / "docs").glob(
+                            f"agent-host-smoke/{self._HOST_RECORD_SLUG[host]}-*.md"
+                        )
+                    ):
+                        self.fail(
+                            f"{host} row says 'No retained live smoke record' but a "
+                            f"record exists under docs/agent-host-smoke/"
+                        )
+                    continue
+                # Otherwise the cell MUST be a repository-relative Markdown link.
+                link_match = re.search(r"\]\(([^)]+\.md)\)", evidence_cell)
+                self.assertIsNotNone(
+                    link_match,
+                    f"{host} evidence cell must link a .md record: {evidence_cell!r}",
+                )
+                assert link_match is not None  # mypy narrowing after assertIsNotNone
+                link_target = link_match.group(1)
+                self.assertFalse(
+                    link_target.startswith(("http://", "https://")),
+                    f"{host} evidence cell must link a repository-relative record",
+                )
+                record_path = (ROOT / "docs" / link_target).resolve()
+                self.assertTrue(
+                    record_path.is_file(),
+                    f"{host} record not found at {record_path}",
+                )
+                # Reject the previously-loosened bare "Retained ..." prefix without
+                # a valid link — keep this explicit so the assertion can never
+                # silently regress to a meaningless prefix check.
+                record_text = record_path.read_text(encoding="utf-8")
+                for field in self._HOST_RECORD_REQUIRED_FIELDS:
+                    # Accept an optional parenthetical annotation after the field
+                    # name (e.g. "Known limitations (exact missing evidence):").
+                    self.assertRegex(
+                        record_text,
+                        rf"(?m)^\s*-\s*\*\*{re.escape(field)}(?:\s*\([^)]*\))?:\*\*",
+                        f"{host} record missing required field {field!r}",
+                    )
+                # The record must name the host.
+                normalized_record = collapsed(record_text)
+                self.assertIn(host, normalized_record, f"{host} record must name {host}")
+                # The record must state a durable-evidence limitation explicitly.
+                lowered = normalized_record.lower()
+                self.assertTrue(
+                    any(phrase in lowered for phrase in self._DURABLE_EVIDENCE_PHRASES),
+                    f"{host} record must state an explicit durable-evidence limitation",
+                )
+
+    def test_retained_evidence_cells_cannot_be_arbitrary_prefixes(self):
+        """The contract is the linked record plus its durable-evidence status, not a
+        free-form string starting with "Retained ". Lock the cell to a Markdown link
+        so a future copy-paste cannot re-loosen the check."""
+        rows = self._host_status_rows()
+        for host, cells in rows.items():
+            with self.subTest(host=host):
+                evidence_cell = cells[1]
+                if evidence_cell == "No retained live smoke record":
+                    continue
+                # Must end in a markdown link to a .md file (with optional preceding
+                # descriptive text). The check is exact: no plain "Retained ..." text
+                # without a verifiable link.
+                self.assertRegex(
+                    evidence_cell,
+                    r"\[.+\]\([^)]+\.md\)",
+                    f"{host} cell must end in a Markdown link to a .md record",
+                )
 
     def test_no_host_is_fabricated_as_verified(self):
         self.assertNotRegex(self.status, r"(?im)^\|[^\n]+\|\s*Verified\s*\|")

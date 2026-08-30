@@ -672,7 +672,9 @@ class GoldenCreatorPathTests(unittest.TestCase):
         section = self.section(self.readme, "Codex planning → Antigravity rendering")
         normalized = collapsed(section)
         for phrase in (
-            "experimental until linked live smoke evidence exists",
+            "experimental until",
+            "linked real host execution smoke record",
+            "durable, inspectable links",
             "has not been verified",
             "handoff prepare",
             "handoff inspect",

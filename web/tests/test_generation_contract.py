@@ -271,6 +271,7 @@ class CatalogAndRegistryTests(unittest.IsolatedAsyncioTestCase):
                 ("cloudflare", "@cf/black-forest-labs/flux-1-schnell", True),
                 ("xai", "grok-imagine-image-2.0", True),
                 ("stability", "sd3.5-large", True),
+                ("comfyui", "sdxl-base", True),
             ),
             tuple((entry.provider, entry.model, entry.enabled) for entry in CATALOG),
         )
