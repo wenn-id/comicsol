@@ -107,7 +107,7 @@ class CatalogAndFixtureTests(unittest.TestCase):
 
 class WorkflowValidationTests(unittest.IsolatedAsyncioTestCase):
     def provider(self, *, fixture_dir: Path | None = None) -> ComfyUIProvider:
-        return ComfyUIProvider(fixture_dir=fixture_dir)
+        return ComfyUIProvider(fixture_dir=FIXTURES if fixture_dir is None else fixture_dir)
 
     def injected_workflow(self, package: dict[str, object]) -> dict[str, dict[str, object]]:
         workflow = package["workflow"]
@@ -250,6 +250,7 @@ class RemoteLifecycleTests(unittest.IsolatedAsyncioTestCase):
     def remote_provider(self, handler: object) -> ComfyUIProvider:
         return ComfyUIProvider(
             approved_origins=frozenset({REMOTE_ORIGIN}),
+            fixture_dir=FIXTURES,
             transport=httpx.MockTransport(handler),
         )
 
@@ -479,7 +480,7 @@ class RemoteLifecycleTests(unittest.IsolatedAsyncioTestCase):
             await provider.generate(make_request(), "sdxl-base", None)
         self.assertNotIn(CANARY, f"{caught.exception!s} {caught.exception!r}")
 
-        local = ComfyUIProvider()
+        local = ComfyUIProvider(fixture_dir=FIXTURES)
         result = await local.generate(make_request(), "sdxl-base", None)
         assert result.external_job_id is not None
         package = local.local_package(result.external_job_id)
@@ -490,7 +491,7 @@ class RemoteLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
 class LocalHandoffTests(unittest.IsolatedAsyncioTestCase):
     async def test_local_route_never_contacts_localhost(self) -> None:
-        provider = ComfyUIProvider()
+        provider = ComfyUIProvider(fixture_dir=FIXTURES)
         with patch.object(socket, "getaddrinfo", side_effect=AssertionError("network access")):
             result = await provider.generate(make_request(), "sdxl-base", None)
             package = provider.local_package(result.external_job_id)
@@ -498,7 +499,7 @@ class LocalHandoffTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("://", json.dumps(package))
 
     async def test_local_package_is_deterministic_portable_and_resumable(self) -> None:
-        provider = ComfyUIProvider()
+        provider = ComfyUIProvider(fixture_dir=FIXTURES)
         request = make_request()
         first = await provider.generate(request, "sdxl-base", None)
         second = await provider.generate(request, "sdxl-base", None)
