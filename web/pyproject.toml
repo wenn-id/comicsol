@@ -44,4 +44,6 @@ comic_sol_web = [
     "static/styles.css",
     "static/views/start.js",
     "static/views/plan.js",
+    "static/views/generate.js",
+    "static/views/review.js",
 ]

@@ -6,7 +6,16 @@ import asyncio
 from typing import Annotated, Any, NoReturn
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 
 from comic_sol_web.auth import AuthError, SessionPrincipal, require_principal
 
@@ -63,7 +72,18 @@ def _reject(error: Exception) -> NoReturn:
     raise error
 
 
-def _job_envelope(job: Any) -> dict[str, object]:
+def _job_envelope(job: Any, expected_revision: int | None = None) -> dict[str, object]:
+    revision_current = expected_revision is not None and job.project_revision == expected_revision
+    can_cancel = revision_current and (
+        job.state.value
+        in {
+            "queued",
+            "polling",
+            "awaiting_provider_confirmation",
+            "paused",
+        }
+        or (job.state.value == "running" and job.external_job_id is not None)
+    )
     value: dict[str, object] = {
         "job_id": job.job_id,
         "project_id": job.project_id,
@@ -75,12 +95,41 @@ def _job_envelope(job: Any) -> dict[str, object]:
         "attempt": job.attempt_number,
         "retry_count": job.retry_count,
         "max_retries": job.max_retries,
+        "can_cancel": can_cancel,
     }
-    if job.external_job_id is not None:
-        value["external_job_id"] = job.external_job_id
     if job.accepted_project_revision is not None:
         value["accepted_project_revision"] = job.accepted_project_revision
+        artifact_job_id = getattr(getattr(job, "request", None), "job_id", None)
+        if isinstance(artifact_job_id, str):
+            value["artifact_job_id"] = artifact_job_id
+    if job.state.value == "validating":
+        value["artifact_state"] = "staged"
+    elif job.state.value == "accepted":
+        value["artifact_state"] = "accepted"
     return value
+
+
+def _recommendation_envelope(recommendation: Any) -> dict[str, object]:
+    cost = recommendation.estimated_cost
+    return {
+        "provider": recommendation.provider,
+        "model": recommendation.model,
+        "auth_mode": recommendation.auth_mode.value,
+        "reasons": list(recommendation.reasons),
+        "estimated_cost": None if cost is None else dict(cost),
+    }
+
+
+def _options_envelope(models: Any) -> list[dict[str, object]]:
+    return [
+        {
+            "provider": entry.provider,
+            "model": entry.model,
+            "capabilities": sorted(entry.capabilities),
+            "auth_modes": ["agent"] if entry.provider in {"agent", "fake"} else ["hosted", "byok"],
+        }
+        for entry in models
+    ]
 
 
 def _revision(body: dict[str, object]) -> int:
@@ -131,16 +180,20 @@ def _switch_reason(service: Any, job_id: str) -> Any:
 
 async def _available_routing_credentials(
     source: Any,
+    service: Any,
     request: Request,
     principal: SessionPrincipal,
 ) -> dict[str, tuple[object, ...]]:
-    from comic_sol_web.generation.catalog import CATALOG
     from comic_sol_web.generation.credentials import CredentialBrokerError
     from comic_sol_web.generation.types import AuthMode
 
     resolver = _resolve_service(source, request)
+    executable = await service.available_options()
+    providers = sorted(
+        {entry.provider for entry in executable if entry.provider not in {"agent", "fake"}}
+    )
     available: dict[str, tuple[object, ...]] = {}
-    for provider in sorted({entry.provider for entry in CATALOG if entry.provider != "fake"}):
+    for provider in providers:
         modes: list[AuthMode] = []
         for mode in (AuthMode.HOSTED, AuthMode.BYOK):
             try:
@@ -186,6 +239,95 @@ def create_generation_router(
     """Register routes without constructing storage, providers, or workers."""
     router = APIRouter(prefix="/api/generation", tags=["generation"])
 
+    @router.get("/options")
+    async def generation_options(
+        request: Request,
+        response: Response,
+        _principal: Annotated[SessionPrincipal, Depends(require_principal)],
+    ) -> dict[str, object]:
+        response.headers["Cache-Control"] = "private, no-store"
+        try:
+            service = _resolve_service(service_source, request)
+            return {"options": _options_envelope(await service.available_options())}
+        except Exception as error:
+            _reject(error)
+
+    @router.get("/recommendations")
+    async def generation_recommendations(
+        request: Request,
+        response: Response,
+        project_id: str,
+        expected_revision: int,
+        job_id: str,
+        principal: Annotated[SessionPrincipal, Depends(require_principal)],
+    ) -> dict[str, object]:
+        response.headers["Cache-Control"] = "private, no-store"
+        try:
+            service = _resolve_service(service_source, request)
+            jobs = service.list_jobs(
+                principal,
+                project_id,
+                expected_revision,
+                limit=50,
+            )
+            job = next((item for item in jobs if item.job_id == job_id), None)
+            if job is None:
+                raise HTTPException(status_code=404, detail="generation job unavailable")
+            from comic_sol_web.generation.router import recommend
+            from comic_sol_web.generation.types import ErrorCategory
+
+            history: dict[tuple[str, str], dict[str, object]] = {}
+            for attempt in reversed(service.attempts(job.job_id)):
+                error = attempt.get("error_category")
+                try:
+                    if error is not None:
+                        history[(job.provider, job.model)] = {"last_error": ErrorCategory(error)}
+                        break
+                except (TypeError, ValueError):
+                    continue
+            recommendations = recommend(
+                job.request,
+                {(job.provider, job.model): (job.auth_mode,)},
+                history,
+            )
+            return {"recommendations": [_recommendation_envelope(item) for item in recommendations]}
+        except HTTPException:
+            raise
+        except Exception as error:
+            _reject(error)
+
+    @router.get("/jobs")
+    async def list_generation_jobs(
+        request: Request,
+        response: Response,
+        project_id: str,
+        expected_revision: int,
+        principal: Annotated[SessionPrincipal, Depends(require_principal)],
+        limit: int = 50,
+    ) -> dict[str, object]:
+        response.headers["Cache-Control"] = "private, no-store"
+        try:
+            service = _resolve_service(service_source, request)
+            jobs = service.list_jobs(
+                principal,
+                project_id,
+                expected_revision,
+                limit=limit,
+            )
+            accepted = service.current_accepted(
+                principal,
+                project_id,
+                expected_revision,
+            )
+            return {
+                "jobs": [_job_envelope(job, expected_revision) for job in jobs],
+                "accepted_job": (
+                    None if accepted is None else _job_envelope(accepted, expected_revision)
+                ),
+            }
+        except Exception as error:
+            _reject(error)
+
     @router.post("/queue", status_code=status.HTTP_201_CREATED)
     async def queue_generation(
         request: Request,
@@ -205,17 +347,18 @@ def create_generation_router(
             raise HTTPException(status_code=400, detail="generation request rejected")
         try:
             service = _resolve_service(service_source, request)
+            revision = _revision(body)
             jobs = service.queue(
                 principal,
                 project_id,
-                _revision(body),
+                revision,
                 provider=provider,
                 model=model,
                 auth_mode=auth_mode,
                 max_retries=max_retries,
             )
             background_tasks.add_task(_consume_queue, service)
-            return {"jobs": [_job_envelope(job) for job in jobs]}
+            return {"jobs": [_job_envelope(job, revision) for job in jobs]}
         except HTTPException:
             raise
         except Exception as error:
@@ -244,9 +387,32 @@ def create_generation_router(
         _require_csrf(request, principal)
         try:
             service = _resolve_service(service_source, request)
-            job = service.retry_same_provider(principal, job_id, _revision(body))
+            revision = _revision(body)
+            job = service.retry_same_provider(principal, job_id, revision)
             background_tasks.add_task(_consume_queue, service)
-            return _job_envelope(job)
+            return _job_envelope(job, revision)
+        except HTTPException:
+            raise
+        except Exception as error:
+            _reject(error)
+
+    @router.post("/{job_id}/cancel")
+    async def cancel_generation(
+        request: Request,
+        job_id: str,
+        body: Annotated[dict[str, object], Body()],
+        principal: Annotated[SessionPrincipal, Depends(require_principal)],
+    ) -> dict[str, object]:
+        _require_csrf(request, principal)
+        if set(body) != {"expected_revision"}:
+            raise HTTPException(status_code=400, detail="generation request rejected")
+        try:
+            service = _resolve_service(service_source, request)
+            revision = _revision(body)
+            return _job_envelope(
+                await service.cancel(principal, job_id, revision),
+                revision,
+            )
         except HTTPException:
             raise
         except Exception as error:
@@ -273,6 +439,7 @@ def create_generation_router(
             reason = _switch_reason(service, job_id)
             credentials = await _available_routing_credentials(
                 credential_source,
+                service,
                 request,
                 principal,
             )
@@ -315,7 +482,11 @@ def create_generation_router(
         _require_csrf(request, principal)
         try:
             service = _resolve_service(service_source, request)
-            return _job_envelope(service.submit_staged_raster(principal, job_id, _revision(body)))
+            revision = _revision(body)
+            return _job_envelope(
+                service.submit_staged_raster(principal, job_id, revision),
+                revision,
+            )
         except HTTPException:
             raise
         except Exception as error:

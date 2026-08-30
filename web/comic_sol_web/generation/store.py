@@ -244,6 +244,58 @@ class GenerationStore:
             row = self._row(connection, job_id)
         return None if row is None else self.from_row(row)
 
+    def list_jobs(
+        self,
+        owner_id: str,
+        project_id: str,
+        *,
+        limit: int,
+    ) -> tuple[GenerationJob, ...]:
+        self.validate_identifier(owner_id, "owner")
+        self.validate_identifier(project_id, "project")
+        if isinstance(limit, bool) or not 1 <= limit <= 50:
+            raise GenerationStoreError("generation list limit is invalid")
+        with self.database.read() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM generation_jobs
+                WHERE owner_id = ? AND project_id = ?
+                ORDER BY created_at DESC, job_id DESC
+                LIMIT ?
+                """,
+                (owner_id, project_id, limit),
+            ).fetchall()
+        return tuple(self.from_row(row) for row in rows)
+
+    def current_accepted(
+        self,
+        owner_id: str,
+        project_id: str,
+        accepted_project_revision: int,
+    ) -> GenerationJob | None:
+        self.validate_identifier(owner_id, "owner")
+        self.validate_identifier(project_id, "project")
+        if isinstance(accepted_project_revision, bool) or accepted_project_revision < 1:
+            raise GenerationStoreError("accepted project revision is invalid")
+        with self.database.read() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM generation_jobs
+                WHERE owner_id = ? AND project_id = ? AND state = ?
+                  AND accepted_project_revision <= ?
+                  AND json_extract(request_json, '$.subject_kind') = 'panel'
+                ORDER BY accepted_project_revision DESC, updated_at DESC, job_id DESC
+                LIMIT 1
+                """,
+                (
+                    owner_id,
+                    project_id,
+                    JobState.ACCEPTED.value,
+                    accepted_project_revision,
+                ),
+            ).fetchone()
+        return None if row is None else self.from_row(row)
+
     def from_row(self, row: sqlite3.Row) -> GenerationJob:
         staged_name = cast(str | None, row["staged_raster_name"])
         staged = None if staged_name is None else self.staging_root / staged_name

@@ -29,6 +29,7 @@ from comic_sol_web.auth import SessionPrincipal, require_principal
 from comic_sol_web.database import Database
 from comic_sol_web.engine_gateway import (
     EngineGateway,
+    GatewayError,
     GatewayInputError,
     PROJECT_IDEMPOTENCY_MIGRATION,
     PROJECT_MIGRATION,
@@ -175,6 +176,44 @@ class GatewayFixture(unittest.TestCase):
         path = self.gateway.staging_root / f"{request.job_id}-{color}.png"
         Image.new("RGB", (request.width, request.height), color).save(path)
         return path
+
+    def accept_panel(self, color: str = "teal") -> tuple[ProjectSnapshot, GenerationRequest, bytes]:
+        snapshot = self.import_prepared()
+        reference = self.service.prepare_generation(
+            self.alice,
+            snapshot.project_id,
+            snapshot.revision,
+        )[0]
+        accepted_reference = self.service.submit_raster(
+            self.alice,
+            snapshot.project_id,
+            snapshot.revision,
+            reference.job_id,
+            self.staged_raster(reference),
+            "image/png",
+            CAPABILITIES_USED,
+        )
+        panel = next(
+            request
+            for request in self.service.prepare_generation(
+                self.alice,
+                snapshot.project_id,
+                accepted_reference.revision,
+            )
+            if request.subject_kind == "panel"
+        )
+        staged = self.staged_raster(panel, color)
+        expected = staged.read_bytes()
+        accepted_panel = self.service.submit_raster(
+            self.alice,
+            snapshot.project_id,
+            panel.project_revision,
+            panel.job_id,
+            staged,
+            "image/png",
+            PANEL_CAPABILITIES_USED,
+        )
+        return accepted_panel, panel, expected
 
 
 class EngineGatewayContractTests(GatewayFixture):
@@ -906,6 +945,111 @@ class EngineGatewayContractTests(GatewayFixture):
         panel_receipt = next(item for item in receipts if item["job_id"] == panel.job_id)
         self.assertEqual(PANEL_CAPABILITIES_USED, panel_receipt["capabilities_used"])
 
+    def test_current_accepted_panel_raster_is_owner_revision_and_job_bound(self) -> None:
+        accepted, panel, expected = self.accept_panel()
+        raster = self.service.accepted_raster(
+            self.alice,
+            accepted.project_id,
+            accepted.revision,
+            panel.job_id,
+        )
+        self.assertEqual(expected, raster.payload)
+        self.assertEqual("image/png", raster.media_type)
+        self.assertEqual(hashlib.sha256(expected).hexdigest(), raster.sha256)
+        self.assertEqual(
+            {"payload", "media_type", "sha256"},
+            {field.name for field in dataclasses.fields(raster)},
+        )
+        self.assertNotIn(str(accepted.root), repr(raster))
+
+        with self.assertRaises(ProjectUnavailableError):
+            self.service.accepted_raster(
+                self.bob,
+                accepted.project_id,
+                accepted.revision,
+                panel.job_id,
+            )
+        with self.assertRaises(StaleProjectRevisionError):
+            self.service.accepted_raster(
+                self.alice,
+                accepted.project_id,
+                accepted.revision - 1,
+                panel.job_id,
+            )
+        with self.assertRaises(GatewayInputError):
+            self.service.accepted_raster(
+                self.alice,
+                accepted.project_id,
+                accepted.revision,
+                "not-a-job-id",
+            )
+        with self.assertRaises(ProjectUnavailableError):
+            self.service.accepted_raster(
+                self.alice,
+                accepted.project_id,
+                accepted.revision,
+                "0" * 64,
+            )
+
+    def test_reference_unaccepted_missing_and_substituted_rasters_fail_closed(self) -> None:
+        snapshot = self.import_prepared()
+        reference = self.service.prepare_generation(
+            self.alice,
+            snapshot.project_id,
+            snapshot.revision,
+        )[0]
+        with self.assertRaises(ProjectUnavailableError):
+            self.service.accepted_raster(
+                self.alice,
+                snapshot.project_id,
+                snapshot.revision,
+                reference.job_id,
+            )
+        accepted_reference = self.service.submit_raster(
+            self.alice,
+            snapshot.project_id,
+            snapshot.revision,
+            reference.job_id,
+            self.staged_raster(reference),
+            "image/png",
+            CAPABILITIES_USED,
+        )
+        with self.assertRaises(ProjectUnavailableError):
+            self.service.accepted_raster(
+                self.alice,
+                snapshot.project_id,
+                accepted_reference.revision,
+                reference.job_id,
+            )
+
+        accepted, panel, _expected = self.accept_panel("purple")
+        canonical = accepted.root / f"panels/raw/{panel.subject_id}.png"
+        canonical.write_bytes(b"substituted")
+        with self.assertRaises(GatewayError):
+            self.service.accepted_raster(
+                self.alice,
+                accepted.project_id,
+                accepted.revision,
+                panel.job_id,
+            )
+
+    def test_linked_accepted_raster_is_rejected(self) -> None:
+        accepted, panel, _expected = self.accept_panel("orange")
+        canonical = accepted.root / f"panels/raw/{panel.subject_id}.png"
+        retained = accepted.root / f"panels/attempts/{panel.subject_id}/initial-001.png"
+        canonical.unlink()
+        try:
+            canonical.symlink_to(retained)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlink creation unavailable: {error}")
+        with self.assertRaises((GatewayError, ValueError)):
+            self.service.accepted_raster(
+                self.alice,
+                accepted.project_id,
+                accepted.revision,
+                panel.job_id,
+            )
+
     def test_restart_recovers_revision_after_an_interrupted_engine_commit(self) -> None:
         snapshot = self.import_prepared()
         request = self.gateway.prepare_generation(snapshot.project_id, snapshot.revision)[0]
@@ -1349,6 +1493,115 @@ class ProjectApiTests(GatewayFixture):
         self.assertEqual(snapshot.revision + 1, body["revision"])
         self.assertEqual(plan_payload(snapshot.root), body["summary"]["plan"])
         self.assertEqual(2, auth.csrf_checks)
+
+    def test_qa_and_export_api_are_owner_revision_confirmed_and_path_free(self) -> None:
+        snapshot = self.import_prepared()
+        app, auth = self.app_for(self.alice)
+        qa_path = f"/api/projects/{snapshot.project_id}/qa"
+        export_path = f"/api/projects/{snapshot.project_id}/export"
+        export_key = idempotency_key()
+        with TestClient(app) as client:
+            qa = client.post(qa_path, json={}, headers=write_headers(snapshot.revision))
+            missing_confirmation = client.post(
+                export_path,
+                json={"format": "archive", "overwrite_confirmed": False},
+                headers=write_headers(snapshot.revision),
+            )
+            unsupported = client.post(
+                export_path,
+                json={"format": "png", "overwrite_confirmed": True},
+                headers=write_headers(snapshot.revision),
+            )
+            exported = client.post(
+                export_path,
+                json={"format": "archive", "overwrite_confirmed": True},
+                headers=write_headers(snapshot.revision, key=export_key),
+            )
+            replayed = client.post(
+                export_path,
+                json={"format": "archive", "overwrite_confirmed": True},
+                headers=write_headers(snapshot.revision, key=export_key),
+            )
+            stale = client.post(
+                export_path,
+                json={"format": "archive", "overwrite_confirmed": True},
+                headers=write_headers(snapshot.revision + 1),
+            )
+
+        self.assertEqual(200, qa.status_code)
+        self.assertEqual("private, no-store", qa.headers.get("cache-control"))
+        self.assertEqual(snapshot.revision, qa.json()["revision"])
+        self.assertIn("qa", qa.json()["summary"])
+        self.assertEqual(plan_payload(snapshot.root), qa.json()["summary"]["plan"])
+        self.assertNotIn(str(snapshot.root), json.dumps(qa.json()))
+        self.assertEqual(400, missing_confirmation.status_code)
+        self.assertEqual(400, unsupported.status_code)
+        self.assertEqual(200, exported.status_code)
+        self.assertTrue(exported.content.startswith(b"PK"))
+        self.assertEqual("private, no-store", exported.headers.get("cache-control"))
+        self.assertEqual(str(snapshot.revision), exported.headers.get("x-project-revision"))
+        self.assertEqual("nosniff", exported.headers.get("x-content-type-options"))
+        self.assertNotIn(str(snapshot.root).encode(), exported.content)
+        self.assertIsNone(exported.headers.get("x-project-path"))
+        self.assertEqual(409, replayed.status_code)
+        self.assertEqual(409, stale.status_code)
+        self.assertEqual(6, auth.csrf_checks)
+
+        other_app, _other_auth = self.app_for(self.bob)
+        with TestClient(other_app) as client:
+            wrong_owner_qa = client.post(
+                qa_path,
+                json={},
+                headers=write_headers(snapshot.revision),
+            )
+            wrong_owner_export = client.post(
+                export_path,
+                json={"format": "archive", "overwrite_confirmed": True},
+                headers=write_headers(snapshot.revision),
+            )
+        self.assertEqual(404, wrong_owner_qa.status_code)
+        self.assertEqual(404, wrong_owner_export.status_code)
+
+    def test_accepted_raster_api_returns_only_private_verified_png_bytes(self) -> None:
+        accepted, panel, expected = self.accept_panel("green")
+        app, _auth = self.app_for(self.alice)
+        path = (
+            f"/api/projects/{accepted.project_id}/accepted-raster/{panel.job_id}"
+            f"?expected_revision={accepted.revision}"
+        )
+        with TestClient(app) as client:
+            response = client.get(path)
+            stale = client.get(
+                path.replace(
+                    f"expected_revision={accepted.revision}",
+                    f"expected_revision={accepted.revision - 1}",
+                )
+            )
+            malformed = client.get(
+                f"/api/projects/{accepted.project_id}/accepted-raster/not-a-job-id"
+                f"?expected_revision={accepted.revision}"
+            )
+            unknown = client.get(
+                f"/api/projects/{accepted.project_id}/accepted-raster/{'0' * 64}"
+                f"?expected_revision={accepted.revision}"
+            )
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(expected, response.content)
+        self.assertEqual("image/png", response.headers.get("content-type"))
+        self.assertEqual("private, no-store", response.headers.get("cache-control"))
+        self.assertEqual("nosniff", response.headers.get("x-content-type-options"))
+        self.assertEqual(f'"{hashlib.sha256(expected).hexdigest()}"', response.headers.get("etag"))
+        self.assertIsNone(response.headers.get("content-disposition"))
+        self.assertNotIn(str(accepted.root).encode(), response.content)
+        self.assertEqual(409, stale.status_code)
+        self.assertEqual(400, malformed.status_code)
+        self.assertEqual(404, unknown.status_code)
+
+        other_app, _other_auth = self.app_for(self.bob)
+        with TestClient(other_app) as client:
+            wrong_owner = client.get(path)
+        self.assertEqual(404, wrong_owner.status_code)
+        self.assertEqual({"detail": "project unavailable"}, wrong_owner.json())
 
     def test_api_anonymous_or_wrong_owner_access_is_unavailable(self) -> None:
         snapshot = self.create()
