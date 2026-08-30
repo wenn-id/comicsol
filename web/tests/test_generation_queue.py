@@ -1942,6 +1942,7 @@ class DurableQueueTests(GenerationQueueFixture):
 
             approved = client.post(
                 f"/api/approvals/{proposal['proposal_id']}/approve",
+                json={"project_id": proposal["project_id"]},
                 headers={
                     "Idempotency-Key": str(uuid.uuid4()),
                     "X-Expected-Revision": str(self.projects.revision),

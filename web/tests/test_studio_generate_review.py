@@ -72,6 +72,10 @@ class StudioGenerateReviewContractTests(unittest.TestCase):
         self.assertIn("overwrite.checked = false", self.review)
         self.assertIn("exportButton.focus()", self.review)
 
+    def test_webmcp_queue_handoff_publishes_the_refreshed_page_state(self) -> None:
+        self.assertIn('document.addEventListener("comic-sol:generation-refreshed"', self.app)
+        self.assertIn("store.replaceProjectAndGenerationJobs(", self.app)
+
     def test_shell_registers_four_guarded_steps_without_changing_start_or_plan(self) -> None:
         for index, view in enumerate(("start", "plan", "generate", "review"), start=1):
             self.assertRegex(

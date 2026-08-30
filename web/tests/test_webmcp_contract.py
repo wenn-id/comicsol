@@ -694,6 +694,70 @@ class WebMcpContractTests(unittest.TestCase):
         self.assertFalse(result["exportResult"]["ok"])
         self.assertFalse(result["approve"]["ok"])
 
+    def test_queue_publishes_the_revision_created_while_queueing(self) -> None:
+        module_url = WEBMCP.as_uri()
+        result = self.run_node(
+            f"""
+            const oldProject = {{
+              project_id: "project_0123456789abcdef01234567", revision: 3, status: "STORYBOARDED",
+              summary: {{ plan: {{ storyPlan: "", characterBible: "", storyboard: "", visualIdentityPack: "" }} }}
+            }};
+            const newProject = {{
+              project_id: "project_0123456789abcdef01234567", revision: 4, status: "STORYBOARDED",
+              summary: {{ plan: {{ storyPlan: "", characterBible: "", storyboard: "", visualIdentityPack: "" }} }}
+            }};
+            const queuedJob = {{
+              job_id: "a".repeat(64), project_id: newProject.project_id,
+              project_revision: 4, state: "queued", provider: "agent",
+              model: "agent-image-generation", auth_mode: "agent",
+              attempt: 1, retry_count: 0, max_retries: 2
+            }};
+            let published = null;
+            let queued = false;
+            globalThis.CustomEvent = class {{ constructor(type, init) {{ this.type = type; this.detail = init.detail; }} }};
+            globalThis.document = {{
+              cookie: "comic_sol_csrf=csrf-token",
+              dispatchEvent(event) {{ published = event; event.detail.accepted = true; return true; }}
+            }};
+            globalThis.fetch = async (url) => {{
+              if (url === "/api/projects/current") return new Response(
+                JSON.stringify(queued ? newProject : oldProject), {{ status: 200 }});
+              if (url === "/api/projects/project_0123456789abcdef01234567") return new Response(
+                JSON.stringify(queued ? newProject : oldProject), {{ status: 200 }});
+              if (url === "/api/generation/options") return new Response(JSON.stringify({{
+                options: [{{ provider: "agent", model: "agent-image-generation", auth_modes: ["agent"] }}]
+              }}), {{ status: 200 }});
+              if (url === "/api/generation/queue") {{
+                queued = true;
+                return new Response(JSON.stringify({{ jobs: [] }}), {{ status: 200 }});
+              }}
+              if (url.startsWith("/api/generation/jobs")) return new Response(JSON.stringify({{
+                jobs: [queuedJob], accepted_job: null
+              }}), {{ status: 200 }});
+              throw new Error("unexpected fetch " + url);
+            }};
+            const module = await import({json.dumps(module_url)});
+            const queue = await module.TOOL_DEFINITIONS.find((item) => item.name === "queue_generation").execute({{
+              project_id: "project_0123456789abcdef01234567", expected_revision: 3,
+              provider: "agent", model: "agent-image-generation", auth_mode: "agent",
+              confirm_cost: true,
+              idempotency_key: "00000000-0000-4000-8000-000000000060"
+            }});
+            console.log(JSON.stringify({{
+              ok: queue.ok, revision: queue.data?.revision, jobs: queue.data?.jobs?.length,
+              eventType: published?.type,
+              publishedRevision: published?.detail?.project?.revision,
+              publishedJobCount: published?.detail?.jobs?.length
+            }}));
+            """
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(4, result["revision"])
+        self.assertEqual(1, result["jobs"])
+        self.assertEqual("comic-sol:generation-refreshed", result["eventType"])
+        self.assertEqual(4, result["publishedRevision"])
+        self.assertEqual(1, result["publishedJobCount"])
+
     def test_local_mcp_surface_remains_exactly_seventeen_tools(self) -> None:
         source = (WEB_ROOT.parent / "scripts" / "mcp_server.py").read_text(encoding="utf-8")
         tree = ast.parse(source)

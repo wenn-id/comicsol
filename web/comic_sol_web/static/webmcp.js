@@ -355,6 +355,13 @@ function assertCurrentProject(projectId, revision, project) {
   return project;
 }
 
+function assertProject(projectId, project) {
+  if (!project || project.project_id !== projectId || !Number.isInteger(project.revision)) {
+    throw new WebMcpInputError();
+  }
+  return project;
+}
+
 function safeProject(project) {
   if (!project) return { available: false };
   return {
@@ -558,6 +565,15 @@ function publishQa(project) {
   if (!detail.accepted) throw new WebMcpInputError();
 }
 
+function publishGeneration(project, jobs, acceptedJob) {
+  if (typeof document === "undefined" || typeof document.dispatchEvent !== "function") {
+    throw new WebMcpInputError();
+  }
+  const detail = { project, jobs, acceptedJob, accepted: false };
+  document.dispatchEvent(new CustomEvent("comic-sol:generation-refreshed", { detail }));
+  if (!detail.accepted) throw new WebMcpInputError();
+}
+
 function pageOwnedArchive(handle) {
   if (handle !== "selected") throw new WebMcpInputError();
   const input = typeof document === "undefined" ? null : document.getElementById("project-archive");
@@ -657,10 +673,15 @@ async function queueStudioGeneration(input) {
     selection,
     input.idempotency_key,
   );
+  const project = await getCurrentProject();
+  assertProject(input.project_id, project);
+  const jobsResult = await listGenerationJobs(input.project_id, project.revision);
+  const jobs = Array.isArray(jobsResult.jobs) ? jobsResult.jobs : [];
+  publishGeneration(project, jobs, jobsResult.accepted_job ?? null);
   return {
     project_id: input.project_id,
-    revision: input.expected_revision,
-    jobs: Array.isArray(result.jobs) ? result.jobs.map(safeJob).filter(Boolean).slice(0, 50) : [],
+    revision: project.revision,
+    jobs: jobs.map(safeJob).filter(Boolean).slice(0, 50),
   };
 }
 

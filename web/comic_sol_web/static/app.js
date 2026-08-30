@@ -86,6 +86,23 @@ document.addEventListener("comic-sol:qa-completed", (event) => {
   event.detail.accepted = true;
   announce("QA completed.", "success");
 });
+document.addEventListener("comic-sol:generation-refreshed", (event) => {
+  const project = event.detail?.project;
+  if (!project || typeof project.project_id !== "string" || !Number.isInteger(project.revision)) {
+    return;
+  }
+  const current = store.getState().project;
+  if (!current || current.project_id !== project.project_id) {
+    return;
+  }
+  store.replaceProjectAndGenerationJobs(
+    project,
+    Array.isArray(event.detail.jobs) ? event.detail.jobs : [],
+    event.detail.acceptedJob ?? undefined,
+  );
+  event.detail.accepted = true;
+  announce("Generation queued and refreshed.", "success");
+});
 void registerWebMcp();
 
 async function restoreProject() {
