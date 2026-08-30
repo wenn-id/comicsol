@@ -7,7 +7,6 @@ import {
   MAX_SOURCE_BYTES,
   approveProposal,
   createProject,
-  exportProject,
   getCurrentProject,
   getGenerationOptions,
   getGenerationRecommendations,
@@ -252,7 +251,7 @@ export const TOOL_DEFINITIONS = Object.freeze([
   },
   {
     name: "export_project",
-    description: "Create a private archive or PDF export after explicit overwrite confirmation.",
+    description: "Stage a private archive or PDF export for confirmation and download in Review.",
     inputSchema: objectSchema(
       {
         project_id: PROJECT_ID,
@@ -549,6 +548,15 @@ function publishProject(project) {
   if (!detail.accepted) throw new WebMcpInputError();
 }
 
+function publishQa(project) {
+  if (typeof document === "undefined" || typeof document.dispatchEvent !== "function") {
+    throw new WebMcpInputError();
+  }
+  const detail = { project, accepted: false };
+  document.dispatchEvent(new CustomEvent("comic-sol:qa-completed", { detail }));
+  if (!detail.accepted) throw new WebMcpInputError();
+}
+
 function pageOwnedArchive(handle) {
   if (handle !== "selected") throw new WebMcpInputError();
   const input = typeof document === "undefined" ? null : document.getElementById("project-archive");
@@ -708,8 +716,10 @@ async function runStudioQa(input) {
   assertProjectId(input.project_id);
   assertRevision(input.expected_revision);
   assertIdempotencyKey(input.idempotency_key);
+  assertCurrentProject(input.project_id, input.expected_revision, await getCurrentProject());
   const project = await runQa(input.project_id, input.expected_revision, input.idempotency_key);
-  return safeProject(project);
+  publishQa(project);
+  return safeQa(project);
 }
 
 async function exportStudioProject(input) {
@@ -725,21 +735,18 @@ async function exportStudioProject(input) {
   if (!["archive", "pdf"].includes(input.format)) throw new WebMcpInputError();
   assertConfirmation(input.overwrite_confirmed);
   assertIdempotencyKey(input.idempotency_key);
-  const result = await exportProject(
-    input.project_id,
-    input.expected_revision,
-    input.format,
-    input.overwrite_confirmed,
-    input.idempotency_key,
-  );
+  assertCurrentProject(input.project_id, input.expected_revision, await getCurrentProject());
+  if (typeof document === "undefined" || typeof document.dispatchEvent !== "function") {
+    throw new WebMcpInputError();
+  }
+  const detail = { format: input.format, accepted: false };
+  document.dispatchEvent(new CustomEvent("comic-sol:export-request", { detail }));
+  if (!detail.accepted) throw new WebMcpInputError();
   return {
     project_id: input.project_id,
-    revision: result.revision,
+    revision: input.expected_revision,
     format: input.format,
-    media_type: ["application/pdf", "application/zip"].includes(result.mediaType)
-      ? result.mediaType
-      : "application/octet-stream",
-    byte_size: Number.isInteger(result.blob.size) ? result.blob.size : 0,
+    review_required: true,
   };
 }
 
