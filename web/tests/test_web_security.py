@@ -14,11 +14,10 @@ cryptographic/redaction primitives:
 - CSRF mismatch/deny at queue boundary;
 - anonymous and cross-owner access;
 - archive traversal/symlink/oversize/malformed/rollback;
-- raster MIME mismatch, dimension and decoded-size limits,
-  failed-replacement retention;
-- SSRF/redirect/loopback/private/link-local/DNS-rebinding policy;
+- raster MIME mismatch and failed-replacement retention;
+- SSRF origin policy: redirect, loopback, private and link-local origins;
 - provider-switch approval expiry, replay, wrong owner, wrong jobs;
-- lease/restart recovery and cancellation races;
+- restart recovery and bounded cancellation;
 - sensitive-data redaction across logs/envelopes.
 
 All offline; no live or paid provider calls; credential-free.
