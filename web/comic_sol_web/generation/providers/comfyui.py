@@ -190,7 +190,13 @@ def _validate_fixture_payload(raw: bytes) -> Mapping[str, object]:
 
 
 def _validate_fixture_schema(data: Mapping[str, object]) -> None:
-    for key in ("workflow_id", "output_node_id", "max_prompt_chars", "max_negative_prompt_chars"):
+    for key in (
+        "workflow_id",
+        "output_node_id",
+        "max_prompt_chars",
+        "max_negative_prompt_chars",
+        "workflow_sha256",
+    ):
         if key not in data:
             raise ProviderError(ErrorCategory.INVALID_OUTPUT)
     allowed = data.get("allowed_node_classes")
@@ -237,6 +243,12 @@ def _validate_fixture_schema(data: Mapping[str, object]) -> None:
     if not isinstance(output_node_id, str) or output_node_id not in workflow:
         raise ProviderError(ErrorCategory.INVALID_OUTPUT)
     if optional is not None and not isinstance(optional, list):
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+    declared_digest = data.get("workflow_sha256")
+    if not isinstance(declared_digest, str) or _SHA256_RE.fullmatch(declared_digest) is None:
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+    canonical_workflow = _canonical_bytes(workflow)
+    if _sha256(canonical_workflow) != declared_digest:
         raise ProviderError(ErrorCategory.INVALID_OUTPUT)
 
 
@@ -397,7 +409,10 @@ class ComfyUIProvider:
         if not isinstance(approved_origins, frozenset):
             raise ValueError("ComfyUI approved origins must be a frozenset")
         remote_origins = frozenset(_validate_remote_origin(origin) for origin in approved_origins)
+        if len(remote_origins) > 1:
+            raise ValueError("ComfyUI remote route requires exactly one approved origin")
         self.approved_origins = remote_origins
+        self._remote_base = next(iter(remote_origins)) if remote_origins else None
         self._transport = transport
         self._fixture_dir = (
             Path(fixture_dir) if fixture_dir is not None else Path(_DEFAULT_FIXTURE_DIR)
@@ -440,7 +455,7 @@ class ComfyUIProvider:
         model: str,
         workflow: Mapping[str, object],
     ) -> GenerationResult:
-        base = next(iter(self.approved_origins))
+        base = self._remote_base
         payload = {"prompt": workflow}
         async with BoundedHTTPClient(self._policy, transport=self._transport) as client:
             response = await client.post_json(
@@ -482,7 +497,7 @@ class ComfyUIProvider:
 
     async def _remote_poll(self, external_job_id: str) -> GenerationResult:
         job_id = _validate_job_id(external_job_id)
-        base = next(iter(self.approved_origins))
+        base = self._remote_base
         history_url = f"{base}/api/history/{job_id}"
         async with BoundedHTTPClient(self._policy, transport=self._transport) as client:
             history = await client.get_json(
@@ -546,11 +561,21 @@ class ComfyUIProvider:
             self._cancelled.add(job_id)
             return
         job_id = _validate_job_id(external_job_id)
-        base = next(iter(self.approved_origins))
+        base = self._remote_base
+        if base is None:
+            raise ProviderError(ErrorCategory.PROVIDER_ERROR)
         async with BoundedHTTPClient(self._policy, transport=self._transport) as client:
+            # Interrupt an active execution, then drop the still-queued job so a
+            # not-yet-started prompt is also cancelled. Both calls stay on the
+            # approved origin through the bounded transport.
             await client.post_json(
                 f"{base}/api/interrupt",
-                payload={},
+                payload={"prompt_id": job_id},
+                error_classifier=_classify_error,
+            )
+            await client.post_json(
+                f"{base}/api/queue",
+                payload={"delete": [job_id]},
                 error_classifier=_classify_error,
             )
 

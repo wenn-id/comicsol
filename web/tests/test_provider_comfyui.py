@@ -166,6 +166,15 @@ class WorkflowValidationTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(ErrorCategory.INVALID_OUTPUT, caught.exception.category)
 
+    async def test_fixture_workflow_digest_mismatch_is_rejected(self) -> None:
+        base = json.loads(SDXL_BASE.read_text())
+        base["workflow_sha256"] = "0" * 64
+        path = write_fixture("sdxl-base", base)
+        provider = self.provider(fixture_dir=path.parent)
+        with self.assertRaises(ProviderError) as caught:
+            await provider.generate(make_request(), "sdxl-base", None)
+        self.assertEqual(ErrorCategory.INVALID_OUTPUT, caught.exception.category)
+
     async def test_unapproved_node_class_is_rejected(self) -> None:
         base = json.loads(SDXL_BASE.read_text())
         injected = json.loads(json.dumps(base))
@@ -233,9 +242,14 @@ class WorkflowValidationTests(unittest.IsolatedAsyncioTestCase):
             _validate_fixture_payload(b"not json")
         with self.assertRaises(ProviderError):
             _validate_fixture_payload(b"[]")
-        deep = json.dumps({"a": {"b": {"c": {"d": {"e": {}}}}}})
+        nested: dict[str, object] = {}
+        cursor = nested
+        for _ in range(80):
+            child: dict[str, object] = {}
+            cursor["a"] = child
+            cursor = child
         with self.assertRaises(ProviderError):
-            _validate_fixture_payload(deep.encode())
+            _validate_fixture_payload(json.dumps(nested).encode())
 
     async def test_paths_urls_tokens_cookies_and_machine_paths_rejected(self) -> None:
         base = json.loads(SDXL_BASE.read_text())
@@ -279,6 +293,10 @@ class RemoteLifecycleTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(origin=origin), self.assertRaises(ValueError):
                 ComfyUIProvider(approved_origins=frozenset({origin}))
+
+    def test_remote_route_requires_exactly_one_approved_origin(self) -> None:
+        with self.assertRaises(ValueError):
+            ComfyUIProvider(approved_origins=frozenset({"https://a.example", "https://b.example"}))
 
     async def test_remote_submission_translation(self) -> None:
         seen: list[httpx.Request] = []
@@ -379,8 +397,13 @@ class RemoteLifecycleTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(200, json={}, request=request)
 
         await self.remote_provider(handler).cancel(PROMPT_ID, None)
+        self.assertEqual(2, len(seen))
         self.assertEqual("POST", seen[0].method)
         self.assertEqual(f"{REMOTE_BASE}/interrupt", str(seen[0].url))
+        self.assertEqual({"prompt_id": PROMPT_ID}, json.loads(seen[0].content))
+        self.assertEqual("POST", seen[1].method)
+        self.assertEqual(f"{REMOTE_BASE}/queue", str(seen[1].url))
+        self.assertEqual({"delete": [PROMPT_ID]}, json.loads(seen[1].content))
 
     async def test_history_output_node_must_match_fixture(self) -> None:
         async def history_missing_output(request: httpx.Request) -> httpx.Response:
