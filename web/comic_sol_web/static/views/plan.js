@@ -265,29 +265,36 @@ export function renderPlanView({ store, announce }) {
 
   const proposalHandler = (event) => {
     const proposal = safeProposal(event.detail);
-    if (!proposal) return;
+    if (!proposal) {
+      event.preventDefault();
+      return;
+    }
     if (proposal.expectedRevision !== store.getState().project.revision) {
       announce("Revision changed. The agent proposal is stale and was not opened.", "error");
+      event.preventDefault();
       return;
     }
     if (store.getState().draft) {
       announce("A draft is already waiting for review. Discard or promote it first.", "error");
+      event.preventDefault();
       return;
     }
     const current = store.getState().workingPlan;
     const editorDirty = editorHasChanges(controls, current);
     if (editorDirty) {
       announce("Review or discard your typed edits before opening an agent proposal.", "error");
+      event.preventDefault();
       return;
     }
     store.createDraft(proposal.changes, "agent");
     updateDraft();
     announce("Agent-proposed changes are ready for review.");
   };
-  if (!activeProposalHandler) {
-    activeProposalHandler = proposalHandler;
-    document.addEventListener("comic-sol:plan-proposal", activeProposalHandler);
+  if (activeProposalHandler) {
+    document.removeEventListener("comic-sol:plan-proposal", activeProposalHandler);
   }
+  activeProposalHandler = proposalHandler;
+  document.addEventListener("comic-sol:plan-proposal", activeProposalHandler);
   updateDraft();
   return view;
 }

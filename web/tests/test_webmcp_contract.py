@@ -398,9 +398,11 @@ class WebMcpContractTests(unittest.TestCase):
             f"""
             const archive = Object.assign(new Blob(["archive"]), {{ name: "project.comic-sol-handoff" }});
             let selectedFile = archive;
+            globalThis.CustomEvent = class {{ constructor(type, init) {{ this.type = type; this.detail = init.detail; }} }};
             globalThis.document = {{
               cookie: "comic_sol_csrf=csrf-token",
               getElementById() {{ return {{ files: [selectedFile] }}; }},
+              dispatchEvent(event) {{ event.detail.accepted = true; return true; }},
             }};
             const project = {{
               project_id: "project_0123456789abcdef01234567", revision: 1,
@@ -509,6 +511,71 @@ class WebMcpContractTests(unittest.TestCase):
             },
             result["proposal"],
         )
+
+    def test_rejected_plan_proposals_and_background_generation_fail_closed(self) -> None:
+        module_url = WEBMCP.as_uri()
+        result = self.run_node(
+            f"""
+            const project = {{
+              project_id: "current-project", revision: 3, status: "PLANNING",
+              summary: {{ plan: {{ storyPlan: "", characterBible: "", storyboard: "", visualIdentityPack: "" }} }}
+            }};
+            globalThis.CustomEvent = class {{
+              constructor(type, init) {{ this.type = type; this.detail = init.detail; }}
+            }};
+            globalThis.document = {{
+              getElementById(id) {{ return id === "plan-editor" || id === "draft-diff" ? {{}} : null; }},
+              dispatchEvent() {{ return false; }}
+            }};
+            let calls = [];
+            globalThis.fetch = async (url) => {{
+              calls.push(url);
+              if (url === "/api/projects/current") {{
+                return new Response(JSON.stringify(project), {{ status: 200 }});
+              }}
+              if (url === "/api/generation/options") {{
+                return new Response(JSON.stringify({{ options: [{{
+                  provider: "agent", model: "agent-image-generation", auth_modes: ["agent"]
+                }}] }}), {{ status: 200 }});
+              }}
+              throw new Error("write must not run");
+            }};
+            const module = await import({json.dumps(module_url)});
+            const find = (name) => module.TOOL_DEFINITIONS.find((item) => item.name === name);
+            const common = {{ expected_revision: 3, idempotency_key: "00000000-0000-4000-8000-000000000040" }};
+            const update = await find("update_project_plan").execute({{
+              ...common, project_id: project.project_id, confirm_plan: true,
+              plan: {{ storyPlan: "proposal", characterBible: "", storyboard: "", visualIdentityPack: "" }}
+            }});
+            const queue = await find("queue_generation").execute({{
+              ...common, project_id: "background-project", provider: "agent",
+              model: "agent-image-generation", auth_mode: "agent", confirm_cost: true
+            }});
+            console.log(JSON.stringify({{ update, queue, calls }}));
+            """
+        )
+        self.assertFalse(result["update"]["ok"])
+        self.assertFalse(result["queue"]["ok"])
+        self.assertNotIn("/api/generation/queue", result["calls"])
+
+    def test_non_revision_conflicts_are_not_reported_as_stale(self) -> None:
+        module_url = WEBMCP.as_uri()
+        result = self.run_node(
+            f"""
+            globalThis.document = {{ cookie: "comic_sol_csrf=csrf-token" }};
+            globalThis.fetch = async () => new Response("{{}}", {{ status: 409 }});
+            const module = await import({json.dumps(module_url)});
+            const approve = await module.TOOL_DEFINITIONS.find(
+              (item) => item.name === "approve_provider_switch"
+            ).execute({{
+              proposal_id: "p".repeat(32), expected_revision: 1, confirm_switch: true,
+              idempotency_key: "00000000-0000-4000-8000-000000000041"
+            }});
+            console.log(JSON.stringify(approve));
+            """
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual("conflict", result["error"]["code"])
 
     def test_confirmation_guards_match_the_studio_boundaries(self) -> None:
         module_url = WEBMCP.as_uri()

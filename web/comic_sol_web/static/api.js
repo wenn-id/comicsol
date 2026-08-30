@@ -20,6 +20,13 @@ export class StaleRevisionError extends StudioApiError {
   }
 }
 
+export class StudioConflictError extends StudioApiError {
+  constructor() {
+    super("The Studio operation conflicts with the current project state.", 409);
+    this.name = "StudioConflictError";
+  }
+}
+
 export class MigrationValidationError extends StudioApiError {
   constructor(status) {
     super("The archive could not be validated or migrated. The original archive was not changed.", status);
@@ -62,8 +69,10 @@ function validateEnvelope(value) {
   });
 }
 
-function requestFailure(response, archive = false) {
-  if (response.status === 409) throw new StaleRevisionError();
+function requestFailure(response, archive = false, conflictIsStale = true) {
+  if (response.status === 409) {
+    throw conflictIsStale ? new StaleRevisionError() : new StudioConflictError();
+  }
   if (archive && (response.status === 400 || response.status === 413 || response.status === 422)) {
     throw new MigrationValidationError(response.status);
   }
@@ -83,8 +92,8 @@ async function readEnvelope(response, { archive = false } = {}) {
   }
 }
 
-async function readJson(response) {
-  if (!response.ok) requestFailure(response);
+async function readJson(response, { conflictIsStale = true } = {}) {
+  if (!response.ok) requestFailure(response, false, conflictIsStale);
   try {
     const value = await response.json();
     if (!value || typeof value !== "object") throw new Error("invalid response");
@@ -97,7 +106,14 @@ async function readJson(response) {
 
 async function writeRequest(
   path,
-  { body, expectedRevision, archive = false, idempotencyKey, responseType = "project" },
+  {
+    body,
+    expectedRevision,
+    archive = false,
+    idempotencyKey,
+    responseType = "project",
+    conflictIsStale = true,
+  },
 ) {
   const csrf = cookieValue("comic_sol_csrf");
   if (!csrf) {
@@ -116,10 +132,12 @@ async function writeRequest(
     body: body instanceof FormData ? body : JSON.stringify(body),
   });
   if (responseType === "raw") {
-    if (!response.ok) requestFailure(response, archive);
+    if (!response.ok) requestFailure(response, archive, conflictIsStale);
     return response;
   }
-  return responseType === "json" ? readJson(response) : readEnvelope(response, { archive });
+  return responseType === "json"
+    ? readJson(response, { conflictIsStale })
+    : readEnvelope(response, { archive });
 }
 
 function getJson(path) {
@@ -231,21 +249,22 @@ export function submitGeneratedAsset(assetId, jobId, expectedRevision, idempoten
     expectedRevision,
     idempotencyKey,
     responseType: "json",
+    conflictIsStale: false,
   });
 }
 
 function proposalDecision(proposalId, decision, expectedRevision, idempotencyKey) {
   return writeRequest(`${APPROVALS_PATH}/${encodeURIComponent(proposalId)}/${decision}`, {
-    body: {}, expectedRevision, idempotencyKey, responseType: "json",
+    body: {}, expectedRevision, idempotencyKey, responseType: "json", conflictIsStale: false,
   });
 }
 
-export function approveProposal(proposalId, expectedRevision) {
-  return proposalDecision(proposalId, "approve", expectedRevision, arguments[2]);
+export function approveProposal(proposalId, expectedRevision, idempotencyKey) {
+  return proposalDecision(proposalId, "approve", expectedRevision, idempotencyKey);
 }
 
-export function rejectProposal(proposalId, expectedRevision) {
-  return proposalDecision(proposalId, "reject", expectedRevision, arguments[2]);
+export function rejectProposal(proposalId, expectedRevision, idempotencyKey) {
+  return proposalDecision(proposalId, "reject", expectedRevision, idempotencyKey);
 }
 
 export function runQa(projectId, expectedRevision, idempotencyKey) {
@@ -268,6 +287,7 @@ export async function exportProject(
       expectedRevision,
       idempotencyKey,
       responseType: "raw",
+      conflictIsStale: false,
     },
   );
   const revision = Number(response.headers.get("x-project-revision"));

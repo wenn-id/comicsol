@@ -64,6 +64,15 @@ for (const tab of tabs) {
 
 store.subscribe(render);
 render(store.getState());
+document.addEventListener("comic-sol:project-selected", (event) => {
+  const project = event.detail?.project;
+  if (!project || typeof project.project_id !== "string" || !Number.isInteger(project.revision)) {
+    return;
+  }
+  store.setProject(project);
+  event.detail.accepted = true;
+  announce("Project opened. Plan is ready for review.", "success");
+});
 void registerWebMcp();
 
 async function restoreProject() {
