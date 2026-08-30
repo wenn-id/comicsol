@@ -851,15 +851,16 @@ class TestRasterValidation(WiredAppFixture):
         assert resp.status_code in {400, 422}, resp.text
         assert self._current_asset_count(client) == 0
 
-    def test_failed_replacement_retains_previous(self) -> None:
-        """When a staged-raster replacement fails, the prior artifact remains.
+    def test_malformed_upload_rejected_and_prior_asset_intact(self) -> None:
+        """A malformed raster upload is rejected and the prior asset's bytes
+        are unchanged.
 
-        We use a malformed replacement body to test the rejection
-        contract. We do NOT prove a *semantic* replace-then-roll-back
-        workflow here: a successful second upload is a new asset, not an
-        in-place replacement of the prior one. The bytes-level retention
-        is what guarantees the prior asset is not corrupted by a failed
-        attempt.
+        This name states exactly what is proven: rejection of the bad
+        body, plus bytes-level retention of the previously stored
+        artifact. It is deliberately NOT named "replacement" — a second
+        POST to `/api/assets` creates a new asset rather than replacing
+        `asset_id` in place, so an in-place replace-then-roll-back
+        workflow is not qualified here.
         """
         client, _auth = self.client(self.alice)
         png = bounded_png()
