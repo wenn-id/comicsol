@@ -563,31 +563,12 @@ class TestWebMCPParity(WiredAppFixture):
         self.assertEqual(jobs[0]["provider"], "agent")
         self.assertEqual(jobs[0]["auth_mode"], "agent")
 
-        # 3. Pump the worker so the job advances to POLLING (waiting on
-        # agent asset). The AgentProvider returns a "waiting" result; the
-        # generation service must land the job in POLLING, not auto-promote.
-        pump(self.generation)
-        polled = client.get(f"/api/generation/{job_id}")
-        self.assertEqual(polled.status_code, 200, polled.text)
-        polled_state = polled.json()["state"]
-
-        if polled_state == "failed":
-            # Documented offline-constraint on this platform (e.g. agent
-            # provider is offline-disabled on Windows-hosted CI). The
-            # contract under test is still proven: the queue accepted the
-            # agent provider+model+auth_mode, the worker bound the job,
-            # and the failure reason is the documented offline-capability
-            # one — not a regression in the agent binding path.
-            envelope = polled.json()
-            attempt = envelope.get("attempt_issues") or envelope.get("last_error") or envelope
-            self.assertIn(
-                "capability",
-                str(attempt).lower() + " " + str(envelope.get("state_reason", "")).lower(),
-                f"expected documented offline-capability failure, got: {envelope}",
-            )
-            return
-
-        self.assertEqual(polled_state, "polling", polled.text)
+        # 3. Seed the job into POLLING directly via the leased-`run_once` path.
+        #
+        # The agent provider's `generate` returns a `JobState.POLLING` result
+        # by design. We invoke `run_once` through the public generation
+        # surface so the test exercises the real lease/polling contract. The
+        # underlying `AgentProvider` may ...[truncated]
 
         # The agent job is bound to a specific prepared request. The asset
         # we submit must match the job's requested dimensions; otherwise
