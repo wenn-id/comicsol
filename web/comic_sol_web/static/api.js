@@ -1,7 +1,9 @@
 const PROJECTS_PATH = "/api/projects";
 const GENERATION_PATH = "/api/generation";
 const APPROVALS_PATH = "/api/approvals";
+const ASSETS_PATH = "/api/assets";
 export const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
+export const MAX_SOURCE_BYTES = 200 * 1024;
 
 export class StudioApiError extends Error {
   constructor(message, status = 0) {
@@ -140,9 +142,9 @@ export function importProject(archive, idempotencyKey) {
   });
 }
 
-export function updatePlan(projectId, plan, expectedRevision) {
+export function updatePlan(projectId, plan, expectedRevision, idempotencyKey) {
   return writeRequest(PROJECTS_PATH, {
-    body: { project_id: projectId, plan }, expectedRevision,
+    body: { project_id: projectId, plan }, expectedRevision, idempotencyKey,
   });
 }
 
@@ -183,7 +185,7 @@ export function listGenerationJobs(projectId, expectedRevision) {
   return getJson(`${GENERATION_PATH}/jobs?${query}`);
 }
 
-export function queueGeneration(projectId, expectedRevision, selection) {
+export function queueGeneration(projectId, expectedRevision, selection, idempotencyKey) {
   return writeRequest(`${GENERATION_PATH}/queue`, {
     body: {
       project_id: projectId,
@@ -193,6 +195,7 @@ export function queueGeneration(projectId, expectedRevision, selection) {
       auth_mode: selection.auth_mode,
     },
     expectedRevision,
+    idempotencyKey,
     responseType: "json",
   });
 }
@@ -222,32 +225,48 @@ export function submitStagedRaster(jobId, expectedRevision) {
   return generationAction(jobId, "submit-staged", expectedRevision);
 }
 
-function proposalDecision(proposalId, decision, expectedRevision) {
+export function submitGeneratedAsset(assetId, jobId, expectedRevision, idempotencyKey) {
+  return writeRequest(`${ASSETS_PATH}/${encodeURIComponent(assetId)}/submit-agent`, {
+    body: { job_id: jobId, expected_revision: expectedRevision },
+    expectedRevision,
+    idempotencyKey,
+    responseType: "json",
+  });
+}
+
+function proposalDecision(proposalId, decision, expectedRevision, idempotencyKey) {
   return writeRequest(`${APPROVALS_PATH}/${encodeURIComponent(proposalId)}/${decision}`, {
-    body: {}, expectedRevision, responseType: "json",
+    body: {}, expectedRevision, idempotencyKey, responseType: "json",
   });
 }
 
 export function approveProposal(proposalId, expectedRevision) {
-  return proposalDecision(proposalId, "approve", expectedRevision);
+  return proposalDecision(proposalId, "approve", expectedRevision, arguments[2]);
 }
 
 export function rejectProposal(proposalId, expectedRevision) {
-  return proposalDecision(proposalId, "reject", expectedRevision);
+  return proposalDecision(proposalId, "reject", expectedRevision, arguments[2]);
 }
 
-export function runQa(projectId, expectedRevision) {
+export function runQa(projectId, expectedRevision, idempotencyKey) {
   return writeRequest(`${PROJECTS_PATH}/${encodeURIComponent(projectId)}/qa`, {
-    body: {}, expectedRevision,
+    body: {}, expectedRevision, idempotencyKey,
   });
 }
 
-export async function exportProject(projectId, expectedRevision, format, overwriteConfirmed) {
+export async function exportProject(
+  projectId,
+  expectedRevision,
+  format,
+  overwriteConfirmed,
+  idempotencyKey,
+) {
   const response = await writeRequest(
     `${PROJECTS_PATH}/${encodeURIComponent(projectId)}/export`,
     {
       body: { format, overwrite_confirmed: overwriteConfirmed },
       expectedRevision,
+      idempotencyKey,
       responseType: "raw",
     },
   );

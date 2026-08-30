@@ -23,6 +23,7 @@ STATIC_ASSETS = {
     "static/index.html",
     "static/app.js",
     "static/api.js",
+    "static/webmcp.js",
     "static/state.js",
     "static/styles.css",
     "static/views/start.js",
@@ -69,6 +70,7 @@ class StudioContractTests(unittest.TestCase):
     start: ClassVar[str]
     plan: ClassVar[str]
     styles: ClassVar[str]
+    webmcp: ClassVar[str]
     scripts: ClassVar[str]
     parser: ClassVar[StudioDocumentParser]
 
@@ -81,7 +83,8 @@ class StudioContractTests(unittest.TestCase):
         cls.start = (STATIC_ROOT / "views" / "start.js").read_text(encoding="utf-8")
         cls.plan = (STATIC_ROOT / "views" / "plan.js").read_text(encoding="utf-8")
         cls.styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
-        cls.scripts = "\n".join((cls.app, cls.api, cls.state, cls.start, cls.plan))
+        cls.webmcp = (STATIC_ROOT / "webmcp.js").read_text(encoding="utf-8")
+        cls.scripts = "\n".join((cls.app, cls.api, cls.state, cls.start, cls.plan, cls.webmcp))
         cls.parser = StudioDocumentParser()
         cls.parser.feed(cls.index)
 
@@ -102,7 +105,7 @@ class StudioContractTests(unittest.TestCase):
         self.assertNotRegex(self.index, r"https?://|<link[^>]+stylesheet[^>]+(?:cdn|http)")
         self.assertNotRegex(self.scripts, r"\bReact\b|\bVue\b|\bAngular\b|require\(|node_modules")
 
-    def test_wheel_declares_and_http_serves_all_seven_studio_assets(self) -> None:
+    def test_wheel_declares_and_http_serves_all_studio_assets(self) -> None:
         project = tomllib.loads((WEB_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         package_data = project["tool"]["setuptools"]["package-data"]["comic_sol_web"]
         self.assertEqual(STATIC_ASSETS, set(package_data))
@@ -202,7 +205,7 @@ class StudioContractTests(unittest.TestCase):
         self.assertIn("encodeURIComponent(projectId)", self.api)
         route_literals = set(re.findall(r'["\'](/api/[^"\']*)["\']', self.scripts))
         self.assertEqual(
-            {"/api/projects", "/api/generation", "/api/approvals"},
+            {"/api/projects", "/api/generation", "/api/approvals", "/api/assets"},
             route_literals,
         )
         self.assertNotRegex(

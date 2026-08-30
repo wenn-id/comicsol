@@ -1,4 +1,5 @@
 import { getCurrentProject } from "./api.js";
+import { registerWebMcp } from "./webmcp.js";
 import { createStore, restoreCurrentProject } from "./state.js";
 import { renderStartView } from "./views/start.js";
 import { renderPlanView } from "./views/plan.js";
@@ -63,6 +64,7 @@ for (const tab of tabs) {
 
 store.subscribe(render);
 render(store.getState());
+void registerWebMcp();
 
 async function restoreProject() {
   try {
