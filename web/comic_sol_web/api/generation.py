@@ -285,10 +285,12 @@ def create_generation_router(
                         break
                 except (TypeError, ValueError):
                     continue
+            candidates = await service.available_options()
             recommendations = recommend(
                 job.request,
                 {(job.provider, job.model): (job.auth_mode,)},
                 history,
+                candidates,
             )
             return {"recommendations": [_recommendation_envelope(item) for item in recommendations]}
         except HTTPException:

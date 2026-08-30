@@ -694,7 +694,7 @@ class DurableQueueTests(GenerationQueueFixture):
                 (
                     FakeProvider(),
                     AgentProvider(
-                        frozenset({"custom_dimensions", "negative_prompt", "text_to_image"})
+                        frozenset({"custom_dimensions", "text_to_image"})
                     ),
                 )
             ),
@@ -702,9 +702,15 @@ class DurableQueueTests(GenerationQueueFixture):
             credentials=self.credentials,
             clock=self.clock,
         )
+        options = asyncio.run(active.available_options())
+        agent_option = next(item for item in options if item.provider == "agent")
+        self.assertEqual(
+            frozenset({"custom_dimensions", "text_to_image"}),
+            agent_option.capabilities,
+        )
         self.assertEqual(
             {"agent", "fake"},
-            {entry.provider for entry in asyncio.run(active.available_options())},
+            {entry.provider for entry in options},
         )
 
     def test_arbitrary_catalog_destination_is_rejected_before_project_preparation(self) -> None:
@@ -2086,6 +2092,38 @@ class AgentSubmissionTests(GenerationQueueFixture):
         with self.database.read() as connection:
             count = connection.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0]
         self.assertEqual(0, count)
+
+    def test_agent_job_recommendation_uses_runtime_option(self) -> None:
+        queued = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="agent",
+            model=AGENT_MODEL,
+            auth_mode=AuthMode.AGENT,
+        )[0]
+        app = FastAPI()
+        app.state.auth = FakeAuth(self.alice)
+        app.include_router(create_generation_router(self.service))
+        app.dependency_overrides[require_principal] = lambda: self.alice
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/api/generation/recommendations",
+                params={
+                    "project_id": self.projects.project_id,
+                    "expected_revision": self.projects.revision,
+                    "job_id": queued.job_id,
+                },
+            )
+        self.assertEqual(200, response.status_code)
+        values = response.json()["recommendations"]
+        self.assertEqual(1, len(values))
+        self.assertEqual("agent", values[0]["provider"])
+        self.assertEqual(AGENT_MODEL, values[0]["model"])
+        self.assertEqual("agent", values[0]["auth_mode"])
+        self.assertIsNone(values[0]["estimated_cost"])
+        self.assertTrue(values[0]["reasons"])
 
     def test_missing_agent_capability_is_resumable_without_resolving_credentials(self) -> None:
         queued = self.service.queue(

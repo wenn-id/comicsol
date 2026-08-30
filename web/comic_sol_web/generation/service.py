@@ -214,12 +214,15 @@ class GenerationService:
             agent = self._providers.get("agent")
         except KeyError:
             agent = None
-        if (
-            isinstance(agent, AgentProvider)
-            and AGENT_PROVIDER_MODEL.enabled
-            and AGENT_PROVIDER_MODEL.capabilities <= agent.active_capabilities
-        ):
-            options.append(AGENT_PROVIDER_MODEL)
+        if isinstance(agent, AgentProvider) and AGENT_PROVIDER_MODEL.enabled:
+            capabilities = AGENT_PROVIDER_MODEL.capabilities & agent.active_capabilities
+            if "text_to_image" in capabilities:
+                options.append(
+                    replace(
+                        AGENT_PROVIDER_MODEL,
+                        capabilities=frozenset(capabilities),
+                    )
+                )
         return tuple(sorted(options, key=lambda item: (item.provider, item.model)))
 
     async def available_options(self) -> tuple[ProviderModel, ...]:

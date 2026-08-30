@@ -35,7 +35,13 @@ from comic_sol_web.generation.approvals import (
 from comic_sol_web.generation.queue import DurableGenerationQueue
 from comic_sol_web.generation.router import RouterRecommendation, recommend
 from comic_sol_web.generation.store import GenerationStore
-from comic_sol_web.generation.types import AuthMode, ErrorCategory, GenerationRequest, JobState
+from comic_sol_web.generation.types import (
+    AuthMode,
+    ErrorCategory,
+    GenerationRequest,
+    JobState,
+    ProviderModel,
+)
 from comic_sol_web.migrations import (
     APPLICATION_MIGRATIONS,
     APPROVAL_MIGRATIONS,
@@ -107,6 +113,27 @@ class AssistedRouterTests(unittest.TestCase):
         self.assertEqual(
             ("google", AuthMode.BYOK), (recommendations[0].provider, recommendations[0].auth_mode)
         )
+
+    def test_runtime_candidates_supply_executable_recommendations(self) -> None:
+        agent_model = ProviderModel(
+            provider="agent",
+            model="active-agent-image",
+            capabilities=frozenset({"custom_dimensions", "text_to_image"}),
+            enabled=True,
+        )
+        candidates = (agent_model,)
+        recommendations = recommend(
+            self.request(),
+            {("agent", "active-agent-image"): (AuthMode.AGENT,)},
+            {},
+            candidates=candidates,
+        )
+        self.assertEqual(1, len(recommendations))
+        self.assertEqual("agent", recommendations[0].provider)
+        self.assertEqual("active-agent-image", recommendations[0].model)
+        self.assertEqual(AuthMode.AGENT, recommendations[0].auth_mode)
+        self.assertIsNone(recommendations[0].estimated_cost)
+        self.assertTrue(recommendations[0].reasons)
 
     def test_ranking_and_identifier_tie_breaks_are_stable_across_input_order(self) -> None:
         first = recommend(
