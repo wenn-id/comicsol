@@ -109,7 +109,9 @@ class StudioGenerateReviewContractTests(unittest.TestCase):
             "revisionCurrent && SWITCH_STATES.has(job.state)",
         ):
             self.assertIn(guard, self.generate)
-        self.assertIn("const displayState = JOB_STATES.has(job.state) ? job.state : \"unknown\";", self.generate)
+        self.assertIn(
+            'const displayState = JOB_STATES.has(job.state) ? job.state : "unknown";', self.generate
+        )
         self.assertNotIn("PAUSE_STATES", self.generate)
         switch_start = self.generate.index("revisionCurrent && SWITCH_STATES.has(job.state)")
         self.assertLess(
@@ -144,8 +146,10 @@ class StudioGenerateReviewContractTests(unittest.TestCase):
 
     def test_generate_sync_publishes_project_and_jobs_atomically(self) -> None:
         sync = self.generate[
-            self.generate.index("function syncProjectAndJobs") :
-            self.generate.index("async function refresh") - 1
+            self.generate.index("function syncProjectAndJobs") : self.generate.index(
+                "async function refresh"
+            )
+            - 1
         ]
         self.assertIn("store.replaceProjectAndGenerationJobs", sync)
         self.assertNotIn("store.replaceProject(", sync)
@@ -187,8 +191,9 @@ class StudioGenerateReviewContractTests(unittest.TestCase):
         self.assertIn("for (const job of actionableFailed)", self.review)
         self.assertIn("URL.revokeObjectURL", self.review)
         qa_handler = self.review[
-            self.review.index("Run QA", self.review.index("QA findings"))
-            : self.review.index("section.append(qaCard)")
+            self.review.index("Run QA", self.review.index("QA findings")) : self.review.index(
+                "section.append(qaCard)"
+            )
         ]
         self.assertLess(
             qa_handler.index("const control = event.currentTarget;"),

@@ -693,9 +693,7 @@ class DurableQueueTests(GenerationQueueFixture):
             ProviderRegistry(
                 (
                     FakeProvider(),
-                    AgentProvider(
-                        frozenset({"custom_dimensions", "text_to_image"})
-                    ),
+                    AgentProvider(frozenset({"custom_dimensions", "text_to_image"})),
                 )
             ),
             self.staging_root,
