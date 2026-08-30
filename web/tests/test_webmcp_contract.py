@@ -577,6 +577,75 @@ class WebMcpContractTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual("conflict", result["error"]["code"])
 
+    def test_qa_result_is_returned_and_published_to_the_studio(self) -> None:
+        module_url = WEBMCP.as_uri()
+        result = self.run_node(
+            f"""
+            const project = {{
+              project_id: "project_0123456789abcdef01234567", revision: 4,
+              status: "STORYBOARDED", summary: {{
+                plan: {{ storyPlan: "private", characterBible: "", storyboard: "", visualIdentityPack: "" }},
+                qa: {{ valid: false, issues: [{{ path: "private/path", message: "private finding" }}] }}
+              }}
+            }};
+            let published = null;
+            globalThis.CustomEvent = class {{ constructor(type, init) {{ this.type = type; this.detail = init.detail; }} }};
+            globalThis.document = {{
+              cookie: "comic_sol_csrf=csrf-token",
+              dispatchEvent(event) {{ published = event; event.detail.accepted = true; return true; }}
+            }};
+            globalThis.fetch = async () => new Response(JSON.stringify(project), {{ status: 200 }});
+            const module = await import({json.dumps(module_url)});
+            const qa = await module.TOOL_DEFINITIONS.find((item) => item.name === "run_qa").execute({{
+              project_id: project.project_id, expected_revision: 4,
+              idempotency_key: "00000000-0000-4000-8000-000000000050"
+            }});
+            console.log(JSON.stringify({{
+              qa, eventType: published.type,
+              publishedProjectId: published.detail.project.project_id
+            }}));
+            """
+        )
+        self.assertFalse(result["qa"]["data"]["valid"])
+        self.assertEqual(1, result["qa"]["data"]["issue_count"])
+        self.assertEqual("comic-sol:qa-completed", result["eventType"])
+        self.assertEqual("project_0123456789abcdef01234567", result["publishedProjectId"])
+        self.assertNotIn("private", json.dumps(result["qa"]))
+
+    def test_export_hands_off_to_review_without_downloading_the_payload(self) -> None:
+        module_url = WEBMCP.as_uri()
+        result = self.run_node(
+            f"""
+            const project = {{
+              project_id: "project_0123456789abcdef01234567", revision: 4,
+              status: "STORYBOARDED", summary: {{ plan: {{
+                storyPlan: "", characterBible: "", storyboard: "", visualIdentityPack: ""
+              }} }}
+            }};
+            const calls = [];
+            let requestedFormat = null;
+            globalThis.CustomEvent = class {{ constructor(type, init) {{ this.type = type; this.detail = init.detail; }} }};
+            globalThis.document = {{
+              dispatchEvent(event) {{ requestedFormat = event.detail.format; event.detail.accepted = true; return true; }}
+            }};
+            globalThis.fetch = async (url, init = {{}}) => {{
+              calls.push({{ url, method: init.method || "GET" }});
+              return new Response(JSON.stringify(project), {{ status: 200 }});
+            }};
+            const module = await import({json.dumps(module_url)});
+            const exported = await module.TOOL_DEFINITIONS.find((item) => item.name === "export_project").execute({{
+              project_id: project.project_id, expected_revision: 4, format: "pdf",
+              overwrite_confirmed: true,
+              idempotency_key: "00000000-0000-4000-8000-000000000051"
+            }});
+            console.log(JSON.stringify({{ exported, requestedFormat, calls }}));
+            """
+        )
+        self.assertTrue(result["exported"]["ok"])
+        self.assertTrue(result["exported"]["data"]["review_required"])
+        self.assertEqual("pdf", result["requestedFormat"])
+        self.assertEqual([{"url": "/api/projects/current", "method": "GET"}], result["calls"])
+
     def test_confirmation_guards_match_the_studio_boundaries(self) -> None:
         module_url = WEBMCP.as_uri()
         result = self.run_node(

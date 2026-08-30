@@ -73,6 +73,19 @@ document.addEventListener("comic-sol:project-selected", (event) => {
   event.detail.accepted = true;
   announce("Project opened. Plan is ready for review.", "success");
 });
+document.addEventListener("comic-sol:qa-completed", (event) => {
+  const project = event.detail?.project;
+  if (!project || typeof project.project_id !== "string" || !Number.isInteger(project.revision)) {
+    return;
+  }
+  const current = store.getState().project;
+  if (!current || current.project_id !== project.project_id || current.revision !== project.revision) {
+    return;
+  }
+  store.setQa(project);
+  event.detail.accepted = true;
+  announce("QA completed.", "success");
+});
 void registerWebMcp();
 
 async function restoreProject() {
