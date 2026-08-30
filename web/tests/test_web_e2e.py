@@ -145,9 +145,13 @@ class TestImportedArchiveFlow(WiredAppFixture):
         self.assertEqual(archive.read_bytes(), original_bytes)
 
     def test_original_archive_unchanged_after_failed_import(self) -> None:
-        """Malformed archive import fails and leaves original archive intact."""
+        """Malformed archive import fails and leaves the submitted archive
+        byte-identical. A bad import must not rewrite or truncate the
+        user's file on disk — neither the rejected malformed payload nor
+        the good archive that the rejection was triggered alongside.
+        """
         archive = self.portable_archive()
-        original_bytes = archive.read_bytes()
+        archive_original = archive.read_bytes()
         client, _auth = self.client()
 
         # Write a malformed ZIP (not a real comic-sol archive).
@@ -155,6 +159,9 @@ class TestImportedArchiveFlow(WiredAppFixture):
         bad_archive.write_bytes(
             b"PK\x05\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
         )
+        # Snapshot the on-disk bytes BEFORE the upload so the post-check
+        # compares against the file the user actually submitted.
+        bad_original = bad_archive.read_bytes()
 
         with bad_archive.open("rb") as handle:
             resp = client.post(
@@ -164,8 +171,11 @@ class TestImportedArchiveFlow(WiredAppFixture):
             )
         self.assertEqual(resp.status_code, 400, resp.text)
 
-        # Original archive must be byte-identical.
-        self.assertEqual(archive.read_bytes(), original_bytes)
+        # Both on-disk files must be byte-identical to their pre-upload
+        # snapshots — the rejected import must not have been rewritten,
+        # truncated, or replaced with a different archive.
+        self.assertEqual(bad_archive.read_bytes(), bad_original)
+        self.assertEqual(archive.read_bytes(), archive_original)
 
 
 class TestAnonymousAndCrossOwnerAccess(WiredAppFixture):

@@ -706,11 +706,10 @@ class TestArchiveSecurity(WiredAppFixture):
         assert current.status_code == 204, current.text
 
     def test_archive_symlink_rejected(self) -> None:
-        """A real symlink ZipInfo member must be rejected by the archive guard.
-
-        Inject both the Unix symlink (create_system=3 + S_IFLNK) and the
-        Windows reparse-point branch (create_system=0 + Windows reparse
-        attribute) so the test fails if either branch is loosened.
+        """A real Unix symlink ZipInfo member must be rejected by the archive
+        guard. The Unix symlink uses `create_system=3` plus the
+        `S_IFLNK` mode bit so the engine's `_validate_member_type`
+        branch for Unix-symlink detection is exercised.
         """
         # Unix symlink: S_IFLNK with create_system=3 (Unix).
         unix_link = zipfile.ZipInfo("project/unix_symlink", (1980, 1, 1, 0, 0, 0))
@@ -718,25 +717,51 @@ class TestArchiveSecurity(WiredAppFixture):
         unix_link.compress_type = zipfile.ZIP_DEFLATED
         unix_link.external_attr = (stat.S_IFLNK | 0o777) << 16
 
-        # Windows reparse point: external_attr with FILE_ATTRIBUTE_REPARSE_POINT
-        # (0x400) and the reparse-point tag in the upper bits. The engine
-        # gates on the lower 32 bits being a non-regular file mode.
-        win_link = zipfile.ZipInfo("project/win_reparse", (1980, 1, 1, 0, 0, 0))
-        win_link.create_system = 0
-        win_link.compress_type = zipfile.ZIP_DEFLATED
-        # Mode bits still indicate a non-regular member (symlink-style), which
-        # is what the engine's `_validate_member_type` checks.
-        win_link.external_attr = (stat.S_IFLNK | 0o777) << 16
-
         client, _auth = self.client(self.alice)
-        data = self._inject_into_valid_archive(
-            [(unix_link, b"project.json"), (win_link, b"project.json")],
-        )
+        data = self._inject_into_valid_archive([(unix_link, b"project.json")])
         resp = client.post(
             "/api/projects/import",
             files={
                 "archive": (
-                    "symlink.comic-sol-handoff",
+                    "unix-symlink.comic-sol-handoff",
+                    io.BytesIO(data),
+                    "application/zip",
+                )
+            },
+            headers=headers(0),
+        )
+        assert resp.status_code in {400, 422}, resp.text
+        # The failed import must leave no project row behind.
+        current = client.get("/api/projects/current")
+        assert current.status_code == 204, current.text
+
+    def test_archive_windows_reparse_point_rejected(self) -> None:
+        """A real Windows reparse-point ZipInfo member must be rejected
+        by the archive guard. Submitted in a separate, otherwise-valid
+        archive from the Unix-symlink case so each validation path is
+        tested independently.
+
+        The Windows reparse-point uses `create_system=0` plus the
+        `FILE_ATTRIBUTE_REPARSE_POINT` (0x400) attribute bit in the
+        upper 16 bits of `external_attr`, which the engine reads as a
+        Windows reparse-point detection signal.
+        """
+        # Windows reparse point: external_attr with FILE_ATTRIBUTE_REPARSE_POINT
+        # (0x400) in the upper 16 bits, plus the symlink-style mode bit
+        # in the lower 16 bits so the engine's mode-based check still
+        # classifies the member as non-regular.
+        win_link = zipfile.ZipInfo("project/win_reparse", (1980, 1, 1, 0, 0, 0))
+        win_link.create_system = 0
+        win_link.compress_type = zipfile.ZIP_DEFLATED
+        win_link.external_attr = (0x400 | (stat.S_IFLNK | 0o777)) << 16
+
+        client, _auth = self.client(self.alice)
+        data = self._inject_into_valid_archive([(win_link, b"project.json")])
+        resp = client.post(
+            "/api/projects/import",
+            files={
+                "archive": (
+                    "win-reparse.comic-sol-handoff",
                     io.BytesIO(data),
                     "application/zip",
                 )
@@ -931,18 +956,30 @@ class TestSsrfPolicy(WiredAppFixture):
                 _canonical_origin(url)
 
     def test_https_private_ip_requires_allowlist(self) -> None:
-        """A canonical origin outside the allowlist is rejected by policy.
+        """A canonical origin outside the allowlist is rejected at request
+        time, not just at policy construction. Two assertions are
+        required:
 
-        TransportPolicy normalizes every approved origin through
-        _canonical_origin and stores the canonical form; an arbitrary
-        private-IP origin must not appear unless explicitly normalized
-        in.
+        1. **Configuration state** — `TransportPolicy` normalizes
+           approved origins through `_canonical_origin` and stores the
+           canonical form; an arbitrary private-IP origin must not
+           appear unless explicitly allowlisted.
+        2. **Request-time enforcement** — a `BoundedHTTPClient` whose
+           `policy.approved_origins` does not include a private-IP
+           origin must raise `ProviderError` and must NOT actually
+           connect, even when the URL is otherwise well-formed.
         """
+        import asyncio
+
         from comic_sol_web.generation.providers.http import (
+            BoundedHTTPClient,
             TransportPolicy,
             _canonical_origin,
         )
+        from comic_sol_web.generation.providers.base import ProviderError
+        from comic_sol_web.generation.types import ErrorCategory
 
+        # 1. Configuration state.
         policy = TransportPolicy(
             approved_origins=frozenset({"https://example.com"}),
             connect_timeout=1.0,
@@ -954,6 +991,50 @@ class TestSsrfPolicy(WiredAppFixture):
         self.assertNotIn(canonical, policy.approved_origins)
         # The canonical form of the allowed origin must be present.
         self.assertIn(_canonical_origin("https://example.com"), policy.approved_origins)
+
+        # 2. Request-time enforcement. Construct a transport mock that
+        # fails the test if it is ever invoked. The disallowed-origin
+        # request must short-circuit before the transport is consulted.
+        import httpx
+
+        class _ForbiddenTransport(httpx.AsyncBaseTransport):
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str]] = []
+
+            async def handle_async_request(self, request):  # type: ignore[override]
+                self.calls.append((request.method, str(request.url)))
+                raise AssertionError(
+                    f"transport should not be called for disallowed origin: "
+                    f"{request.method} {request.url}"
+                )
+
+        forbidden = _ForbiddenTransport()
+        client = BoundedHTTPClient(policy, transport=forbidden)
+        try:
+            with self.assertRaises(ProviderError) as cm:
+                # _request is the inner async primitive; exercise it
+                # directly to keep the test free of async-runtime
+                # requirements and to assert that the disallowed-origin
+                # check fires before any transport invocation.
+                asyncio.run(
+                    client._request(
+                        "GET",
+                        "https://169.254.169.254/latest/meta-data/iam",
+                        headers=None,
+                    )
+                )
+            self.assertEqual(
+                cm.exception.category,
+                ErrorCategory.INVALID_OUTPUT,
+            )
+            # The transport must NOT have been touched.
+            self.assertEqual(
+                forbidden.calls,
+                [],
+                f"transport was called for disallowed origin: {forbidden.calls}",
+            )
+        finally:
+            asyncio.run(client._client.aclose())
 
     def test_policy_rejects_cleartext_non_loopback_origins(self) -> None:
         """TransportPolicy canonicalizes and rejects cleartext non-loopback."""
@@ -1096,6 +1177,20 @@ class TestLeaseAndCancel(WiredAppFixture):
             self.assertNotEqual(new_state, "queued", (prior_state, new_state))
 
     def test_cancel_race_bounded(self) -> None:
+        """Cancel is revision-bound, idempotent, and never re-leases.
+
+        The wired app advances jobs deterministically, so instead of
+        racing the worker this asserts the three properties that a
+        cancel-race regression would break:
+
+        1. A cancel carrying a stale `expected_revision` is rejected —
+           cancellation cannot be replayed across a revision boundary.
+        2. Repeating the same cancel is idempotent: the second call
+           never moves the job to a different state than the first.
+        3. A cancelled/terminal job is never handed back out by
+           `lease_next`, so no worker can resurrect it, and its state
+           never regresses to `queued` after further worker cycles.
+        """
         client, _auth = self.client(self.alice)
         archive = self.portable_archive()
         with archive.open("rb") as handle:
@@ -1119,16 +1214,47 @@ class TestLeaseAndCancel(WiredAppFixture):
         )
         assert queued.status_code == 201, queued.text
         job_id = queued.json()["jobs"][0]["job_id"]
-        cancel = client.post(
+
+        # 1. A stale revision must not be able to cancel.
+        stale = client.post(
+            f"/api/generation/{job_id}/cancel",
+            json={"expected_revision": rev + 999},
+            headers=headers(rev + 999),
+        )
+        self.assertIn(stale.status_code, {400, 409, 412, 422}, stale.text)
+
+        # 2. The real cancel, then an exact replay of it.
+        first = client.post(
             f"/api/generation/{job_id}/cancel",
             json={"expected_revision": rev},
             headers=headers(rev),
         )
-        assert cancel.status_code in {200, 202, 409}, cancel.text
+        self.assertIn(first.status_code, {200, 202, 409}, first.text)
+        after_first = client.get(f"/api/generation/{job_id}").json()["state"]
+
+        second = client.post(
+            f"/api/generation/{job_id}/cancel",
+            json={"expected_revision": rev},
+            headers=headers(rev),
+        )
+        self.assertIn(second.status_code, {200, 202, 409}, second.text)
+        after_second = client.get(f"/api/generation/{job_id}").json()["state"]
+        # Idempotent: the replay must not change the observed state.
+        self.assertEqual(after_first, after_second)
+
+        # 3. No worker may lease this job again, and further worker
+        # cycles must never regress it back to `queued`.
+        leased = self.generation.lease_next("cancel-race-probe")
+        if leased is not None:
+            self.assertNotEqual(
+                leased.job.job_id,
+                job_id,
+                "a cancelled/terminal job was leased again",
+            )
         pump(self.generation)
-        resp = client.get(f"/api/generation/{job_id}")
-        assert resp.status_code == 200
-        assert resp.json()["state"] in {"cancelled", "failed", "accepted", "validating"}
+        final = client.get(f"/api/generation/{job_id}")
+        assert final.status_code == 200, final.text
+        self.assertNotEqual(final.json()["state"], "queued", final.json())
 
 
 class TestSensitiveDataRedaction(WiredAppFixture):
