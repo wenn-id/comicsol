@@ -17,7 +17,6 @@ const JOB_STATES = new Set([
   "awaiting_provider_confirmation", "paused", "failed", "cancelled",
 ]);
 const RETRY_STATES = new Set(["failed"]);
-const PAUSE_STATES = new Set(["failed", "paused"]);
 const SWITCH_STATES = new Set(["failed", "paused"]);
 const ACTIVE_STATES = new Set([
   "queued", "running", "polling", "awaiting_provider_confirmation",
@@ -130,7 +129,7 @@ function showPromotionDialog(job, project, refresh, announce, trigger) {
 }
 
 function renderJob(job, project, refresh, announce) {
-  const displayState = JOB_STATES.has(job.state) ? job.state : "failed";
+  const displayState = JOB_STATES.has(job.state) ? job.state : "unknown";
   const revisionCurrent = job.project_revision === project.revision;
   const card = element("article", null, { class: "card job-card" });
   card.append(
@@ -160,16 +159,6 @@ function renderJob(job, project, refresh, announce) {
       () => retryGeneration(job.job_id, project.revision), "Generation retry queued.",
     )));
   }
-  if (revisionCurrent && PAUSE_STATES.has(job.state)) {
-    actions.append(button("Pause", true, async (event) => {
-      try {
-        const proposal = await pauseForSwitch(job.job_id, project.revision);
-        showSwitchDialog(proposal, project.revision, refresh, announce, event.currentTarget);
-      } catch (error) {
-        announce(error.message, "error");
-      }
-    }));
-  }
   if (revisionCurrent && job.can_cancel === true) {
     actions.append(button("Cancel", true, () => run(
       () => cancelGeneration(job.job_id, project.revision), "Generation cancelled.",
@@ -184,9 +173,10 @@ function renderJob(job, project, refresh, announce) {
   }
   if (revisionCurrent && SWITCH_STATES.has(job.state)) {
     actions.append(button("Switch provider", true, async (event) => {
+      const trigger = event.currentTarget;
       try {
         const proposal = await pauseForSwitch(job.job_id, project.revision);
-        showSwitchDialog(proposal, project.revision, refresh, announce, event.currentTarget);
+        showSwitchDialog(proposal, project.revision, refresh, announce, trigger);
       } catch (error) {
         announce(error.message, "error");
       }

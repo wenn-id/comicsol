@@ -104,12 +104,18 @@ class StudioGenerateReviewContractTests(unittest.TestCase):
         self.assertIn("job.project_revision === project.revision", self.generate)
         for guard in (
             "revisionCurrent && RETRY_STATES.has(job.state)",
-            "revisionCurrent && PAUSE_STATES.has(job.state)",
             "revisionCurrent && job.can_cancel === true",
             'revisionCurrent && job.state === "validating"',
             "revisionCurrent && SWITCH_STATES.has(job.state)",
         ):
             self.assertIn(guard, self.generate)
+        self.assertIn("const displayState = JOB_STATES.has(job.state) ? job.state : \"unknown\";", self.generate)
+        self.assertNotIn("PAUSE_STATES", self.generate)
+        switch_start = self.generate.index("revisionCurrent && SWITCH_STATES.has(job.state)")
+        self.assertLess(
+            self.generate.index("const trigger = event.currentTarget;", switch_start),
+            self.generate.index("await pauseForSwitch(", switch_start),
+        )
         self.assertIn('createElement("dialog")', self.generate)
         self.assertIn("proposal_id", self.generate)
         self.assertIn("approveProposal", self.generate)
@@ -132,7 +138,7 @@ class StudioGenerateReviewContractTests(unittest.TestCase):
             "cancelled",
         ):
             self.assertIn(state, self.generate)
-        for action in ("Retry", "Pause", "Cancel", "Promote", "Switch provider"):
+        for action in ("Retry", "Cancel", "Promote", "Switch provider"):
             self.assertIn(action, self.generate)
         self.assertRegex(self.generate, r'aria-live["\'],\s*["\']polite')
 
@@ -180,6 +186,17 @@ class StudioGenerateReviewContractTests(unittest.TestCase):
         self.assertIn("generation.staged.project_revision === project.revision", self.review)
         self.assertIn("for (const job of actionableFailed)", self.review)
         self.assertIn("URL.revokeObjectURL", self.review)
+        qa_handler = self.review[
+            self.review.index("Run QA", self.review.index("QA findings"))
+            : self.review.index("section.append(qaCard)")
+        ]
+        self.assertLess(
+            qa_handler.index("const control = event.currentTarget;"),
+            qa_handler.index("await runQa("),
+        )
+        self.assertNotIn("event.currentTarget.disabled = true", qa_handler)
+        self.assertNotIn("event.currentTarget.disabled = false", qa_handler)
+        self.assertEqual(2, qa_handler.count("control.disabled"))
         self.assertIn("disposeReviewView", self.review)
         self.assertIn("submitStagedRaster", self.review)
         self.assertIn("runQa", self.review)

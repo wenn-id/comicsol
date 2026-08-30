@@ -296,14 +296,15 @@ export function renderReviewView({ store, announce, navigate }) {
     qaResults.append(element("p", "QA has not been run for this revision."));
   }
   qaCard.append(qaResults, button("Run QA", async (event) => {
-    event.currentTarget.disabled = true;
+    const control = event.currentTarget;
+    control.disabled = true;
     try {
       const checked = await runQa(project.project_id, project.revision);
       store.setQa(checked);
       announce("QA completed.", "success");
       focusStudioMain();
     } catch (error) {
-      event.currentTarget.disabled = false;
+      control.disabled = false;
       announce(error.message, "error");
     }
   }));
