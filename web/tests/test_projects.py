@@ -1450,6 +1450,19 @@ class ProjectApiTests(GatewayFixture):
             unavailable = client.get("/api/projects/current")
         self.assertEqual(204, unavailable.status_code)
 
+    def test_blocking_project_routes_are_sync_for_fastapi_threadpool(self) -> None:
+        router = create_projects_router(self.service)
+        names = {"run_project_qa", "export_project", "get_accepted_raster"}
+        endpoints = {
+            route.name: route.endpoint
+            for route in router.routes
+            if getattr(route, "name", None) in names
+        }
+        self.assertEqual(names, set(endpoints))
+        self.assertTrue(
+            all(not inspect.iscoroutinefunction(endpoint) for endpoint in endpoints.values())
+        )
+
     def test_creation_headers_fail_before_project_allocation(self) -> None:
         app, auth = self.app_for(self.alice)
         with TestClient(app) as client:

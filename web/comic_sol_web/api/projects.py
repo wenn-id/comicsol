@@ -184,7 +184,7 @@ def create_projects_router(service_source: Any) -> APIRouter:
             await archive.close()
 
     @router.post("/{project_id}/qa")
-    async def run_project_qa(
+    def run_project_qa(
         request: Request,
         response: Response,
         project_id: str,
@@ -205,7 +205,7 @@ def create_projects_router(service_source: Any) -> APIRouter:
             _reject(error)
 
     @router.post("/{project_id}/export", response_class=Response)
-    async def export_project(
+    def export_project(
         request: Request,
         project_id: str,
         body: Annotated[dict[str, object], Body()],
@@ -261,7 +261,7 @@ def create_projects_router(service_source: Any) -> APIRouter:
             _reject(error)
 
     @router.get("/{project_id}/accepted-raster/{job_id}", response_class=Response)
-    async def get_accepted_raster(
+    def get_accepted_raster(
         request: Request,
         project_id: str,
         job_id: str,
