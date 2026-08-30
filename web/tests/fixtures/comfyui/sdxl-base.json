@@ -1,0 +1,91 @@
+{
+  "workflow_id": "sdxl-base",
+  "workflow_sha256": "dda7c528c2e8c978ca955f5f00992474a225287c47bd6f19f09d34eef28b2b4c",
+  "output_node_id": "9",
+  "max_prompt_chars": 2048,
+  "max_negative_prompt_chars": 1024,
+  "negative_prompt_required": true,
+  "optional_slots": ["seed"],
+  "dimension_min": 512,
+  "dimension_max": 2048,
+  "dimension_step": 8,
+  "allowed_node_classes": [
+    "CheckpointLoaderSimple",
+    "CLIPTextEncode",
+    "CLIPTextEncodeSDXL",
+    "EmptyLatentImage",
+    "KSampler",
+    "VAEDecode",
+    "SaveImage",
+    "PreviewImage"
+  ],
+  "required_node_classes": [
+    "CheckpointLoaderSimple",
+    "CLIPTextEncode",
+    "EmptyLatentImage",
+    "KSampler",
+    "VAEDecode",
+    "SaveImage"
+  ],
+  "model_node_id": "1",
+  "model_input_name": "ckpt_name",
+  "model_value": "sd_xl_base_1.0.safetensors",
+  "slot_paths": {
+    "positive_prompt": [
+      {"node_id": "2", "input_name": "text"}
+    ],
+    "negative_prompt": [
+      {"node_id": "3", "input_name": "text"}
+    ],
+    "width": [
+      {"node_id": "4", "input_name": "width"}
+    ],
+    "height": [
+      {"node_id": "4", "input_name": "height"}
+    ],
+    "seed": [
+      {"node_id": "5", "input_name": "seed"}
+    ]
+  },
+  "workflow": {
+    "1": {
+      "class_type": "CheckpointLoaderSimple",
+      "inputs": {"ckpt_name": "sd_xl_base_1.0.safetensors"}
+    },
+    "2": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {"clip": ["1", 1], "text": "REPLACE_PROMPT"}
+    },
+    "3": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {"clip": ["1", 1], "text": "REPLACE_NEGATIVE"}
+    },
+    "4": {
+      "class_type": "EmptyLatentImage",
+      "inputs": {"batch_size": 1, "height": 1024, "width": 1024}
+    },
+    "5": {
+      "class_type": "KSampler",
+      "inputs": {
+        "cfg": 7,
+        "denoise": 1.0,
+        "latent_image": ["4", 0],
+        "model": ["1", 0],
+        "negative": ["3", 0],
+        "positive": ["2", 0],
+        "sampler_name": "euler",
+        "scheduler": "normal",
+        "seed": 0,
+        "steps": 25
+      }
+    },
+    "6": {
+      "class_type": "VAEDecode",
+      "inputs": {"samples": ["5", 0], "vae": ["1", 2]}
+    },
+    "9": {
+      "class_type": "SaveImage",
+      "inputs": {"filename_prefix": "comic_sol", "images": ["6", 0]}
+    }
+  }
+}
