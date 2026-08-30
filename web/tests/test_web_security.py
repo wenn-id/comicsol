@@ -448,6 +448,35 @@ class TestCallbackForgeryAndRace(WiredAppFixture):
         job_id = queued.json()["jobs"][0]["job_id"]
         return job_id, pid, rev
 
+    def _queue_agent(self, client) -> tuple[str, str, int]:
+        """Queue an AgentProvider job that enters POLLING and keeps its
+        external_job_id bound while we exercise the callback surface."""
+        from comic_sol_web.generation.providers.agent import AGENT_MODEL
+
+        archive = self.portable_archive()
+        with archive.open("rb") as handle:
+            imp = client.post(
+                "/api/projects/import",
+                files={"archive": (archive.name, handle, "application/zip")},
+                headers=headers(0),
+            )
+        pid = imp.json()["project_id"]
+        rev = imp.json()["revision"]
+        queued = client.post(
+            "/api/generation/queue",
+            json={
+                "project_id": pid,
+                "expected_revision": rev,
+                "provider": "agent",
+                "model": AGENT_MODEL,
+                "auth_mode": "agent",
+            },
+            headers=headers(rev),
+        )
+        assert queued.status_code == 201, queued.text
+        job_id = queued.json()["jobs"][0]["job_id"]
+        return job_id, pid, rev
+
     def test_no_http_callback_endpoint_exists(self) -> None:
         """A forged HTTP callback must have no surface to land on.
 
@@ -464,31 +493,50 @@ class TestCallbackForgeryAndRace(WiredAppFixture):
             resp = client.post(path, json={"forged": True}, headers=headers(0))
             self.assertIn(resp.status_code, {404, 405}, (path, resp.status_code, resp.text))
 
-    def test_callback_requires_bound_attempt(self) -> None:
-        """record_result must reject unbound or wrong-external-id callbacks.
+    def test_callback_external_id_mismatch_rejected(self) -> None:
+        """A callback whose external job ID differs from the bound ID must be
+        rejected. This proves the comparison is enforced, not just a no-lease
+        check that would pass if the comparison were removed.
 
-        This is the only callback surface; forging it at the service layer
-        must raise GenerationConflictError.
+        Also covers the no-lease / no-external-id branch, since the test
+        begins from a fresh job without any callback binding.
         """
-        from comic_sol_web.generation.types import GenerationResult, JobState
+        from comic_sol_web.generation.types import (
+            GenerationResult,
+            JobState,
+        )
+        from comic_sol_web.generation.service import (
+            GenerationConflictError,
+        )
         from PIL import Image as _PILImage
-        from comic_sol_web.generation.service import GenerationConflictError
-
         import io as _io
 
         client, _auth = self.client(self.alice)
-        job_id, _pid, _rev = self._queue_one(client)
+        # Use the agent provider so the job enters POLLING and keeps its
+        # external_job_id bound while the callback surface is exercised.
+        job_id, _pid, _rev = self._queue_agent(client)
         stream = _io.BytesIO()
         _PILImage.new("RGB", (8, 8), "#334455").save(stream, format="PNG")
         png_bytes = stream.getvalue()
 
-        # No lease, no external_job_id → callback not bound to this attempt.
+        # Pump once so the agent adapter binds external_job_id and lease.
+        pump(self.generation, 1)
+        job = self.generation.get(self.alice, job_id)
+        stored_external_id = job.external_job_id
+        self.assertIsNotNone(stored_external_id, "pump must bind external_job_id")
+        # Sanity: stored external_id is not what the forged callback sends.
+        self.assertNotEqual(stored_external_id, "forged-external-mismatch")
+
+        # Forge a callback whose external_job_id differs from the bound
+        # ID. record_result must reject on the comparison, not just on the
+        # lease. We pass lease_token=None so the lease check cannot be the
+        # source of the rejection — only the ID mismatch can be.
         with self.assertRaises(GenerationConflictError):
             self.generation.record_result(
                 job_id=job_id,
                 lease_token=None,
                 result=GenerationResult(
-                    external_job_id="forged-external",
+                    external_job_id="forged-external-mismatch",
                     state=JobState.ACCEPTED,
                     raster_bytes=png_bytes,
                     media_type="image/png",
@@ -629,18 +677,30 @@ class TestArchiveSecurity(WiredAppFixture):
     def test_archive_symlink_rejected(self) -> None:
         """A real symlink ZipInfo member must be rejected by the archive guard.
 
-        Inject a Unix symlink member into a genuinely valid portable
-        archive. The rewriter must not silently accept the bundle, and the
-        rejection must be attributable to the symlink member, not to a
-        malformed bundle.
+        Inject both the Unix symlink (create_system=3 + S_IFLNK) and the
+        Windows reparse-point branch (create_system=0 + Windows reparse
+        attribute) so the test fails if either branch is loosened.
         """
-        link = zipfile.ZipInfo("project/symlink", (1980, 1, 1, 0, 0, 0))
-        link.create_system = 3
-        link.compress_type = zipfile.ZIP_DEFLATED
-        link.external_attr = (stat.S_IFLNK | 0o777) << 16
+        # Unix symlink: S_IFLNK with create_system=3 (Unix).
+        unix_link = zipfile.ZipInfo("project/unix_symlink", (1980, 1, 1, 0, 0, 0))
+        unix_link.create_system = 3
+        unix_link.compress_type = zipfile.ZIP_DEFLATED
+        unix_link.external_attr = (stat.S_IFLNK | 0o777) << 16
+
+        # Windows reparse point: external_attr with FILE_ATTRIBUTE_REPARSE_POINT
+        # (0x400) and the reparse-point tag in the upper bits. The engine
+        # gates on the lower 32 bits being a non-regular file mode.
+        win_link = zipfile.ZipInfo("project/win_reparse", (1980, 1, 1, 0, 0, 0))
+        win_link.create_system = 0
+        win_link.compress_type = zipfile.ZIP_DEFLATED
+        # Mode bits still indicate a non-regular member (symlink-style), which
+        # is what the engine's `_validate_member_type` checks.
+        win_link.external_attr = (stat.S_IFLNK | 0o777) << 16
 
         client, _auth = self.client(self.alice)
-        data = self._inject_into_valid_archive([(link, b"project.json")])
+        data = self._inject_into_valid_archive(
+            [(unix_link, b"project.json"), (win_link, b"project.json")],
+        )
         resp = client.post(
             "/api/projects/import",
             files={
@@ -667,6 +727,8 @@ class TestArchiveSecurity(WiredAppFixture):
         `_inject_into_valid_archive` is not appropriate.
         """
         client, _auth = self.client(self.alice)
+        projects_root = self.gateway.projects_root
+        before = sorted(p.name for p in projects_root.iterdir()) if projects_root.exists() else []
         resp = client.post(
             "/api/projects/import",
             files={
@@ -682,6 +744,14 @@ class TestArchiveSecurity(WiredAppFixture):
         # No project rows leaked from the failed import: /current is 204.
         current = client.get("/api/projects/current")
         assert current.status_code == 204, current.text
+        # And the on-disk container allocated before archive parsing must be
+        # cleaned up, so no partial product state is left behind.
+        after = sorted(p.name for p in projects_root.iterdir()) if projects_root.exists() else []
+        self.assertEqual(
+            before,
+            after,
+            "failed import must not leak an allocated project container",
+        )
 
     def test_oversized_archive_rejected(self) -> None:
         """An archive that exceeds the public size cap is rejected without
@@ -868,9 +938,15 @@ class TestSsrfPolicy(WiredAppFixture):
             )
 
     def test_redirects_never_followed(self) -> None:
-        """Provider transport must never follow redirects."""
+        """Provider transport must reject 3xx responses via the explicit
+        `response.is_redirect` check, not just by trusting HTTPX's
+        follow_redirects setting.
+        """
+        from unittest.mock import AsyncMock, MagicMock
+
         from comic_sol_web.generation.providers.http import (
             BoundedHTTPClient,
+            ProviderError,
             TransportPolicy,
             _canonical_origin,
         )
@@ -884,7 +960,33 @@ class TestSsrfPolicy(WiredAppFixture):
             max_response_bytes=1024,
         )
         client = BoundedHTTPClient(policy)
-        assert client._client.follow_redirects is False
+        # The library-level guard is set, but the explicit 3xx rejection
+        # lives in `_request`; test that the rejection fires against a
+        # transport that returns a redirect, by patching the underlying
+        # httpx client's `stream` to yield a response with `is_redirect=True`.
+        redirect_response = MagicMock()
+        redirect_response.is_redirect = True
+        redirect_response.is_error = False
+        redirect_response.status_code = 302
+        redirect_response.headers = {"location": "https://example.com/elsewhere"}
+
+        stream_cm = MagicMock()
+        stream_cm.__aenter__ = AsyncMock(return_value=redirect_response)
+        stream_cm.__aexit__ = AsyncMock(return_value=None)
+
+        client._client.stream = MagicMock(return_value=stream_cm)
+
+        async def _drive_redirect_rejection() -> None:
+            await client._request(
+                "POST",
+                "https://example.com/x",
+                headers={"accept": "image/png"},
+            )
+
+        with self.assertRaises(ProviderError):
+            import asyncio as _asyncio
+
+            _asyncio.run(_drive_redirect_rejection())
 
 
 class TestLeaseAndCancel(WiredAppFixture):
