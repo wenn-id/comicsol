@@ -62,16 +62,18 @@ are useful diagnostics, but the host remains **Experimental**.
 
 | Agent host | Status | Retained live smoke evidence |
 |---|---|---|
-| Codex | Experimental | No retained live smoke record |
+| Codex | Experimental | Retained local smoke record — no durable external link authorized ([codex-2026-08-30](agent-host-smoke/codex-2026-08-30.md)) |
 | Claude Code | Experimental | No retained live smoke record |
-| Google Antigravity | Experimental | No retained live smoke record |
-| ZCode | Experimental | No retained live smoke record |
+| Google Antigravity | Experimental | Retained local smoke record — no durable external link authorized ([google-antigravity-2026-08-30](agent-host-smoke/google-antigravity-2026-08-30.md)) |
+| ZCode | Experimental | Retained installer-lifecycle record; live execution blocked — no durable external link authorized ([zcode-2026-08-30](agent-host-smoke/zcode-2026-08-30.md)) |
 
 Empty or unproven rows remain experimental. Path-copy tests and installer tests are not
 live host verification. Documentation examples, successful Skill placement, and a
-portable archive created outside the named host also do not verify that host. Do not
-promote a row until its record meets the verification threshold and its output evidence
-is retained and linked.
+portable archive created outside the named host also do not verify that host. A host
+that retains a local smoke record still stays Experimental until its output evidence is
+also reachable through durable, access-controlled links; a local path alone is not
+sufficient. Do not promote a row until its record meets the verification threshold and
+its output evidence is retained and linked.
 
 ## Claim boundaries
 

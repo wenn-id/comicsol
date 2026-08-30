@@ -50,8 +50,11 @@ the exact placements. The [surface guide](docs/surfaces.md) and
 [support matrix](docs/support-matrix.md) separate host, image capability, launcher, and
 output-root claims. “Agent Skills compatible” is a contract claim, not universal
 host verification. The [agent-host smoke contract](docs/agent-host-smoke.md) keeps
-Codex, Claude Code, Google Antigravity, and ZCode experimental until a complete live
-record is retained.
+Codex, Claude Code, Google Antigravity, and ZCode experimental until **both** a linked
+real host execution smoke record **and** durable, inspectable links to the required
+sanitized output artifacts (manifest, QA report, page PNG, PDF, and execution evidence)
+exist. A linked Markdown record without durable output evidence keeps the host
+Experimental.
 
 ## Request a comic
 
@@ -66,7 +69,11 @@ handoff, or an actionable `BLOCKED` state that preserves the work.
 
 ## Codex planning → Antigravity rendering
 
-> **Experimental host example:** this Codex-to-Antigravity route is experimental until linked live smoke evidence exists. Antigravity has not been verified.
+> **Experimental host example:** this Codex-to-Antigravity route is experimental until
+> both a linked real host execution smoke record and durable, inspectable links to the
+> required sanitized output artifacts exist. A record alone — without durable manifest,
+> QA report, page PNG, PDF, and execution evidence — keeps the host Experimental.
+> Antigravity has not been verified.
 
 The commands below use the installed package launcher. From a source checkout, replace
 `comic-sol handoff` with `"$PYTHON" scripts/comic_sol.py handoff`.

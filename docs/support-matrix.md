@@ -30,10 +30,10 @@ Skills hosts are compatibility targets rather than blanket verified hosts.
 
 | Host | Current claim | Supported placement |
 |---|---|---|
-| Codex | **Experimental** until a real host smoke record is linked | User |
-| Claude | **Experimental** until a real host smoke record is linked | User or project |
-| Antigravity | **Experimental** until a real host smoke record is linked | Project |
-| ZCode | **Experimental** until a real host smoke record is linked | User |
+| Codex | **Experimental** — retained local smoke record; no durable external link, so not verified | User |
+| Claude | **Experimental** — no retained live smoke record | User or project |
+| Antigravity | **Experimental** — retained local smoke record; no durable external link, so not verified | Project |
+| ZCode | **Experimental** — installer-lifecycle record; live execution blocked | User |
 
 No claim above implies that every AI chat product can execute local projects. A host
 must provide the filesystem and tool execution required by its tier.
