@@ -1,5 +1,6 @@
 import {
   StudioApiError,
+  StudioConflictError,
   StaleRevisionError,
   MigrationValidationError,
   MAX_ARCHIVE_BYTES,
@@ -535,7 +536,17 @@ async function createStudioProject(input) {
     },
     input.idempotency_key,
   );
+  publishProject(project);
   return safeProject(project);
+}
+
+function publishProject(project) {
+  if (typeof document === "undefined" || typeof document.dispatchEvent !== "function") {
+    throw new WebMcpInputError();
+  }
+  const detail = { project, accepted: false };
+  document.dispatchEvent(new CustomEvent("comic-sol:project-selected", { detail }));
+  if (!detail.accepted) throw new WebMcpInputError();
 }
 
 function pageOwnedArchive(handle) {
@@ -565,6 +576,7 @@ async function importStudioProject(input) {
   assertIdempotencyKey(input.idempotency_key);
   const archive = pageOwnedArchive(input.archive_handle);
   const project = await importProject(archive, input.idempotency_key);
+  publishProject(project);
   return safeProject(project);
 }
 
@@ -625,6 +637,11 @@ async function queueStudioGeneration(input) {
   assertConfirmation(input.confirm_cost);
   assertIdempotencyKey(input.idempotency_key);
   const selection = await curatedSelection(input.provider, input.model, input.auth_mode);
+  assertCurrentProject(
+    input.project_id,
+    input.expected_revision,
+    await getCurrentProject(),
+  );
   const result = await queueGeneration(
     input.project_id,
     input.expected_revision,
@@ -730,8 +747,11 @@ function safeError(error) {
   if (error instanceof WebMcpInputError) {
     return { code: "invalid_request", message: "The WebMCP request is invalid." };
   }
-  if (error instanceof StaleRevisionError || error?.status === 409) {
+  if (error instanceof StaleRevisionError) {
     return { code: "stale_revision", message: "The project revision is stale; refresh and retry." };
+  }
+  if (error instanceof StudioConflictError || error?.status === 409) {
+    return { code: "conflict", message: "The Studio operation conflicts with the current state." };
   }
   if (error instanceof MigrationValidationError) {
     return { code: "archive_rejected", message: "The selected archive was rejected safely." };

@@ -223,6 +223,14 @@ class StudioContractTests(unittest.TestCase):
         self.assertRegex(self.plan, r"project\.revision\s*!==\s*draft\.expectedRevision")
         self.assertRegex(self.plan, r"textContent\s*=")
         self.assertNotRegex(self.plan, r"JSON\.stringify\([^)]*project")
+        self.assertIn('removeEventListener("comic-sol:plan-proposal"', self.plan)
+        self.assertGreaterEqual(self.plan.count("event.preventDefault()"), 5)
+
+    def test_webmcp_lifecycle_results_update_the_page_owned_store(self) -> None:
+        self.assertIn('"comic-sol:project-selected"', self.webmcp)
+        self.assertIn('"comic-sol:project-selected"', self.app)
+        self.assertIn("store.setProject(project)", self.app)
+        self.assertIn("event.detail.accepted = true", self.app)
 
     def test_plan_persists_reviewed_draft_before_local_promotion(self) -> None:
         self.assertIn("updatePlan", self.plan)
@@ -465,11 +473,11 @@ check(activeStore.getState().project.revision === 9, "active project was overwri
 
     def test_proposal_listener_survives_bad_events_and_preserves_pending_review(self) -> None:
         self.assertNotIn("{ once: true }", self.plan)
-        self.assertNotIn("removeEventListener", self.plan)
+        self.assertEqual(1, self.plan.count('removeEventListener("comic-sol:plan-proposal"'))
         self.assertEqual(1, self.plan.count('addEventListener("comic-sol:plan-proposal"'))
         self.assertRegex(self.plan, r"if\s*\(store\.getState\(\)\.draft\)[\s\S]{0,240}return")
-        self.assertRegex(self.plan, r"if\s*\(!activeProposalHandler\)")
-        malformed_return = self.plan.index("if (!proposal) return")
+        self.assertRegex(self.plan, r"if\s*\(activeProposalHandler\)")
+        malformed_return = self.plan.index("if (!proposal)")
         listener_registration = self.plan.index('addEventListener("comic-sol:plan-proposal"')
         self.assertLess(malformed_return, listener_registration)
 
