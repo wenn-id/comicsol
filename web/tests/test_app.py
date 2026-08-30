@@ -91,6 +91,25 @@ class WebConfigTests(unittest.TestCase):
         self.assertNotIn(ENCRYPTION_SECRET, repr(config))
 
 
+def registered_api_routes(app):
+    """Flatten FastAPI's `app.routes`, which on FastAPI >= 0.121 wraps included
+    routers in `_IncludedRouter` objects that have no `.path` of their own.
+
+    Yield every concrete route's `(path, methods)` so route-registration
+    contract tests remain behavior-focused rather than coupled to a specific
+    internal route representation.
+    """
+    stack = list(app.routes)
+    while stack:
+        route = stack.pop()
+        path = getattr(route, "path", None)
+        router = getattr(route, "original_router", None)
+        if path is not None and router is None:
+            yield path, frozenset(getattr(route, "methods", None) or ())
+        if router is not None and hasattr(router, "routes"):
+            stack.extend(router.routes)
+
+
 class WebApplicationTests(unittest.TestCase):
     def test_health_does_not_import_provider_or_engine_network_code(self):
         from comic_sol_web.app import create_app
@@ -166,9 +185,9 @@ class WebApplicationTests(unittest.TestCase):
             data_root = Path(temporary) / "not-created"
             app = create_app(WebConfig.from_env(valid_environment(data_root)))
             routes = {
-                (route.path, frozenset(route.methods or ()))
-                for route in app.routes
-                if route.path.startswith("/api/projects")
+                (route_path, methods)
+                for route_path, methods in registered_api_routes(app)
+                if route_path.startswith("/api/projects")
             }
         self.assertEqual(
             {
@@ -196,9 +215,9 @@ class WebApplicationTests(unittest.TestCase):
             data_root = Path(temporary) / "not-created"
             app = create_app(WebConfig.from_env(valid_environment(data_root)))
             routes = {
-                (route.path, frozenset(route.methods or ()))
-                for route in app.routes
-                if route.path.startswith("/api/generation")
+                (route_path, methods)
+                for route_path, methods in registered_api_routes(app)
+                if route_path.startswith("/api/generation")
             }
             self.assertEqual(
                 {
@@ -241,9 +260,9 @@ class WebApplicationTests(unittest.TestCase):
             data_root = Path(temporary) / "not-created"
             app = create_app(WebConfig.from_env(valid_environment(data_root)))
             routes = {
-                (route.path, frozenset(route.methods or ()))
-                for route in app.routes
-                if route.path.startswith("/api/assets")
+                (route_path, methods)
+                for route_path, methods in registered_api_routes(app)
+                if route_path.startswith("/api/assets")
             }
             self.assertEqual(
                 {
@@ -330,9 +349,9 @@ class WebApplicationTests(unittest.TestCase):
             data_root = Path(temporary) / "not-created"
             app = create_app(WebConfig.from_env(valid_environment(data_root)))
             routes = {
-                (route.path, frozenset(route.methods or ()))
-                for route in app.routes
-                if route.path.startswith("/api/approvals")
+                (route_path, methods)
+                for route_path, methods in registered_api_routes(app)
+                if route_path.startswith("/api/approvals")
             }
             self.assertEqual(
                 {
