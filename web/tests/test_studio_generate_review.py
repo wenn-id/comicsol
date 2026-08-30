@@ -216,7 +216,6 @@ class StudioGenerateReviewContractTests(unittest.TestCase):
         awaited = self.review.index("await exportProject(")
         lifecycle_guard = self.review.index(
             "if (!reviewSessionIsCurrent(exportSessionEpoch))",
-            awaited,
         )
         self.assertLess(awaited, lifecycle_guard)
         self.assertIn("const exportSessionEpoch = reviewSessionEpoch", self.review)

@@ -1024,6 +1024,14 @@ class EngineGatewayContractTests(GatewayFixture):
 
         accepted, panel, _expected = self.accept_panel("purple")
         canonical = accepted.root / f"panels/raw/{panel.subject_id}.png"
+        canonical.unlink()
+        with self.assertRaises(ProjectUnavailableError):
+            self.service.accepted_raster(
+                self.alice,
+                accepted.project_id,
+                accepted.revision,
+                panel.job_id,
+            )
         canonical.write_bytes(b"substituted")
         with self.assertRaises(GatewayError):
             self.service.accepted_raster(
