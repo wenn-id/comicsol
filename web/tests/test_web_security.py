@@ -587,9 +587,10 @@ class TestArchiveSecurity(WiredAppFixture):
         only be attributed to the injected property under test.
         """
         import copy
+        from typing import Any
 
         source = self.portable_archive()
-        entries: list[tuple[zipfile.ZipInfo | str, bytes]] = []
+        entries: list[tuple[Any, bytes]] = []
         with zipfile.ZipFile(source, "r") as bundle:
             for info in bundle.infolist():
                 entries.append((copy.copy(info), bundle.read(info)))
