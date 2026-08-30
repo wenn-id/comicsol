@@ -27,8 +27,10 @@ All offline; no live or paid provider calls; credential-free.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
+import stat
 import unittest
 import zipfile
 from uuid import uuid4
@@ -47,6 +49,17 @@ from web.tests.fixtures.wp16_fixture import (
     headers,
     pump,
 )
+from web.tests.fixtures.wp16_fixture import (  # re-exported wiring symbols
+    NullCredentialResolver,
+)
+
+from comic_sol_web.generation.providers.base import ProviderRegistry
+from comic_sol_web.generation.providers.fake import FakeProvider
+from comic_sol_web.generation.service import GenerationService
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 class TestRedactionPrimitives(unittest.TestCase):
@@ -514,26 +527,73 @@ class TestArchiveSecurity(WiredAppFixture):
         data = self._make_archive_bytes([("../evil", b"x"), ("page-1.png", b"png")])
         resp = client.post(
             "/api/projects/import",
-            files={"archive": ("traversal.zip", io.BytesIO(data), "application/zip")},
+            files={
+                "archive": (
+                    "traversal.comic-sol-handoff",
+                    io.BytesIO(data),
+                    "application/zip",
+                )
+            },
             headers=headers(0),
         )
         assert resp.status_code in {400, 422}, resp.text
+        # No project rows leaked from the failed import: /current is 204.
+        current = client.get("/api/projects/current")
+        assert current.status_code == 204, current.text
 
     def test_archive_symlink_rejected(self) -> None:
+        """A real symlink ZipInfo member must be rejected by the archive guard.
+
+        Take a genuinely valid portable archive, inject one Unix symlink
+        member (`external_attr` carrying `S_IFLNK`), and submit it under the
+        accepted `.comic-sol-handoff` suffix so the rejection is proven at
+        the archive-content boundary rather than the filename check.
+        """
+        import copy
+
         client, _auth = self.client(self.alice)
-        data = self._make_archive_bytes([("link", b"PNG")])
+        source = self.portable_archive()
+        with zipfile.ZipFile(source, "r") as bundle:
+            entries = [(copy.copy(info), bundle.read(info)) for info in bundle.infolist()]
+
+        link = zipfile.ZipInfo("project/symlink", (1980, 1, 1, 0, 0, 0))
+        link.create_system = 3
+        link.compress_type = zipfile.ZIP_DEFLATED
+        link.external_attr = (stat.S_IFLNK | 0o777) << 16
+        entries.append((link, b"project.json"))
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as out:
+            for info, payload in entries:
+                out.writestr(info, payload)
+
         resp = client.post(
             "/api/projects/import",
-            files={"archive": ("symlink.zip", io.BytesIO(data), "application/zip")},
+            files={
+                "archive": (
+                    "symlink.comic-sol-handoff",
+                    io.BytesIO(buf.getvalue()),
+                    "application/zip",
+                )
+            },
             headers=headers(0),
         )
         assert resp.status_code in {400, 422}, resp.text
+        # The failed import must leave no project row behind.
+        current = client.get("/api/projects/current")
+        assert current.status_code == 204, current.text
 
     def test_malformed_archive_rejected_and_rollback(self) -> None:
         client, _auth = self.client(self.alice)
         resp = client.post(
             "/api/projects/import",
-            files={"archive": ("bad.zip", io.BytesIO(b"not a zip"), "application/zip")},
+            files={
+                "archive": (
+                    "bad.comic-sol-handoff",
+                    io.BytesIO(b"not a zip"),
+                    "application/zip",
+                )
+            },
             headers=headers(0),
         )
         assert resp.status_code in {400, 422}, resp.text
@@ -547,7 +607,13 @@ class TestArchiveSecurity(WiredAppFixture):
         data = self._make_archive_bytes([("big.png", blob)])
         resp = client.post(
             "/api/projects/import",
-            files={"archive": ("big.zip", io.BytesIO(data), "application/zip")},
+            files={
+                "archive": (
+                    "big.comic-sol-handoff",
+                    io.BytesIO(data),
+                    "application/zip",
+                )
+            },
             headers=headers(0),
         )
         assert resp.status_code in {400, 413, 422}, resp.text
@@ -557,31 +623,67 @@ class TestRasterValidation(WiredAppFixture):
     """Raster MIME mismatch, decoded-size limits, failed-replacement retention."""
 
     def test_raster_mime_mismatch_rejected(self) -> None:
+        """A valid decodable PNG with a lying `text/html` MIME must be
+        rejected at the MIME/decoding boundary, not because the bytes are
+        invalid."""
         client, _auth = self.client(self.alice)
-        bad = io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+        png = self._valid_png()
         resp = client.post(
             "/api/assets",
-            files={"file": ("panel.png", bad, "text/html")},  # lying MIME
+            files={"file": ("panel.png", io.BytesIO(png), "text/html")},  # lying MIME
             headers=headers(0),
         )
         assert resp.status_code in {400, 422}, resp.text
+        assert self._current_asset_count(client) == 0
 
     def test_failed_replacement_retains_previous(self) -> None:
-        """When a staged raster replacement fails, the prior artifact remains."""
+        """When a staged-raster replacement fails, the prior artifact remains."""
         client, _auth = self.client(self.alice)
-        # Upload a minimal valid raster.
-        png = (
-            b"\x89PNG\r\n\x1a\n"
-            + b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
-            + b"\x1f\x15\xc4\x89\x00\x00\x00\x0aIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01"
-            + b"\r\n\x2d\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
-        )
+        png = self._valid_png()
+        # Upload a valid raster and capture its digest.
         ok = client.post(
             "/api/assets",
             files={"file": ("panel.png", io.BytesIO(png), "image/png")},
             headers=headers(0),
         )
         assert ok.status_code in {200, 201}, ok.text
+        asset_id = ok.json()["asset_id"]
+        # Original bytes that the owner may download.
+        original = client.get(f"/api/assets/{asset_id}")
+        assert original.status_code == 200, original.text
+        original_bytes = original.content
+        original_sha = _sha256(original_bytes)
+
+        # A malformed replacement (not decodable) must be rejected and must
+        # not overwrite the prior artifact.
+        bad = io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+        replacement = client.post(
+            "/api/assets",
+            files={"file": ("panel.png", bad, "image/png")},
+            headers=headers(0),
+        )
+        assert replacement.status_code in {400, 422}, replacement.text
+
+        # The prior artifact must still be retrievable, byte-identical.
+        after = client.get(f"/api/assets/{asset_id}")
+        assert after.status_code == 200, after.text
+        assert _sha256(after.content) == original_sha
+
+    def _valid_png(self) -> bytes:
+        from PIL import Image
+
+        stream = io.BytesIO()
+        Image.new("RGB", (8, 8), "#334455").save(stream, format="PNG")
+        return stream.getvalue()
+
+    def _current_asset_count(self, client) -> int:
+        # Assets are owner-bounded; an upload that failed must leave no row.
+        with self.database.read() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS n FROM assets WHERE owner_id = ?",
+                (self.alice.user_id,),
+            ).fetchone()
+        return int(row["n"]) if row else 0
 
 
 class TestSsrfPolicy(WiredAppFixture):
@@ -699,6 +801,7 @@ class TestLeaseAndCancel(WiredAppFixture):
     """Lease expiry/restart recovery and cancellation races."""
 
     def test_restart_recovery(self) -> None:
+        """A worker restart must reclaim a leased job from durable storage."""
         client, _auth = self.client(self.alice)
         archive = self.portable_archive()
         with archive.open("rb") as handle:
@@ -727,7 +830,8 @@ class TestLeaseAndCancel(WiredAppFixture):
         pump(self.generation)
         resp = client.get(f"/api/generation/{job_id}")
         assert resp.status_code == 200
-        assert resp.json()["state"] in {
+        prior_state = resp.json()["state"]
+        assert prior_state in {
             "queued",
             "running",
             "validating",
@@ -735,6 +839,38 @@ class TestLeaseAndCancel(WiredAppFixture):
             "accepted",
             "cancelled",
         }
+
+        # Build a brand-new worker over the SAME durable database/staging so
+        # the restarted worker must reclaim the leased job from disk, not
+        # start fresh.
+        restarted = GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry((FakeProvider(),)),
+            self.gateway.staging_root,
+            credentials=NullCredentialResolver(),
+            assets=self.assets,
+            clock=lambda: self.clock_value,
+        )
+        # Same job must be durable and retrievable by a new worker.
+        same = restarted.get(self.alice, job_id)
+        self.assertEqual(same.job_id, job_id)
+        pump(restarted)
+        resp2 = client.get(f"/api/generation/{job_id}")
+        assert resp2.status_code == 200
+        new_state = resp2.json()["state"]
+        assert new_state in {
+            "queued",
+            "running",
+            "validating",
+            "failed",
+            "accepted",
+            "cancelled",
+        }
+        # Restarted worker must never regress a terminal/pending state
+        # backwards to queued when the prior state was already advancing.
+        if prior_state != "queued":
+            self.assertNotEqual(new_state, "queued", (prior_state, new_state))
 
     def test_cancel_race_bounded(self) -> None:
         client, _auth = self.client(self.alice)
@@ -798,11 +934,30 @@ class TestSensitiveDataRedaction(WiredAppFixture):
             headers=headers(rev),
         )
         assert queued.status_code == 201, queued.text
-        text = queued.text
-        assert "api_key" not in text.lower()
-        assert "bearer" not in text.lower()
-        assert "password" not in text.lower()
-        assert "cookie" not in text.lower()
+        # The queue envelope must be a bounded, redacted job list.
+        body = queued.json()
+        self.assertIn("jobs", body)
+        envelope = body["jobs"][0]
+        # Never disclose credentials, cookies, tokens, or machine paths.
+        allowed_keys = {
+            "job_id",
+            "project_id",
+            "project_revision",
+            "state",
+            "provider",
+            "model",
+            "auth_mode",
+            "attempt",
+            "retry_count",
+            "max_retries",
+            "can_cancel",
+        }
+        self.assertTrue(set(envelope) <= allowed_keys, set(envelope))
+        for key in ("credential", "cookie", "token", "session", "api_key"):
+            self.assertNotIn(key, envelope)
+        blob = queued.text.lower()
+        for forbidden in ("api_key", "bearer", "password", "cookie"):
+            self.assertNotIn(forbidden, blob)
 
 
 class TestWebMcpAuthorization(WiredAppFixture):

@@ -45,6 +45,7 @@ class TestImportedArchiveFlow(WiredAppFixture):
 
     def test_full_imported_archive_e2e(self) -> None:
         archive = self.portable_archive()
+        original_bytes = archive.read_bytes()
         client, _auth = self.client()
         import_headers = headers()
 
@@ -81,45 +82,61 @@ class TestImportedArchiveFlow(WiredAppFixture):
         # Pump the worker to advance job through processing.
         pump(self.generation)
 
-        # Check job state after pump.
+        # Check job state after pump. The engine intentionally stops at
+        # VALIDATING/staged: promotion requires an EXPLICIT owner action
+        # (WP3 staged-raster acceptance). Assert that exact contract so a
+        # regression that auto-promotes without consent fails here.
         listing = client.get(f"/api/generation/jobs?project_id={pid}&expected_revision={rev}")
         self.assertEqual(listing.status_code, 200)
         job_states = [
             {"state": j["state"], "artifact_state": j.get("artifact_state")}
             for j in listing.json()["jobs"]
         ]
-        # At least one job should be in validating/staged or failed (repair path).
-        terminal_states = {"accepted", "failed", "completed"}
-        has_pending = any(js["state"] in {"queued", "running", "validating"} for js in job_states)
-        has_terminal = any(js["state"] in terminal_states for js in job_states)
-        self.assertTrue(
-            has_pending or has_terminal,
-            f"Expected at least one queued/running/validating/terminal job, got {job_states}",
+        self.assertEqual(
+            job_states,
+            [{"state": "validating", "artifact_state": "staged"}],
+            f"worker must stage exactly one raster awaiting explicit acceptance: {job_states}",
         )
 
-        # If job is in validating/staged state, submit staged raster.
-        for js in job_states:
-            if js["state"] == "validating" and js["artifact_state"] == "staged":
-                submit_resp = client.post(
-                    f"/api/generation/{job_id}/submit-staged",
-                    json={"expected_revision": rev},
-                    headers={"Idempotency-Key": str(uuid4())},
-                )
-                self.assertEqual(submit_resp.status_code, 200, submit_resp.text)
-                self.assertIn(submit_resp.json()["state"], {"accepted", "failed"})
-                break
+        # Explicit staged-raster acceptance is mandatory, not optional.
+        submit_resp = client.post(
+            f"/api/generation/{job_id}/submit-staged",
+            json={"expected_revision": rev},
+            headers={"Idempotency-Key": str(uuid4())},
+        )
+        self.assertEqual(submit_resp.status_code, 200, submit_resp.text)
+        submitted = submit_resp.json()
+        # The offline FakeProvider raster is a 1x1 fixture, so WP3 validation
+        # rejects it and the job lands in the repair/rerender path. Either
+        # outcome must be terminal — never left pending.
+        self.assertIn(submitted["state"], {"accepted", "failed"}, submitted)
+        self.assertEqual(submitted["project_revision"], rev)
+        self.assertEqual(submitted["provider"], "fake")
 
-        # Pump again after submit to promote.
+        # Pump again: a terminal job must stay terminal (no resurrection).
         pump(self.generation)
+        after = client.get(f"/api/generation/{job_id}")
+        self.assertEqual(after.status_code, 200, after.text)
+        self.assertEqual(after.json()["state"], submitted["state"])
 
         # Verify snapshot.
         snap = client.get(f"/api/projects/{pid}")
         self.assertEqual(snap.status_code, 200)
         self.assertEqual(snap.json()["status"], "STORYBOARDED")
 
-        # Run QA (may have composition warnings in fake env, but must succeed).
+        # Run QA. The verifier must actually run and enumerate its findings
+        # rather than reporting a blanket pass.
         qa_resp = client.post(f"/api/projects/{pid}/qa", json={}, headers=headers(rev))
-        self.assertIn(qa_resp.status_code, {200, 400}, qa_resp.text)
+        self.assertEqual(qa_resp.status_code, 200, qa_resp.text)
+        qa_body = qa_resp.json()
+        qa = qa_body["summary"]["qa"]
+        self.assertIn("valid", qa)
+        self.assertIsInstance(qa["issues"], list)
+        # The FakeProvider raster was rejected by WP3, so composition/PDF
+        # artifacts are genuinely absent — QA must report that, not pass.
+        self.assertFalse(qa["valid"], qa)
+        issue_paths = {issue["path"] for issue in qa["issues"]}
+        self.assertIn("cache/composition.json", issue_paths)
 
         # Export archive.
         export_resp = client.post(
@@ -129,10 +146,12 @@ class TestImportedArchiveFlow(WiredAppFixture):
         )
         self.assertEqual(export_resp.status_code, 200, export_resp.text)
         self.assertGreater(len(export_resp.content), 0)
+        # The export must be a real ZIP archive, not an empty/error body.
+        self.assertEqual(export_resp.content[:2], b"PK", export_resp.content[:16])
 
         # Verify the original archive file is unchanged (byte-identical).
         self.assertTrue(archive.exists(), "Original archive must remain on disk")
-        self.assertGreater(archive.stat().st_size, 0)
+        self.assertEqual(archive.read_bytes(), original_bytes)
 
     def test_original_archive_unchanged_after_failed_import(self) -> None:
         """Malformed archive import fails and leaves original archive intact."""
