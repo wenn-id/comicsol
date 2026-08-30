@@ -211,11 +211,22 @@ class WorkflowValidationTests(unittest.IsolatedAsyncioTestCase):
         for request in (
             make_request(width=64, height=64),
             make_request(width=100, height=1024),
+            make_request(width=0, height=1024),
         ):
             with self.subTest(width=request.width):
                 with self.assertRaises(ProviderError) as caught:
                     await provider.generate(request, "sdxl-base", None)
                 self.assertEqual(ErrorCategory.INVALID_OUTPUT, caught.exception.category)
+
+    async def test_prompt_length_limits_are_enforced(self) -> None:
+        provider = self.provider()
+        for request in (
+            make_request(prompt="p" * 2049),
+            make_request(negative_prompt="n" * 1025),
+        ):
+            with self.assertRaises(ProviderError) as caught:
+                await provider.generate(request, "sdxl-base", None)
+            self.assertEqual(ErrorCategory.INVALID_OUTPUT, caught.exception.category)
 
     async def test_oversized_deep_and_malformed_payload_rejection(self) -> None:
         with self.assertRaises(ProviderError):
@@ -370,6 +381,45 @@ class RemoteLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await self.remote_provider(handler).cancel(PROMPT_ID, None)
         self.assertEqual("POST", seen[0].method)
         self.assertEqual(f"{REMOTE_BASE}/interrupt", str(seen[0].url))
+
+    async def test_history_output_node_must_match_fixture(self) -> None:
+        async def history_missing_output(request: httpx.Request) -> httpx.Response:
+            if request.url.path == f"/api/history/{PROMPT_ID}":
+                return httpx.Response(
+                    200,
+                    json={
+                        PROMPT_ID: {
+                            "status": {"completed": True, "status_str": "success"},
+                            "outputs": {
+                                "5": {
+                                    "images": [
+                                        {"filename": "x.png", "subfolder": "", "type": "output"}
+                                    ]
+                                }
+                            },
+                        }
+                    },
+                    request=request,
+                )
+            return httpx.Response(404, request=request)
+
+        provider = self.remote_provider(history_missing_output)
+        with self.assertRaises(ProviderError) as caught:
+            await provider.poll(PROMPT_ID, None)
+        self.assertEqual(ErrorCategory.INVALID_OUTPUT, caught.exception.category)
+
+    async def test_view_query_rejects_traversal_and_non_output_type(self) -> None:
+        from comic_sol_web.generation.providers.comfyui import _view_query
+
+        for image in (
+            {"filename": "..\\..\\escape.png", "subfolder": "", "type": "output"},
+            {"filename": "../escape.png", "subfolder": "", "type": "output"},
+            {"filename": "x.png", "subfolder": "", "type": "input"},
+            {"filename": "x.png", "subfolder": "", "type": "output", "extra": CANARY},
+        ):
+            with self.subTest(image=image):
+                with self.assertRaises(ProviderError):
+                    _view_query(image)
 
     async def test_output_history_lookup_failure_states(self) -> None:
         states = iter(

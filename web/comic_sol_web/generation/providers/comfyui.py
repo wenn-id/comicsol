@@ -604,17 +604,22 @@ class ComfyUIProvider:
 
 
 def _view_query(image: Mapping[str, object]) -> str:
+    if set(image) != {"filename", "subfolder", "type"}:
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT)
     filename = image.get("filename")
     subfolder = image.get("subfolder")
     image_type = image.get("type")
     if (
         not isinstance(filename, str)
         or not filename
-        or "\x00" in filename
-        or "\\" in filename
         or not isinstance(subfolder, str)
-        or image_type != "output"
+        or "\x00" in filename
+        or "\x00" in subfolder
+        or "\\" in filename
+        or "\\" in subfolder
         or "/" in filename
+        or ".." in subfolder
+        or image_type != "output"
     ):
         raise ProviderError(ErrorCategory.INVALID_OUTPUT)
     return urlencode({"filename": filename, "subfolder": subfolder, "type": image_type})
