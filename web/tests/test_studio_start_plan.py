@@ -27,6 +27,8 @@ STATIC_ASSETS = {
     "static/styles.css",
     "static/views/start.js",
     "static/views/plan.js",
+    "static/views/generate.js",
+    "static/views/review.js",
 }
 
 
@@ -190,7 +192,7 @@ class StudioContractTests(unittest.TestCase):
             r"importProject\(file, retry\.idempotencyKey\)",
         )
 
-    def test_client_uses_only_the_existing_wp3_project_api(self) -> None:
+    def test_client_preserves_wp3_project_api_and_uses_only_bounded_studio_routes(self) -> None:
         self.assertIn('const PROJECTS_PATH = "/api/projects"', self.api)
         self.assertIn("`${PROJECTS_PATH}/current`", self.api)
         self.assertIn("getCurrentProject", self.app)
@@ -199,10 +201,13 @@ class StudioContractTests(unittest.TestCase):
         self.assertIn("`${PROJECTS_PATH}/import`", self.api)
         self.assertIn("encodeURIComponent(projectId)", self.api)
         route_literals = set(re.findall(r'["\'](/api/[^"\']*)["\']', self.scripts))
-        self.assertEqual({"/api/projects"}, route_literals)
+        self.assertEqual(
+            {"/api/projects", "/api/generation", "/api/approvals"},
+            route_literals,
+        )
         self.assertNotRegex(
             self.scripts,
-            r'fetch\s*\(\s*["\']https?://|/api/(?:provider|generation|draft)',
+            r'fetch\s*\(\s*["\']https?://|/api/provider',
         )
 
     def test_plan_edits_are_revision_bound_and_agent_changes_are_reviewable(self) -> None:

@@ -11,7 +11,7 @@ from types import MappingProxyType
 from typing import Any
 
 from comic_sol_web.generation.catalog import CATALOG
-from comic_sol_web.generation.types import AuthMode, ErrorCategory, GenerationRequest
+from comic_sol_web.generation.types import AuthMode, ErrorCategory, GenerationRequest, ProviderModel
 
 _COST_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,31}\Z")
 _LATENCY_ORDER = {"low": 0, "medium": 1, "high": 2}
@@ -157,16 +157,18 @@ def recommend(
     request: GenerationRequest,
     available_credentials: Mapping[Any, Any],
     history: Mapping[Any, Any],
+    candidates: Iterable[ProviderModel] = CATALOG,
 ) -> tuple[RouterRecommendation, ...]:
-    """Return all eligible catalog entries in a stable, disclosed order.
+    """Return all eligible candidate entries in a stable, disclosed order.
 
-    The function consumes only caller-supplied credential availability and
-    observations. It never probes a credential, provider, price, or network.
+    The function consumes only caller-supplied candidates, credential
+    availability, and observations. It never probes a credential, provider,
+    price, or network. ``candidates`` defaults to the curated catalog.
     """
     required = request.required_capabilities
     references_required = bool(request.references)
     ranked: list[_RankedRecommendation] = []
-    for entry in CATALOG:
+    for entry in candidates:
         if not entry.enabled or not required <= entry.capabilities:
             continue
         if references_required and "reference_images" not in entry.capabilities:

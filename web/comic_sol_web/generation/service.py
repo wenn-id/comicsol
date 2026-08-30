@@ -21,6 +21,10 @@ from comic_sol_web.generation.credentials import (
     CredentialBrokerError,
     CredentialUnavailableError,
 )
+from comic_sol_web.generation.catalog import CATALOG
+from comic_sol_web.generation.providers.agent import (
+    _MODEL as AGENT_PROVIDER_MODEL,
+)
 from comic_sol_web.generation.providers.agent import (
     AgentProvider,
     agent_job_checksum,
@@ -48,6 +52,7 @@ from comic_sol_web.generation.types import (
     GenerationRequest,
     GenerationResult,
     JobState,
+    ProviderModel,
 )
 from comic_sol_web.migrations import GENERATION_MIGRATIONS, apply_migrations
 
@@ -194,6 +199,36 @@ class GenerationService:
         except (KeyError, ProviderError) as error:
             raise GenerationConflictError("agent handoff job binding is invalid") from error
 
+    def _runtime_options(self) -> tuple[ProviderModel, ...]:
+        """Return curated models backed by a currently executable adapter."""
+        options: list[ProviderModel] = []
+        for entry in CATALOG:
+            if not entry.enabled:
+                continue
+            try:
+                self._providers.get(entry.provider)
+            except KeyError:
+                continue
+            options.append(entry)
+        try:
+            agent = self._providers.get("agent")
+        except KeyError:
+            agent = None
+        if isinstance(agent, AgentProvider) and AGENT_PROVIDER_MODEL.enabled:
+            capabilities = AGENT_PROVIDER_MODEL.capabilities & agent.active_capabilities
+            if "text_to_image" in capabilities:
+                options.append(
+                    replace(
+                        AGENT_PROVIDER_MODEL,
+                        capabilities=frozenset(capabilities),
+                    )
+                )
+        return tuple(sorted(options, key=lambda item: (item.provider, item.model)))
+
+    async def available_options(self) -> tuple[ProviderModel, ...]:
+        """Return only curated models backed by a registered executable adapter."""
+        return self._runtime_options()
+
     def queue(
         self,
         principal: SessionPrincipal,
@@ -216,13 +251,19 @@ class GenerationService:
             model,
             max_retries,
         )
-        # Lookup proves there is an explicit provider selection. The service
-        # never catches this to choose another provider.
-        self._providers.get(provider)
+        if not any(
+            entry.provider == provider and entry.model == model for entry in self._runtime_options()
+        ):
+            raise ValueError("generation destination is not currently executable")
+        selected_provider = self._providers.get(provider)
         if provider == "agent" and mode is not AuthMode.AGENT:
             raise ValueError("agent generation requires agent authentication mode")
         requests = self._projects.prepare_generation(principal, project_id, expected_revision)
         if provider == "agent":
+            if not isinstance(selected_provider, AgentProvider) or any(
+                not selected_provider.capability_available(request, model) for request in requests
+            ):
+                raise ValueError("agent generation capability is unavailable")
             requests = self._bind_agent_requests(principal, project_id, requests)
         now = self._clock()
         return tuple(
@@ -240,6 +281,116 @@ class GenerationService:
 
     def get(self, principal: SessionPrincipal, job_id: str) -> GenerationJob:
         return self._queue.get_owned(principal.user_id, job_id)
+
+    def list_jobs(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        expected_revision: int,
+        *,
+        limit: int = 50,
+    ) -> tuple[GenerationJob, ...]:
+        self._projects.snapshot(principal, project_id, expected_revision)
+        bounded_limit = min(50, max(1, limit))
+        return self._store.list_jobs(
+            principal.user_id,
+            project_id,
+            limit=bounded_limit,
+        )
+
+    def current_accepted(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        expected_revision: int,
+    ) -> GenerationJob | None:
+        self._projects.snapshot(principal, project_id, expected_revision)
+        return self._store.current_accepted(
+            principal.user_id,
+            project_id,
+            expected_revision,
+        )
+
+    async def cancel(
+        self,
+        principal: SessionPrincipal,
+        job_id: str,
+        expected_revision: int,
+    ) -> GenerationJob:
+        """Cancel one non-promoting job without racing canonical acceptance."""
+        job = self._queue.get_owned(principal.user_id, job_id)
+        self._projects.snapshot(principal, job.project_id, expected_revision)
+        terminal = {JobState.ACCEPTED, JobState.FAILED, JobState.CANCELLED}
+        if job.state in terminal:
+            return job
+        if job.project_revision != expected_revision:
+            raise GenerationConflictError("generation project revision is stale")
+        if job.state is JobState.VALIDATING:
+            raise GenerationConflictError("staged raster promotion cannot be cancelled")
+        cancellable = {
+            JobState.QUEUED,
+            JobState.RUNNING,
+            JobState.POLLING,
+            JobState.AWAITING_PROVIDER_CONFIRMATION,
+            JobState.PAUSED,
+        }
+        if job.state not in cancellable:
+            raise GenerationConflictError("generation job cannot be cancelled")
+        if job.state is JobState.RUNNING and job.external_job_id is None:
+            raise GenerationConflictError("active provider call cannot be cancelled safely")
+        if job.external_job_id is not None and job.state in {
+            JobState.RUNNING,
+            JobState.POLLING,
+        }:
+            try:
+                provider = self._providers.get(job.provider)
+                if job.auth_mode is AuthMode.AGENT:
+                    await provider.cancel(job.external_job_id, None)
+                else:
+                    async with self._credentials.resolve(
+                        job.owner_id,
+                        job.provider,
+                        job.auth_mode,
+                    ) as credential:
+                        await provider.cancel(job.external_job_id, credential)
+            except (KeyError, CredentialBrokerError, ProviderError) as error:
+                raise GenerationConflictError("provider cancellation failed") from error
+        now = self._clock()
+        with self._store.database.transaction() as connection:
+            updated = connection.execute(
+                """
+                UPDATE generation_jobs
+                SET state = ?, lease_token = NULL, lease_owner = NULL,
+                    lease_expires_at = NULL, updated_at = ?
+                WHERE job_id = ? AND owner_id = ? AND state = ?
+                """,
+                (
+                    JobState.CANCELLED.value,
+                    now,
+                    job_id,
+                    principal.user_id,
+                    job.state.value,
+                ),
+            ).rowcount
+            if updated != 1:
+                current_row = self._store.row(connection, job_id)
+                if current_row is not None:
+                    current = self._store.from_row(current_row)
+                    if current.state in terminal:
+                        return current
+                raise GenerationConflictError("generation cancellation lost a state race")
+            current_row = self._store.row(connection, job_id)
+            assert current_row is not None
+            self._store.append_attempt(
+                connection,
+                current_row,
+                JobState.CANCELLED,
+                now,
+                error_category=ErrorCategory.CANCELLED.value,
+                external_job_id=current_row["external_job_id"],
+                result_checksum=current_row["result_checksum"],
+            )
+        return self._store.from_row(current_row)
 
     def lease_next(
         self,
@@ -807,7 +958,7 @@ class GenerationService:
 
         self._validate_agent_scope(principal, job, expected_revision)
         assert job.external_job_id is not None
-        validating = self.record_result(
+        return self.record_result(
             job.job_id,
             None,
             GenerationResult(
@@ -819,9 +970,6 @@ class GenerationService:
                 usage={"images": 1},
             ),
         )
-        if validating.state is JobState.ACCEPTED:
-            return validating
-        return self.submit_staged_raster(principal, job.job_id, expected_revision)
 
     def submit_staged_raster(
         self,
@@ -1187,8 +1335,4 @@ class GenerationService:
                 state,
                 error_category=error.category,
             )
-        if recorded.state is JobState.VALIDATING:
-            principal = SessionPrincipal(job.owner_id, job.owner_id)
-            current = self._queue.get_owned(job.owner_id, job.job_id)
-            return self.submit_staged_raster(principal, job.job_id, current.project_revision)
         return recorded

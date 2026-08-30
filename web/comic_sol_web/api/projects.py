@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, NoReturn
 from uuid import UUID
@@ -109,6 +110,8 @@ async def _stage_archive(upload: UploadFile, destination: Path) -> None:
 def create_projects_router(service_source: Any) -> APIRouter:
     """Create project routes whose service source may resolve lazily per request."""
     router = APIRouter(prefix="/api/projects", tags=["projects"])
+    used_export_keys: set[tuple[str, str]] = set()
+    export_key_order: deque[tuple[str, str]] = deque(maxlen=256)
 
     @router.post("", status_code=status.HTTP_201_CREATED)
     async def create_project(
@@ -179,6 +182,111 @@ def create_projects_router(service_source: Any) -> APIRouter:
             _reject(error)
         finally:
             await archive.close()
+
+    @router.post("/{project_id}/qa")
+    def run_project_qa(
+        request: Request,
+        response: Response,
+        project_id: str,
+        body: Annotated[dict[str, object], Body()],
+        principal: Annotated[SessionPrincipal, Depends(require_principal)],
+    ) -> dict[str, object]:
+        _require_csrf(request, principal)
+        _private_response(response)
+        if body:
+            raise HTTPException(status_code=400, detail="project request rejected")
+        _idempotency_key, expected_revision = _write_headers(request, creation=False)
+        try:
+            service = _resolve_service(service_source, request)
+            return _envelope(service.run_qa(principal, project_id, expected_revision))
+        except HTTPException:
+            raise
+        except Exception as error:
+            _reject(error)
+
+    @router.post("/{project_id}/export", response_class=Response)
+    def export_project(
+        request: Request,
+        project_id: str,
+        body: Annotated[dict[str, object], Body()],
+        principal: Annotated[SessionPrincipal, Depends(require_principal)],
+    ) -> Response:
+        _require_csrf(request, principal)
+        if set(body) != {"format", "overwrite_confirmed"}:
+            raise HTTPException(status_code=400, detail="project request rejected")
+        export_format = body.get("format")
+        if export_format not in {"archive", "pdf"} or body.get("overwrite_confirmed") is not True:
+            raise HTTPException(status_code=400, detail="project request rejected")
+        idempotency_key, expected_revision = _write_headers(request, creation=False)
+        replay_key = (principal.user_id, idempotency_key)
+        if replay_key in used_export_keys:
+            raise HTTPException(status_code=409, detail="project export replay rejected")
+        try:
+            service = _resolve_service(service_source, request)
+            outputs = service.export(
+                principal,
+                project_id,
+                expected_revision,
+                (export_format,),
+            )
+            output = outputs.get(export_format)
+            if not isinstance(output, Path):
+                raise ValueError("project export result is invalid")
+            from comic_sol_product.cli import _load_engine_module
+
+            project_io = _load_engine_module("project_io")
+            archive = _load_engine_module("handoff_archive")
+            payload = project_io.read_bytes_nofollow(
+                output,
+                max_bytes=archive.MAX_TOTAL_COMPRESSED_BYTES,
+            )
+            if len(export_key_order) == export_key_order.maxlen:
+                used_export_keys.discard(export_key_order.popleft())
+            export_key_order.append(replay_key)
+            used_export_keys.add(replay_key)
+            media_type = "application/pdf" if export_format == "pdf" else "application/zip"
+            current = service.read_plan(principal, project_id)
+            return Response(
+                content=payload,
+                media_type=media_type,
+                headers={
+                    "Cache-Control": "private, no-store",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-Project-Revision": str(current.revision),
+                },
+            )
+        except HTTPException:
+            raise
+        except Exception as error:
+            _reject(error)
+
+    @router.get("/{project_id}/accepted-raster/{job_id}", response_class=Response)
+    def get_accepted_raster(
+        request: Request,
+        project_id: str,
+        job_id: str,
+        expected_revision: int,
+        principal: Annotated[SessionPrincipal, Depends(require_principal)],
+    ) -> Response:
+        try:
+            service = _resolve_service(service_source, request)
+            raster = service.accepted_raster(
+                principal,
+                project_id,
+                expected_revision,
+                job_id,
+            )
+            return Response(
+                content=raster.payload,
+                media_type=raster.media_type,
+                headers={
+                    "Cache-Control": "private, no-store",
+                    "ETag": f'"{raster.sha256}"',
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+        except Exception as error:
+            _reject(error)
 
     @router.get("/current", response_model=None)
     async def get_current_project(

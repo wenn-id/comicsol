@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Mapping
 
 from comic_sol_web.auth import SessionPrincipal
-from comic_sol_web.engine_gateway import EngineGateway, ProjectSnapshot
+from comic_sol_web.engine_gateway import AcceptedRaster, EngineGateway, ProjectSnapshot
 from comic_sol_web.generation.types import GenerationRequest
 
 
@@ -93,6 +93,20 @@ class ProjectService:
             raster,
             media_type,
             capabilities_used,
+        )
+
+    def accepted_raster(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        expected_revision: int,
+        job_id: str,
+    ) -> AcceptedRaster:
+        self._authorize(principal, project_id)
+        return self.gateway.accepted_raster(
+            project_id,
+            expected_revision,
+            job_id,
         )
 
     def run_qa(

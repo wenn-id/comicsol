@@ -231,6 +231,18 @@ class HangingProvider(FakeProvider):
         raise AssertionError("cancelled provider call resumed")
 
 
+class CancellationRecordingProvider(FakeProvider):
+    """Record provider cancellation attempts for revision-boundary tests."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancel_calls: list[str] = []
+
+    async def cancel(self, external_job_id: str, credential: str | None) -> None:
+        self.cancel_calls.append(external_job_id)
+        await super().cancel(external_job_id, credential)
+
+
 class CredentialRecordingProvider(FakeProvider):
     """Record which owner-scoped credential reaches each provider call."""
 
@@ -358,6 +370,7 @@ class FakeProjects:
         self.prepare_calls = 0
         self.request_ids: tuple[str, ...] = ("engine-job-1",)
         self.subject_ids: dict[str, str] = {}
+        self.subject_kinds: dict[str, str] = {}
         self.fixtures: dict[str, str] = {}
         self.prompt = "private generation prompt"
         self.request_width = 1024
@@ -380,6 +393,7 @@ class FakeProjects:
             make_request(
                 project_revision=self.revision,
                 job_id=job_id,
+                subject_kind=self.subject_kinds.get(job_id, "panel"),
                 subject_id=self.subject_ids.get(job_id, f"panel-{index}"),
                 fixture=self.fixtures.get(job_id, "success"),
                 prompt=self.prompt,
@@ -468,7 +482,7 @@ class FakeProjects:
         if principal.user_id != self.owner_id or project_id != self.project_id:
             raise ValueError("project unavailable")
         if expected_revision is not None and expected_revision != self.revision:
-            raise ValueError("project revision is stale")
+            raise StaleProjectRevisionError(expected_revision, self.revision)
         return type(
             "Snapshot",
             (),
@@ -599,6 +613,351 @@ class GenerationQueueFixture(unittest.TestCase):
 
 
 class DurableQueueTests(GenerationQueueFixture):
+    def test_curated_options_and_recommendations_are_stable_sanitized_and_offline(self) -> None:
+        queued = self.queue()
+        app = FastAPI()
+        app.state.auth = FakeAuth(self.alice)
+        app.include_router(
+            create_generation_router(self.service, credential_source=self.credentials)
+        )
+        app.dependency_overrides[require_principal] = lambda: self.alice
+
+        with TestClient(app) as client:
+            options = client.get("/api/generation/options")
+            recommendations = client.get(
+                "/api/generation/recommendations",
+                params={
+                    "project_id": self.projects.project_id,
+                    "expected_revision": self.projects.revision,
+                    "job_id": queued.job_id,
+                },
+            )
+
+        self.assertEqual(200, options.status_code)
+        option_values = options.json()["options"]
+        self.assertEqual(
+            sorted(option_values, key=lambda item: (item["provider"], item["model"])),
+            option_values,
+        )
+        self.assertTrue(option_values)
+        self.assertEqual({"fake"}, {item["provider"] for item in option_values})
+        self.assertTrue(
+            all(
+                set(item) == {"provider", "model", "capabilities", "auth_modes"}
+                for item in option_values
+            )
+        )
+        self.assertTrue(all(item["auth_modes"] == ["agent"] for item in option_values))
+        serialized = json.dumps(option_values).lower()
+        for forbidden in ("credential", "endpoint", "token", "account", "url"):
+            self.assertNotIn(forbidden, serialized)
+
+        self.assertEqual(200, recommendations.status_code)
+        values = recommendations.json()["recommendations"]
+        self.assertEqual(1, len(values))
+        self.assertEqual("fake", values[0]["provider"])
+        self.assertEqual("agent", values[0]["auth_mode"])
+        self.assertIsNone(values[0]["estimated_cost"])
+        self.assertTrue(values[0]["reasons"])
+        self.assertIn("unknown", " ".join(values[0]["reasons"]).lower())
+        self.assertEqual([], self.credentials.resolutions)
+
+    def test_agent_option_requires_trusted_active_capabilities(self) -> None:
+        inactive = GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry((FakeProvider(), AgentProvider())),
+            self.staging_root,
+            credentials=self.credentials,
+            clock=self.clock,
+        )
+        self.assertEqual(
+            {"fake"},
+            {entry.provider for entry in asyncio.run(inactive.available_options())},
+        )
+        prepare_calls = self.projects.prepare_calls
+        with self.assertRaises(ValueError):
+            inactive.queue(
+                self.alice,
+                self.projects.project_id,
+                self.projects.revision,
+                provider="agent",
+                model=AGENT_MODEL,
+                auth_mode=AuthMode.AGENT,
+            )
+        self.assertEqual(prepare_calls, self.projects.prepare_calls)
+
+        active = GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry(
+                (
+                    FakeProvider(),
+                    AgentProvider(frozenset({"custom_dimensions", "text_to_image"})),
+                )
+            ),
+            self.staging_root,
+            credentials=self.credentials,
+            clock=self.clock,
+        )
+        options = asyncio.run(active.available_options())
+        agent_option = next(item for item in options if item.provider == "agent")
+        self.assertEqual(
+            frozenset({"custom_dimensions", "text_to_image"}),
+            agent_option.capabilities,
+        )
+        self.assertEqual(
+            {"agent", "fake"},
+            {entry.provider for entry in options},
+        )
+
+    def test_arbitrary_catalog_destination_is_rejected_before_project_preparation(self) -> None:
+        before = self.projects.prepare_calls
+        with self.assertRaises(ValueError):
+            self.service.queue(
+                self.alice,
+                self.projects.project_id,
+                self.projects.revision,
+                provider="fake",
+                model="attacker-model",
+                auth_mode=AuthMode.AGENT,
+            )
+        self.assertEqual(before, self.projects.prepare_calls)
+
+    def test_job_listing_is_owner_project_revision_bound_stable_and_capped(self) -> None:
+        self.projects.request_ids = tuple(f"engine-job-{index:03d}" for index in range(60))
+        queued = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="fake",
+            model="fake-raster-v1",
+            auth_mode=AuthMode.AGENT,
+        )
+        listed = self.service.list_jobs(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            limit=500,
+        )
+        self.assertEqual(50, len(listed))
+        self.assertEqual(
+            sorted((job.job_id for job in queued), reverse=True)[:50],
+            [job.job_id for job in listed],
+        )
+        self.assertTrue(all(job.owner_id == self.alice.user_id for job in listed))
+        with self.assertRaises(ValueError):
+            self.service.list_jobs(
+                self.bob,
+                self.projects.project_id,
+                self.projects.revision,
+            )
+        with self.assertRaises(StaleProjectRevisionError):
+            self.service.list_jobs(
+                self.alice,
+                self.projects.project_id,
+                self.projects.revision - 1,
+            )
+
+    def test_cancel_is_csrf_revision_bound_terminal_idempotent_and_promotion_safe(self) -> None:
+        queued = self.queue()
+        no_csrf = FastAPI()
+        no_csrf.include_router(create_generation_router(self.service))
+        no_csrf.dependency_overrides[require_principal] = lambda: self.alice
+        with TestClient(no_csrf) as client:
+            denied = client.post(
+                f"/api/generation/{queued.job_id}/cancel",
+                json={"expected_revision": queued.project_revision},
+            )
+        self.assertEqual(403, denied.status_code)
+
+        cancelled = asyncio.run(
+            self.service.cancel(self.alice, queued.job_id, queued.project_revision)
+        )
+        repeated = asyncio.run(
+            self.service.cancel(self.alice, queued.job_id, queued.project_revision)
+        )
+        self.assertEqual(JobState.CANCELLED, cancelled.state)
+        self.assertEqual(cancelled, repeated)
+        self.assertEqual(
+            1,
+            sum(
+                attempt["state"] == JobState.CANCELLED.value
+                for attempt in self.service.attempts(queued.job_id)
+            ),
+        )
+        with self.assertRaises(GenerationUnavailableError):
+            asyncio.run(self.service.cancel(self.bob, queued.job_id, queued.project_revision))
+        with self.assertRaises(StaleProjectRevisionError):
+            asyncio.run(self.service.cancel(self.alice, queued.job_id, queued.project_revision + 1))
+
+        self.projects.request_ids = ("initial-provider-call",)
+        running_job = self.queue()
+        running_lease = self.service.lease_next("initial-provider-worker")
+        assert running_lease is not None
+        self.assertEqual(JobState.RUNNING, running_lease.job.state)
+        self.assertIsNone(running_lease.job.external_job_id)
+        with self.assertRaises(GenerationConflictError):
+            asyncio.run(
+                self.service.cancel(
+                    self.alice,
+                    running_job.job_id,
+                    running_job.project_revision,
+                )
+            )
+
+        provider = FakeProvider()
+        self.service = self.make_service(provider)
+        self.projects.request_ids = ("provider-cancel",)
+        self.projects.fixtures["provider-cancel"] = "async"
+        polling_job = self.queue()
+        polling = asyncio.run(self.service.run_once("provider-cancel-worker"))
+        assert polling is not None
+        assert polling.external_job_id is not None
+        self.assertEqual(JobState.POLLING, polling.state)
+        provider_cancelled = asyncio.run(
+            self.service.cancel(self.alice, polling_job.job_id, polling_job.project_revision)
+        )
+        self.assertEqual(JobState.CANCELLED, provider_cancelled.state)
+        self.assertEqual(
+            JobState.CANCELLED,
+            asyncio.run(provider.poll(polling.external_job_id, None)).state,
+        )
+
+        self.projects.request_ids = ("promotion-race",)
+        validating_job = self.queue()
+        lease = self.service.lease_next("promotion-worker")
+        assert lease is not None
+        validating = self.service.record_result(
+            validating_job.job_id,
+            lease.lease_token,
+            self.accepted_result(),
+        )
+        self.assertEqual(JobState.VALIDATING, validating.state)
+        with self.assertRaises(GenerationConflictError):
+            asyncio.run(
+                self.service.cancel(
+                    self.alice,
+                    validating.job_id,
+                    validating.project_revision,
+                )
+            )
+        promoted = self.service.submit_staged_raster(
+            self.alice,
+            validating.job_id,
+            validating.project_revision,
+        )
+        self.assertEqual(JobState.ACCEPTED, promoted.state)
+        self.assertEqual(
+            promoted,
+            asyncio.run(
+                self.service.cancel(
+                    self.alice,
+                    promoted.job_id,
+                    cast(int, promoted.accepted_project_revision),
+                )
+            ),
+        )
+
+    def test_current_accepted_preview_ignores_reference_jobs(self) -> None:
+        def promote(request_id: str, subject_kind: str) -> GenerationJob:
+            self.projects.request_ids = (request_id,)
+            self.projects.subject_kinds[request_id] = subject_kind
+            queued = self.queue()
+            staged = asyncio.run(self.service.run_once(f"{request_id}-worker"))
+            assert staged is not None
+            self.assertEqual(JobState.VALIDATING, staged.state)
+            return self.service.submit_staged_raster(
+                self.alice,
+                queued.job_id,
+                staged.project_revision,
+            )
+
+        reference_first = promote("reference-first", "reference")
+        self.assertEqual(JobState.ACCEPTED, reference_first.state)
+        self.assertIsNone(
+            self.service.current_accepted(
+                self.alice,
+                self.projects.project_id,
+                self.projects.revision,
+            )
+        )
+
+        panel = promote("panel-preview", "panel")
+        current_panel = self.service.current_accepted(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+        )
+        assert current_panel is not None
+        self.assertEqual(panel.job_id, current_panel.job_id)
+        self.assertEqual("panel", current_panel.request.subject_kind)
+
+        newer_reference = promote("reference-newer", "reference")
+        self.assertEqual(JobState.ACCEPTED, newer_reference.state)
+        retained_panel = self.service.current_accepted(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+        )
+        assert retained_panel is not None
+        self.assertEqual(panel.job_id, retained_panel.job_id)
+        self.assertEqual("panel", retained_panel.request.subject_kind)
+
+    def test_historical_active_job_cannot_be_cancelled_or_advertised(self) -> None:
+        provider = CancellationRecordingProvider()
+        self.service = self.make_service(provider)
+        self.projects.request_ids = ("historical-provider-job",)
+        self.projects.fixtures["historical-provider-job"] = "async"
+        queued = self.queue()
+        polling = asyncio.run(self.service.run_once("historical-provider-worker"))
+        assert polling is not None
+        assert polling.external_job_id is not None
+        self.assertEqual(JobState.POLLING, polling.state)
+
+        self.projects.revision += 1
+        self.assertNotEqual(polling.project_revision, self.projects.revision)
+        self.assertNotEqual(
+            self.service.get(self.alice, queued.job_id).project_revision,
+            self.projects.revision,
+        )
+        self.assertEqual(
+            JobState.POLLING,
+            self.service.get(self.alice, queued.job_id).state,
+        )
+        with self.assertRaisesRegex(
+            GenerationConflictError,
+            "generation project revision is stale",
+        ):
+            asyncio.run(
+                self.service.cancel(
+                    self.alice,
+                    queued.job_id,
+                    self.projects.revision,
+                )
+            )
+
+        self.assertEqual([], provider.cancel_calls)
+        self.assertEqual(JobState.POLLING, self.service.get(self.alice, queued.job_id).state)
+
+        app = FastAPI()
+        app.include_router(create_generation_router(self.service))
+        app.dependency_overrides[require_principal] = lambda: self.alice
+        with TestClient(app) as client:
+            response = client.get(
+                "/api/generation/jobs",
+                params={
+                    "project_id": self.projects.project_id,
+                    "expected_revision": self.projects.revision,
+                },
+            )
+
+        self.assertEqual(200, response.status_code)
+        historical = next(
+            item for item in response.json()["jobs"] if item["job_id"] == queued.job_id
+        )
+        self.assertFalse(historical["can_cancel"])
+
     def test_queue_options_are_validated_before_project_preparation(self) -> None:
         cases = (
             (self.alice, "fake-raster-v1", 11),
@@ -1114,9 +1473,15 @@ class DurableQueueTests(GenerationQueueFixture):
 
         assert completed is not None
         self.assertEqual(queued.job_id, completed.job_id)
-        self.assertEqual(JobState.ACCEPTED, completed.state)
+        self.assertEqual(JobState.VALIDATING, completed.state)
         self.assertEqual(4, completed.project_revision)
-        self.assertEqual(5, completed.accepted_project_revision)
+        promoted = self.service.submit_staged_raster(
+            self.alice,
+            completed.job_id,
+            completed.project_revision,
+        )
+        self.assertEqual(JobState.ACCEPTED, promoted.state)
+        self.assertEqual(5, promoted.accepted_project_revision)
         self.assertEqual(1, len(self.projects.submissions))
 
     def test_sibling_jobs_follow_only_each_successful_batch_promotion_revision(self) -> None:
@@ -1206,6 +1571,50 @@ class DurableQueueTests(GenerationQueueFixture):
         self.assertEqual(accepted, self.projects.accepted_raster)
         self.assertEqual(1, len(self.projects.submissions))
 
+        self.clock.value += 1
+        self.projects.request_ids = tuple(f"newer-failed-job-{index:03d}" for index in range(60))
+        self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="fake",
+            model="fake-raster-v1",
+            auth_mode=AuthMode.AGENT,
+        )
+        app = FastAPI()
+        app.state.auth = FakeAuth(self.alice)
+        app.include_router(create_generation_router(self.service))
+        app.dependency_overrides[require_principal] = lambda: self.alice
+        with TestClient(app) as client:
+            listing = client.get(
+                "/api/generation/jobs",
+                params={
+                    "project_id": self.projects.project_id,
+                    "expected_revision": self.projects.revision,
+                    "limit": 50,
+                },
+            )
+        self.assertEqual(200, listing.status_code)
+        payload = listing.json()
+        self.assertEqual(50, len(payload["jobs"]))
+        self.assertTrue(all(job["can_cancel"] is True for job in payload["jobs"]))
+        self.assertTrue(all("external_job_id" not in job for job in payload["jobs"]))
+        accepted_job = payload["accepted_job"]
+        self.assertEqual(queued.job_id, accepted_job["job_id"])
+        self.assertEqual(queued.request.job_id, accepted_job["artifact_job_id"])
+        self.assertIs(False, accepted_job["can_cancel"])
+        self.assertNotIn("external_job_id", accepted_job)
+
+        self.projects.revision += 1
+        retained = self.service.current_accepted(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+        )
+        self.assertIsNotNone(retained)
+        assert retained is not None
+        self.assertEqual(queued.job_id, retained.job_id)
+
     def test_queued_jobs_are_consumed_before_older_polling_jobs(self) -> None:
         self.projects.request_ids = ("older-async-job",)
         self.projects.fixtures["older-async-job"] = "async"
@@ -1221,7 +1630,7 @@ class DurableQueueTests(GenerationQueueFixture):
 
         assert completed is not None
         self.assertEqual(newer.job_id, completed.job_id)
-        self.assertEqual(JobState.ACCEPTED, completed.state)
+        self.assertEqual(JobState.VALIDATING, completed.state)
         self.assertEqual(JobState.POLLING, self.service.get(self.alice, older.job_id).state)
 
     def test_worker_resolves_credentials_after_leasing_each_job_owner(self) -> None:
@@ -1277,8 +1686,8 @@ class DurableQueueTests(GenerationQueueFixture):
 
         self.assertEqual(201, response.status_code)
         job_id = response.json()["jobs"][0]["job_id"]
-        self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, job_id).state)
-        self.assertEqual(PNG, self.projects.accepted_raster)
+        self.assertEqual(JobState.VALIDATING, self.service.get(self.alice, job_id).state)
+        self.assertIsNone(self.projects.accepted_raster)
 
     def test_request_queue_drain_bounds_recurring_provider_polling(self) -> None:
         provider = NeverCompletingProvider()
@@ -1293,7 +1702,7 @@ class DurableQueueTests(GenerationQueueFixture):
         self.assertGreater(provider.poll_calls, 0)
         self.assertLessEqual(provider.poll_calls, 4)
 
-    def test_queue_request_continues_until_an_async_job_is_accepted(self) -> None:
+    def test_queue_request_continues_until_an_async_job_is_staged(self) -> None:
         self.projects.fixtures["engine-job-1"] = "async"
         app = FastAPI()
         app.state.auth = FakeAuth(self.alice)
@@ -1314,8 +1723,8 @@ class DurableQueueTests(GenerationQueueFixture):
 
         self.assertEqual(201, response.status_code)
         job_id = response.json()["jobs"][0]["job_id"]
-        self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, job_id).state)
-        self.assertEqual(PNG, self.projects.accepted_raster)
+        self.assertEqual(JobState.VALIDATING, self.service.get(self.alice, job_id).state)
+        self.assertIsNone(self.projects.accepted_raster)
 
     def test_queue_drain_continues_after_one_promotion_conflict(self) -> None:
         self.projects.request_ids = ("conflicted-job", "accepted-sibling")
@@ -1339,9 +1748,23 @@ class DurableQueueTests(GenerationQueueFixture):
 
         self.assertEqual(201, response.status_code)
         jobs = [self.service.get(self.alice, item["job_id"]) for item in response.json()["jobs"]]
+        self.assertTrue(all(job.state is JobState.VALIDATING for job in jobs))
+        with self.assertRaises(StaleProjectRevisionError):
+            self.service.submit_staged_raster(
+                self.alice,
+                jobs[0].job_id,
+                jobs[0].project_revision,
+            )
+        promoted = self.service.submit_staged_raster(
+            self.alice,
+            jobs[1].job_id,
+            jobs[1].project_revision,
+        )
+        self.assertEqual(JobState.ACCEPTED, promoted.state)
+        current = [self.service.get(self.alice, job.job_id) for job in jobs]
         self.assertEqual(
             [JobState.ACCEPTED, JobState.VALIDATING],
-            sorted((job.state for job in jobs), key=lambda state: state.value),
+            sorted((job.state for job in current), key=lambda state: state.value),
         )
         self.assertEqual(1, len(self.projects.submissions))
 
@@ -1374,8 +1797,69 @@ class DurableQueueTests(GenerationQueueFixture):
             )
 
         self.assertEqual(200, retried.status_code)
-        self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, job_id).state)
+        self.assertEqual(JobState.VALIDATING, self.service.get(self.alice, job_id).state)
         self.assertEqual(2, provider.calls)
+
+    def test_switch_route_rejects_credentialed_provider_without_registered_adapter(
+        self,
+    ) -> None:
+        resolver = SelectiveCredentialResolver(
+            {
+                ("alice-id", "bfl", AuthMode.AGENT): None,
+                ("alice-id", "google", AuthMode.HOSTED): "hosted-google-credential",
+            }
+        )
+        self.service = GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry((BflQuotaProvider(),)),
+            self.staging_root,
+            credentials=resolver,
+            clock=self.clock,
+        )
+        queued = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="bfl",
+            model="flux-1.1-pro",
+            auth_mode=AuthMode.AGENT,
+        )[0]
+        failed = asyncio.run(self.service.run_once("failed-bfl-worker"))
+        assert failed is not None
+        self.assertEqual(JobState.FAILED, failed.state)
+        with self.database.transaction() as connection:
+            connection.execute(
+                "INSERT INTO users (user_id, login, updated_at) VALUES (?, ?, ?)",
+                (self.alice.user_id, self.alice.login, self.clock()),
+            )
+            connection.execute(
+                "INSERT INTO web_projects "
+                "(project_id, owner_id, storage_name, revision, engine_state) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    self.projects.project_id,
+                    self.alice.user_id,
+                    "project-storage",
+                    self.projects.revision,
+                    "STORYBOARDED",
+                ),
+            )
+        approvals = ProviderSwitchApprovals(self.database, clock=self.clock)
+        app = FastAPI()
+        app.state.auth = FakeAuth(self.alice)
+        app.include_router(create_generation_router(self.service, approvals, resolver))
+        app.dependency_overrides[require_principal] = lambda: self.alice
+
+        with TestClient(app) as client:
+            response = client.post(
+                f"/api/generation/{queued.job_id}/pause-for-switch",
+                json={"expected_revision": self.projects.revision},
+                headers={"Idempotency-Key": str(uuid.uuid4())},
+            )
+
+        self.assertEqual(409, response.status_code)
+        self.assertEqual(JobState.FAILED, self.service.get(self.alice, queued.job_id).state)
 
     def test_switch_route_creates_server_recommendation_and_approval_resumes_worker(
         self,
@@ -1465,7 +1949,14 @@ class DurableQueueTests(GenerationQueueFixture):
             )
 
         self.assertEqual(200, approved.status_code)
-        self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, queued.job_id).state)
+        staged = self.service.get(self.alice, queued.job_id)
+        self.assertEqual(JobState.VALIDATING, staged.state)
+        accepted = self.service.submit_staged_raster(
+            self.alice,
+            staged.job_id,
+            staged.project_revision,
+        )
+        self.assertEqual(JobState.ACCEPTED, accepted.state)
         self.assertEqual(PNG, self.projects.accepted_raster)
 
     def test_worker_pauses_when_the_persisted_provider_is_unavailable(self) -> None:
@@ -1518,13 +2009,21 @@ class DurableQueueTests(GenerationQueueFixture):
             self.service.attempts(queued.job_id)[-1]["error_category"],
         )
 
-    def test_worker_executes_the_wp4_fake_provider_offline(self) -> None:
+    def test_worker_stages_the_wp4_fake_provider_until_explicit_promotion(self) -> None:
         queued = self.queue()
         completed = asyncio.run(self.service.run_once("offline-worker"))
         self.assertIsNotNone(completed)
         assert completed is not None
         self.assertEqual(queued.job_id, completed.job_id)
-        self.assertEqual(JobState.ACCEPTED, completed.state)
+        self.assertEqual(JobState.VALIDATING, completed.state)
+        self.assertIsNone(self.projects.accepted_raster)
+
+        accepted = self.service.submit_staged_raster(
+            self.alice,
+            queued.job_id,
+            queued.project_revision,
+        )
+        self.assertEqual(JobState.ACCEPTED, accepted.state)
         self.assertEqual(PNG, self.projects.accepted_raster)
 
 
@@ -1541,7 +2040,9 @@ class AgentSubmissionTests(GenerationQueueFixture):
             max_pixels=100,
             max_decoded_bytes=4096,
         )
-        self.agent = AgentProvider(frozenset({"text_to_image"}))
+        self.agent = AgentProvider(
+            frozenset({"custom_dimensions", "negative_prompt", "text_to_image"})
+        )
         self.service = GenerationService(
             self.database,
             self.projects,
@@ -1590,7 +2091,47 @@ class AgentSubmissionTests(GenerationQueueFixture):
             count = connection.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0]
         self.assertEqual(0, count)
 
+    def test_agent_job_recommendation_uses_runtime_option(self) -> None:
+        queued = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="agent",
+            model=AGENT_MODEL,
+            auth_mode=AuthMode.AGENT,
+        )[0]
+        app = FastAPI()
+        app.state.auth = FakeAuth(self.alice)
+        app.include_router(create_generation_router(self.service))
+        app.dependency_overrides[require_principal] = lambda: self.alice
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/api/generation/recommendations",
+                params={
+                    "project_id": self.projects.project_id,
+                    "expected_revision": self.projects.revision,
+                    "job_id": queued.job_id,
+                },
+            )
+        self.assertEqual(200, response.status_code)
+        values = response.json()["recommendations"]
+        self.assertEqual(1, len(values))
+        self.assertEqual("agent", values[0]["provider"])
+        self.assertEqual(AGENT_MODEL, values[0]["model"])
+        self.assertEqual("agent", values[0]["auth_mode"])
+        self.assertIsNone(values[0]["estimated_cost"])
+        self.assertTrue(values[0]["reasons"])
+
     def test_missing_agent_capability_is_resumable_without_resolving_credentials(self) -> None:
+        queued = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="agent",
+            model=AGENT_MODEL,
+            auth_mode=AuthMode.AGENT,
+        )[0]
         self.service = GenerationService(
             self.database,
             self.projects,
@@ -1600,14 +2141,6 @@ class AgentSubmissionTests(GenerationQueueFixture):
             assets=self.assets,
             clock=self.clock,
         )
-        queued = self.service.queue(
-            self.alice,
-            self.projects.project_id,
-            self.projects.revision,
-            provider="agent",
-            model=AGENT_MODEL,
-            auth_mode=AuthMode.AGENT,
-        )[0]
 
         blocked = asyncio.run(self.service.run_once("missing-agent-capability"))
 
@@ -1655,6 +2188,14 @@ class AgentSubmissionTests(GenerationQueueFixture):
         self.assertEqual([], self.credentials.resolutions)
 
     def test_stale_agent_capability_handoff_remains_blocked_on_resume(self) -> None:
+        queued = self.service.queue(
+            self.alice,
+            self.projects.project_id,
+            self.projects.revision,
+            provider="agent",
+            model=AGENT_MODEL,
+            auth_mode=AuthMode.AGENT,
+        )[0]
         self.service = GenerationService(
             self.database,
             self.projects,
@@ -1664,14 +2205,6 @@ class AgentSubmissionTests(GenerationQueueFixture):
             assets=self.assets,
             clock=self.clock,
         )
-        queued = self.service.queue(
-            self.alice,
-            self.projects.project_id,
-            self.projects.revision,
-            provider="agent",
-            model=AGENT_MODEL,
-            auth_mode=AuthMode.AGENT,
-        )[0]
         blocked = asyncio.run(self.service.run_once("missing-agent-capability"))
         assert blocked is not None
         self.projects.revision += 1
@@ -1696,15 +2229,22 @@ class AgentSubmissionTests(GenerationQueueFixture):
         self.assertEqual(JobState.AWAITING_PROVIDER_CONFIRMATION, current.state)
         self.assertEqual([], self.credentials.resolutions)
 
-    def test_agent_asset_submission_promotes_exactly_once_without_credentials(self) -> None:
+    def test_agent_asset_submission_stages_then_promotes_exactly_once_without_credentials(
+        self,
+    ) -> None:
         queued = self.queue_agent()
         handle = self.upload(self.alice)
 
-        accepted = self.service.submit_agent_asset(
+        staged = self.service.submit_agent_asset(
             self.alice, queued.job_id, handle.asset_id, queued.project_revision
         )
-        duplicate = self.service.submit_agent_asset(
-            self.alice, queued.job_id, handle.asset_id, queued.project_revision
+        self.assertEqual(JobState.VALIDATING, staged.state)
+        self.assertIsNone(self.projects.accepted_raster)
+        accepted = self.service.submit_staged_raster(
+            self.alice, queued.job_id, queued.project_revision
+        )
+        duplicate = self.service.submit_staged_raster(
+            self.alice, queued.job_id, queued.project_revision
         )
 
         self.assertEqual(JobState.ACCEPTED, accepted.state)
@@ -1743,18 +2283,28 @@ class AgentSubmissionTests(GenerationQueueFixture):
         first_asset = self.upload(self.alice, bounded_png(channel=1))
         second_asset = self.upload(self.alice, bounded_png(channel=2))
 
-        first = self.service.submit_agent_asset(
+        first_staged = self.service.submit_agent_asset(
             self.alice,
             first_before.job_id,
             first_asset.asset_id,
             first_before.project_revision,
         )
+        first = self.service.submit_staged_raster(
+            self.alice,
+            first_staged.job_id,
+            first_staged.project_revision,
+        )
         rebound = self.service.get(self.alice, second_before.job_id)
-        second = self.service.submit_agent_asset(
+        second_staged = self.service.submit_agent_asset(
             self.alice,
             rebound.job_id,
             second_asset.asset_id,
             rebound.project_revision,
+        )
+        second = self.service.submit_staged_raster(
+            self.alice,
+            second_staged.job_id,
+            second_staged.project_revision,
         )
 
         self.assertEqual(JobState.ACCEPTED, first.state)
@@ -1783,11 +2333,16 @@ class AgentSubmissionTests(GenerationQueueFixture):
             self.assertEqual(JobState.POLLING, waiting.state)
         first_asset = self.upload(self.alice, bounded_png(channel=1))
 
-        first = self.service.submit_agent_asset(
+        first_staged = self.service.submit_agent_asset(
             self.alice,
             first_before.job_id,
             first_asset.asset_id,
             first_before.project_revision,
+        )
+        first = self.service.submit_staged_raster(
+            self.alice,
+            first_staged.job_id,
+            first_staged.project_revision,
         )
         self.projects.request_ids = ("b" * 64,)
         self.projects.subject_ids["b" * 64] = "panel-2"
@@ -1813,11 +2368,16 @@ class AgentSubmissionTests(GenerationQueueFixture):
         self.assertNotEqual(second_before.job_id, rebound_key)
 
         second_asset = self.upload(self.alice, bounded_png(channel=2))
-        second = self.service.submit_agent_asset(
+        second_staged = self.service.submit_agent_asset(
             self.alice,
             requeued.job_id,
             second_asset.asset_id,
             requeued.project_revision,
+        )
+        second = self.service.submit_staged_raster(
+            self.alice,
+            second_staged.job_id,
+            second_staged.project_revision,
         )
 
         self.assertEqual(JobState.ACCEPTED, second.state)
@@ -1855,11 +2415,16 @@ class AgentSubmissionTests(GenerationQueueFixture):
             )
 
         self.projects.after_accept = enqueue_after_accept
-        accepted = self.service.submit_agent_asset(
+        staged = self.service.submit_agent_asset(
             self.alice,
             first_before.job_id,
             first_asset.asset_id,
             first_before.project_revision,
+        )
+        accepted = self.service.submit_staged_raster(
+            self.alice,
+            staged.job_id,
+            staged.project_revision,
         )
 
         rebound = self.service.get(self.alice, second_before.job_id)
@@ -1903,11 +2468,16 @@ class AgentSubmissionTests(GenerationQueueFixture):
             queued.project_revision,
         )
         handle = self.upload(self.alice)
-        accepted = self.service.submit_agent_asset(
+        staged = self.service.submit_agent_asset(
             self.alice,
             queued.job_id,
             handle.asset_id,
             queued.project_revision,
+        )
+        accepted = self.service.submit_staged_raster(
+            self.alice,
+            staged.job_id,
+            staged.project_revision,
         )
 
         self.assertEqual(JobState.POLLING, polled.state)
@@ -2097,8 +2667,13 @@ class AgentSubmissionTests(GenerationQueueFixture):
     def test_duplicate_checksum_mismatch_preserves_last_accepted_raster(self) -> None:
         queued = self.queue_agent()
         first = self.upload(self.alice, bounded_png(channel=1))
-        accepted = self.service.submit_agent_asset(
+        staged = self.service.submit_agent_asset(
             self.alice, queued.job_id, first.asset_id, queued.project_revision
+        )
+        accepted = self.service.submit_staged_raster(
+            self.alice,
+            staged.job_id,
+            staged.project_revision,
         )
         accepted_bytes = self.projects.accepted_raster
         second = self.upload(self.alice, bounded_png(channel=2))
@@ -2142,8 +2717,14 @@ class AgentSubmissionTests(GenerationQueueFixture):
 
         self.assertTrue(all(not worker.is_alive() for worker in workers))
         self.assertTrue(results)
-        self.assertTrue(all(item.state is JobState.ACCEPTED for item in results))
+        self.assertTrue(all(item.state is JobState.VALIDATING for item in results))
         self.assertTrue(all(isinstance(error, GenerationConflictError) for error in errors))
+        accepted = self.service.submit_staged_raster(
+            self.alice,
+            queued.job_id,
+            queued.project_revision,
+        )
+        self.assertEqual(JobState.ACCEPTED, accepted.state)
         self.assertEqual(JobState.ACCEPTED, self.service.get(self.alice, queued.job_id).state)
         self.assertEqual(1, len(self.projects.submissions))
         self.assertEqual(1, len(self.service.receipts(queued.job_id)))
@@ -2153,6 +2734,7 @@ def make_request(
     *,
     project_revision: int,
     job_id: str = "engine-job-1",
+    subject_kind: str = "panel",
     subject_id: str = "panel-1",
     fixture: str = "success",
     prompt: str = "private generation prompt",
@@ -2163,7 +2745,7 @@ def make_request(
         job_id=job_id,
         project_id="project-1",
         project_revision=project_revision,
-        subject_kind="panel",
+        subject_kind=subject_kind,
         subject_id=subject_id,
         prompt=prompt,
         negative_prompt=None,

@@ -175,6 +175,12 @@ class WebApplicationTests(unittest.TestCase):
                 ("/api/projects", frozenset({"POST"})),
                 ("/api/projects/import", frozenset({"POST"})),
                 ("/api/projects/current", frozenset({"GET"})),
+                (
+                    "/api/projects/{project_id}/accepted-raster/{job_id}",
+                    frozenset({"GET"}),
+                ),
+                ("/api/projects/{project_id}/qa", frozenset({"POST"})),
+                ("/api/projects/{project_id}/export", frozenset({"POST"})),
                 ("/api/projects/{project_id}", frozenset({"GET"})),
             },
             routes,
@@ -196,9 +202,13 @@ class WebApplicationTests(unittest.TestCase):
             }
             self.assertEqual(
                 {
+                    ("/api/generation/options", frozenset({"GET"})),
+                    ("/api/generation/recommendations", frozenset({"GET"})),
+                    ("/api/generation/jobs", frozenset({"GET"})),
                     ("/api/generation/queue", frozenset({"POST"})),
                     ("/api/generation/{job_id}", frozenset({"GET"})),
                     ("/api/generation/{job_id}/retry", frozenset({"POST"})),
+                    ("/api/generation/{job_id}/cancel", frozenset({"POST"})),
                     (
                         "/api/generation/{job_id}/pause-for-switch",
                         frozenset({"POST"}),
@@ -404,7 +414,7 @@ class WebApplicationTests(unittest.TestCase):
                 service = _generation_service(request)
 
             self.assertEqual("agent", service._providers.get("agent").provider_id)
-            with self.assertRaises(KeyError):
+            with self.assertRaisesRegex(ValueError, "not currently executable"):
                 service.queue(
                     SessionPrincipal("owner-id", "owner"),
                     "project-id",

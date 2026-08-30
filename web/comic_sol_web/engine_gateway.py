@@ -31,6 +31,7 @@ _handoff = _load_engine_module("handoff")
 _handoff_archive = _load_engine_module("handoff_archive")
 _input_limits = _load_engine_module("input_limits")
 _project_io = _load_engine_module("project_io")
+_raster_limits = _load_engine_module("raster_limits")
 _schema = _load_engine_module("schema")
 _validation = _load_engine_module("validate_project")
 
@@ -54,6 +55,7 @@ validate_storyboard = _validation.validate_storyboard
 validate_project = _validation.validate_project
 
 _PROJECT_ID = re.compile(r"[A-Za-z0-9_-]{32}\Z")
+_HANDOFF_JOB_ID = re.compile(r"[0-9a-f]{64}\Z")
 _DEFAULT_GENERATION_DIMENSION = 1024
 _PLAN_FIELDS = {
     "storyPlan": "plan/story-plan.json",
@@ -117,6 +119,13 @@ class StaleProjectRevisionError(GatewayError):
         self.expected = expected
         self.actual = actual
         super().__init__("project revision is stale")
+
+
+@dataclass(frozen=True)
+class AcceptedRaster:
+    payload: bytes
+    media_type: str
+    sha256: str
 
 
 @dataclass(frozen=True)
@@ -980,6 +989,94 @@ class EngineGateway:
                     self._ensure_revision(project_id, expected_revision, revision, root)
                 raise
 
+    def accepted_raster(
+        self,
+        project_id: str,
+        expected_revision: int,
+        job_id: str,
+    ) -> AcceptedRaster:
+        """Read the current canonical panel raster bound to an accepted handoff job."""
+        if not isinstance(job_id, str) or _HANDOFF_JOB_ID.fullmatch(job_id) is None:
+            raise GatewayInputError("accepted raster job identifier is invalid")
+        initial = self._row(project_id)
+        self._check_revision(cast(int, initial["revision"]), expected_revision)
+        root = self._root_from_row(initial)
+        with ProjectLock(root, read_only=True), self.database.read() as connection:
+            self._checked_row(connection, project_id, expected_revision)
+            inspection = comic_sol.inspect_handoff(root)
+            state = next(
+                (
+                    item
+                    for item in cast(list[dict[str, object]], inspection["jobs"])
+                    if item.get("job_id") == job_id
+                ),
+                None,
+            )
+            if (
+                state is None
+                or state.get("status") != "completed"
+                or state.get("subject_kind") != "panel"
+            ):
+                raise ProjectUnavailableError("accepted raster unavailable")
+            relative = state.get("path")
+            if not isinstance(relative, str):
+                raise GatewayError("accepted raster job binding is invalid")
+            job = read_contained_json(root, relative)
+            if (
+                not isinstance(job, Mapping)
+                or job.get("job_id") != job_id
+                or job.get("subject_kind") != "panel"
+            ):
+                raise GatewayError("accepted raster job binding is invalid")
+            subject_id = job.get("subject_id")
+            retry_limit = job.get("retry_limit")
+            if (
+                not isinstance(subject_id, str)
+                or isinstance(retry_limit, bool)
+                or not isinstance(retry_limit, int)
+            ):
+                raise GatewayError("accepted raster job binding is invalid")
+            job_sha256 = _handoff.generation_job_sha256(job)
+            accepted_receipts: list[Mapping[str, object]] = []
+            for attempt in range(1, retry_limit + 2):
+                attempt_id = _handoff.attempt_id(job_id=job_id, attempt=attempt)
+                receipt_path = f"generation/receipts/{attempt_id}.json"
+                try:
+                    receipt = read_contained_json(root, receipt_path)
+                except FileNotFoundError:
+                    continue
+                if not isinstance(receipt, Mapping):
+                    raise GatewayError("accepted raster receipt is invalid")
+                issues = _handoff.validate_generation_receipt(receipt)
+                if issues:
+                    raise GatewayError("accepted raster receipt is invalid")
+                if receipt.get("job_id") != job_id or receipt.get("job_sha256") != job_sha256:
+                    raise GatewayError("accepted raster receipt binding is invalid")
+                if receipt.get("outcome") == "success" and receipt.get("category") == "accepted":
+                    accepted_receipts.append(receipt)
+            if len(accepted_receipts) != 1:
+                raise ProjectUnavailableError("accepted raster unavailable")
+            receipt = accepted_receipts[0]
+            digest = receipt.get("raster_sha256")
+            if not isinstance(digest, str):
+                raise GatewayError("accepted raster digest binding is invalid")
+            canonical_path = f"panels/raw/{subject_id}.png"
+            try:
+                payload = read_contained_bytes(
+                    root,
+                    canonical_path,
+                    max_bytes=_raster_limits.MAX_ENCODED_RASTER_BYTES,
+                )
+            except FileNotFoundError as error:
+                raise ProjectUnavailableError("accepted raster unavailable") from error
+            if hashlib.sha256(payload).hexdigest() != digest:
+                raise GatewayError("accepted raster digest mismatch")
+            try:
+                comic_sol._validate_handoff_raster(payload, job)
+            except _handoff.HandoffResultError as error:
+                raise GatewayError("accepted raster validation failed") from error
+            return AcceptedRaster(payload=payload, media_type="image/png", sha256=digest)
+
     def run_qa(self, project_id: str, expected_revision: int) -> ProjectSnapshot:
         initial = self._row(project_id)
         self._check_revision(cast(int, initial["revision"]), expected_revision)
@@ -998,7 +1095,7 @@ class EngineGateway:
                 project_id,
                 cast(int, row["revision"]),
                 root,
-                extra_summary={"qa": qa},
+                extra_summary={"qa": qa, "plan": self._plan_summary(root)},
             )
 
     def export(

@@ -154,3 +154,31 @@ footer { border-top: 1px solid var(--line); padding-block: 1rem 2rem; color: var
   .step-tab[aria-current="page"], .button.primary { color: #16101f; }
   .notice { color: #f6f1ff; background: #392858; }
 }
+
+
+.job-card { display: grid; align-content: start; }
+.job-state { font-weight: 800; text-transform: capitalize; }
+.state-accepted { color: var(--success); }
+.state-failed, .state-cancelled { color: var(--danger); }
+.state-validating, .staged-raster { border-color: var(--accent); }
+.accepted-raster { border: 2px solid var(--success); }
+.warning { border-left: 0.3rem solid #9b6500; }
+.raster-preview {
+  display: block;
+  width: 100%;
+  max-height: 38rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  object-fit: contain;
+  background: var(--surface);
+}
+dialog {
+  width: min(34rem, calc(100% - 2rem));
+  border: 2px solid var(--accent);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  color: var(--ink);
+  background: var(--surface);
+}
+dialog::backdrop { background: rgb(20 12 32 / 70%); }
+.revision-label { font-weight: 750; }
