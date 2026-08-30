@@ -308,8 +308,8 @@ export function renderGenerateView({ store, announce, navigate }) {
     const current = await getProject(project.project_id);
     const result = await listGenerationJobs(current.project_id, current.revision);
     if (!section.isConnected) return current;
-    store.replaceProject(current);
-    store.setGenerationJobs(
+    store.replaceProjectAndGenerationJobs(
+      current,
       Array.isArray(result.jobs) ? result.jobs : [],
       result.accepted_job ?? null,
     );

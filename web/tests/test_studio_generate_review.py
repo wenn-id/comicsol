@@ -136,6 +136,16 @@ class StudioGenerateReviewContractTests(unittest.TestCase):
             self.assertIn(action, self.generate)
         self.assertRegex(self.generate, r'aria-live["\'],\s*["\']polite')
 
+    def test_generate_sync_publishes_project_and_jobs_atomically(self) -> None:
+        sync = self.generate[
+            self.generate.index("function syncProjectAndJobs") :
+            self.generate.index("async function refresh") - 1
+        ]
+        self.assertIn("store.replaceProjectAndGenerationJobs", sync)
+        self.assertNotIn("store.replaceProject(", sync)
+        self.assertNotIn("store.setGenerationJobs(", sync)
+        self.assertIn("replaceProjectAndGenerationJobs", self.state)
+
     def test_generate_requires_explicit_confirmation_before_promotion(self) -> None:
         self.assertIn("showPromotionDialog", self.generate)
         self.assertIn("Confirm promotion", self.generate)
@@ -319,6 +329,14 @@ check(
 fresh.setGenerationJobs([staged, failed], accepted);
 check(fresh.getState().generation.staged.job_id === staged.job_id, "staged job missing");
 check(fresh.getState().generation.accepted.job_id === accepted.job_id, "staging hid acceptance");
+fresh.setQa(Object.freeze({{
+  ...project,
+  summary: Object.freeze({{
+    ...project.summary,
+    qa: Object.freeze({{ valid: true, issues: Object.freeze([]) }}),
+  }}),
+}}));
+check(fresh.getState().generation.qa?.valid === true, "QA result was not stored");
 let publications = 0;
 const unsubscribe = fresh.subscribe(() => {{ publications += 1; }});
 const nextProject = Object.freeze({{ ...project, revision: 8 }});
@@ -328,6 +346,7 @@ check(publications === 1, "project and generation refresh was not atomic");
 check(fresh.getState().project.revision === 8, "atomic refresh lost project revision");
 check(fresh.getState().generation.loadedRevision === 8, "atomic refresh lost job revision");
 check(fresh.getState().generation.accepted.job_id === accepted.job_id, "atomic refresh lost acceptance");
+check(fresh.getState().generation.qa === null, "stale QA survived revision change");
 """
         completed = subprocess.run(
             [node, "--input-type=module", "--eval", script],

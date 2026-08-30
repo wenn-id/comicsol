@@ -66,7 +66,7 @@ function generationState(
     jobs,
     accepted,
     staged,
-    qa: previous.qa,
+    qa: loadedRevision === previous.loadedRevision ? previous.qa : null,
     loadedRevision,
   });
 }
