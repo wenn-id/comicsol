@@ -80,8 +80,10 @@ or, for an advanced source checkout, `"$PYTHON" scripts/comic_sol.py`.
 - **How you start it:** a natural-language request in a fresh session; use
   `comic-sol doctor` for deterministic readiness.
 - **Default output root:** the platform default in the table above.
-- **Claim boundary:** Codex remains experimental until a real host smoke record is
-  linked. Installer tests prove placement mechanics, not live host compatibility.
+- **Claim boundary:** Codex remains experimental until **both** a linked real host
+  execution smoke record **and** durable, inspectable links to the required sanitized
+  output artifacts exist. Installer tests prove placement mechanics, not live host
+  compatibility.
 - **Details:** [`README.md` → Install](../README.md#install-the-agent-skill) and
   [`docs/onboarding.md`](onboarding.md).
 
