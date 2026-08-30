@@ -921,6 +921,7 @@ class ApprovalApiTests(ProviderSwitchFixture):
             )
             approved = client.post(
                 f"/api/approvals/{proposal.proposal_id}/approve",
+                json={"project_id": proposal.project_id},
                 headers=write_headers(),
             )
         self.assertEqual(400, missing_headers.status_code)
@@ -946,6 +947,7 @@ class ApprovalApiTests(ProviderSwitchFixture):
         with TestClient(app) as client:
             approved = client.post(
                 f"/api/approvals/{proposal.proposal_id}/approve",
+                json={"project_id": proposal.project_id},
                 headers=write_headers(),
             )
 
@@ -953,13 +955,29 @@ class ApprovalApiTests(ProviderSwitchFixture):
         self.assertEqual("approved", approved.json()["decision"])
         self.assertEqual(JobState.QUEUED.value, self.row(job.job_id)["state"])
 
+    def test_approval_rejects_a_proposal_bound_to_another_active_project(self) -> None:
+        job = self.enqueue("background-project")
+        proposal = self.propose(job)
+        app, _ = self.app_for(self.alice)
+        with TestClient(app) as client:
+            response = client.post(
+                f"/api/approvals/{proposal.proposal_id}/approve",
+                json={"project_id": "current-project"},
+                headers=write_headers(),
+            )
+
+        self.assertEqual(409, response.status_code)
+        self.assertEqual(
+            JobState.AWAITING_PROVIDER_CONFIRMATION.value, self.row(job.job_id)["state"]
+        )
+
     def test_public_errors_are_sanitized(self) -> None:
         app, auth = self.app_for(self.alice)
         secret = "credential-canary-prompt-private-private-path-raw-provider-response"
         with TestClient(app) as client:
             response = client.post(
                 f"/api/approvals/{secret}/reject",
-                json={},
+                json={"project_id": "project-1"},
                 headers=write_headers(),
             )
         self.assertEqual(404, response.status_code)

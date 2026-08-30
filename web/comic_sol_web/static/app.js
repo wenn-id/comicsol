@@ -1,4 +1,5 @@
 import { getCurrentProject } from "./api.js";
+import { registerWebMcp } from "./webmcp.js";
 import { createStore, restoreCurrentProject } from "./state.js";
 import { renderStartView } from "./views/start.js";
 import { renderPlanView } from "./views/plan.js";
@@ -63,6 +64,46 @@ for (const tab of tabs) {
 
 store.subscribe(render);
 render(store.getState());
+document.addEventListener("comic-sol:project-selected", (event) => {
+  const project = event.detail?.project;
+  if (!project || typeof project.project_id !== "string" || !Number.isInteger(project.revision)) {
+    return;
+  }
+  store.setProject(project);
+  event.detail.accepted = true;
+  announce("Project opened. Plan is ready for review.", "success");
+});
+document.addEventListener("comic-sol:qa-completed", (event) => {
+  const project = event.detail?.project;
+  if (!project || typeof project.project_id !== "string" || !Number.isInteger(project.revision)) {
+    return;
+  }
+  const current = store.getState().project;
+  if (!current || current.project_id !== project.project_id || current.revision !== project.revision) {
+    return;
+  }
+  store.setQa(project);
+  event.detail.accepted = true;
+  announce("QA completed.", "success");
+});
+document.addEventListener("comic-sol:generation-refreshed", (event) => {
+  const project = event.detail?.project;
+  if (!project || typeof project.project_id !== "string" || !Number.isInteger(project.revision)) {
+    return;
+  }
+  const current = store.getState().project;
+  if (!current || current.project_id !== project.project_id) {
+    return;
+  }
+  store.replaceProjectAndGenerationJobs(
+    project,
+    Array.isArray(event.detail.jobs) ? event.detail.jobs : [],
+    event.detail.acceptedJob ?? undefined,
+  );
+  event.detail.accepted = true;
+  announce("Generation queued and refreshed.", "success");
+});
+void registerWebMcp();
 
 async function restoreProject() {
   try {

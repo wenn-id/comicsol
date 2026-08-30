@@ -39,6 +39,15 @@ def _write_headers(request: Request) -> tuple[str, int]:
     return key.lower(), parsed_revision
 
 
+def _project_id(body: dict[str, object] | None) -> str:
+    if not isinstance(body, dict) or set(body) != {"project_id"}:
+        raise HTTPException(status_code=400, detail="provider switch request rejected")
+    project_id = body["project_id"]
+    if not isinstance(project_id, str) or not project_id:
+        raise HTTPException(status_code=400, detail="provider switch request rejected")
+    return project_id
+
+
 def _reject(error: Exception) -> NoReturn:
     from comic_sol_web.generation.approvals import (
         ApprovalConflictError,
@@ -83,14 +92,14 @@ def create_approvals_router(
         body: Annotated[dict[str, object] | None, Body()] = None,
     ) -> dict[str, object]:
         _require_csrf(request, principal)
-        if body:
-            raise HTTPException(status_code=400, detail="provider switch request rejected")
+        project_id = _project_id(body)
         key, revision = _write_headers(request)
         try:
             service = _resolve_service(service_source, request)
             proposal = service.approve(
                 principal,
                 proposal_id,
+                expected_project_id=project_id,
                 expected_revision=revision,
                 idempotency_key=key,
             )
@@ -122,14 +131,14 @@ def create_approvals_router(
         body: Annotated[dict[str, object] | None, Body()] = None,
     ) -> dict[str, object]:
         _require_csrf(request, principal)
-        if body:
-            raise HTTPException(status_code=400, detail="provider switch request rejected")
+        project_id = _project_id(body)
         key, revision = _write_headers(request)
         try:
             service = _resolve_service(service_source, request)
             proposal = service.reject(
                 principal,
                 proposal_id,
+                expected_project_id=project_id,
                 expected_revision=revision,
                 idempotency_key=key,
             )

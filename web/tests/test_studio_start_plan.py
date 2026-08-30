@@ -23,6 +23,7 @@ STATIC_ASSETS = {
     "static/index.html",
     "static/app.js",
     "static/api.js",
+    "static/webmcp.js",
     "static/state.js",
     "static/styles.css",
     "static/views/start.js",
@@ -69,6 +70,7 @@ class StudioContractTests(unittest.TestCase):
     start: ClassVar[str]
     plan: ClassVar[str]
     styles: ClassVar[str]
+    webmcp: ClassVar[str]
     scripts: ClassVar[str]
     parser: ClassVar[StudioDocumentParser]
 
@@ -81,7 +83,8 @@ class StudioContractTests(unittest.TestCase):
         cls.start = (STATIC_ROOT / "views" / "start.js").read_text(encoding="utf-8")
         cls.plan = (STATIC_ROOT / "views" / "plan.js").read_text(encoding="utf-8")
         cls.styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
-        cls.scripts = "\n".join((cls.app, cls.api, cls.state, cls.start, cls.plan))
+        cls.webmcp = (STATIC_ROOT / "webmcp.js").read_text(encoding="utf-8")
+        cls.scripts = "\n".join((cls.app, cls.api, cls.state, cls.start, cls.plan, cls.webmcp))
         cls.parser = StudioDocumentParser()
         cls.parser.feed(cls.index)
 
@@ -102,7 +105,7 @@ class StudioContractTests(unittest.TestCase):
         self.assertNotRegex(self.index, r"https?://|<link[^>]+stylesheet[^>]+(?:cdn|http)")
         self.assertNotRegex(self.scripts, r"\bReact\b|\bVue\b|\bAngular\b|require\(|node_modules")
 
-    def test_wheel_declares_and_http_serves_all_seven_studio_assets(self) -> None:
+    def test_wheel_declares_and_http_serves_all_studio_assets(self) -> None:
         project = tomllib.loads((WEB_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         package_data = project["tool"]["setuptools"]["package-data"]["comic_sol_web"]
         self.assertEqual(STATIC_ASSETS, set(package_data))
@@ -202,7 +205,7 @@ class StudioContractTests(unittest.TestCase):
         self.assertIn("encodeURIComponent(projectId)", self.api)
         route_literals = set(re.findall(r'["\'](/api/[^"\']*)["\']', self.scripts))
         self.assertEqual(
-            {"/api/projects", "/api/generation", "/api/approvals"},
+            {"/api/projects", "/api/generation", "/api/approvals", "/api/assets"},
             route_literals,
         )
         self.assertNotRegex(
@@ -220,6 +223,14 @@ class StudioContractTests(unittest.TestCase):
         self.assertRegex(self.plan, r"project\.revision\s*!==\s*draft\.expectedRevision")
         self.assertRegex(self.plan, r"textContent\s*=")
         self.assertNotRegex(self.plan, r"JSON\.stringify\([^)]*project")
+        self.assertIn('removeEventListener("comic-sol:plan-proposal"', self.plan)
+        self.assertGreaterEqual(self.plan.count("event.preventDefault()"), 5)
+
+    def test_webmcp_lifecycle_results_update_the_page_owned_store(self) -> None:
+        self.assertIn('"comic-sol:project-selected"', self.webmcp)
+        self.assertIn('"comic-sol:project-selected"', self.app)
+        self.assertIn("store.setProject(project)", self.app)
+        self.assertIn("event.detail.accepted = true", self.app)
 
     def test_plan_persists_reviewed_draft_before_local_promotion(self) -> None:
         self.assertIn("updatePlan", self.plan)
@@ -462,11 +473,11 @@ check(activeStore.getState().project.revision === 9, "active project was overwri
 
     def test_proposal_listener_survives_bad_events_and_preserves_pending_review(self) -> None:
         self.assertNotIn("{ once: true }", self.plan)
-        self.assertNotIn("removeEventListener", self.plan)
+        self.assertEqual(1, self.plan.count('removeEventListener("comic-sol:plan-proposal"'))
         self.assertEqual(1, self.plan.count('addEventListener("comic-sol:plan-proposal"'))
         self.assertRegex(self.plan, r"if\s*\(store\.getState\(\)\.draft\)[\s\S]{0,240}return")
-        self.assertRegex(self.plan, r"if\s*\(!activeProposalHandler\)")
-        malformed_return = self.plan.index("if (!proposal) return")
+        self.assertRegex(self.plan, r"if\s*\(activeProposalHandler\)")
+        malformed_return = self.plan.index("if (!proposal)")
         listener_registration = self.plan.index('addEventListener("comic-sol:plan-proposal"')
         self.assertLess(malformed_return, listener_registration)
 

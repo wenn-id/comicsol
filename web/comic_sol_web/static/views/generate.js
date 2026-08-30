@@ -42,7 +42,7 @@ function focusStudioMain() {
   document.getElementById("studio-main")?.focus();
 }
 
-function showSwitchDialog(proposal, expectedRevision, refresh, announce, trigger) {
+function showSwitchDialog(proposal, projectId, expectedRevision, refresh, announce, trigger) {
   const previousFocus = trigger;
   const dialog = document.createElement("dialog");
   dialog.setAttribute("aria-labelledby", "switch-dialog-heading");
@@ -57,7 +57,7 @@ function showSwitchDialog(proposal, expectedRevision, refresh, announce, trigger
   const confirm = button("Confirm switch", true, async () => {
     confirm.disabled = true;
     try {
-      await approveProposal(proposal.proposal_id, expectedRevision);
+      await approveProposal(proposal.proposal_id, projectId, expectedRevision);
       dialog.close();
       announce("Provider switch approved.", "success");
       await refresh();
@@ -70,7 +70,7 @@ function showSwitchDialog(proposal, expectedRevision, refresh, announce, trigger
   const stay = button("Keep current provider", true, async () => {
     stay.disabled = true;
     try {
-      await rejectProposal(proposal.proposal_id, expectedRevision);
+      await rejectProposal(proposal.proposal_id, projectId, expectedRevision);
       dialog.close();
       announce("Provider switch rejected; the current route was preserved.");
       await refresh();
@@ -176,7 +176,7 @@ function renderJob(job, project, refresh, announce) {
       const trigger = event.currentTarget;
       try {
         const proposal = await pauseForSwitch(job.job_id, project.revision);
-        showSwitchDialog(proposal, project.revision, refresh, announce, trigger);
+        showSwitchDialog(proposal, project.project_id, project.revision, refresh, announce, trigger);
       } catch (error) {
         announce(error.message, "error");
       }

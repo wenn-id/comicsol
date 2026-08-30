@@ -158,13 +158,29 @@ class WebApplicationTests(unittest.TestCase):
         static_routes = [route for route in app.routes if getattr(route, "path", "") == "/static"]
         self.assertEqual(1, len(static_routes))
 
-        # WP1 ships no UI assets. The future surface must still be mounted,
-        # and a request for a static asset must return a deterministic 404
-        # rather than surfacing Starlette's missing-directory RuntimeError
-        # on the first request.
+        # The static surface must return a deterministic 404 for unknown
+        # assets rather than surfacing Starlette's missing-directory error.
         with TestClient(app) as client:
             missing = client.get("/static/this-asset-does-not-exist")
         self.assertEqual(404, missing.status_code)
+
+    def test_webmcp_asset_is_source_packaged_and_http_served(self):
+        from comic_sol_web.app import create_app
+        from comic_sol_web.config import WebConfig
+        from fastapi.testclient import TestClient
+
+        static_root = Path(__file__).resolve().parents[1] / "comic_sol_web" / "static"
+        self.assertTrue((static_root / "webmcp.js").is_file())
+        project = tomllib.loads(
+            (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        package_data = project["tool"]["setuptools"]["package-data"]["comic_sol_web"]
+        self.assertIn("static/webmcp.js", package_data)
+
+        with TestClient(create_app(WebConfig.from_env(valid_environment()))) as client:
+            served = client.get("/static/webmcp.js")
+        self.assertEqual(200, served.status_code)
+        self.assertIn("registerWebMcp", served.text)
 
     def test_create_app_has_no_startup_background_or_network_work(self):
         from comic_sol_web.app import create_app
@@ -559,6 +575,8 @@ import sys
 from fastapi.testclient import TestClient
 from comic_sol_web.app import create_app
 from comic_sol_web.config import WebConfig
+from importlib.resources import files
+assert files("comic_sol_web").joinpath("static", "webmcp.js").is_file()
 with TemporaryDirectory() as temporary:
     root = Path(temporary) / "data"
     config = WebConfig(

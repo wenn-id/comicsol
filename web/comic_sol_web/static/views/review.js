@@ -16,6 +16,7 @@ let exportObjectUrl = null;
 let pendingReviewExport = null;
 let reviewSessionEpoch = 0;
 let reviewViewEpoch = 0;
+let activeExportRequestHandler = null;
 
 function element(tag, text, attributes = {}) {
   const node = document.createElement(tag);
@@ -52,6 +53,10 @@ function reviewSessionIsCurrent(sessionEpoch) {
 
 export function disposeReviewView({ preservePendingExport = false } = {}) {
   reviewViewEpoch += 1;
+  if (activeExportRequestHandler && typeof document.removeEventListener === "function") {
+    document.removeEventListener("comic-sol:export-request", activeExportRequestHandler);
+    activeExportRequestHandler = null;
+  }
   revokeExportObjectUrl();
   if (!preservePendingExport) {
     reviewSessionEpoch += 1;
@@ -388,6 +393,30 @@ export function renderReviewView({ store, announce, navigate }) {
       },
     });
   });
+
+  const exportRequestHandler = (event) => {
+    if (!reviewViewIsCurrent(viewEpoch, section)) {
+      event.preventDefault();
+      return;
+    }
+    const requestedFormat = event.detail?.format;
+    if (!["archive", "pdf"].includes(requestedFormat)) {
+      event.preventDefault();
+      return;
+    }
+    format.value = requestedFormat;
+    overwrite.checked = false;
+    event.detail.accepted = true;
+    announce("Review the export settings and confirm the private download.");
+    exportButton.focus();
+  };
+  if (activeExportRequestHandler && typeof document.removeEventListener === "function") {
+    document.removeEventListener("comic-sol:export-request", activeExportRequestHandler);
+  }
+  if (typeof document.addEventListener === "function") {
+    activeExportRequestHandler = exportRequestHandler;
+    document.addEventListener("comic-sol:export-request", exportRequestHandler);
+  }
   exportCard.append(formatLabel, format, guidance, overwriteLabel, exportButton);
   const transferredDownload = consumePendingReviewExport(exportCard, announce);
   if (transferredDownload) {

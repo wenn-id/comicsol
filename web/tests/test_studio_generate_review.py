@@ -64,6 +64,18 @@ class StudioGenerateReviewContractTests(unittest.TestCase):
         cls.styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
         cls.scripts = "\n".join((cls.app, cls.api, cls.state, cls.generate, cls.review))
 
+    def test_webmcp_qa_and_export_handoffs_use_page_owned_state(self) -> None:
+        self.assertIn('document.addEventListener("comic-sol:qa-completed"', self.app)
+        self.assertIn("store.setQa(project)", self.app)
+        self.assertIn('document.addEventListener("comic-sol:export-request"', self.review)
+        self.assertIn("format.value = requestedFormat", self.review)
+        self.assertIn("overwrite.checked = false", self.review)
+        self.assertIn("exportButton.focus()", self.review)
+
+    def test_webmcp_queue_handoff_publishes_the_refreshed_page_state(self) -> None:
+        self.assertIn('document.addEventListener("comic-sol:generation-refreshed"', self.app)
+        self.assertIn("store.replaceProjectAndGenerationJobs(", self.app)
+
     def test_shell_registers_four_guarded_steps_without_changing_start_or_plan(self) -> None:
         for index, view in enumerate(("start", "plan", "generate", "review"), start=1):
             self.assertRegex(
@@ -277,11 +289,11 @@ class StudioGenerateReviewContractTests(unittest.TestCase):
         self.assertIn('headers.get("x-project-revision")', self.api)
         self.assertRegex(
             self.api,
-            r"function approveProposal\(proposalId, expectedRevision\)",
+            r"function approveProposal\(proposalId, projectId, expectedRevision, idempotencyKey\)",
         )
         self.assertRegex(
             self.api,
-            r"function rejectProposal\(proposalId, expectedRevision\)",
+            r"function rejectProposal\(proposalId, projectId, expectedRevision, idempotencyKey\)",
         )
         self.assertNotRegex(
             self.api, r"function (?:approve|reject)Proposal\([^)]*(?:provider|model)"

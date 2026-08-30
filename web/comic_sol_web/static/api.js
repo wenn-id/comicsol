@@ -1,7 +1,9 @@
 const PROJECTS_PATH = "/api/projects";
 const GENERATION_PATH = "/api/generation";
 const APPROVALS_PATH = "/api/approvals";
+const ASSETS_PATH = "/api/assets";
 export const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
+export const MAX_SOURCE_BYTES = 200 * 1024;
 
 export class StudioApiError extends Error {
   constructor(message, status = 0) {
@@ -15,6 +17,13 @@ export class StaleRevisionError extends StudioApiError {
   constructor() {
     super("The project changed in another session. Refresh before continuing.", 409);
     this.name = "StaleRevisionError";
+  }
+}
+
+export class StudioConflictError extends StudioApiError {
+  constructor() {
+    super("The Studio operation conflicts with the current project state.", 409);
+    this.name = "StudioConflictError";
   }
 }
 
@@ -60,8 +69,10 @@ function validateEnvelope(value) {
   });
 }
 
-function requestFailure(response, archive = false) {
-  if (response.status === 409) throw new StaleRevisionError();
+function requestFailure(response, archive = false, conflictIsStale = true) {
+  if (response.status === 409) {
+    throw conflictIsStale ? new StaleRevisionError() : new StudioConflictError();
+  }
   if (archive && (response.status === 400 || response.status === 413 || response.status === 422)) {
     throw new MigrationValidationError(response.status);
   }
@@ -81,8 +92,8 @@ async function readEnvelope(response, { archive = false } = {}) {
   }
 }
 
-async function readJson(response) {
-  if (!response.ok) requestFailure(response);
+async function readJson(response, { conflictIsStale = true } = {}) {
+  if (!response.ok) requestFailure(response, false, conflictIsStale);
   try {
     const value = await response.json();
     if (!value || typeof value !== "object") throw new Error("invalid response");
@@ -95,7 +106,14 @@ async function readJson(response) {
 
 async function writeRequest(
   path,
-  { body, expectedRevision, archive = false, idempotencyKey, responseType = "project" },
+  {
+    body,
+    expectedRevision,
+    archive = false,
+    idempotencyKey,
+    responseType = "project",
+    conflictIsStale = true,
+  },
 ) {
   const csrf = cookieValue("comic_sol_csrf");
   if (!csrf) {
@@ -114,10 +132,12 @@ async function writeRequest(
     body: body instanceof FormData ? body : JSON.stringify(body),
   });
   if (responseType === "raw") {
-    if (!response.ok) requestFailure(response, archive);
+    if (!response.ok) requestFailure(response, archive, conflictIsStale);
     return response;
   }
-  return responseType === "json" ? readJson(response) : readEnvelope(response, { archive });
+  return responseType === "json"
+    ? readJson(response, { conflictIsStale })
+    : readEnvelope(response, { archive });
 }
 
 function getJson(path) {
@@ -140,9 +160,9 @@ export function importProject(archive, idempotencyKey) {
   });
 }
 
-export function updatePlan(projectId, plan, expectedRevision) {
+export function updatePlan(projectId, plan, expectedRevision, idempotencyKey) {
   return writeRequest(PROJECTS_PATH, {
-    body: { project_id: projectId, plan }, expectedRevision,
+    body: { project_id: projectId, plan }, expectedRevision, idempotencyKey,
   });
 }
 
@@ -183,7 +203,7 @@ export function listGenerationJobs(projectId, expectedRevision) {
   return getJson(`${GENERATION_PATH}/jobs?${query}`);
 }
 
-export function queueGeneration(projectId, expectedRevision, selection) {
+export function queueGeneration(projectId, expectedRevision, selection, idempotencyKey) {
   return writeRequest(`${GENERATION_PATH}/queue`, {
     body: {
       project_id: projectId,
@@ -193,6 +213,7 @@ export function queueGeneration(projectId, expectedRevision, selection) {
       auth_mode: selection.auth_mode,
     },
     expectedRevision,
+    idempotencyKey,
     responseType: "json",
   });
 }
@@ -222,33 +243,51 @@ export function submitStagedRaster(jobId, expectedRevision) {
   return generationAction(jobId, "submit-staged", expectedRevision);
 }
 
-function proposalDecision(proposalId, decision, expectedRevision) {
+export function submitGeneratedAsset(assetId, jobId, expectedRevision, idempotencyKey) {
+  return writeRequest(`${ASSETS_PATH}/${encodeURIComponent(assetId)}/submit-agent`, {
+    body: { job_id: jobId, expected_revision: expectedRevision },
+    expectedRevision,
+    idempotencyKey,
+    responseType: "json",
+    conflictIsStale: false,
+  });
+}
+
+function proposalDecision(proposalId, projectId, decision, expectedRevision, idempotencyKey) {
   return writeRequest(`${APPROVALS_PATH}/${encodeURIComponent(proposalId)}/${decision}`, {
-    body: {}, expectedRevision, responseType: "json",
+    body: { project_id: projectId }, expectedRevision, idempotencyKey, responseType: "json", conflictIsStale: false,
   });
 }
 
-export function approveProposal(proposalId, expectedRevision) {
-  return proposalDecision(proposalId, "approve", expectedRevision);
+export function approveProposal(proposalId, projectId, expectedRevision, idempotencyKey) {
+  return proposalDecision(proposalId, projectId, "approve", expectedRevision, idempotencyKey);
 }
 
-export function rejectProposal(proposalId, expectedRevision) {
-  return proposalDecision(proposalId, "reject", expectedRevision);
+export function rejectProposal(proposalId, projectId, expectedRevision, idempotencyKey) {
+  return proposalDecision(proposalId, projectId, "reject", expectedRevision, idempotencyKey);
 }
 
-export function runQa(projectId, expectedRevision) {
+export function runQa(projectId, expectedRevision, idempotencyKey) {
   return writeRequest(`${PROJECTS_PATH}/${encodeURIComponent(projectId)}/qa`, {
-    body: {}, expectedRevision,
+    body: {}, expectedRevision, idempotencyKey,
   });
 }
 
-export async function exportProject(projectId, expectedRevision, format, overwriteConfirmed) {
+export async function exportProject(
+  projectId,
+  expectedRevision,
+  format,
+  overwriteConfirmed,
+  idempotencyKey,
+) {
   const response = await writeRequest(
     `${PROJECTS_PATH}/${encodeURIComponent(projectId)}/export`,
     {
       body: { format, overwrite_confirmed: overwriteConfirmed },
       expectedRevision,
+      idempotencyKey,
       responseType: "raw",
+      conflictIsStale: false,
     },
   );
   const revision = Number(response.headers.get("x-project-revision"));
