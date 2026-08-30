@@ -253,18 +253,18 @@ export function submitGeneratedAsset(assetId, jobId, expectedRevision, idempoten
   });
 }
 
-function proposalDecision(proposalId, decision, expectedRevision, idempotencyKey) {
+function proposalDecision(proposalId, projectId, decision, expectedRevision, idempotencyKey) {
   return writeRequest(`${APPROVALS_PATH}/${encodeURIComponent(proposalId)}/${decision}`, {
-    body: {}, expectedRevision, idempotencyKey, responseType: "json", conflictIsStale: false,
+    body: { project_id: projectId }, expectedRevision, idempotencyKey, responseType: "json", conflictIsStale: false,
   });
 }
 
-export function approveProposal(proposalId, expectedRevision, idempotencyKey) {
-  return proposalDecision(proposalId, "approve", expectedRevision, idempotencyKey);
+export function approveProposal(proposalId, projectId, expectedRevision, idempotencyKey) {
+  return proposalDecision(proposalId, projectId, "approve", expectedRevision, idempotencyKey);
 }
 
-export function rejectProposal(proposalId, expectedRevision, idempotencyKey) {
-  return proposalDecision(proposalId, "reject", expectedRevision, idempotencyKey);
+export function rejectProposal(proposalId, projectId, expectedRevision, idempotencyKey) {
+  return proposalDecision(proposalId, projectId, "reject", expectedRevision, idempotencyKey);
 }
 
 export function runQa(projectId, expectedRevision, idempotencyKey) {

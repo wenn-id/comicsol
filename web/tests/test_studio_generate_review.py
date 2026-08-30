@@ -285,11 +285,11 @@ class StudioGenerateReviewContractTests(unittest.TestCase):
         self.assertIn('headers.get("x-project-revision")', self.api)
         self.assertRegex(
             self.api,
-            r"function approveProposal\(proposalId, expectedRevision, idempotencyKey\)",
+            r"function approveProposal\(proposalId, projectId, expectedRevision, idempotencyKey\)",
         )
         self.assertRegex(
             self.api,
-            r"function rejectProposal\(proposalId, expectedRevision, idempotencyKey\)",
+            r"function rejectProposal\(proposalId, projectId, expectedRevision, idempotencyKey\)",
         )
         self.assertNotRegex(
             self.api, r"function (?:approve|reject)Proposal\([^)]*(?:provider|model)"

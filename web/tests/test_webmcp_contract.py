@@ -167,11 +167,12 @@ for _decision in ("approve_provider_switch", "reject_provider_switch"):
     EXPECTED_SCHEMAS[_decision] = object_schema(
         {
             "proposal_id": PROPOSAL_ID,
+            "project_id": OPAQUE_PROJECT,
             "expected_revision": REVISION,
             "confirm_switch": {"type": "boolean", "const": True},
             "idempotency_key": IDEMPOTENCY,
         },
-        ["proposal_id", "expected_revision", "confirm_switch", "idempotency_key"],
+        ["proposal_id", "project_id", "expected_revision", "confirm_switch", "idempotency_key"],
     )
 EXPECTED_SCHEMAS["run_qa"] = object_schema(
     {"project_id": OPAQUE_PROJECT, "expected_revision": REVISION, "idempotency_key": IDEMPOTENCY},
@@ -551,24 +552,39 @@ class WebMcpContractTests(unittest.TestCase):
               ...common, project_id: "background-project", provider: "agent",
               model: "agent-image-generation", auth_mode: "agent", confirm_cost: true
             }});
-            console.log(JSON.stringify({{ update, queue, calls }}));
+            const decision = await find("approve_provider_switch").execute({{
+              ...common, project_id: "background-project", proposal_id: "p".repeat(32),
+              confirm_switch: true
+            }});
+            console.log(JSON.stringify({{ update, queue, decision, calls }}));
             """
         )
         self.assertFalse(result["update"]["ok"])
         self.assertFalse(result["queue"]["ok"])
+        self.assertFalse(result["decision"]["ok"])
         self.assertNotIn("/api/generation/queue", result["calls"])
+        self.assertFalse(any(url.startswith("/api/approvals/") for url in result["calls"]))
 
     def test_non_revision_conflicts_are_not_reported_as_stale(self) -> None:
         module_url = WEBMCP.as_uri()
         result = self.run_node(
             f"""
             globalThis.document = {{ cookie: "comic_sol_csrf=csrf-token" }};
-            globalThis.fetch = async () => new Response("{{}}", {{ status: 409 }});
+            globalThis.fetch = async (url) => new Response(
+              url === "/api/projects/current"
+                ? JSON.stringify({{
+                    project_id: "current-project", revision: 1, status: "PLANNING",
+                    summary: {{ plan: {{ storyPlan: "", characterBible: "", storyboard: "", visualIdentityPack: "" }} }}
+                  }})
+                : "{{}}",
+              {{ status: url === "/api/projects/current" ? 200 : 409 }}
+            );
             const module = await import({json.dumps(module_url)});
             const approve = await module.TOOL_DEFINITIONS.find(
               (item) => item.name === "approve_provider_switch"
             ).execute({{
-              proposal_id: "p".repeat(32), expected_revision: 1, confirm_switch: true,
+              proposal_id: "p".repeat(32), project_id: "current-project",
+              expected_revision: 1, confirm_switch: true,
               idempotency_key: "00000000-0000-4000-8000-000000000041"
             }});
             console.log(JSON.stringify(approve));

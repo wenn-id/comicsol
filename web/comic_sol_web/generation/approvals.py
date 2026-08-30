@@ -516,6 +516,7 @@ class ProviderSwitchApprovals:
         proposal_id: str,
         decision: str,
         *,
+        expected_project_id: str | None = None,
         expected_revision: int,
         idempotency_key: str,
     ) -> SwitchProposal:
@@ -532,6 +533,8 @@ class ProviderSwitchApprovals:
             if row is None or row["owner_id"] != principal.user_id:
                 raise ApprovalUnavailableError("provider switch proposal is unavailable")
             proposal = self._proposal_from_row(row)
+            if expected_project_id is not None and proposal.project_id != expected_project_id:
+                raise ApprovalConflictError("provider switch project is not active")
             if row["project_revision"] != revision:
                 raise ApprovalConflictError("provider switch project revision is stale")
             consumed = connection.execute(
@@ -652,6 +655,7 @@ class ProviderSwitchApprovals:
         principal: SessionPrincipal,
         proposal_id: str,
         *,
+        expected_project_id: str | None = None,
         expected_revision: int,
         idempotency_key: str,
     ) -> SwitchProposal:
@@ -659,6 +663,7 @@ class ProviderSwitchApprovals:
             principal,
             proposal_id,
             "approved",
+            expected_project_id=expected_project_id,
             expected_revision=expected_revision,
             idempotency_key=idempotency_key,
         )
@@ -668,6 +673,7 @@ class ProviderSwitchApprovals:
         principal: SessionPrincipal,
         proposal_id: str,
         *,
+        expected_project_id: str | None = None,
         expected_revision: int,
         idempotency_key: str,
     ) -> SwitchProposal:
@@ -675,6 +681,7 @@ class ProviderSwitchApprovals:
             principal,
             proposal_id,
             "rejected",
+            expected_project_id=expected_project_id,
             expected_revision=expected_revision,
             idempotency_key=idempotency_key,
         )

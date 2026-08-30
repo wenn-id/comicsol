@@ -64,11 +64,12 @@ function schemaForDecision() {
   return objectSchema(
     {
       proposal_id: PROPOSAL_ID,
+      project_id: PROJECT_ID,
       expected_revision: REVISION,
       confirm_switch: { type: "boolean", const: true },
       idempotency_key: IDEMPOTENCY_KEY,
     },
-    ["proposal_id", "expected_revision", "confirm_switch", "idempotency_key"],
+    ["proposal_id", "project_id", "expected_revision", "confirm_switch", "idempotency_key"],
   );
 }
 
@@ -692,14 +693,16 @@ async function submitStudioAsset(input) {
 }
 
 async function decideProviderSwitch(input, decision) {
-  assertObject(input, ["proposal_id", "expected_revision", "confirm_switch", "idempotency_key"]);
+  assertObject(input, ["proposal_id", "project_id", "expected_revision", "confirm_switch", "idempotency_key"]);
   assertProposalId(input.proposal_id);
+  assertProjectId(input.project_id);
   assertRevision(input.expected_revision);
   assertConfirmation(input.confirm_switch);
   assertIdempotencyKey(input.idempotency_key);
+  assertCurrentProject(input.project_id, input.expected_revision, await getCurrentProject());
   const proposal = decision === "approved"
-    ? await approveProposal(input.proposal_id, input.expected_revision, input.idempotency_key)
-    : await rejectProposal(input.proposal_id, input.expected_revision, input.idempotency_key);
+    ? await approveProposal(input.proposal_id, input.project_id, input.expected_revision, input.idempotency_key)
+    : await rejectProposal(input.proposal_id, input.project_id, input.expected_revision, input.idempotency_key);
   return safeProposal(proposal, decision);
 }
 
