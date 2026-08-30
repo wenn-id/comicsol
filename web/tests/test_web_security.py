@@ -638,8 +638,17 @@ class TestSsrfPolicy(WiredAppFixture):
                 _canonical_origin(url)
 
     def test_https_private_ip_requires_allowlist(self) -> None:
-        """A canonical origin outside the allowlist is rejected by policy."""
-        from comic_sol_web.generation.providers.http import TransportPolicy
+        """A canonical origin outside the allowlist is rejected by policy.
+
+        TransportPolicy normalizes every approved origin through
+        _canonical_origin and stores the canonical form; an arbitrary
+        private-IP origin must not appear unless explicitly normalized
+        in.
+        """
+        from comic_sol_web.generation.providers.http import (
+            TransportPolicy,
+            _canonical_origin,
+        )
 
         policy = TransportPolicy(
             approved_origins=frozenset({"https://example.com"}),
@@ -648,8 +657,10 @@ class TestSsrfPolicy(WiredAppFixture):
             total_timeout=1.0,
             max_response_bytes=1024,
         )
-        assert "https://169.254.169.254" not in policy.approved_origins
-        assert "https://example.com" in policy.approved_origins
+        canonical = _canonical_origin("https://169.254.169.254")
+        self.assertNotIn(canonical, policy.approved_origins)
+        # The canonical form of the allowed origin must be present.
+        self.assertIn(_canonical_origin("https://example.com"), policy.approved_origins)
 
     def test_policy_rejects_cleartext_non_loopback_origins(self) -> None:
         """TransportPolicy canonicalizes and rejects cleartext non-loopback."""
