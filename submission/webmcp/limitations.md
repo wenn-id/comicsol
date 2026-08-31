@@ -48,7 +48,7 @@ package; each is listed here and referenced from
 ## What this document does not limit
 
 - The submission is still a Draft PR, not a merged release.
-- The `68` documentation contract tests under
+- The `69` documentation contract tests under
   `web/tests/test_web_docs.py` are part of the release-qualification
   suite. The exact count and the recorded command for the final head
   are in [verification.md](verification.md). No pre-documentation RED

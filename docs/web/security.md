@@ -219,12 +219,23 @@ provider-neutral handoff package (`web/comic_sol_web/generation/providers/agent.
 includes `"prompt": request.prompt` and `"negative_prompt"` in the
 package). Hosted and BYOK adapters, when wired, send the prompt and
 the negative prompt in the external provider request body. The raw
-provider payload bytes are not persisted in Studio, and an exported
-archive or receipt does not carry the prompt, but the prompt **does**
-leave the Studio deployment and reach the execution route the
-operator configured. A Studio operator who cannot accept that
-disclosure should not enable any generation route that hands a
-prompt to an external process.
+provider payload bytes are not persisted in Studio, and a **receipt**
+does not carry the prompt, but the prompt **does** leave the Studio
+deployment and reach the execution route the operator configured.
+
+**Portable handoff archives disclose the source; receipts do not.** A
+project created from a prompt or pasted story stores the exact input
+bytes as `source/input.txt` (via `comic_sol.init_project()`), and
+`export_handoff_archive()` includes every regular project file —
+including `source/input.txt` and `source/request.json` — in the ZIP
+(it excludes only the project lock and transaction log). A user who
+shares a portable archive therefore shares the original prompt or
+private story verbatim. Treat handoff archives as **source-bearing**
+and apply the same privacy controls as the project itself; only a
+receipt is guaranteed to omit prompt and story content. A Studio
+operator who cannot accept that disclosure should not enable any
+generation route that hands a prompt to an external process, and
+should warn users before they export or share a project archive.
 
 ## Backup and incident expectations
 

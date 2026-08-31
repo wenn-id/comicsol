@@ -75,8 +75,14 @@ below under the heading the configuration contract uses.
 
 ### Required at start
 
-- `COMIC_SOL_WEB_SESSION_SECRET` — server-side session signing key
-  (consumed by `comic_sol_web.auth.SessionAuthenticator`).
+- `COMIC_SOL_WEB_SESSION_SECRET` — required by the configuration module
+  and held in `WebConfig.session_secret`, but in the current merged
+  build it is **not consumed by any authentication component**: no
+  `SessionAuthenticator` exists, and `create_app()` neither constructs
+  an `AuthService` nor passes this value anywhere. It is a
+  **required-but-currently-unused** configuration value, recorded for
+  future authentication wiring. Operators should not assume that
+  preserving or rotating this value controls active sessions today.
 - `COMIC_SOL_WEB_ENCRYPTION_SECRET` — required by the configuration
   module and held in `WebConfig.encryption_secret`, but in the current
   build it is **not passed to `CredentialBroker`**; persisted BYOK
