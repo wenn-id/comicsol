@@ -796,11 +796,13 @@ class WebMcpSurfaceContractTests(unittest.TestCase):
 
     def test_the_published_tool_list_matches_the_merged_module_exactly(self) -> None:
         """check the published tool list matches the merged module exactly."""
-        documented = set(re.findall(r"`([a-z_]+)`", self.tool_list))
+        documented = set(
+            re.findall(r"^-\s+`([a-z_]+)`", self.tool_list, re.M)
+        )
         registered = set(re.findall(r'^\s*name:\s*"([a-z_]+)",\s*$', self.webmcp_source, re.M))
         self.assertEqual(
             registered,
-            documented & (WEBMCP_READ_TOOLS | WEBMCP_WRITE_TOOLS),
+            documented,
             "the published WebMCP tool list drifted from webmcp.js",
         )
         for tool in sorted(registered):

@@ -190,8 +190,20 @@ makes the remaining ciphertext undecryptable. See
 ## Startup and shutdown
 
 Startup fails closed: a missing or invalid environment variable stops the
-process before it accepts a request. A successful start brings the queue
-online and begins serving `/healthz` immediately.
+process before it accepts a request. A successful start registers
+`/healthz` and returns `200 {"status":"ok"}` immediately; the
+endpoint **does not touch the database** and is a liveness probe only
+(see [Health endpoint](#health-endpoint)).
+
+`/healthz` being green therefore proves **the process is up**, not
+that the queue is initialized, not that any lease has been reclaimed,
+and not that any provider route is selectable. Queue initialization
+is lazy: the SQLite `GenerationStore` is opened on first use (a queue
+write, lease attempt, or approval). Expired `running` leases are
+reclaimed by `DurableGenerationQueue.lease_next()` when a consumer
+next polls, not at startup; an operator who restarts the process and
+only inspects `/healthz` can therefore leave work stalled until the
+next `queue`/`retry`/`approve` write triggers a consumer.
 
 **There is no coordinated graceful-shutdown drain.** The merged
 `web/comic_sol_web/app.py::create_app` registers no lifespan or shutdown
@@ -201,8 +213,8 @@ instead provided by design:
 
 - the generation queue is SQLite-backed through `GenerationStore`, so the
   durable half survives process restart without a replay hook;
-- in-flight work is protected by **expiring leases** that recover on next
-  start rather than by an explicit drain step.
+- in-flight work is protected by **expiring leases** that recover on the
+  next `lease_next()` poll, not at startup and not on a drain step.
 
 A hard termination loses only the in-memory half of the queue; the
 SQLite-backed half is authoritative on restart. The absence of a drain

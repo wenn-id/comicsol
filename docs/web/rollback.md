@@ -37,6 +37,15 @@ across rollback, so:
   such handler. A panel whose `running` lease expired because the
   process was killed will be re-claimed on the next poll; an
   in-memory half that was mid-step is not recoverable.
+- **authenticated sessions are persisted, not invalidated.** A rollback
+  that retains the data volume and the session secret keeps the
+  SQLite `sessions` rows intact, and `AuthService.authenticate_token()`
+  reads them back after restart; only the `AuthService` object on
+  `app.state` is process-local. A runbook that needs to log users out
+  as part of the rollback must therefore call
+  `AuthService.revoke(session_token)` explicitly, rotate
+  `COMIC_SOL_WEB_SESSION_SECRET`, or both — the rollback itself does
+  not invalidate any session.
 
 Before any rollback, snapshot the data volume. After the rollback, run
 the full [Verification](#verification) checklist. **`/healthz` is a

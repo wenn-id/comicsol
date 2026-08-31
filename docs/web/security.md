@@ -39,7 +39,7 @@ succeeds, the browser holds an HttpOnly session cookie and a paired CSRF
 cookie. The session cookie is `HttpOnly` and is never returned to JavaScript;
 the CSRF header is paired against a per-session token via
 `AuthService.require_csrf`, and a missing, mismatched, or expired token is
-rejected before any handler runs. The same-origin policy plus the same-site
+rejected before the handler mutates state. The same-origin policy plus the same-site
 cookie model isolate the session from third-party contexts.
 
 ## Ownership and opaque IDs
@@ -54,10 +54,18 @@ so the existence of unrelated IDs is not leaked.
 
 Generation, provider switch, raster promotion, and overwrite all bind to a
 **revision**. The revision is monotonically increasing and is part of the
-request's identity. Submitting the same logical action twice is safe:
-re-submissions of the same request signature are deduplicated server-side
-rather than executed twice, and a stale revision cannot be replayed onto a
-later one.
+request's identity. Re-submissions whose request signature is
+**deduplicated by `Idempotency-Key`** (parseable as a UUID) are rejected
+or returned as the prior result server-side rather than executed twice;
+operations that **parse but discard** the `Idempotency-Key` (plan updates
+and `run_qa`) are not deduplicated and a duplicate replay therefore
+re-runs the operation. A stale revision cannot be replayed onto a later
+one for any operation. The export endpoint tracks replayed export calls
+in an **in-memory set** scoped to the process: a duplicate `Idempotency-Key`
+on the same `(user, key)` is rejected with `409 export replay rejected`,
+and the set is lost on process restart (an export retried after a
+restart with the same key is therefore not deduplicated across that
+restart).
 
 ## Approval replay protection
 
@@ -111,10 +119,16 @@ Studio supports four credential modes, each with its own lifetime:
   end. The session lifetime is bounded to **one hour** at the most.
 - **Encrypted persisted BYOK** — you authorize a credential that is encrypted
   at rest and kept for future sessions, under a key the operator rotates.
-  Revocation is explicit: deleting the record, rotating the key, or
-  expiring the credential each end further use. **Rotation** of the
-  encryption key re-encrypts under the new key without exposing the prior
-  plaintext.
+  Revocation is explicit: rotating the encryption key alone does **not**
+  end the credential's use — `CredentialBroker.resolve()` re-encrypts the
+  same provider credential under the new active key, leaving the database
+  record and the upstream API token valid. The implemented Studio-side
+  revocation path is `CredentialBroker.revoke(user_id, provider)`, which
+  sets `revoked_at` on the persisted record. For a suspected compromise,
+  revoke the credential both **provider-side first** (rotate, disable, or
+  delete the upstream API key) and **Studio-side second**
+  (`CredentialBroker.revoke(user_id, provider)`), then re-encrypt any
+  remaining records under the new active key.
 
 Every credential mode supports a documented revocation path and a
 documented rotation path (where applicable: agent credentials are scoped to

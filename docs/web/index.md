@@ -86,14 +86,26 @@ would create. Review it and confirm it before generation.
 
 ## Generation routes
 
-In the merged build, only the **`agent`** route is registered and
-selectable. The other three routes (`hosted`, `session BYOK`, and
-`encrypted persisted BYOK`) exist as offline adapter-level tests but
-are not wired into `create_app`; selecting them at runtime is not
-possible until the adapters are registered. The descriptions below
-remain for reference and for future builds that wire them in. Choose
-exactly one of the routes below that is currently implemented in the
-build you are running.
+In the merged build, only the **`agent`** route is registered, and it
+is **selectable only when capabilities are passed at startup**.
+`create_app` accepts an `active_agent_image_capabilities` parameter
+that defaults to the empty set; the agent provider exposes
+`AgentProvider` as a route option only when that set intersects
+`{text_to_image}`. With the documented bare
+`create_app(WebConfig.from_env(os.environ))` start command, the set
+is empty, the curated `available_options()` list is empty, and every
+generation request is rejected as not currently executable. To make
+the agent route selectable in this build, the operator must supply
+`text_to_image` (or a wider set) through the start invocation;
+otherwise the process is up but no route is executable.
+
+The other three routes (`hosted`, `session BYOK`, and `encrypted
+persisted BYOK`) exist as offline adapter-level tests but are not
+wired into `create_app`; selecting them at runtime is not possible
+until the adapters are registered. The descriptions below remain for
+reference and for future builds that wire them in. Choose exactly one
+of the routes below that is currently implemented in the build you
+are running.
 
 - **Agent** — a local agent session drives generation and hands finished
   rasters back through agent-native handoff. Credentials, if any, live and are
