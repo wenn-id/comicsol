@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -436,9 +437,42 @@ class FrameworkDocumentTests(unittest.TestCase):
 
     def test_framework_doc_states_current_status_explicitly(self) -> None:
         text = self.DOC.read_text(encoding="utf-8")
-        self.assertIn("No live evidence has been retained", text)
+        self.assertIn("## Current status", text)
         self.assertIn("Four distinct evidence states", text)
         self.assertIn("Authorization boundaries", text)
+
+    def test_framework_doc_binds_retained_rows_to_a_candidate_and_gate(self) -> None:
+        """A retained row must name its candidate SHA, bundle, and gate command.
+
+        The framework's whole purpose is that a live claim is candidate-bound
+        and reproducible. If the status section claims retained evidence, the
+        document must also carry the 40-hex candidate, the bundle location,
+        and the exact gate invocation that revalidates it.
+        """
+        text = self.DOC.read_text(encoding="utf-8")
+        status = text.split("## Four distinct evidence states", 1)[0]
+        claims_retained = "is retained" in status or "has been exercised" in status
+        if not claims_retained:
+            self.assertIn("No live evidence has been retained", status)
+            return
+        candidates = re.findall(r"\b[0-9a-f]{40}\b", status)
+        self.assertTrue(candidates, "retained status must name a 40-hex candidate SHA")
+        self.assertIn("evidence/web-live/", status)
+        self.assertIn("scripts.live_web_evidence", status)
+        for sha in candidates:
+            with self.subTest(sha=sha):
+                self.assertIn(sha[:7], status)
+
+    def test_framework_doc_keeps_unexecuted_gaps_explicitly_not_run(self) -> None:
+        """Retaining one row must not silently upgrade the other five gaps."""
+        status = self.DOC.read_text(encoding="utf-8").split("## Four distinct evidence states", 1)[
+            0
+        ]
+        lowered = status.lower()
+        for gap in ("document.modelcontext", "comfyui", "paid/live provider", "release asset"):
+            with self.subTest(gap=gap):
+                self.assertIn(gap, lowered, f"missing gap statement for {gap!r}")
+                self.assertIn("no ", lowered, "unexecuted gaps must stay explicitly negative")
 
 
 if __name__ == "__main__":

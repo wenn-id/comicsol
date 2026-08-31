@@ -56,3 +56,4 @@ web/.ruff_cache/
 # Materialized sample compatibility copies
 /samples/sunlight-courier/panels/raw/*.png
 /samples/sunlight-courier/panels/clean/*.png
+.vercel

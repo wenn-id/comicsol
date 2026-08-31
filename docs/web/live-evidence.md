@@ -11,17 +11,39 @@ exact-candidate companion to the honest state recorded in
 
 ## Current status
 
-**No live evidence has been retained.** As of this work package:
+**One evidence row is retained: a static-only external deployment.** As of
+this work package:
 
-- No external Studio deployment has been exercised or published.
+- An external Studio deployment has been exercised and published — **static
+  UI only**. See "Retained evidence" below.
 - No active-agent WebMCP demonstration through a real
   `document.modelContext` surface has been retained.
 - No local ComfyUI smoke through the agent-native handoff has been
   retained.
 - No paid/live provider route has exact-candidate smoke evidence.
-- No real screenshot or video demonstration has been retained.
+- No workflow video has been retained. Two static UI screenshots of the
+  deployment are retained.
 - No native portable release asset has been published and smoke-qualified
   as a release asset.
+
+### Retained evidence
+
+| Field | Value |
+| --- | --- |
+| Bundle | `evidence/web-live/948d853/` |
+| Candidate | `948d853665c7f4a2368bea64a010e44230664224` |
+| Host | Vercel Hobby, team `wenn-projects` |
+| Cost | `USD 0.00` |
+| Authorization | issue #321 comment `5479494077`, recorded before execution |
+| Rows | `deploy-static-01` (`GET /`), `deploy-static-02` (`GET /webmcp.js`), `deploy-static-03` (mobile capture) — all `pass` |
+| Gate | `python -m scripts.live_web_evidence evidence/web-live/948d853 --candidate 948d853665c7f4a2368bea64a010e44230664224` |
+
+**What the deployment does not include:** the FastAPI application, SQLite
+state at `COMIC_SOL_WEB_DATA_ROOT`, the `DurableGenerationQueue` poller, and
+every API route. Only the files under `web/comic_sol_web/static/` are served.
+The deployment therefore proves asset delivery and client-side WebMCP tool
+registration surface, not workflow execution. Rows 2–6 of the gap table
+remain `Not run`.
 
 The sections below define the exact procedure and validation gate so that
 any future evidence is **retained, sanitized, and candidate-bound** — never
