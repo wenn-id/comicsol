@@ -161,9 +161,14 @@ contract, the four modes are:
 - **Hosted** — credentials are server-side secrets configured by the
   operator. The browser never receives them; the operator may revoke a
   hosted credential by rotating the operator-configured secret.
-- **Session BYOK** — you paste a credential for one session. It is held in
-  memory only, used within a single studio session, and discarded at session
-  end. The session lifetime is bounded to **one hour** at the most.
+- **Session BYOK** — you paste a credential for one session. It is stored
+  server-side by `CredentialBroker.store_session()`, keyed by
+  `(user_id, provider)` with an independent TTL (at most **one hour**);
+  ending the Studio session removes only the process-local
+  `AuthService` session record and does **not** revoke the broker-stored
+  credential — it remains resolvable after logout and to a fresh login
+  by the same user until the broker TTL expires. To revoke session BYOK
+  immediately, call `CredentialBroker.revoke(user_id, provider)`.
 - **Encrypted persisted BYOK** — you authorize a credential that is encrypted
   at rest and kept for future sessions, under a key the operator rotates.
   Revocation is explicit: rotating the encryption key alone does **not**

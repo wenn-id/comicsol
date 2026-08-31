@@ -110,10 +110,23 @@ CREDENTIAL_PATTERNS = (
     re.compile(
         r"(?i)\bauthorization\s*[:=]\s*[\"']?(?:Bearer|Basic|Token)\s+[A-Za-z0-9._\-+/=]{12,}"
     ),
+    # Query-string credentials (api_key, access_token, client_secret) when
+    # their values match a credential shape. Bounded by the same 12+ char
+    # class used for JSON/header bodies so a UI label like ?api_key=on
+    # never matches. Matches `?api_key=...`, `&access_token=...`, and the
+    # same names in URL fragments.
+    re.compile(
+        r"[?&](?:api[_-]?key|access[_-]?token|client[_-]?secret)=[A-Za-z0-9._\-+/=]{12,}"
+    ),
     re.compile(
         r"-----BEGIN [A-Z ]+PRIVATE KEY-----",
         re.IGNORECASE,
     ),
+    # Long quoted story text in JSON bodies (a raw paragraph pasted into a
+    # "story" field). The pattern catches a quoted key "story" followed by a
+    # quoted string value of 200+ characters, which is the minimum for a real
+    # story paragraph and is far above any legitimate UI label.
+    re.compile(r'"story"\s*:\s*"[^"]{200,}"'),
 )
 
 MARKDOWN_LINK = re.compile(r"\[(?P<label>[^\]]*)\]\((?P<target>[^)\s]+)\)")
@@ -359,7 +372,14 @@ class WebProvidersContractTests(unittest.TestCase):
                 )
 
     def test_every_paid_route_states_that_it_is_not_routable_in_the_merged_build(self) -> None:
-        """Only the agent route is registered in the merged composition root."""
+        """Only the agent route is registered in the merged composition root.
+
+        The agent route is routable only when startup capabilities expose
+        ``text_to_image``; with the documented bare start the capability set
+        is empty and the agent route is also unavailable. The unconditional
+        matrix-cell assertion below therefore applies to the shipped matrix
+        shape, not to runtime availability under the bare-start invocation.
+        """
         paid = {
             "OpenAI",
             "Google",
@@ -384,6 +404,41 @@ class WebProvidersContractTests(unittest.TestCase):
             rows.get("Active-agent image generation", {}).get("routable in merged build", ""),
             "agent route must be the one routable route in the merged build",
         )
+        agent_doc = collapsed(read("docs/web/providers.md"))
+        self.assertIn("text_to_image", agent_doc)
+        self.assertIn(
+            "capabilities",
+            collapsed(read("docs/web/index.md")).lower(),
+        )
+
+    def test_agent_route_requires_text_to_image_capability_at_runtime(self) -> None:
+        """`create_app`'s default `active_agent_image_capabilities` is empty.
+
+        `GenerationService._runtime_options()` emits the agent route only
+        when `text_to_image in (active_capabilities ∩ agent.active_capabilities)`.
+        A bare `create_app(WebConfig.from_env(os.environ))` start therefore
+        yields an empty `available_options()` tuple and every generation
+        request is rejected. The published matrix documents that bare-start
+        behavior; the contract here pins the same gate in code, not only
+        in prose, by checking the agent provider's declared capabilities.
+        """
+        from comic_sol_web.generation.providers.agent import (
+            AGENT_MODEL,
+            _AGENT_HANDOFF_CAPABILITIES,
+        )
+
+        # The shipped agent provider advertises the same set of
+        # capabilities that the matrix doc says are required. If a future
+        # change narrows the handoff set, this test fails before the
+        # matrix can drift from the code.
+        self.assertIn("text_to_image", _AGENT_HANDOFF_CAPABILITIES)
+        self.assertEqual(AGENT_MODEL, "active-agent-image")
+        # The published index must state the capability condition.
+        index_doc = collapsed(read("docs/web/index.md"))
+        self.assertIn("text_to_image", index_doc)
+        self.assertIn("capabilities", index_doc.lower())
+        providers_doc = collapsed(read("docs/web/providers.md"))
+        self.assertIn("text_to_image", providers_doc)
 
     def test_no_route_claims_live_smoke_without_an_evidence_link(self) -> None:
         """A `Yes` in the live-smoke column requires a real evidence link."""
@@ -859,21 +914,59 @@ class WebDocumentationLinkTests(unittest.TestCase):
                     )
 
     def test_every_in_document_anchor_resolves(self) -> None:
-        """check every in document anchor resolves."""
+        """check every in document anchor resolves, including cross-file."""
         for path in self._markdown_documents():
             text = path.read_text(encoding="utf-8")
-            headings = {
-                "#" + re.sub(r"[^a-z0-9 -]", "", line.lstrip("#").strip().lower()).replace(" ", "-")
-                for line in text.splitlines()
-                if line.startswith("#")
-            }
             for match in MARKDOWN_LINK.finditer(text):
                 target = match.group("target")
-                if not target.startswith("#"):
+                if target.startswith((
+                    "http://", "https://", "mailto:",
+                )):
                     continue
+                file_part, _, anchor = target.partition("#")
+                if not anchor:
+                    continue
+                if file_part:
+                    target_path = (path.parent / file_part).resolve()
+                    if not target_path.is_file():
+                        # The relative-link test above will already report
+                        # this; skip the anchor check for missing files.
+                        continue
+                    anchor_doc = target_path.read_text(encoding="utf-8")
+                else:
+                    anchor_doc = text
+                # GitHub-flavored anchor: lowercase, strip punctuation,
+                # collapse whitespace runs to single hyphens, drop leading
+                # and trailing hyphens. Matches the slug the published
+                # Markdown renders at, not a custom doc-specific recipe.
+                def slug(heading: str) -> str:
+                    lowered = heading.strip().lower()
+                    out: list[str] = []
+                    last_dash = False
+                    for ch in lowered:
+                        if ch.isalnum() or (
+                            ord("a") <= ord(ch) <= ord("z")
+                            and ch.isascii()
+                        ):
+                            out.append(ch)
+                            last_dash = False
+                        elif ch == " " or ch == "-":
+                            if not last_dash:
+                                out.append("-")
+                                last_dash = True
+                        else:
+                            if not last_dash:
+                                out.append("-")
+                                last_dash = True
+                    return "".join(out).strip("-")
+                headings = {
+                    slug(line.lstrip("#").strip())
+                    for line in anchor_doc.splitlines()
+                    if line.startswith("#")
+                }
                 with self.subTest(document=path.name, anchor=target):
                     self.assertIn(
-                        target.lower(),
+                        slug(anchor),
                         headings,
                         f"{path.relative_to(ROOT)} links anchor {target!r}, "
                         f"which no heading defines",

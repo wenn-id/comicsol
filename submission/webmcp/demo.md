@@ -38,8 +38,10 @@ the bundled `fake-raster-v1` model.
 2. **Create a project from a short prompt.** The demo project's
    `story.txt` is loaded as the prompt; the WebMCP `create_project`
    tool returns a Plan and a revision.
-3. **Inspect the Plan.** The WebMCP `get_project_state` tool returns
-   the Plan; the demo's Plan is recorded in `demo-project/plan.json`.
+3. **Inspect the Plan.** The WebMCP `get_project_state` tool reports
+   whether a Plan is available (`plan_available: true`); it does not
+   return the Plan body itself. The illustrative Plan is recorded in
+   `demo-project/plan.json`.
 4. **Queue a generation.** The WebMCP `queue_generation` tool queues a
    panel against `fake-raster-v1`. The queue is read with
    `list_generation_jobs` to confirm the panel is in flight; the queue

@@ -20,11 +20,16 @@ The columns are:
 - **Adapter implemented** — a provider adapter module exists and is exercised
   by merged adapter tests behind `httpx.MockTransport`.
 - **Routable in merged build** — the route is actually reachable through the
-  merged `create_app` composition root. **Only the agent route is.**
+  merged `create_app` composition root. **Only the agent route is**, and only
+  when the startup capability set exposes `text_to_image`.
   `web/comic_sol_web/app.py::_generation_service` registers a
   `ProviderRegistry((AgentProvider(...),))` — one provider — and
   `GenerationService._runtime_options()` excludes every catalog entry with no
-  registered adapter. No paid provider is selectable in the merged build.
+  registered adapter, then emits the agent model only when
+  `text_to_image` is in the intersection of the agent's declared
+  capabilities and the startup-supplied `active_agent_image_capabilities`
+  (empty by default). No paid provider is selectable in the merged build,
+  and a bare start exposes no executable route at all.
 - **Offline-qualified (adapter-level)** — a deterministic, zero-cost,
   contract-tested flow exercises the adapter with a mocked transport. This is
   **not** an end-to-end route qualification.

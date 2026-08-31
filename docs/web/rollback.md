@@ -23,13 +23,16 @@ across rollback, so:
 
 - **durable, SQLite-backed** project state, generation history, and
   persisted BYOK credentials survive;
-- **in-memory / process-local** state does **not** survive: only the
-  `AuthService` object on `app.state`, the in-memory half of the
-  generation queue, and any FastAPI background task that was consuming
-  a job at the moment of termination are lost. Authenticated **session
-  records** are themselves persisted in the SQLite `sessions` table and
-  survive a rollback that retains the data volume (see the dedicated
-  bullet below);
+- **in-memory / process-local** state does **not** survive: all
+  process-local `app.state` caches are recreated on restart — the
+  `AuthService` object, the cached `generation` service, the cached
+  `generation_credentials` broker, and any session-BYOK state held by
+  that broker — and any FastAPI background task that was consuming a
+  job at the moment of termination is lost. The in-memory half of the
+  generation queue (if any in-flight lease was mid-step) is also lost.
+  Authenticated **session records** are themselves persisted in the
+  SQLite `sessions` table and survive a rollback that retains the data
+  volume (see the dedicated bullet below);
 - the **on-disk (SQLite-backed) generation queue is not "replayed"**.
   `web/comic_sol_web/app.py::create_app` registers **no** `lifespan` or
   `shutdown` handler that drains, flushes, or replays interrupted work.
@@ -183,10 +186,12 @@ following are **not recoverable by rollback**:
   in-flight task was doing is not. Do **not** queue a replacement job
   for it: `DurableGenerationQueue.lease_next()` selects expired
   `running` rows and reclaims them while retries remain, so the
-  persisted job recovers on the next poll. Manual requeueing is
-  reserved for jobs that have exhausted their retries or reached a
-  terminal state — enqueuing a duplicate otherwise causes duplicate
-  generation and duplicate provider spend.
+  persisted job recovers on the next poll. Jobs that have exhausted
+  their retries (`retry_count >= max_retries`) or reached a terminal
+  state are **not recoverable** — neither `/retry` nor `/queue` reopens
+  them. The only recovery path is to start a new generation request
+  from the same project revision. Enqueuing a duplicate of an active
+  job causes duplicate generation and duplicate provider spend.
 - **provider-side state** (model deprecation, billing changes, account
   suspension, provider outages) is outside Studio. Rolling back Studio
   does not roll back the provider.

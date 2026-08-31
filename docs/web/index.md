@@ -103,9 +103,9 @@ The other three routes (`hosted`, `session BYOK`, and `encrypted
 persisted BYOK`) exist as offline adapter-level tests but are not
 wired into `create_app`; selecting them at runtime is not possible
 until the adapters are registered. The descriptions below remain for
-reference and for future builds that wire them in. Choose exactly one
-of the routes below that is currently implemented in the build you
-are running.
+reference and for future builds that wire them in. If startup
+capabilities expose a selectable route, choose exactly one. Otherwise,
+generation is unavailable until the required capability is supplied.
 
 - **Agent** — a local agent session drives generation and hands finished
   rasters back through agent-native handoff. Credentials, if any, live and are
