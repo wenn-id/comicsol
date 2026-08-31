@@ -97,7 +97,7 @@ identical to the Skill checkout.
 - **How you start it:** install the plugin through Codex's repo marketplace and
   start a fresh session.
 - **Default output root:** the platform default in the table above.
-- **Details:** [`README.md` → Codex Plugin](../README.md#codex-plugin--same-repository).
+- **Details:** [`README.md` → Codex Plugin](../README.md#codex-plugin-same-repository).
 
 ## Source checkout (development)
 
@@ -172,7 +172,7 @@ persists outside that volume.
 
 ## Comic Sol Studio (Web)
 
-The Web distribution (`web/comic_sol_web/`) is a separately installed Flask
+The Web distribution (`web/comic_sol_web/`) is a separately installed FastAPI
 application that exposes the same deterministic lifecycle through a browser
 and a WebMCP client (`5` read + `9` write tools). The local `stdio` MCP server
 remains exactly `17` tools. The Web surface is **not** a replacement for the
@@ -181,10 +181,12 @@ are unchanged. The Web surface has no default output root; an explicit
 `COMIC_SOL_WEB_DATA_ROOT` volume is required and the process fails fast if it
 is missing.
 
-- **How you start it:** the Web package exports no dedicated console script;
-  start the FastAPI application with the bundled `uvicorn` using the module
-  path `comic_sol_web.app:create_app` (in a source checkout, run from `web/`):
-  `uvicorn comic_sol_web.app:create_app --host 127.0.0.1 --port 8000`. The
+- **How you start it:** the Web package exports no dedicated console script.
+  The factory `comic_sol_web.app.create_app` requires a `WebConfig`; the
+  intended invocation is `python -c "import os; from
+  comic_sol_web.config import WebConfig; from comic_sol_web.app import
+  create_app; create_app(WebConfig.from_env(os.environ))"` bound to a
+  host/port by the chosen ASGI server. The
   `/healthz` endpoint returns `{"status":"ok"}`; there is no readiness
   endpoint.
 - **Default output root:** none; `COMIC_SOL_WEB_DATA_ROOT` is required and
@@ -209,4 +211,4 @@ is missing.
 | Native archive | installed `comic-sol doctor` | Platform default (table above); runtime lives separately |
 | MCP server | `comic-sol mcp --root <absolute path>` | None — explicit `--root` required |
 | OCI image | container entrypoint | `/data` inside the container |
-| Comic Sol Studio (Web) | `uvicorn comic_sol_web.app:create_app` (from `web/`) | None — `COMIC_SOL_WEB_DATA_ROOT` is required |
+| Comic Sol Studio (Web) | `python -c "import os; from comic_sol_web.config import WebConfig; from comic_sol_web.app import create_app; create_app(WebConfig.from_env(os.environ))"` + an ASGI server (uvicorn is a dependency) | None — `COMIC_SOL_WEB_DATA_ROOT` is required |

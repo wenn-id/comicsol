@@ -32,20 +32,39 @@ Each step is detailed in the sections below.
 
 ## Sign in
 
-Open the Studio in a browser and sign in with **GitHub** through the
-OAuth flow Studio configures. Studio stores only a keyed digest of the
-OAuth state; a replay is rejected on consume. After the callback succeeds,
-the browser holds an HttpOnly session cookie, every state-changing request
-carries CSRF protection, and the server never streams a provider credential
-to the browser.
+**Studio does not currently ship an OAuth sign-in route.** The merged
+`web/comic_sol_web/app.py::create_app` composition root includes the
+`projects`, `generation`, `approvals`, and `assets` routers; an
+authentication router is **not yet included**, so no `/api/auth/login`
+is served by the merged application. The `WebConfig` also has no
+GitHub-client configuration. `/healthz` is unauthenticated and
+deterministic; every project and generation route currently requires a
+principal, but the route that issues one is not present in the merged
+build.
 
-Signing in does not configure a provider. You choose a generation route (and,
-for BYOK routes, supply or authorize your own credentials) after your project
-is planned.
+**The intended end state** — the path the build will require once the
+auth router is wired — is:
+
+- the user opens the Studio in a browser and authenticates through
+  GitHub OAuth (`web/comic_sol_web/auth.py` contains the construction
+  logic, but the router is not registered by `create_app` in the merged
+  build);
+- Studio stores only a keyed digest of the OAuth state; a replay is
+  rejected on consume;
+- after the callback succeeds, the browser holds an `HttpOnly` session
+  cookie, every state-changing request carries CSRF protection, and the
+  server never streams a provider credential to the browser.
+
+Signing in does not configure a provider. The user chooses a generation
+route (and, for BYOK routes, supplies or authorizes their own
+credentials) only after the project is planned. The sign-in wiring is
+tracked as a release blocker; the **steps after sign-in below are the
+documented user path that the build will require once the auth router
+is added — not a flow that is exercised by the merged code today.**
 
 ## Entry modes
 
-A project begins one of two ways:
+A project begins one of three ways:
 
 - **Create from a short prompt** — type a one-line idea; Studio drafts a plan.
 - **Create from a pasted story** — paste a longer narrative; Studio drafts a

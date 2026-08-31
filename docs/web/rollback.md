@@ -18,17 +18,31 @@ suspected credential compromise, or a downstream provider-side failure.
 
 A deployment rollback is the operation of stopping the current Studio
 process and starting a previous, known-good build against the existing
-data volume. The data volume under `COMIC_SOL_WEB_DATA_ROOT` is the single
-source of truth and is preserved across rollback, so:
+data volume. The data volume under `COMIC_SOL_WEB_DATA_ROOT` is preserved
+across rollback, so:
 
-- project state, sessions, generation history, and persisted BYOK
-  credentials survive;
-- in-flight generation is **not** preserved (see below);
-- the on-disk queue is replayed on next start.
+- **durable, SQLite-backed** project state, generation history, and
+  persisted BYOK credentials survive;
+- **in-memory / process-local** state does **not** survive: sessions
+  (the authenticated session object lives on `app.state`), the
+  in-memory half of the generation queue, and any FastAPI background
+  task that was consuming a job at the moment of termination are lost;
+- the **on-disk (SQLite-backed) generation queue is not "replayed"**.
+  `web/comic_sol_web/app.py::create_app` registers **no** `lifespan` or
+  `shutdown` handler that drains, flushes, or replays interrupted work.
+  Recovery is by design: `DurableGenerationQueue` stores jobs
+  transactionally and `expired-running` leases are recovered on the
+  next process start rather than by an explicit replay step. A panel
+  whose `running` lease expired because the process was killed will be
+  re-claimed by the next consumer; an in-memory half that was mid-step
+  is not recoverable.
 
 Before any rollback, snapshot the data volume. After the rollback, run
-[Verification](#verification) and confirm the process answers `/healthz`
-before serving traffic.
+the full [Verification](#verification) checklist. **`/healthz` is a
+liveness probe only**; it confirms the process is up, not that it is
+ready to serve traffic. Do **not** start serving traffic on `/healthz`
+alone — run the deployment-specific readiness checks (port reachable,
+data root mounted, environment secrets valid) before opening ingress.
 
 ## Restore from backup
 
@@ -51,25 +65,53 @@ before you commit to a restore.
 ## Credential-key rotation and revocation
 
 A suspected credential compromise is a security incident. The recovery
-steps are:
+steps differ by credential mode; record the mode and the time the
+incident was detected before starting.
 
 1. **Identify the affected mode.** The four credential modes (agent,
    hosted, session BYOK, encrypted persisted BYOK) have different blast
    radii; agent and session BYOK credentials are scoped to a session and
    expire naturally, while hosted and persisted BYOK credentials persist
    until the operator revokes them.
-2. **Revoke the affected credential.** For hosted credentials, rotate
-   the operator-side secret and redeploy. For persisted BYOK, delete the
-   record through the credential storage interface. For session BYOK,
-   end the affected session. Agent credentials live in the agent session
-   and are not retrievable from Studio; contain the agent session.
-3. **Rotate the encryption key** for the persisted BYOK surface, even if
-   only one key was used, so any cached ciphertext under the old key is
-   treated as decrypt-only from this point forward.
-4. **Audit receipts** for the affected owner and window. Receipts are
-   sanitized (see [Security and privacy](security.md)) and never contain
-   a raw provider payload, but they do show which actions took place
-   under the affected credential.
+2. **Revoke the affected credential at every layer it lives in.**
+   - **Provider side first, where supported.** Hosted credentials
+     (`COMIC_SOL_WEB_HOSTED_SECRET_REFS`) live on the operator's side
+     of the proxy and are managed by a provider dashboard. Rotate,
+     disable, or revoke the upstream secret there; do not rely on a
+     Studio-side delete alone. Persisted BYOK credentials may also
+     have provider-side state (e.g. an API key with usage logs) that
+     must be rotated or revoked at the provider.
+   - **Studio side second.** For hosted credentials, redeploy with
+     the new operator secret. For persisted BYOK, call the credential
+     storage interface to delete the record. For session BYOK, end
+     the affected session.
+   - **Agent side, concretely.** Agent credentials live in the
+     agent session and are not retrievable from Studio. End the
+     external agent session by terminating the agent process (or
+     revoking its session token) on the user's machine; do not rely
+     on Studio to "contain" it.
+3. **Re-encrypt every affected persisted BYOK record eagerly, not
+   read-time.** Suspected compromise does not wait for lazy rotation.
+   For each affected record:
+   - if the plaintext can be re-supplied (the user re-enters the
+     BYOK or re-issues the provider key), re-encrypt it under the
+     new active key and persist immediately;
+   - if the plaintext **cannot** be re-supplied (the user is
+     unavailable, the key is lost, or the record cannot be safely
+     verified), **delete and revoke** the record rather than
+     leaving it under the suspect key. Do not rely on a "decrypt
+     on next read" path; that path itself is a compromise surface.
+4. **Retire the old key only after every reachable record has
+   moved.** Keep the old key declared in
+   `COMIC_SOL_WEB_CREDENTIAL_KEY_REFS` until a documented audit
+   confirms that no remaining ciphertext is encrypted under it.
+   The retirement condition is *zero remaining records under the
+   old key*, not a wall-clock window. Removing the old key
+   before the audit is a recovery failure, not a precaution.
+5. **Audit receipts** for the affected owner and window. Receipts
+   are sanitized (see [Security and privacy](security.md)) and
+   never contain a raw provider payload, but they do show which
+   actions took place under the affected credential.
 
 ## Incident response
 

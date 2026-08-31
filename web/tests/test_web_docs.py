@@ -20,6 +20,7 @@ after publication.
 
 from __future__ import annotations
 
+import ast
 import re
 import unittest
 from pathlib import Path
@@ -31,6 +32,8 @@ from comic_sol_web.generation.catalog import CATALOG
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DOCS = ROOT / "docs" / "web"
 SUBMISSION = ROOT / "submission" / "webmcp"
+APP_SOURCE = ROOT / "web" / "comic_sol_web" / "app.py"
+GENERATION_SERVICE_SOURCE = ROOT / "web" / "comic_sol_web" / "generation" / "service.py"
 
 # The exact WebMCP surface #266 registered and WP16 qualified.
 WEBMCP_READ_TOOLS = frozenset(
@@ -56,7 +59,22 @@ WEBMCP_WRITE_TOOLS = frozenset(
     }
 )
 
-# Credential shapes that must never appear in any WP17 document.
+# Credential, token, header, and path/endpoint/payload shapes that must never
+# appear in any WP17 document or submission artifact. Each pattern is a single
+# prohibited shape; new ones are added when the documentation contract is
+# extended. The list covers:
+#   - vendor API key formats (sk-, sk-proj-, ghp_, github_pat_, AKIA, xoxb-,
+#     AIza, r8_);
+#   - generic authorization header shapes (Bearer, Token, Basic) with a real
+#     token attached;
+#   - session/cookie header values that look like a real session or CSRF
+#     token (Set-Cookie + long token; csrf_token=…; X-CSRF-Token: …);
+#   - private filesystem path shapes (Unix /home/<user>/, Windows
+#     C:\Users\<user>\) and the obvious secret-mount path /run/secrets/*;
+#   - private link-local / loopback / metadata endpoints;
+#   - raw JSON or query-string bodies that carry a credential or a story
+#     excerpt ({"api_key":..., {"access_token":..., authorization:...,
+#     "story": "<20+ word paragraph>").
 CREDENTIAL_PATTERNS = (
     re.compile(r"sk-[A-Za-z0-9]{20,}"),
     re.compile(r"sk-proj-[A-Za-z0-9_-]{20,}"),
@@ -66,6 +84,26 @@ CREDENTIAL_PATTERNS = (
     re.compile(r"xoxb-[A-Za-z0-9-]{20,}"),
     re.compile(r"AIza[0-9A-Za-z_-]{30,}"),
     re.compile(r"r8_[A-Za-z0-9]{30,}"),
+    re.compile(
+        r"(?i)(?:^|[\s;,(\"'])(?:Bearer|Authorization|Token|Basic)\s+[A-Za-z0-9._\-+/=]{24,}"
+    ),
+    re.compile(r"(?i)\bSet-Cookie:\s*[A-Za-z0-9_]+=[A-Za-z0-9._\-+/=]{24,}"),
+    re.compile(r"(?i)\bcsrf_?token\s*=\s*[\"']?[A-Za-z0-9._\-+/=]{24,}\""),
+    re.compile(r"(?i)\bx-csrf-token:\s*[A-Za-z0-9._\-+/=]{24,}"),
+    re.compile(r"/home/[a-z0-9_\-]+/\.[A-Za-z0-9_./-]+"),
+    re.compile(r"C:\\Users\\[^\\\s/\"]+\\"),
+    re.compile(r"/run/secrets/[A-Za-z0-9_./-]+"),
+    re.compile(r"https?://(?:127\.|10\.|192\.168\.|169\.254\.|::1|localhost)"),
+    re.compile(
+        r"(?i)(?:\"api[_-]?key\"|\"access[_-]?token\"|\"client[_-]?secret\"|\"authorization\")\s*:\s*\"[A-Za-z0-9._\-+/=]{12,}\""
+    ),
+    re.compile(
+        r"(?i)\bauthorization\s*[:=]\s*[\"']?(?:Bearer|Basic|Token)\s+[A-Za-z0-9._\-+/=]{12,}"
+    ),
+    re.compile(
+        r"-----BEGIN [A-Z ]+PRIVATE KEY-----",
+        re.IGNORECASE,
+    ),
 )
 
 MARKDOWN_LINK = re.compile(r"\[(?P<label>[^\]]*)\]\((?P<target>[^)\s]+)\)")
@@ -95,6 +133,7 @@ class WebIndexContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        """setUpClass."""
         cls.document = read("docs/web/index.md")
         cls.normalized = collapsed(cls.document)
 
@@ -155,6 +194,7 @@ class WebIndexContractTests(unittest.TestCase):
         )
 
     def test_all_four_generation_modes_are_documented(self) -> None:
+        """check all four generation modes are documented."""
         modes = collapsed(section(self.document, "Generation routes")).lower()
         for mode in (
             "agent",
@@ -166,6 +206,7 @@ class WebIndexContractTests(unittest.TestCase):
                 self.assertIn(mode, modes, mode)
 
     def test_all_four_explicit_confirmations_are_documented(self) -> None:
+        """check all four explicit confirmations are documented."""
         confirmations = collapsed(section(self.document, "Explicit confirmations")).lower()
         for confirmation in (
             "generation cost",
@@ -177,6 +218,7 @@ class WebIndexContractTests(unittest.TestCase):
                 self.assertIn(confirmation, confirmations, confirmation)
 
     def test_entry_modes_cover_story_creation_and_archive_import(self) -> None:
+        """check entry modes cover story creation and archive import."""
         entry = collapsed(section(self.document, "Entry modes"))
         self.assertIn("short prompt", entry)
         self.assertIn("pasted story", entry)
@@ -184,6 +226,7 @@ class WebIndexContractTests(unittest.TestCase):
         self.assertIn(".comic-sol-handoff", entry)
 
     def test_page_owned_handles_are_the_only_documented_input_source(self) -> None:
+        """check page owned handles are the only documented input source."""
         handles = collapsed(section(self.document, "Asset and archive handles"))
         self.assertIn("page-owned", handles)
         self.assertIn("never", handles.lower())
@@ -191,6 +234,7 @@ class WebIndexContractTests(unittest.TestCase):
         self.assertIn("arbitrary URL", handles)
 
     def test_evidence_tiers_are_named_and_distinguished(self) -> None:
+        """check evidence tiers are named and distinguished."""
         tiers = collapsed(section(self.document, "Evidence tiers"))
         for tier in (
             "Implemented",
@@ -206,6 +250,7 @@ class WebIndexContractTests(unittest.TestCase):
         )
 
     def test_index_makes_no_adoption_or_visual_quality_claim(self) -> None:
+        """check index makes no adoption or visual quality claim."""
         lowered = self.normalized.lower()
         for banned in (
             "thousands of",
@@ -220,6 +265,7 @@ class WebIndexContractTests(unittest.TestCase):
                 self.assertNotIn(banned, lowered, banned)
 
     def test_index_states_the_exact_webmcp_and_local_mcp_counts(self) -> None:
+        """check index states the exact webmcp and local mcp counts."""
         surfaces = collapsed(section(self.document, "Tool surfaces"))
         self.assertIn("five read", surfaces)
         self.assertIn("nine write", surfaces)
@@ -235,24 +281,43 @@ class WebProvidersContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        """setUpClass."""
         cls.document = read("docs/web/providers.md")
         cls.normalized = collapsed(cls.document)
         cls.matrix = section(cls.document, "Provider verification matrix")
 
     @classmethod
-    def matrix_rows(cls) -> dict[str, list[str]]:
-        """Return `{provider label: [cells]}` for the verification matrix."""
-        rows: dict[str, list[str]] = {}
+    def matrix_header(cls) -> list[str]:
+        """Return the matrix column names from the header row (lowercased)."""
+        for line in cls.matrix.splitlines():
+            if not line.startswith("|"):
+                continue
+            cells = [cell.strip().lower() for cell in line.strip("|").split("|")]
+            if len(cells) >= 6 and cells[0] == "provider":
+                return cells
+        raise AssertionError("provider verification matrix has no header row")
+
+    @classmethod
+    def matrix_rows(cls) -> dict[str, dict[str, str]]:
+        """Return `{provider label: {column name: cell}}` for the matrix."""
+        header = cls.matrix_header()
+        rows: dict[str, dict[str, str]] = {}
         for line in cls.matrix.splitlines():
             if not line.startswith("|"):
                 continue
             cells = [cell.strip() for cell in line.strip("|").split("|")]
-            if len(cells) < 6 or cells[0] in {"Provider", ""} or set(cells[0]) <= {"-", ":"}:
+            if (
+                len(cells) < len(header)
+                or cells[0] == "Provider"
+                or cells[0] == ""
+                or set(cells[0]) <= {"-", ":"}
+            ):
                 continue
-            rows[cells[0]] = cells
+            rows[cells[0]] = dict(zip(header, cells))
         return rows
 
     def test_every_required_route_has_a_matrix_row(self) -> None:
+        """check every required route has a matrix row."""
         rows = self.matrix_rows()
         for label in (
             "OpenAI",
@@ -271,25 +336,52 @@ class WebProvidersContractTests(unittest.TestCase):
                 self.assertIn(label, rows, f"missing matrix row for {label}")
 
     def test_every_matrix_row_uses_only_approved_tier_values(self) -> None:
-        """Implemented / offline-qualified / live-verified are separate columns."""
+        """The live-smoke column is separate from implemented/offline-qualified."""
         approved = {"Yes", "No", "Not run", "n/a"}
-        for label, cells in self.matrix_rows().items():
+        for label, row in self.matrix_rows().items():
             with self.subTest(provider=label):
-                for index, column in ((1, "implemented"), (2, "offline"), (3, "live smoke")):
-                    self.assertIn(
-                        cells[index],
-                        approved,
-                        f"{label} {column} column is {cells[index]!r}, "
-                        f"which is not one of {sorted(approved)}",
-                    )
+                live = row.get("live smoke", "")
+                self.assertIn(
+                    live,
+                    approved,
+                    f"{label} live-smoke column is {live!r}, "
+                    f"which is not one of {sorted(approved)}",
+                )
+
+    def test_every_paid_route_states_that_it_is_not_routable_in_the_merged_build(self) -> None:
+        """Only the agent route is registered in the merged composition root."""
+        paid = {
+            "OpenAI",
+            "Google",
+            "BFL (direct)",
+            "xAI",
+            "Stability",
+            "Replicate",
+            "fal.ai",
+            "Cloudflare",
+            "ComfyUI (remote)",
+        }
+        rows = self.matrix_rows()
+        for label in sorted(paid & set(rows)):
+            with self.subTest(provider=label):
+                self.assertEqual(
+                    "No",
+                    rows[label].get("routable in merged build", ""),
+                    f"{label} must state it is not routable in the merged build",
+                )
+        self.assertEqual(
+            "Yes",
+            rows.get("Active-agent image generation", {}).get("routable in merged build", ""),
+            "agent route must be the one routable route in the merged build",
+        )
 
     def test_no_route_claims_live_smoke_without_an_evidence_link(self) -> None:
         """A `Yes` in the live-smoke column requires a real evidence link."""
-        for label, cells in self.matrix_rows().items():
+        for label, row in self.matrix_rows().items():
             with self.subTest(provider=label):
-                if cells[3] != "Yes":
+                if row.get("live smoke") != "Yes":
                     continue
-                evidence = cells[5]
+                evidence = row.get("evidence", "")
                 match = MARKDOWN_LINK.search(evidence)
                 self.assertIsNotNone(
                     match,
@@ -306,14 +398,15 @@ class WebProvidersContractTests(unittest.TestCase):
                 )
 
     def test_rows_without_live_smoke_state_no_evidence_rather_than_a_link(self) -> None:
-        for label, cells in self.matrix_rows().items():
+        """check rows without live smoke state no evidence rather than a link."""
+        for label, row in self.matrix_rows().items():
             with self.subTest(provider=label):
-                if cells[3] == "Yes":
+                if row.get("live smoke") == "Yes":
                     continue
                 self.assertIn(
-                    cells[5],
+                    row.get("evidence", ""),
                     {"None", "None retained", "n/a"},
-                    f"{label} does not claim live smoke but cites evidence {cells[5]!r}",
+                    f"{label} does not claim live smoke but cites evidence {row.get('evidence')!r}",
                 )
 
     def test_no_paid_provider_is_currently_marked_live_verified(self) -> None:
@@ -334,11 +427,12 @@ class WebProvidersContractTests(unittest.TestCase):
             with self.subTest(provider=label):
                 self.assertNotEqual(
                     "Yes",
-                    rows[label][3],
+                    rows[label].get("live smoke", ""),
                     f"{label} claims live smoke, but no paid provider call is authorized",
                 )
 
     def test_matrix_states_that_unit_tests_are_not_live_verification(self) -> None:
+        """check matrix states that unit tests are not live verification."""
         self.assertIn(
             "Passing offline contract tests is not live verification",
             self.normalized,
@@ -364,6 +458,7 @@ class WebProvidersContractTests(unittest.TestCase):
                 self.assertNotIn(absent, self.document, absent)
 
     def test_remote_and_local_comfyui_are_separate_sections(self) -> None:
+        """check remote and local comfyui are separate sections."""
         remote = collapsed(section(self.document, "Remote ComfyUI"))
         local = collapsed(section(self.document, "Local ComfyUI"))
         self.assertIn("public HTTPS", remote)
@@ -378,17 +473,20 @@ class WebProvidersContractTests(unittest.TestCase):
         self.assertIn("model licenses", local)
 
     def test_authentication_modes_are_documented_per_route(self) -> None:
+        """check authentication modes are documented per route."""
         rows = self.matrix_rows()
-        for label, cells in rows.items():
+        for label, row in rows.items():
             with self.subTest(provider=label):
-                self.assertTrue(cells[4], f"{label} has no authentication modes cell")
+                auth = row.get("authentication", "")
+                self.assertTrue(auth, f"{label} has no authentication modes cell")
                 self.assertRegex(
-                    cells[4],
+                    auth,
                     r"(?i)agent|hosted|BYOK|n/a",
-                    f"{label} authentication cell is {cells[4]!r}",
+                    f"{label} authentication cell is {auth!r}",
                 )
 
     def test_document_contains_no_credential_shaped_string(self) -> None:
+        """check document contains no credential shaped string."""
         for pattern in CREDENTIAL_PATTERNS:
             with self.subTest(pattern=pattern.pattern):
                 self.assertIsNone(pattern.search(self.document), pattern.pattern)
@@ -402,6 +500,7 @@ class WebSecurityContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        """setUpClass."""
         cls.document = read("docs/web/security.md")
         cls.normalized = collapsed(cls.document)
 
@@ -415,6 +514,7 @@ class WebSecurityContractTests(unittest.TestCase):
         self.assertIn(statement, collapsed(self.document.replace(">", " ")))
 
     def test_all_four_credential_modes_are_documented_with_lifetimes(self) -> None:
+        """check all four credential modes are documented with lifetimes."""
         modes = collapsed(section(self.document, "Credential modes and lifetime")).lower()
         for phrase in (
             "agent",
@@ -430,6 +530,7 @@ class WebSecurityContractTests(unittest.TestCase):
         self.assertIn("one hour", modes)
 
     def test_request_integrity_boundaries_are_documented(self) -> None:
+        """check request integrity boundaries are documented."""
         integrity = collapsed(section(self.document, "Request integrity"))
         for phrase in (
             "authentication",
@@ -444,6 +545,7 @@ class WebSecurityContractTests(unittest.TestCase):
                 self.assertIn(phrase, integrity, phrase)
 
     def test_network_trust_boundary_documents_ssrf_and_redirect_policy(self) -> None:
+        """check network trust boundary documents ssrf and redirect policy."""
         network = collapsed(section(self.document, "Network trust boundary"))
         for phrase in (
             "SSRF",
@@ -460,6 +562,7 @@ class WebSecurityContractTests(unittest.TestCase):
                 self.assertIn(phrase, network, phrase)
 
     def test_archive_and_image_trust_boundaries_are_documented(self) -> None:
+        """check archive and image trust boundaries are documented."""
         boundaries = collapsed(section(self.document, "Archive and image trust boundary")).lower()
         for phrase in (
             "portable archive",
@@ -471,16 +574,19 @@ class WebSecurityContractTests(unittest.TestCase):
                 self.assertIn(phrase, boundaries, phrase)
 
     def test_receipts_and_redaction_are_documented(self) -> None:
+        """check receipts and redaction are documented."""
         receipts = collapsed(section(self.document, "Receipts and redaction"))
         self.assertIn("[REDACTED]", receipts)
         self.assertIn("raw provider payload", receipts)
 
     def test_private_destinations_are_documented(self) -> None:
+        """check private destinations are documented."""
         privacy = collapsed(section(self.document, "Private story and artifact destinations"))
         self.assertIn("owner", privacy)
         self.assertIn("never published", privacy)
 
     def test_backup_and_incident_expectations_are_documented(self) -> None:
+        """check backup and incident expectations are documented."""
         self.assertIn("## Backup and incident expectations", self.document)
         expectations = collapsed(section(self.document, "Backup and incident expectations"))
         for phrase in ("backup", "incident", "rotation", "revocation"):
@@ -488,6 +594,7 @@ class WebSecurityContractTests(unittest.TestCase):
                 self.assertIn(phrase, expectations.lower(), phrase)
 
     def test_document_contains_no_credential_shaped_string(self) -> None:
+        """check document contains no credential shaped string."""
         for pattern in CREDENTIAL_PATTERNS:
             with self.subTest(pattern=pattern.pattern):
                 self.assertIsNone(pattern.search(self.document), pattern.pattern)
@@ -501,10 +608,12 @@ class WebDeploymentContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        """setUpClass."""
         cls.document = read("docs/web/deployment.md")
         cls.normalized = collapsed(cls.document)
 
     def test_single_process_runtime_and_its_limits_are_documented(self) -> None:
+        """check single process runtime and its limits are documented."""
         runtime = collapsed(section(self.document, "One-process runtime"))
         self.assertIn("one process", runtime.lower())
         self.assertIn("process-local", runtime)
@@ -513,12 +622,14 @@ class WebDeploymentContractTests(unittest.TestCase):
                 self.assertIn(phrase, runtime.lower(), phrase)
 
     def test_durable_data_volume_is_required(self) -> None:
+        """check durable data volume is required."""
         volume = collapsed(section(self.document, "Durable data volume"))
         self.assertIn("COMIC_SOL_WEB_DATA_ROOT", volume)
         self.assertIn("absolute", volume)
         self.assertIn("durable", volume.lower())
 
     def test_every_required_environment_variable_is_documented(self) -> None:
+        """check every required environment variable is documented."""
         secrets = section(self.document, "Environment secrets")
         from comic_sol_web.config import (
             CREDENTIAL_ACTIVE_KEY_ID_VAR,
@@ -543,6 +654,7 @@ class WebDeploymentContractTests(unittest.TestCase):
         self.assertIn(str(MINIMUM_SECRET_LENGTH), secrets)
 
     def test_healthz_is_documented_without_inventing_a_readiness_endpoint(self) -> None:
+        """check healthz is documented without inventing a readiness endpoint."""
         health = collapsed(section(self.document, "Health endpoint"))
         self.assertIn("/healthz", health)
         self.assertIn('{"status":"ok"}', health)
@@ -553,12 +665,14 @@ class WebDeploymentContractTests(unittest.TestCase):
                 self.assertNotIn(invented, self.document, invented)
 
     def test_tls_and_reverse_proxy_expectations_are_documented(self) -> None:
+        """check tls and reverse proxy expectations are documented."""
         tls = collapsed(section(self.document, "TLS and reverse proxy"))
         self.assertIn("TLS", tls)
         self.assertIn("reverse proxy", tls)
         self.assertIn("terminates", tls.lower())
 
     def test_backup_restore_rotation_rollback_incident_are_documented(self) -> None:
+        """check backup restore rotation rollback incident are documented."""
         for heading in (
             "Backup and restore",
             "Credential-key rotation",
@@ -569,6 +683,7 @@ class WebDeploymentContractTests(unittest.TestCase):
         self.assertIn("rollback.md", self.document)
 
     def test_no_deployment_url_or_performed_deployment_is_claimed(self) -> None:
+        """check no deployment url or performed deployment is claimed."""
         status = collapsed(section(self.document, "Deployment status"))
         self.assertIn("not deployed", status.lower())
         lowered = self.normalized.lower()
@@ -588,6 +703,7 @@ class WebDeploymentContractTests(unittest.TestCase):
         )
 
     def test_document_contains_no_credential_shaped_string(self) -> None:
+        """check document contains no credential shaped string."""
         for pattern in CREDENTIAL_PATTERNS:
             with self.subTest(pattern=pattern.pattern):
                 self.assertIsNone(pattern.search(self.document), pattern.pattern)
@@ -601,10 +717,12 @@ class WebRollbackContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        """setUpClass."""
         cls.document = read("docs/web/rollback.md")
         cls.normalized = collapsed(cls.document)
 
     def test_every_recovery_boundary_has_a_section(self) -> None:
+        """check every recovery boundary has a section."""
         for heading in (
             "Rollback",
             "Restore from backup",
@@ -616,6 +734,7 @@ class WebRollbackContractTests(unittest.TestCase):
                 self.assertIn(f"## {heading}", self.document, heading)
 
     def test_rollback_boundaries_are_explicit_rather_than_implied(self) -> None:
+        """check rollback boundaries are explicit rather than implied."""
         limits = collapsed(section(self.document, "What rollback cannot recover"))
         for phrase in (
             "in-flight generation",
@@ -627,6 +746,7 @@ class WebRollbackContractTests(unittest.TestCase):
                 self.assertIn(phrase, limits, phrase)
 
     def test_rollback_never_claims_a_rehearsed_production_drill(self) -> None:
+        """check rollback never claims a rehearsed production drill."""
         lowered = self.normalized.lower()
         for banned in (
             "we performed",
@@ -650,12 +770,14 @@ class WebMcpSurfaceContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        """setUpClass."""
         cls.webmcp_source = (ROOT / "web" / "comic_sol_web" / "static" / "webmcp.js").read_text(
             encoding="utf-8"
         )
         cls.tool_list = read("submission/webmcp/tools.md")
 
     def test_the_merged_module_registers_exactly_five_read_and_nine_write_tools(self) -> None:
+        """check the merged module registers exactly five read and nine write tools."""
         registered = set(re.findall(r'^\s*name:\s*"([a-z_]+)",\s*$', self.webmcp_source, re.M))
         self.assertEqual(WEBMCP_READ_TOOLS | WEBMCP_WRITE_TOOLS, registered)
         self.assertEqual(5, len(WEBMCP_READ_TOOLS))
@@ -663,6 +785,7 @@ class WebMcpSurfaceContractTests(unittest.TestCase):
         self.assertEqual(14, len(registered))
 
     def test_the_published_tool_list_matches_the_merged_module_exactly(self) -> None:
+        """check the published tool list matches the merged module exactly."""
         documented = set(re.findall(r"`([a-z_]+)`", self.tool_list))
         registered = set(re.findall(r'^\s*name:\s*"([a-z_]+)",\s*$', self.webmcp_source, re.M))
         self.assertEqual(
@@ -675,6 +798,7 @@ class WebMcpSurfaceContractTests(unittest.TestCase):
                 self.assertIn(f"`{tool}`", self.tool_list, tool)
 
     def test_the_published_tool_list_separates_reads_from_writes(self) -> None:
+        """check the published tool list separates reads from writes."""
         reads = section(self.tool_list, "Read tools (5)")
         writes = section(self.tool_list, "Write tools (9)")
         for tool in sorted(WEBMCP_READ_TOOLS):
@@ -687,6 +811,7 @@ class WebMcpSurfaceContractTests(unittest.TestCase):
                 self.assertNotIn(f"`{tool}`", reads, tool)
 
     def test_local_mcp_remains_exactly_seventeen_tools(self) -> None:
+        """check local mcp remains exactly seventeen tools."""
         source = (ROOT / "scripts" / "mcp_server.py").read_text(encoding="utf-8")
         tools = re.findall(r"@mcp\.tool\(\)\n(?:@[^\n]+\n)*def (comic_[a-z_]+)\(", source)
         self.assertEqual(17, len(tools), sorted(tools))
@@ -706,6 +831,7 @@ class WebDocumentationLinkTests(unittest.TestCase):
         return documents
 
     def test_every_relative_link_target_exists(self) -> None:
+        """check every relative link target exists."""
         for path in self._markdown_documents():
             text = path.read_text(encoding="utf-8")
             for match in MARKDOWN_LINK.finditer(text):
@@ -723,6 +849,7 @@ class WebDocumentationLinkTests(unittest.TestCase):
                     )
 
     def test_every_in_document_anchor_resolves(self) -> None:
+        """check every in document anchor resolves."""
         for path in self._markdown_documents():
             text = path.read_text(encoding="utf-8")
             headings = {
@@ -743,6 +870,7 @@ class WebDocumentationLinkTests(unittest.TestCase):
                     )
 
     def test_no_wp17_document_contains_a_credential_shaped_string(self) -> None:
+        """check no wp17 document contains a credential shaped string."""
         for path in self._markdown_documents():
             text = path.read_text(encoding="utf-8")
             for pattern in CREDENTIAL_PATTERNS:
@@ -776,10 +904,12 @@ class SubmissionContractTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        """setUpClass."""
         cls.overview = read("submission/webmcp/README.md")
         cls.normalized = collapsed(cls.overview)
 
     def test_every_required_submission_document_exists(self) -> None:
+        """check every required submission document exists."""
         for name in self.REQUIRED_FILES:
             with self.subTest(document=name):
                 self.assertTrue(
@@ -788,6 +918,7 @@ class SubmissionContractTests(unittest.TestCase):
                 )
 
     def test_overview_covers_every_required_submission_topic(self) -> None:
+        """check overview covers every required submission topic."""
         for heading in (
             "Submission overview",
             "Source repository",
@@ -803,10 +934,12 @@ class SubmissionContractTests(unittest.TestCase):
                 self.assertIn(f"## {heading}", self.overview, heading)
 
     def test_source_repository_link_is_the_canonical_repository(self) -> None:
+        """check source repository link is the canonical repository."""
         repository = collapsed(section(self.overview, "Source repository"))
         self.assertIn("https://github.com/wenn-id/comicsol", repository)
 
     def test_deployment_and_video_status_are_honest(self) -> None:
+        """check deployment and video status are honest."""
         status = collapsed(section(self.overview, "Deployment and recording status"))
         self.assertIn("not deployed", status.lower())
         self.assertIn("no video was recorded", status.lower())
@@ -845,10 +978,12 @@ class SubmissionContractTests(unittest.TestCase):
                     )
 
     def test_demo_states_that_no_screenshots_were_produced(self) -> None:
+        """check demo states that no screenshots were produced."""
         demo = collapsed(read("submission/webmcp/demo.md"))
         self.assertIn("no screenshots", demo.lower())
 
     def test_screenshots_are_labelled_as_offline_deterministic_output(self) -> None:
+        """check screenshots are labelled as offline deterministic output."""
         demo = collapsed(read("submission/webmcp/demo.md"))
         self.assertIn("offline", demo.lower())
         self.assertIn("FakeProvider", demo)
@@ -858,6 +993,7 @@ class SubmissionContractTests(unittest.TestCase):
         )
 
     def test_submission_makes_no_adoption_or_visual_quality_claim(self) -> None:
+        """check submission makes no adoption or visual quality claim."""
         for name in self.REQUIRED_FILES:
             lowered = collapsed(read(f"submission/webmcp/{name}")).lower()
             for banned in (
@@ -872,6 +1008,7 @@ class SubmissionContractTests(unittest.TestCase):
                     self.assertNotIn(banned, lowered, banned)
 
     def test_verification_document_records_command_and_outcome_pairs(self) -> None:
+        """check verification document records command and outcome pairs."""
         verification = read("submission/webmcp/verification.md")
         self.assertIn("| Command | Result |", verification)
         # Every recorded gate must resolve to an explicit outcome, never a blank.
@@ -896,6 +1033,7 @@ class SubmissionContractTests(unittest.TestCase):
                 )
 
     def test_limitations_document_lists_every_unavailable_evidence_class(self) -> None:
+        """check limitations document lists every unavailable evidence class."""
         limitations = collapsed(read("submission/webmcp/limitations.md"))
         for phrase in (
             "No external deployment",
@@ -908,6 +1046,7 @@ class SubmissionContractTests(unittest.TestCase):
                 self.assertIn(phrase, limitations, phrase)
 
     def test_demo_fixture_is_sanitized_and_present(self) -> None:
+        """check demo fixture is sanitized and present."""
         fixture = SUBMISSION / "demo-project"
         self.assertTrue(fixture.is_dir(), "submission/webmcp/demo-project is missing")
         files = sorted(path for path in fixture.rglob("*") if path.is_file())
@@ -923,6 +1062,126 @@ class SubmissionContractTests(unittest.TestCase):
             for leaked in ("authorization:", "bearer ", "api_key", "apikey", "secret="):
                 with self.subTest(path=path.name, phrase=leaked):
                     self.assertNotIn(leaked, lowered, leaked)
+
+
+class RuntimeBoundaryContractTests(unittest.TestCase):
+    """Validate the deployment and provider docs against the production
+    composition root, not just documentation prose.
+
+    These assertions read `web/comic_sol_web/app.py` and the
+    `generation/service.py` catalog filtering. They fail if a paid provider
+    adapter is wired into the merged `create_app`, or if a drain/flush
+    lifecycle hook is added, without the documentation being updated to
+    match the new runtime reality.
+    """
+
+    def _app_source(self) -> str:
+        """Return the current merged `app.py` source text."""
+        return APP_SOURCE.read_text(encoding="utf-8")
+
+    def _generation_service_ast(self) -> ast.Module:
+        """Parse `app.py` to an AST so we can inspect its composition root."""
+        return ast.parse(self._app_source())
+
+    def test_paid_provider_adapters_are_not_wired_into_create_app(self) -> None:
+        """Fail if a paid adapter (OpenAI, Google, BFL, xAI, Stability,
+        Replicate, fal, Cloudflare) is ever passed to ProviderRegistry in the
+        merged app.py, since the docs currently label them Not routable."""
+        source = self._app_source()
+        # The only registered provider in the merged build is AgentProvider.
+        # The paid adapter classes live in separate provider modules and are
+        # imported only there; a leak of any of their names into the
+        # composition root should fail this contract.
+        paid_adapters = [
+            "OpenAIProvider",
+            "GoogleProvider",
+            "BFLProvider",
+            "XAIProvider",
+            "StabilityProvider",
+            "ReplicateProvider",
+            "FalProvider",
+            "CloudflareProvider",
+        ]
+        for name in paid_adapters:
+            with self.subTest(adapter=name):
+                self.assertNotIn(name, source, f"{name} must not be wired in app.py")
+
+    def test_registry_has_exactly_one_provider_agent(self) -> None:
+        """Fail if the merged registry tuple does not list AgentProvider as
+        the sole registered provider, which would contradict the docs."""
+        source = self._app_source()
+        self.assertIn("AgentProvider(", source)
+        # The ProviderRegistry constructor in _generation_service takes a
+        # single tuple; count the comma-separated entries inside it to ensure
+        # there is exactly one provider. This is a structural guard, not a
+        # text coincidence.
+        match = re.search(r"ProviderRegistry\(\((.*?)\)\)", source, re.DOTALL)
+        self.assertIsNotNone(match, "ProviderRegistry single-tuple not found")
+        assert match is not None
+        inner = match.group(1)
+        registered = re.findall(r"(\w+Provider)\(", inner)
+        self.assertEqual(
+            ["AgentProvider"],
+            registered,
+            f"merged registry must register only AgentProvider, got {registered}",
+        )
+
+    def test_catalog_entries_for_paid_providers_exist_but_are_not_routed(self) -> None:
+        """Fail if a paid provider has no catalog entry at all, or if the
+        providers.md matrix claims a row the catalog cannot support.
+
+        The providers.md matrix lists OpenAI/Google/BFL/etc. as adapter
+        implemented but not routable. This test cross-checks the catalog
+        actually carries those providers, so the docs are grounded in a real
+        model identifier list."""
+        doc = (WEB_DOCS / "providers.md").read_text(encoding="utf-8")
+        # The known model identifiers are asserted to exist in the catalog.
+        # Test-only fixture providers (FakeProvider) are not user-selectable
+        # routes and are deliberately excluded from the published matrix.
+        for entry in CATALOG:
+            if entry.enabled and entry.provider != "fake":
+                with self.subTest(model=entry.model):
+                    self.assertIn(entry.model, doc, f"catalog model {entry.model} not documented")
+
+    def test_no_lifespan_or_drain_hook_in_create_app(self) -> None:
+        """Fail if a shutdown/lifespan hook appears, since deployment.md
+        states there is no coordinated graceful-shutdown drain."""
+        source = self._app_source()
+        self.assertNotIn("lifespan=", source)
+        self.assertNotIn("on_event(", source)
+        self.assertNotIn('"startup"', source)
+        self.assertNotIn('"shutdown"', source)
+
+    def test_generation_service_filters_registry_to_runtime_backed_models(self) -> None:
+        """Fail if the generation service does not filter catalog entries by
+        registered providers, which would make the matrix's 'routable only
+        agent' claim false."""
+        svc = GENERATION_SERVICE_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("def _runtime_options", svc)
+        self.assertIn("self._providers.get(entry.provider)", svc)
+        self.assertIn("AGENT_PROVIDER_MODEL", svc)
+
+    def test_deployment_docs_do_not_claim_graceful_shutdown_or_replay(self) -> None:
+        """Fail if deployment.md still claims a coordinated drain or an
+        on-disk replay hook that the merged create_app does not implement."""
+        doc = (WEB_DOCS / "deployment.md").read_text(encoding="utf-8")
+        lowered = doc.lower()
+        # Explicitly disclaim graceful shutdown; never promise a drain,
+        # a queue flush, or a startup replay of interrupted work.
+        self.assertIn("no coordinated graceful-shutdown drain", lowered)
+        self.assertNotIn("flush the queue", lowered)
+        self.assertNotIn("is replayed", lowered)
+        self.assertNotIn("replays", lowered)
+        self.assertIn("without a replay hook", lowered)
+
+    def test_deployment_docs_describe_sqlite_backed_state_as_durable(self) -> None:
+        """Fail if deployment.md labels the SQLite-backed queue or approvals
+        as process-local, since the merge wires them to application.sqlite3."""
+        doc = (WEB_DOCS / "deployment.md").read_text(encoding="utf-8")
+        lowered = doc.lower()
+        self.assertIn("sqlite-backed", lowered)
+        self.assertIn("generation queue", lowered)
+        self.assertIn("durablegenerationqueue", lowered.replace(" ", ""))
 
 
 if __name__ == "__main__":

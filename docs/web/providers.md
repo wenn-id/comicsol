@@ -17,30 +17,50 @@ limitations.
 
 The columns are:
 
-- **Implemented** — the code path exists and is exercised by merged tests.
-- **Offline-qualified** — a deterministic, zero-cost, contract-tested flow
-  exercises the route with no live call.
+- **Adapter implemented** — a provider adapter module exists and is exercised
+  by merged adapter tests behind `httpx.MockTransport`.
+- **Routable in merged build** — the route is actually reachable through the
+  merged `create_app` composition root. **Only the agent route is.**
+  `web/comic_sol_web/app.py::_generation_service` registers a
+  `ProviderRegistry((AgentProvider(...),))` — one provider — and
+  `GenerationService._runtime_options()` excludes every catalog entry with no
+  registered adapter. No paid provider is selectable in the merged build.
+- **Offline-qualified (adapter-level)** — a deterministic, zero-cost,
+  contract-tested flow exercises the adapter with a mocked transport. This is
+  **not** an end-to-end route qualification.
 - **Live smoke** — an offline AND a live call both passed against the real
   provider, with retained evidence. `Yes` implies a working evidence link.
-- **Authentication** — the supported credential modes for that route.
+- **Authentication** — the credential modes the adapter is written to accept.
 - **Evidence** — a link only when evidence actually exists; otherwise `None`.
 
-| Provider | Implemented | Offline-qualified | Live smoke | Authentication | Evidence | Surface tier |
-| --- | --- | --- | --- | --- | --- | --- |
-| OpenAI | Yes | Yes | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Standard |
-| Google | Yes | Yes | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Standard |
-| BFL (direct) | Yes | Yes | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Standard |
-| xAI | Yes | Yes | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Standard |
-| Stability | Yes | Yes | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Standard |
-| Replicate | Yes | Yes | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Standard |
-| fal.ai | Yes | Yes | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Standard |
-| Cloudflare | Yes | Yes | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Standard |
-| ComfyUI (remote) | Yes | Yes | Not run | BYOK endpoint URL | None | Standard |
-| ComfyUI (local, agent handoff) | No | Not run | Not run | Agent-native (no Studio credential) | None | Experimental |
-| Active-agent image generation | No | Not run | Not run | Agent-native | None | Experimental |
+> **Wiring caveat, stated once and applied to every row**
+>
+> Adapter-level implementation and offline adapter tests do **not** make a
+> route available to a user of the merged build. Every paid row below is
+> `Routable in merged build: No`. The only end-to-end offline-qualified route
+> is the deterministic `FakeProvider` used by
+> `web/tests/test_web_e2e.py`, which is a test fixture, not a shippable
+> provider. Registering paid adapters in the composition root is production
+> work outside this documentation work package.
+
+| Provider | Adapter implemented | Routable in merged build | Offline-qualified (adapter-level) | Live smoke | Authentication | Evidence | Surface tier |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| OpenAI | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
+| Google | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
+| BFL (direct) | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
+| xAI | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
+| Stability | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
+| Replicate | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
+| fal.ai | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
+| Cloudflare | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
+| ComfyUI (remote) | Yes | No | Yes (mocked transport) | Not run | BYOK endpoint URL | None | Not routable |
+| ComfyUI (local, agent handoff) | No | No | Not run | Not run | Agent-native (no Studio credential) | None | Experimental |
+| Active-agent image generation | Partial (`AgentProvider` is the one registered provider) | Yes | Yes (agent-native handoff exercised offline) | Not run | Agent-native | None | Experimental |
 
 *> `Not run` in the live-smoke column means the route was NOT exercised against a
-> live provider. Passing offline contract tests did not change that.*
+> live provider. Passing offline adapter tests did not change that. `Routable in
+> merged build: No` means a user of the merged build cannot select the route at
+> all.*
 
 ## Open regions
 

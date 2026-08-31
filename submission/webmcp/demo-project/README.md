@@ -8,7 +8,7 @@ The fixture contains:
 
 - `story.txt` — the short story used as the prompt;
 - `plan.json` — the Plan produced by the WebMCP `create_project` tool;
-- `queue.json` — the queue state at the time of the screenshot.
+- `queue.json` — the queue state illustrated for the offline run.
 
 The fixture does not contain a credential, an API key, a token, a
 password, a session secret, an authorization header, or any other value
