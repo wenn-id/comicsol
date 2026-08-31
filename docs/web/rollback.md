@@ -109,28 +109,48 @@ incident was detected before starting.
      external agent session by terminating the agent process (or
      revoking its session token) on the user's machine; do not rely
      on Studio to "contain" it.
-3. **Re-encrypt every affected persisted BYOK record eagerly, not
-   read-time.** Suspected compromise does not wait for lazy rotation.
-   For each affected record:
+3. **Re-encrypt what can be re-supplied; revoke what cannot. There is
+   no implemented purge.** Suspected compromise does not wait for lazy
+   rotation, but the merged `CredentialBroker` exposes **no delete or
+   purge operation** — `revoke(user_id, provider)`
+   (`credentials.py:296-324`) sets `revoked_at` and drops the session
+   entry, and the ciphertext row **stays in the `credentials` table
+   under its original `key_id`**. For each affected record:
    - if the plaintext can be re-supplied (the user re-enters the
-     BYOK or re-issues the provider key), re-encrypt it under the
-     new active key and persist immediately;
+     BYOK or re-issues the provider key), re-authorize it: the
+     upsert path re-encrypts under the current active key and clears
+     `revoked_at`;
    - if the plaintext **cannot** be re-supplied (the user is
      unavailable, the key is lost, or the record cannot be safely
-     verified), **delete and revoke** the record rather than
-     leaving it under the suspect key. Do not rely on a "decrypt
-     on next read" path; that path itself is a compromise surface.
-4. **Retire the old key only after every reachable record has
-   moved.** Keep the old key declared in
-   `COMIC_SOL_WEB_CREDENTIAL_KEY_REFS` until a documented audit
-   confirms that no remaining ciphertext is encrypted under it.
-   The retirement condition is *zero remaining records under the
-   old key*, not a wall-clock window. Removing the old key
-   before the audit is a recovery failure, not a precaution.
-5. **Audit receipts** for the affected owner and window. Receipts
-   are sanitized (see [Security and privacy](security.md)) and
-   never contain a raw provider payload, but they do show which
-   actions took place under the affected credential.
+     verified), call `CredentialBroker.revoke(user_id, provider)` and
+     rotate or delete the credential **at the provider** — that is
+     the only step that actually ends the upstream token's usefulness.
+     Do not rely on a "decrypt on next read" path; that path itself
+     is a compromise surface.
+4. **Retire the old key only when no record still needs it, and
+   accept that revoked ciphertext keeps its old key.** Because
+   `revoke()` does not remove ciphertext or re-key it, a revoked
+   record's row remains decryptable-in-principle under the key id it
+   was written with. The old key must therefore stay declared in
+   `COMIC_SOL_WEB_CREDENTIAL_KEY_REFS` for as long as any row —
+   revoked or active — still carries that `key_id`, unless the
+   operator removes those rows out-of-band at the database level
+   (which is an operator action, not a documented Studio API). The
+   condition for dropping the old key is *no remaining row carries
+   that `key_id`*, not a wall-clock window. Removing the old key
+   while rows still reference it makes that ciphertext permanently
+   undecryptable; that is acceptable only if the operator has
+   decided those records are to be abandoned, and it should be a
+   recorded decision rather than an accident.
+5. **Audit the right table for the right fact.** Generation
+   **receipts** are appended only for an accepted raster and carry
+   only provider, model, auth mode, sanitized usage, and the raster
+   checksum (see [Security and privacy](security.md#receipts-and-redaction)),
+   so they show only *successful* generations under the affected
+   credential. Failed attempts must be audited from the attempt
+   history, and provider-switch decisions from the proposal and
+   decision tables. Receipts are not an action log and cannot answer
+   "what was attempted" on their own.
 
 ## Incident response
 

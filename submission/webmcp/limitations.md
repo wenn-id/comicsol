@@ -48,10 +48,11 @@ package; each is listed here and referenced from
 ## What this document does not limit
 
 - The submission is still a Draft PR, not a merged release.
-- The `67` documentation contract tests under
-  `web/tests/test_web_docs.py` are RED before documentation and GREEN
-  after, and are part of the release-qualification suite. The exact
-  count for the final head is recorded in
-  [verification.md](verification.md).
+- The `68` documentation contract tests under
+  `web/tests/test_web_docs.py` are part of the release-qualification
+  suite. The exact count and the recorded command for the final head
+  are in [verification.md](verification.md). No pre-documentation RED
+  baseline run is recorded in this submission, so none is claimed
+  here.
 - The local MCP surface remains exactly 17 `comic_*` tools and is not
   changed by this work package.

@@ -1153,6 +1153,60 @@ class RuntimeBoundaryContractTests(unittest.TestCase):
                 with self.subTest(model=entry.model):
                     self.assertIn(entry.model, doc, f"catalog model {entry.model} not documented")
 
+    def test_create_app_registers_no_auth_router(self) -> None:
+        """Fail if an authentication/OAuth router is wired into create_app.
+
+        `docs/web/security.md` and `docs/web/index.md` both state that the
+        merged build ships no OAuth sign-in route. This asserts the scope
+        boundary against the composition root: every `include_router(...)`
+        call inside `create_app` must name a factory from the allowed
+        router set, and no auth/login/callback/oauth/github router may
+        appear. Wiring one without updating the docs fails here.
+        """
+        tree = self._generation_service_ast()
+        create_app = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.FunctionDef) and node.name == "create_app"
+            ),
+            None,
+        )
+        self.assertIsNotNone(create_app, "create_app not found in app.py")
+        assert create_app is not None
+        registered: list[str] = []
+        for node in ast.walk(create_app):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute) and func.attr == "include_router"):
+                continue
+            for argument in node.args:
+                inner = argument.func if isinstance(argument, ast.Call) else argument
+                if isinstance(inner, ast.Name):
+                    registered.append(inner.id)
+                elif isinstance(inner, ast.Attribute):
+                    registered.append(inner.attr)
+        self.assertEqual(
+            [
+                "create_projects_router",
+                "create_generation_router",
+                "create_approvals_router",
+                "create_assets_router",
+            ],
+            registered,
+            f"create_app router set drifted from the documented scope: {registered}",
+        )
+        for forbidden in ("auth", "login", "callback", "oauth", "github"):
+            for name in registered:
+                with self.subTest(router=name, forbidden=forbidden):
+                    self.assertNotIn(
+                        forbidden,
+                        name.lower(),
+                        f"{name} looks like an authentication router; "
+                        "docs/web/security.md states none is registered",
+                    )
+
     def test_no_lifespan_or_drain_hook_in_create_app(self) -> None:
         """Fail if a shutdown/lifespan hook appears, since deployment.md
         states there is no coordinated graceful-shutdown drain."""

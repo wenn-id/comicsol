@@ -193,10 +193,14 @@ is missing.
 - **Default output root:** none; `COMIC_SOL_WEB_DATA_ROOT` is required and
   is a separate durable volume from the runtime. The hosted process must
   never contact a user's localhost.
-- **Provider model:** WebMCP `agent`, `hosted`, `session BYOK`, and
-  `encrypted persisted BYOK`; the agent route is agent-native and the
-  hosted route is the only route that does not require a credential in
-  the browser.
+- **Provider model:** the merged build registers only the WebMCP
+  `agent` route, and it is selectable only when the startup invocation
+  supplies trusted `text_to_image` capability; the documented bare
+  start command exposes no executable route. `hosted`,
+  `session BYOK`, and `encrypted persisted BYOK` are **offline
+  adapter contracts**, not routes the merged application serves. The
+  agent route is agent-native; the hosted route (when wired) would be
+  the only route that does not require a credential in the browser.
 - **Details:** [`docs/web/index.md`](web/index.md), [`docs/web/deployment.md`](web/deployment.md),
   [`docs/web/rollback.md`](web/rollback.md), [`docs/web/security.md`](web/security.md),
   [`docs/web/providers.md`](web/providers.md).

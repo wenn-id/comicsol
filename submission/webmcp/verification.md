@@ -7,7 +7,7 @@ passing without an explicit recorded result.
 
 | Command | Result |
 | --- | --- |
-| `python -m unittest web.tests.test_web_docs` | pass — 67 tests, 0 failures |
+| `python -m unittest web.tests.test_web_docs` | pass — 68 tests, 0 failures |
 | `python -m unittest web.tests.test_webmcp_contract` | pass — 17 tests (5 read + 9 write + 3 parity), 0 failures |
 | `python -m unittest web.tests.test_app` | pass — 25 tests (static inventory, /healthz, registration), 0 failures |
 | `python -m unittest web.tests.test_web_security` | pass — 39 tests, 0 failures |

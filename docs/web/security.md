@@ -31,16 +31,42 @@ A request that fails any of these is rejected before it mutates state.
 
 ## Authentication and CSRF
 
-Studio authenticates users through **GitHub OAuth** (`web/comic_sol_web/auth.py`).
-The browser is bound to a one-time OAuth state and a separate cookie-level
-binding; the server records only keyed digests of those values, never the
-plaintext, and any replay is rejected on consume. After the OAuth callback
-succeeds, the browser holds an HttpOnly session cookie and a paired CSRF
-cookie. The session cookie is `HttpOnly` and is never returned to JavaScript;
-the CSRF header is paired against a per-session token via
-`AuthService.require_csrf`, and a missing, mismatched, or expired token is
-rejected before the handler mutates state. The same-origin policy plus the same-site
-cookie model isolate the session from third-party contexts.
+**Studio does not currently ship an OAuth sign-in route.** The merged
+`web/comic_sol_web/app.py::create_app` composition root includes only
+the `projects`, `generation`, `approvals`, and `assets` routers plus
+`/healthz` and static; it does **not** register an authentication
+router, so no `/api/auth/login` or OAuth callback is served by the
+merged application. `WebConfig` has no GitHub-client configuration in
+the merged build. The scope boundary is the same as in
+[Sign in](index.md#sign-in): `/healthz` is unauthenticated and
+deterministic; every project and generation route currently requires
+a `SessionPrincipal`, but the route that issues one is not present
+in the merged build. The session-and-CSRF machinery below is the
+**documented intended end-state** of the build, not an active path
+that the merged code exercises today. The security contract test
+`RuntimeBoundaryContractTests::test_create_app_registers_no_auth_router`
+locks the current scope by AST-scanning the composition root and
+asserting no `auth` / `login` / `callback` / `oauth` / `github`
+router is included.
+
+**Intended end-state (once the auth router is wired)**, the flow is:
+
+- the user opens the Studio in a browser and authenticates through
+  GitHub OAuth (`web/comic_sol_web/auth.py` contains the construction
+  logic, but the router is not registered by `create_app` in the
+  merged build);
+- the browser is bound to a one-time OAuth state and a separate
+  cookie-level binding; the server records only keyed digests of
+  those values, never the plaintext, and any replay is rejected on
+  consume;
+- after the OAuth callback succeeds, the browser holds an `HttpOnly`
+  session cookie and a paired CSRF cookie; the session cookie is
+  `HttpOnly` and is never returned to JavaScript; the CSRF header is
+  paired against a per-session token via `AuthService.require_csrf`,
+  and a missing, mismatched, or expired token is rejected before the
+  handler mutates state;
+- the same-origin policy plus the same-site cookie model isolate the
+  session from third-party contexts.
 
 ## Ownership and opaque IDs
 
@@ -83,17 +109,28 @@ rules below are the **SSRF** defense the merged
 
 - the origin **scheme** must be `https`, or `http` against a `loopback` host
   (for the agent route only);
-- the origin **host** is validated: `localhost` and `127.0.0.0/8` are
-  `loopback`; private, link-local, and metadata ranges are refused for
-  hosted usage;
+- the origin **host** is validated as a literal string: `localhost`
+  and a parsed literal IP in `127.0.0.0/8` are `loopback`; a parsed
+  literal IP in private, link-local, reserved, multicast, unspecified,
+  or metadata ranges is refused for hosted usage;
+- the transport performs **no DNS resolution** of the configured host
+  string before connecting. A configured `https://attacker.example/`
+  that resolves (or later DNS-rebinds) to a private, link-local, or
+  metadata IP is not stopped by the literal-IP check above — only
+  literal-IP origins are checked. An operator who accepts the SSRF
+  exposure must pin the configured host's resolved addresses
+  out-of-band (for example, by a reverse-proxy allowlist or by
+  binding DNS to known public addresses) before deploying;
 - redirects are not followed (`follow_redirects=False`), so a 3xx cannot
   bounce Studio into a disallowed origin;
 - the transport applies a **timeout** at every stage: connect, read, write,
   pool, and total; and a bounded **response byte** cap.
 
 A cleartext `http` origin that is not loopback raises `invalid provider
-origin`. A request to a private, link-local, or metadata address is refused
-the same way.
+origin`. A literal IP that falls in a private, link-local, or metadata
+range is refused the same way; a hostname string that resolves (or
+rebinds) into such a range after configuration is **not** refused at
+the transport layer today.
 
 ## Archive and image trust boundary
 
@@ -160,6 +197,19 @@ destination must be an operator-configured, page-owned handle. Assets and
 archives are never published, never uploaded, and never made public unless
 an operator explicitly configures a destination and a user explicitly
 confirms an overwrite to that destination.
+
+**Generation inputs leave the deployment for the selected execution
+route.** The agent route serializes the user prompt into the
+provider-neutral handoff package (`web/comic_sol_web/generation/providers/agent.py`
+includes `"prompt": request.prompt` and `"negative_prompt"` in the
+package). Hosted and BYOK adapters, when wired, send the prompt and
+the negative prompt in the external provider request body. The raw
+provider payload bytes are not persisted in Studio, and an exported
+archive or receipt does not carry the prompt, but the prompt **does**
+leave the Studio deployment and reach the execution route the
+operator configured. A Studio operator who cannot accept that
+disclosure should not enable any generation route that hands a
+prompt to an external process.
 
 ## Backup and incident expectations
 

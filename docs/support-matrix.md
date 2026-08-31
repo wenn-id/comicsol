@@ -114,12 +114,16 @@ Notes on each mode:
   fast when a required secret or the data root is missing. It exposes a WebMCP
   surface of `5` read and `9` write tools; the local `stdio` MCP server is
   unchanged at exactly `17` tools. In the merged build, only the `agent`
-  provider route is registered and selectable in the running service;
-  `hosted`, `session BYOK`, and `encrypted persisted BYOK` routes exist as
-  offline adapter-level tests with no live adapter wired into the merged
-  distribution. Every provider route is offline-qualified only; **no live
-  provider smoke has been run** and no external deployment has been
-  performed. See
+  provider route is registered, and it is **selectable only when the
+  startup invocation supplies trusted `text_to_image` image capability**
+  (`create_app(active_agent_image_capabilities=...)`); the documented
+  bare start command leaves that set empty, so the default configuration
+  exposes **no executable generation route**. The `hosted`,
+  `session BYOK`, and `encrypted persisted BYOK` routes exist as
+  offline adapter-level contracts with no live adapter wired into the
+  merged distribution. Every provider route is offline-qualified only;
+  **no live provider smoke has been run** and no external deployment has
+  been performed. See
   [`docs/web/index.md`](web/index.md), [`docs/web/providers.md`](web/providers.md),
   and [`docs/web/deployment.md`](web/deployment.md).
 
