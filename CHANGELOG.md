@@ -23,6 +23,23 @@ carries it.
   `stdio` MCP server remains unchanged at exactly 17 `comic_*` tools. No
   production code, provider, migration, dependency, or lock file changed; no
   live provider call or external deployment was made.
+- Added the Web/Studio live evidence collection framework (issue #321, WP18).
+  `docs/web/live-evidence.md` records the four distinct evidence states
+  (`implemented`, `offline-qualified`, `manually exercised`, `live-verified`),
+  the authorization boundaries, the exact-candidate recording protocol, the
+  eight acceptance-criteria mapping, and the honest current status ("no live
+  evidence has been retained"). The submission-side companion lives at
+  `submission/webmcp/live-evidence.md`. The framework's publication gate is
+  `scripts/live_web_evidence.py` (fail-closed, offline-only, never calls a
+  provider, never reads credentials). The contract is locked by
+  `tests/test_live_web_evidence.py` (25 tests): the empty-bundle accept path,
+  every reject path (bad candidate, secret-shaped strings, Markdown control
+  characters, escaped paths, SHA mismatch, missing file, unauthorized
+  manifest fields, schema-version drift), and the four distinct evidence
+  states. `docs/web/index.md` and `submission/webmcp/provider-evidence.md`
+  point to the framework as the durable evidence contract for any future
+  live-smoke, deployment, or release-asset claim. No production code,
+  provider, migration, dependency, or lock file changed.
 
 - Added three fixed, provider-neutral v1 starter bundles: `minimal-one-page`,
   `dialogue-two-page`, and `action-focused`. Starter selection is available through

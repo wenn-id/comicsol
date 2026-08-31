@@ -32,4 +32,10 @@ columns are honest about what was actually done in this work package.
 A future work package that exercises a live smoke, a local ComfyUI
 instance, or an active-agent WebMCP demonstration must record the
 retained evidence link in the `Evidence` column above and update
-[`docs/web/providers.md`](../../docs/web/providers.md) to match.
+[`docs/web/providers.md`](../../docs/web/providers.md) to match. The
+exact-candidate companion to that future work is the
+[`docs/web/live-evidence.md`](../../docs/web/live-evidence.md)
+framework (issue #321) and its publication gate
+[`scripts/live_web_evidence.py`](../../scripts/live_web_evidence.py);
+no evidence row is admitted to this matrix without that gate's
+`summary.json` and `summary.md` artifacts.
