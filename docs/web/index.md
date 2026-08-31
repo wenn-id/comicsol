@@ -249,3 +249,4 @@ authorized**, so every provider route below is at most *offline-qualified* or
 - [Security and privacy](security.md)
 - [Deployment](deployment.md)
 - [Rollback and recovery](rollback.md)
+- [Live evidence collection framework](live-evidence.md) — what is needed before any live smoke, real deployment, real `document.modelContext` session, or published release asset can be marked `live-verified` or `manually exercised` (issue #321).

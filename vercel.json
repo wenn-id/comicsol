@@ -1,0 +1,24 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "",
+  "outputDirectory": "web/comic_sol_web/static",
+  "installCommand": "",
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {"key": "X-Content-Type-Options", "value": "nosniff"},
+        {"key": "X-Frame-Options", "value": "DENY"}
+      ]
+    },
+    {
+      "source": "/webmcp.js",
+      "headers": [
+        {"key": "Content-Type", "value": "application/javascript; charset=utf-8"}
+      ]
+    }
+  ]
+}

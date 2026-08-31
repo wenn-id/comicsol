@@ -1,0 +1,73 @@
+{
+  "schema": "web-live-evidence/1.0",
+  "candidate": {
+    "sha": "948d853665c7f4a2368bea64a010e44230664224",
+    "engine_version": "2.x",
+    "recorded_before_execution": true
+  },
+  "authorization": {
+    "provider_or_host": "Vercel Hobby (team wenn-projects)",
+    "max_cost": "USD 0.00",
+    "maintainer": "wenn-id",
+    "notes": "Static-only Studio UI deploy; authorization recorded in issue #321 comment 5479494077"
+  },
+  "retention": {
+    "location": "evidence/web-live/948d853",
+    "created_at": "2026-08-31T21:20:00+07:00"
+  },
+  "rows": [
+    {
+      "id": "deploy-static-01",
+      "kind": "deployment",
+      "date": "2026-08-31",
+      "environment": "external",
+      "route": "GET /",
+      "provider": "vercel",
+      "model": "n/a",
+      "credential_mode": "none",
+      "step": "Static Studio UI served from external host; HTTP 200 text/html with title Comic Sol Studio",
+      "result": "pass",
+      "cost": "USD 0.00",
+      "artifact": {
+        "path": "deployment/vercel-desktop.png",
+        "sha256": "f3e47e08909cdfe6fc726dd27478b75fa399f0a0be158e19663db23868f632f9",
+        "kind": "image"
+      },
+      "limitations": "Static assets only. No FastAPI backend, no SQLite, no queue; every API route is absent by design."
+    },
+    {
+      "id": "deploy-static-02",
+      "kind": "deployment",
+      "date": "2026-08-31",
+      "environment": "external",
+      "route": "GET /webmcp.js",
+      "provider": "vercel",
+      "model": "n/a",
+      "credential_mode": "none",
+      "step": "WebMCP client module served with application/javascript content type; HTTP 200",
+      "result": "pass",
+      "cost": "USD 0.00",
+      "artifact": null,
+      "limitations": "Asset delivery only. Tool registration in a real agent session is not demonstrated by this row."
+    },
+    {
+      "id": "deploy-static-03",
+      "kind": "media",
+      "date": "2026-08-31",
+      "environment": "external",
+      "route": "GET / (390x844 viewport)",
+      "provider": "vercel",
+      "model": "n/a",
+      "credential_mode": "none",
+      "step": "Headless Chrome capture of the deployed Start step at mobile viewport width",
+      "result": "pass",
+      "cost": "USD 0.00",
+      "artifact": {
+        "path": "deployment/vercel-mobile.png",
+        "sha256": "18fc644ca79486e3afdb9a0aa4e3da3f2e991e4d6a75dda0e817e732a66aa740",
+        "kind": "image"
+      },
+      "limitations": "Screenshot of first-step UI only; no workflow was executed because no backend is deployed."
+    }
+  ]
+}
