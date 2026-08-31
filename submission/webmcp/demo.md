@@ -1,0 +1,107 @@
+# Demo script
+
+This document is a **demo script** (a narration, not a video). The demo
+was not recorded as a video, and **no screenshots were produced** in this
+work package: the environment exposed no `document.modelContext`, so the
+WebMCP client could not be driven to a rendered screen, and WP17
+authorizes no fabricated demonstration artifacts. The narration below
+describes the **intended WebMCP flow** and is **not reproducible end-to-end
+against the merged distribution** (no auth router is wired, so the WebMCP
+tools cannot execute the flow today). The only thing runnable in this work
+package is the separate offline HTTP-only E2E test, which verifies a
+limited boundary and never drives the WebMCP client.
+
+## Environment
+
+The demo reproduces against a local checkout of the pinned baseline on
+WSL. The Web distribution is invoked from a deterministic FakeProvider
+harness; no provider network call is made. The only provider exercised is
+the bundled `fake-raster-v1` model.
+
+> **Honest note**
+>
+> No screenshot in this submission shows a live paid provider result.
+> No screenshot of any kind is included; the demo is narrated and the
+> underlying offline flow is runnable from the commands below.
+
+## Steps
+
+1. **Start the Web distribution with FakeProvider in offline mode.**
+   The process is started with a complete, valid environment and no
+   network call is made. **The merged E2E test does not exercise this
+   exact "create from prompt" flow end-to-end**; it imports a portable
+   archive. The narration below is the **intended Studio flow** the
+   build will require once the auth router is wired (see
+   `docs/web/index.md` "Sign in"). It is not a run the merged build
+   completes today; it is a script a reviewer can use to drive the
+   offline flow once auth is added.
+2. **Create a project from a short prompt.** The demo project's
+   `story.txt` is loaded as the prompt; the WebMCP `create_project`
+   tool returns a Plan and a revision.
+3. **Inspect the Plan.** The WebMCP `get_project_state` tool reports
+   whether a Plan is available (`plan_available: true`); it does not
+   return the Plan body itself. The illustrative Plan is recorded in
+   `demo-project/plan.json`.
+4. **Queue a generation.** The WebMCP `queue_generation` tool queues a
+   panel against `fake-raster-v1`. The queue is read with
+   `list_generation_jobs` to confirm the panel is in flight; the queue
+   state is recorded in `demo-project/queue.json`.
+5. **(Merged-build reality) Submit and promote a staged raster.** The
+   deterministic `FakeProvider` returns a `1x1` raster, which WP3
+   validation **rejects**; the merged E2E
+   (`TestImportedArchiveFlow::test_full_imported_archive_e2e`)
+   documents exactly that rejection and does **not** reach promotion.
+   Promotion is an explicit step in the intended Studio flow (the
+   staging-then-promotion boundary is enforced by the WebMCP write
+   tools and documented in [docs/web/index.md](../../docs/web/index.md)),
+   but **no promoted panel exists in this work package** — the 1x1
+   rejection means no `cache/composition.json` outcome is produced, so
+   the narration below cannot claim a promotion that never happened.
+6. **Run QA (intended).** The WebMCP `run_qa` tool runs deterministic
+   QA over a project's promoted panels. Because no panel is promoted
+   in the merged test, **no successful QA run is claimed** in this
+   work package; QA is local and does not call a provider.
+7. **Export the project (intended).** The WebMCP `export_project` tool
+   exports a project as a portable archive. The merged build exports
+   hand-authored demo or imported-project fixtures, not a project whose
+   rasters were promoted (none exist in this work package).
+
+## Running the offline flow
+
+The authoritative offline run is the merged E2E test. The exact test class
+and method are `TestImportedArchiveFlow::test_full_imported_archive_e2e` in
+`web/tests/test_web_e2e.py` (`python -m unittest
+web.tests.test_web_e2e.TestImportedArchiveFlow`). That test drives the
+HTTP endpoints through a fake-auth fixture and the deterministic
+FakeProvider — it does **not** use the WebMCP client and does **not** call a
+paid provider.
+
+> **Honest provenance of the fixture**
+>
+> The files in `submission/webmcp/demo-project/` are **hand-authored
+> offline fixtures** used to illustrate a Plan and a queue. They were **not**
+> produced by running the merged E2E test: that test imports an existing
+> archive (it does not create from `story.txt`), and its 1x1 FakeProvider
+> raster is rejected by WP3 validation rather than promoted, so it cannot
+> yield a three-panel Plan/queue or a promotion. The narration above describes
+> the intended Studio flow, not a run the merged build can complete today
+> (the sign-in route is not yet wired — see `docs/web/index.md` "Sign in").
+> They are presented as illustrative, hand-authored demo artifacts, and are
+> not claimed to be generated by any executed flow.
+
+## Demo fixture
+
+A sanitized, offline-only demo fixture is at
+`submission/webmcp/demo-project/`. It contains:
+
+- `story.txt` — a hand-authored short story, illustrative of a
+  `create_project` prompt;
+- `plan.json` — a hand-authored illustrative Plan shape; it was **not**
+  produced by any WebMCP tool call or E2E run;
+- `queue.json` — a hand-authored illustrative queue shape;
+- `README.md` — a short note that the fixture is offline-only,
+  hand-authored, and contains no credentials.
+
+The fixture does not contain a credential, an API key, a token, a
+password, a session secret, a Bearer header, or any other value that
+would identify a real provider account.

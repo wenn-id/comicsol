@@ -144,7 +144,7 @@ qualification, and release trust without competing with the creator path above.
 
 ## Documentation by audience
 
-- **Creators:** [user-guide index](docs/user/index.md), [getting started](docs/user/getting-started.md), [resume/repair/export](docs/user/resume-repair-export.md), [opt-in creator dogfood program](docs/dogfood.md), and [troubleshooting](docs/user/troubleshooting.md).
+- **Creators:** [user-guide index](docs/user/index.md), [getting started](docs/user/getting-started.md), [resume/repair/export](docs/user/resume-repair-export.md), [opt-in creator dogfood program](docs/dogfood.md), and [troubleshooting](docs/user/troubleshooting.md). The separately distributed Web surface (Comic Sol Studio) is documented in [docs/web/index.md](docs/web/index.md).
 - **Installers and integrators:** [surface guide](docs/surfaces.md), [native install](docs/install.md), [manual install](docs/install-manual.md), and [structured error contract](docs/structured-errors.md).
 - **Contributors and maintainers:** [contribution guide](CONTRIBUTING.md), [agent development constitution](AGENTS.md), `references/`, benchmarks, and release runbooks.
 

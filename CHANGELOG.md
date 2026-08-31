@@ -7,6 +7,23 @@ carries it.
 
 ### Added
 
+- Added the Web documentation and challenge submission for the separately
+  distributed Web surface (Comic Sol Studio, issue #268, WP17). New
+  `docs/web/index.md` documents the user workflow (sign in; create from
+  prompt/story or import a portable archive; review the Plan; choose
+  agent/hosted/BYOK; confirm cost; inspect the queue; confirm provider
+  switches; explicitly promote staged rasters; run QA; export a private
+  PDF/archive), the exact five-read/nine-write WebMCP surface, the four
+  credential modes, the four explicit confirmations, page-owned handles,
+  the evidence tiers, and the billing distinction. New `docs/web/providers.md`,
+  `docs/web/security.md`, `docs/web/deployment.md`, and `docs/web/rollback.md`
+  separate provider, security, deployment, and recovery contracts. A bounded,
+  evidence-backed submission lives under `submission/webmcp/`. The Web surface
+  is added to `docs/surfaces.md` and `docs/support-matrix.md`; the local
+  `stdio` MCP server remains unchanged at exactly 17 `comic_*` tools. No
+  production code, provider, migration, dependency, or lock file changed; no
+  live provider call or external deployment was made.
+
 - Added three fixed, provider-neutral v1 starter bundles: `minimal-one-page`,
   `dialogue-two-page`, and `action-focused`. Starter selection is available through
   the installed CLI (including guided init), source CLI, `CommandService`, and the
