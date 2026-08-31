@@ -23,10 +23,13 @@ across rollback, so:
 
 - **durable, SQLite-backed** project state, generation history, and
   persisted BYOK credentials survive;
-- **in-memory / process-local** state does **not** survive: sessions
-  (the authenticated session object lives on `app.state`), the
-  in-memory half of the generation queue, and any FastAPI background
-  task that was consuming a job at the moment of termination are lost;
+- **in-memory / process-local** state does **not** survive: only the
+  `AuthService` object on `app.state`, the in-memory half of the
+  generation queue, and any FastAPI background task that was consuming
+  a job at the moment of termination are lost. Authenticated **session
+  records** are themselves persisted in the SQLite `sessions` table and
+  survive a rollback that retains the data volume (see the dedicated
+  bullet below);
 - the **on-disk (SQLite-backed) generation queue is not "replayed"**.
   `web/comic_sol_web/app.py::create_app` registers **no** `lifespan` or
   `shutdown` handler that drains, flushes, or replays interrupted work.
