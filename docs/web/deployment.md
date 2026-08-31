@@ -82,7 +82,7 @@ below under the heading the configuration contract uses.
   build it is **not passed to `CredentialBroker`**; persisted BYOK
   ciphertext is encrypted with the key references named by
   `COMIC_SOL_WEB_CREDENTIAL_KEY_REFS` (selected by
-  `COMIC_SOL_WEB_ACTIVE_CREDENTIAL_KEY_ID`). Operators who back up or
+  `COMIC_SOL_WEB_CREDENTIAL_ACTIVE_KEY_ID`). Operators who back up or
   rotate encryption material must treat `CREDENTIAL_KEY_REFS` as the
   authoritative source; the unused `ENCRYPTION_SECRET` value should not
   be relied on as the at-rest encryption key until it is wired into the

@@ -2,8 +2,8 @@
   "project_id": "demo-project",
   "schema_version": "demo-1",
   "panels": [
-    {"index": 1, "title": "The clerk finds the archive", "status": "promoted"},
-    {"index": 2, "title": "The archive is wrong", "status": "staged"},
+    {"index": 1, "title": "The clerk finds the archive", "status": "pending"},
+    {"index": 2, "title": "The archive is wrong", "status": "pending"},
     {"index": 3, "title": "The clerk decides what to do", "status": "pending"}
   ]
 }

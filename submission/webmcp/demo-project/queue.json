@@ -1,6 +1,6 @@
 {
   "pending": [{"panel": 3, "provider": "fake-raster-v1"}],
-  "in_flight": [],
-  "finished": [{"panel": 1, "provider": "fake-raster-v1", "status": "promoted"}],
+  "in_flight": [{"panel": 1, "provider": "fake-raster-v1"}],
+  "finished": [],
   "failed": []
 }

@@ -17,7 +17,7 @@ columns are honest about what was actually done in this work package.
 | Cloudflare | Yes | Yes | Not run | None |
 | ComfyUI (remote) | Yes | Yes | Not run | None |
 | ComfyUI (local, agent handoff) | No | Not run | Not run | None |
-| Active-agent image generation | No | Not run | Not run | None |
+| Active-agent image generation | Partial | Yes | Not run | None |
 
 ## What this table does not claim
 

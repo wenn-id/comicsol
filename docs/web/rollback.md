@@ -31,11 +31,12 @@ across rollback, so:
   `web/comic_sol_web/app.py::create_app` registers **no** `lifespan` or
   `shutdown` handler that drains, flushes, or replays interrupted work.
   Recovery is by design: `DurableGenerationQueue` stores jobs
-  transactionally and `expired-running` leases are recovered on the
-  next process start rather than by an explicit replay step. A panel
-  whose `running` lease expired because the process was killed will be
-  re-claimed by the next consumer; an in-memory half that was mid-step
-  is not recoverable.
+  transactionally and `expired-running` leases are reclaimed on the
+  **next queue-consumer lease attempt** (`lease_next()`), not by a
+  startup or lifespan recovery handler — `create_app` registers no
+  such handler. A panel whose `running` lease expired because the
+  process was killed will be re-claimed on the next poll; an
+  in-memory half that was mid-step is not recoverable.
 
 Before any rollback, snapshot the data volume. After the rollback, run
 the full [Verification](#verification) checklist. **`/healthz` is a
@@ -51,10 +52,14 @@ known-good snapshot. The procedure is:
 
 1. Stop the Studio process.
 2. Replace the contents of `COMIC_SOL_WEB_DATA_ROOT` with the snapshot.
-3. Re-encrypt any persisted credentials that were written under a key
-   the snapshot does not include; the credential-key rotation logic in
-   `CredentialBroker` re-encrypts a credential under the active key the
-   next time it is read.
+3. Verify the snapshot retains every key id listed in the prior
+   `COMIC_SOL_WEB_CREDENTIAL_KEY_REFS` value, including the active key
+   the snapshot was encrypted under. Without the source key,
+   `CredentialBroker.resolve()` raises `CredentialKeyUnavailableError`
+   before any decrypt or re-encrypt step can run; automatic re-encryption
+   is therefore not promised. If the source key is unavailable, the
+   operator must require credential re-entry and revoke the affected
+   persisted credentials before the new process can serve traffic.
 4. Start the Studio process against the restored data volume.
 5. Run [Verification](#verification).
 
@@ -82,9 +87,11 @@ incident was detected before starting.
      have provider-side state (e.g. an API key with usage logs) that
      must be rotated or revoked at the provider.
    - **Studio side second.** For hosted credentials, redeploy with
-     the new operator secret. For persisted BYOK, call the credential
-     storage interface to delete the record. For session BYOK, end
-     the affected session.
+     the new operator secret. For persisted BYOK, call
+     `CredentialBroker.revoke(user_id, provider)` (which sets
+     `revoked_at` and clears the session state); do not call a delete
+     method — `CredentialBroker` does not expose one. For session
+     BYOK, end the affected session.
    - **Agent side, concretely.** Agent credentials live in the
      agent session and are not retrievable from Studio. End the
      external agent session by terminating the agent process (or

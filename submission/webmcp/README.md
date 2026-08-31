@@ -95,12 +95,12 @@ The other boundaries Studio enforces:
 
 ## Demo instructions
 
-The demo is a deterministic, offline flow that exercises the WebMCP
-client without contacting any paid provider. It is documented in
-[demo.md](demo.md). No screenshots were produced in this work package;
-the demo is narrated and the offline E2E test
-(`web/tests/test_web_e2e.py`) is the runnable, reproducible form of the
-demo.
+The demo is an **intended narrated WebMCP flow**, not an executed
+WebMCP run. No WebMCP tool call was recorded; the flow is documented in
+[demo.md](demo.md) and is bounded by the offline HTTP-only E2E test
+(`web/tests/test_web_e2e.py`), which drives HTTP endpoints through a
+fake-auth fixture rather than the WebMCP client. No screenshots or
+video were produced in this work package.
 
 ## Deployment and recording status
 

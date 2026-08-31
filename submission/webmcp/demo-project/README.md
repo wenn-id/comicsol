@@ -9,9 +9,10 @@ queue without contacting a paid provider.
 
 The fixture contains:
 
-- `story.txt` — the short story used as the prompt;
-- `plan.json` — the Plan produced by the WebMCP `create_project` tool;
-- `queue.json` — the queue state illustrated for the offline run.
+- `story.txt` — a hand-authored short story, illustrative of a prompt;
+- `plan.json` — a hand-authored illustrative Plan shape; no
+  `create_project` call produced it;
+- `queue.json` — a hand-authored illustrative queue shape.
 
 The fixture does not contain a credential, an API key, a token, a
 password, a session secret, an authorization header, or any other value

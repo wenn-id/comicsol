@@ -124,12 +124,17 @@ and never written into a receipt.
 
 ## Receipts and redaction
 
-Every generation and provider switch produces a receipt. The receipt
-records **what happened** (action, revision, provider ID, status, sanitized
-error category) and **what it cost** (sanitized cost field, no token, no
-key). Provider responses are referenced by sanitized identifiers; raw
-provider payload bytes never appear in a receipt, and any value that would
-identify a credential is replaced with **`[REDACTED]`** before persistence.
+Generation receipts are appended only when an accepted raster is
+recorded. A receipt records what was produced (provider, model, auth
+mode, sanitized usage, and the raster checksum) but **not** the wider
+audit trail: failed attempts appear in the attempt history, and
+provider-switch decisions live in the proposal and decision tables.
+Receipts are not a transaction log for actions, revisions, statuses,
+or error categories — those live in their own tables. Provider
+responses are referenced by sanitized identifiers; raw provider
+payload bytes never appear in a receipt, and any value that would
+identify a credential is replaced with **`[REDACTED]`** before
+persistence.
 
 ## Private story and artifact destinations
 

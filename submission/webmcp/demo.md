@@ -89,11 +89,13 @@ paid provider.
 A sanitized, offline-only demo fixture is at
 `submission/webmcp/demo-project/`. It contains:
 
-- `story.txt` — a short story used as the prompt for `create_project`;
-- `plan.json` — the Plan produced by the deterministic WebMCP flow;
-- `queue.json` — the queue state at the time of the offline run;
-- `README.md` — a short note that the fixture is offline-only and
-  contains no credentials.
+- `story.txt` — a hand-authored short story, illustrative of a
+  `create_project` prompt;
+- `plan.json` — a hand-authored illustrative Plan shape; it was **not**
+  produced by any WebMCP tool call or E2E run;
+- `queue.json` — a hand-authored illustrative queue shape;
+- `README.md` — a short note that the fixture is offline-only,
+  hand-authored, and contains no credentials.
 
 The fixture does not contain a credential, an API key, a token, a
 password, a session secret, a Bearer header, or any other value that

@@ -86,7 +86,14 @@ would create. Review it and confirm it before generation.
 
 ## Generation routes
 
-There are four generation routes. Choose exactly one.
+In the merged build, only the **`agent`** route is registered and
+selectable. The other three routes (`hosted`, `session BYOK`, and
+`encrypted persisted BYOK`) exist as offline adapter-level tests but
+are not wired into `create_app`; selecting them at runtime is not
+possible until the adapters are registered. The descriptions below
+remain for reference and for future builds that wire them in. Choose
+exactly one of the routes below that is currently implemented in the
+build you are running.
 
 - **Agent** — a local agent session drives generation and hands finished
   rasters back through agent-native handoff. Credentials, if any, live and are
@@ -121,8 +128,10 @@ Generation runs through a queue that is persisted to the SQLite
 `GenerationStore` (`application.sqlite3` under the data root), not
 held in process memory. You can inspect the queue at any time: which
 panels are pending, which are in flight, which finished, and which
-failed. `DurableGenerationQueue.lease_next()` reclaims eligible
-persisted jobs and expired `running` leases when the service starts.
+failed. Expired `running` leases are reclaimed on the next
+`DurableGenerationQueue.lease_next()` call after the service
+restarts — there is no startup or lifespan recovery handler in
+`create_app`, so recovery happens when a queue consumer first polls.
 Only the in-memory task/service objects on `app.state` are
 process-local; the queue itself survives a restart.
 
