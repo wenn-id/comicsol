@@ -115,9 +115,7 @@ CREDENTIAL_PATTERNS = (
     # class used for JSON/header bodies so a UI label like ?api_key=on
     # never matches. Matches `?api_key=...`, `&access_token=...`, and the
     # same names in URL fragments.
-    re.compile(
-        r"[?&](?:api[_-]?key|access[_-]?token|client[_-]?secret)=[A-Za-z0-9._\-+/=]{12,}"
-    ),
+    re.compile(r"[?&](?:api[_-]?key|access[_-]?token|client[_-]?secret)=[A-Za-z0-9._\-+/=]{12,}"),
     re.compile(
         r"-----BEGIN [A-Z ]+PRIVATE KEY-----",
         re.IGNORECASE,
@@ -919,9 +917,13 @@ class WebDocumentationLinkTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             for match in MARKDOWN_LINK.finditer(text):
                 target = match.group("target")
-                if target.startswith((
-                    "http://", "https://", "mailto:",
-                )):
+                if target.startswith(
+                    (
+                        "http://",
+                        "https://",
+                        "mailto:",
+                    )
+                ):
                     continue
                 file_part, _, anchor = target.partition("#")
                 if not anchor:
@@ -935,6 +937,7 @@ class WebDocumentationLinkTests(unittest.TestCase):
                     anchor_doc = target_path.read_text(encoding="utf-8")
                 else:
                     anchor_doc = text
+
                 # GitHub-flavored anchor: lowercase, strip punctuation,
                 # collapse whitespace runs to single hyphens, drop leading
                 # and trailing hyphens. Matches the slug the published
@@ -944,10 +947,7 @@ class WebDocumentationLinkTests(unittest.TestCase):
                     out: list[str] = []
                     last_dash = False
                     for ch in lowered:
-                        if ch.isalnum() or (
-                            ord("a") <= ord(ch) <= ord("z")
-                            and ch.isascii()
-                        ):
+                        if ch.isalnum() or (ord("a") <= ord(ch) <= ord("z") and ch.isascii()):
                             out.append(ch)
                             last_dash = False
                         elif ch == " " or ch == "-":
@@ -959,6 +959,7 @@ class WebDocumentationLinkTests(unittest.TestCase):
                                 out.append("-")
                                 last_dash = True
                     return "".join(out).strip("-")
+
                 headings = {
                     slug(line.lstrip("#").strip())
                     for line in anchor_doc.splitlines()
