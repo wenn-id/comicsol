@@ -4,9 +4,12 @@ This document is a **demo script** (a narration, not a video). The demo
 was not recorded as a video, and **no screenshots were produced** in this
 work package: the environment exposed no `document.modelContext`, so the
 WebMCP client could not be driven to a rendered screen, and WP17
-authorizes no fabricated demonstration artifacts. This narration is the
-honest record of the offline flow a reviewer can run to reproduce the
-demo.
+authorizes no fabricated demonstration artifacts. The narration below
+describes the **intended WebMCP flow** and is **not reproducible end-to-end
+against the merged distribution** (no auth router is wired, so the WebMCP
+tools cannot execute the flow today). The only thing runnable in this work
+package is the separate offline HTTP-only E2E test, which verifies a
+limited boundary and never drives the WebMCP client.
 
 ## Environment
 

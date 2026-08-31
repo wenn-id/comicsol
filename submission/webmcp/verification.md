@@ -12,14 +12,14 @@ passing without an explicit recorded result.
 | `python -m unittest web.tests.test_app` | pass — 25 tests (static inventory, /healthz, registration), 0 failures |
 | `python -m unittest web.tests.test_web_security` | pass — 39 tests, 0 failures |
 | `python -m unittest web.tests.test_web_e2e` | pass — 14 tests, 0 failures |
-| `python -m unittest discover -s web/tests -p "test_*.py"` (CI-identical, from repo root) | pass — 507 tests, 0 failures |
+| `python -m unittest discover -s web/tests -p "test_*.py"` (CI-identical, from repo root) | pass — 508 tests, 0 failures |
 | `python -m unittest tests.test_user_docs` | pass — existing root docs contract, unchanged at 124 docs tests |
 | `python -m unittest tests.test_release_docs` | pass — existing release docs contract |
 | `python -m unittest tests.test_showcase_contract` | pass — existing showcase contract |
 | Combined docs contract (the four rows above run together in one invocation) | pass — 0 failures; the per-module counts are recorded in their own rows above and are not restated as a separate aggregate total here |
 | `python -m unittest tests.test_doctor_diagnostics tests.test_distribution tests.test_clean_install tests.test_lock_provenance tests.test_container_contract tests.test_command_service tests.test_manifest tests.test_installers tests.test_agent_constitution tests.test_dogfood_docs tests.test_client_setup` | pass — release-qualification suite, 0 failures (skips reflect platform skips) |
 | `python -m coverage run -m unittest discover -s tests` then `python scripts/check_coverage.py` (CI-identical root coverage gate) | pass — 1919 tests, 0 failures; coverage line 83.41% (floor 82%), branch 73.89% (floor 72%) |
-| Web distribution coverage | informational only — the Web distribution has no enforced coverage floor in CI; the discovery result is 507/507 passing |
+| Web distribution coverage | informational only — the Web distribution has no enforced coverage floor in CI; the discovery result is 508/508 passing |
 | `python -m ruff check scripts comic_sol_product tests web/comic_sol_web web/tests` | pass |
 | `python -m ruff format --check scripts comic_sol_product tests web/comic_sol_web web/tests` | pass |
 | `python -m mypy` (root, CI form) | pass — 10 source files clean |

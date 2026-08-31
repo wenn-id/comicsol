@@ -102,8 +102,15 @@ incident was detected before starting.
      the new operator secret. For persisted BYOK, call
      `CredentialBroker.revoke(user_id, provider)` (which sets
      `revoked_at` and clears the session state); do not call a delete
-     method — `CredentialBroker` does not expose one. For session
-     BYOK, end the affected session.
+     method — `CredentialBroker` does not expose one. For **session
+     BYOK, ending the Studio session is not revocation**: the broker
+     keys session credentials by `(user_id, provider)` with an
+     independent TTL (`credentials.py:238-258`), while
+     `AuthService.revoke()` only deletes the SQLite `sessions` row
+     (`auth.py:300-305`). The credential stays resolvable after
+     logout — and to a fresh login by the same user — until its TTL
+     expires. Call `CredentialBroker.revoke(user_id, provider)` for
+     session BYOK too.
    - **Agent side, concretely.** Agent credentials live in the
      agent session and are not retrievable from Studio. End the
      external agent session by terminating the agent process (or

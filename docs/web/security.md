@@ -21,8 +21,11 @@ each with its own section below and its own merged-code contract:
   request (see [Authentication and CSRF](#authentication-and-csrf));
 - **ownership** and **opaque** identifiers — a request can never address a
   resource it does not own (see [Ownership and opaque IDs](#ownership-and-opaque-ids));
-- **revision** and **idempotency** — the same logical action cannot be
-  applied twice and a stale action cannot land on a later state (see
+- **revision** and **idempotency** — for operations that enforce it, the
+  same logical action cannot be applied twice and a stale action cannot
+  land on a later state. This guarantee is **durable-idempotency only**:
+  plan updates, `run_qa`, and export retries after a process restart are
+  documented exceptions that can re-run (see
   [Revision and idempotency](#revision-and-idempotency));
 - **approval replay** protection — a recorded approval cannot be replayed
   onto a later revision (see [Approval replay protection](#approval-replay-protection)).
@@ -143,7 +146,14 @@ fails closed.
 
 ## Credential modes and lifetime
 
-Studio supports four credential modes, each with its own lifetime:
+The **provider contract** defines four credential modes, each with its
+own lifetime. In the **merged Web build** only the capability-gated
+`agent` route is active; `hosted`, `session BYOK`, and `encrypted
+persisted BYOK` are **offline adapter contracts** whose adapters are
+not wired into `create_app`, so those routes are not served by the
+merged application (see [docs/web/surfaces.md](../surfaces.md) and
+[docs/web/index.md](index.md#generation-routes)). Within the provider
+contract, the four modes are:
 
 - **Agent** — credentials live in the agent session. Studio does not see
   them; they are never written to disk by Studio; their lifetime is the

@@ -9,9 +9,19 @@ recorded video.
 ## Submission overview
 
 Comic Sol Studio is the Web distribution of Comic Sol (`wenn-id/comicsol`).
-It exposes a WebMCP tool surface (five read tools, nine write tools) that
-a browser-resident model context can call to plan, generate, and QA a
-comic project. The submission ships:
+It exposes a WebMCP tool surface (five read tools, nine write tools) whose
+declared purpose is to let a browser-resident model context plan, generate,
+and QA a comic project.
+
+**That workflow is not callable against the shipped Web distribution
+today.** The merged `create_app` installs no authentication router and no
+`app.state.auth` service, so every API request these WebMCP tools make
+fails `require_principal` with `401`. The workflow is currently executable
+only through the fake-auth test harness (`web/tests/test_web_e2e.py`), or
+after authentication wiring is added. See
+[`docs/web/index.md` "Sign in"](../../docs/web/index.md#sign-in) and
+[`docs/web/security.md` "Authentication and CSRF"](../../docs/web/security.md#authentication-and-csrf)
+for the same boundary. The submission ships:
 
 - this overview and the exact tool list;
 - an architecture summary grounded in the merged source;
@@ -90,8 +100,14 @@ The other boundaries Studio enforces:
   timeouts and response bytes;
 - a credential broker with the four documented modes and a documented
   rotation path for persisted BYOK;
-- receipts that record actions and sanitized status, never raw provider
-  payloads, and replace any would-be credential with `[REDACTED]`.
+- **generation receipts** whose authorized field set is exactly
+  `{provider, model, auth_mode, usage, checksum}`
+  (`generation/receipts.py::AUTHORIZED_RECEIPT_FIELDS`), appended only
+  when an accepted raster is recorded. Receipts carry no action, status,
+  or error field; failed attempts live in the attempt history and
+  provider-switch decisions live in the proposal and decision tables.
+  Raw provider payloads never appear in a receipt, and any would-be
+  credential value is replaced with `[REDACTED]`.
 
 ## Demo instructions
 

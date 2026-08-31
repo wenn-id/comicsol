@@ -6,14 +6,29 @@ is verified by `web/tests/test_web_docs.py::WebMcpSurfaceContractTests`.
 
 ## Read tools (5)
 
-- `get_project_state` — return the current Plan and the current revision.
+- `get_project_state` — return the current project's `project_id`,
+  `revision`, `status`, and two booleans (`plan_available`,
+  `qa_available`). It does **not** return the Plan itself:
+  `getProjectState()` passes the API response through `safeProject()`
+  (`webmcp.js:365-375`), which retains only those fields and discards
+  `summary.plan`. No WebMCP read tool exposes the Plan body, so a
+  browser-resident model cannot review or diff Plan content from this
+  surface today; it can only learn that a Plan exists.
 - `list_generation_options` — return the routes, models, and credential
   modes available to the current user.
 - `recommend_provider` — recommend a provider for a panel given the
   current Plan, the queue, and the credential inventory.
 - `list_generation_jobs` — return the current generation queue, including
   pending, in-flight, finished, and failed jobs.
-- `get_qa_summary` — return the most recent QA report for the project.
+- `get_qa_summary` — return whether a QA report is available for the
+  current project, plus `valid` and `issue_count` when it is. It
+  **cannot retrieve a prior QA result**: `getQaSummary()` reads
+  `getCurrentProject()`, whose gateway path (`current_project()` →
+  `read_plan()`) populates only `summary.plan` and never
+  `summary.qa`, so `safeQa()` (`webmcp.js:377-388`) returns
+  `available: false` after a completed QA run. Treat the tool as
+  reporting QA availability on this path, not as a way to fetch the
+  last QA report.
 
 ## Write tools (9)
 
