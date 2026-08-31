@@ -170,6 +170,34 @@ persists outside that volume.
   to keep projects.
 - **Details:** [`docs/install-manual.md` → OCI image](install-manual.md#oci-image).
 
+## Comic Sol Studio (Web)
+
+The Web distribution (`web/comic_sol_web/`) is a separately installed Flask
+application that exposes the same deterministic lifecycle through a browser
+and a WebMCP client (`5` read + `9` write tools). The local `stdio` MCP server
+remains exactly `17` tools. The Web surface is **not** a replacement for the
+core CLI: the engine, the local MCP server, the wheel, and the native archive
+are unchanged. The Web surface has no default output root; an explicit
+`COMIC_SOL_WEB_DATA_ROOT` volume is required and the process fails fast if it
+is missing.
+
+- **How you start it:** the Web package exports no dedicated console script;
+  start the FastAPI application with the bundled `uvicorn` using the module
+  path `comic_sol_web.app:create_app` (in a source checkout, run from `web/`):
+  `uvicorn comic_sol_web.app:create_app --host 127.0.0.1 --port 8000`. The
+  `/healthz` endpoint returns `{"status":"ok"}`; there is no readiness
+  endpoint.
+- **Default output root:** none; `COMIC_SOL_WEB_DATA_ROOT` is required and
+  is a separate durable volume from the runtime. The hosted process must
+  never contact a user's localhost.
+- **Provider model:** WebMCP `agent`, `hosted`, `session BYOK`, and
+  `encrypted persisted BYOK`; the agent route is agent-native and the
+  hosted route is the only route that does not require a credential in
+  the browser.
+- **Details:** [`docs/web/index.md`](web/index.md), [`docs/web/deployment.md`](web/deployment.md),
+  [`docs/web/rollback.md`](web/rollback.md), [`docs/web/security.md`](web/security.md),
+  [`docs/web/providers.md`](web/providers.md).
+
 ## Surface summary
 
 | Surface | Start command | Default project output root |
@@ -181,3 +209,4 @@ persists outside that volume.
 | Native archive | installed `comic-sol doctor` | Platform default (table above); runtime lives separately |
 | MCP server | `comic-sol mcp --root <absolute path>` | None — explicit `--root` required |
 | OCI image | container entrypoint | `/data` inside the container |
+| Comic Sol Studio (Web) | `uvicorn comic_sol_web.app:create_app` (from `web/`) | None — `COMIC_SOL_WEB_DATA_ROOT` is required |

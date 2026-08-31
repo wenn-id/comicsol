@@ -69,6 +69,7 @@ WSL2 uses the Linux x86_64 archive; it has no separate native archive.
 | Native portable archive | ✅ bundled Python 3.11 | ❌ no archive | ✅ bundled Python 3.11 | ❌ source only | ✅ bundled Python 3.11 | ❌ no archive | ✅ uses the Linux x86_64 archive |
 | MCP server (`mcp` extra) | ✅ Python 3.11+ and MCP SDK | ✅ Python 3.11+ and MCP SDK | ✅ Python 3.11+ and MCP SDK | ✅ Python 3.11+ and MCP SDK | ✅ Python 3.11+ and MCP SDK | ✅ Python 3.11+ and MCP SDK | ✅ Python 3.11+ and MCP SDK |
 | OCI image | ✅ bundled runtime, `linux/amd64` | ❌ not built | ❌ not built | ❌ not built | ❌ not built | ❌ not built | run the Linux image from WSL2 Docker if available |
+| Comic Sol Studio (Web) | ✅ Python 3.11+ | ✅ Python 3.11+ | ✅ Python 3.11+ | ✅ Python 3.11+ | ✅ Python 3.11+ | ✅ Python 3.11+ | ✅ Python 3.11+ |
 
 Notes on each mode:
 
@@ -106,6 +107,18 @@ Notes on each mode:
   commands and the hardening audit each release runs, and
   [`docs/install-manual.md` → OCI image](install-manual.md#oci-image) for the
   manual and advanced installation overview.
+- **Comic Sol Studio (Web)** — a separately installed Flask application in
+  `web/comic_sol_web/`, pure-Python and platform-independent on Python 3.11+.
+  It is a one-process runtime with a required durable data volume
+  (`COMIC_SOL_WEB_DATA_ROOT`) and no default output root; the process fails
+  fast when a required secret or the data root is missing. It exposes a WebMCP
+  surface of `5` read and `9` write tools; the local `stdio` MCP server is
+  unchanged at exactly `17` tools. Provider routes are `agent`, `hosted`,
+  `session BYOK`, and `encrypted persisted BYOK`. Every provider route
+  is offline-qualified only; **no live provider smoke has been run** and no
+  external deployment has been performed. See
+  [`docs/web/index.md`](web/index.md), [`docs/web/providers.md`](web/providers.md),
+  and [`docs/web/deployment.md`](web/deployment.md).
 
 ## Runtime extras
 
