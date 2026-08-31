@@ -75,8 +75,18 @@ below under the heading the configuration contract uses.
 
 ### Required at start
 
-- `COMIC_SOL_WEB_SESSION_SECRET` — server-side session signing key.
-- `COMIC_SOL_WEB_ENCRYPTION_SECRET` — encryption key for at-rest secrets.
+- `COMIC_SOL_WEB_SESSION_SECRET` — server-side session signing key
+  (consumed by `comic_sol_web.auth.SessionAuthenticator`).
+- `COMIC_SOL_WEB_ENCRYPTION_SECRET` — required by the configuration
+  module and held in `WebConfig.encryption_secret`, but in the current
+  build it is **not passed to `CredentialBroker`**; persisted BYOK
+  ciphertext is encrypted with the key references named by
+  `COMIC_SOL_WEB_CREDENTIAL_KEY_REFS` (selected by
+  `COMIC_SOL_WEB_ACTIVE_CREDENTIAL_KEY_ID`). Operators who back up or
+  rotate encryption material must treat `CREDENTIAL_KEY_REFS` as the
+  authoritative source; the unused `ENCRYPTION_SECRET` value should not
+  be relied on as the at-rest encryption key until it is wired into the
+  encryption boundary.
 - `COMIC_SOL_WEB_DATA_ROOT` — absolute path to a durable data volume.
 
 The two secret values must be at least **`32`** characters (the

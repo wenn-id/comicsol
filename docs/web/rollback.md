@@ -134,8 +134,13 @@ following are **not recoverable by rollback**:
 
 - **in-flight generation** that was lost when the process was stopped
   is not restored; the panel state is preserved, but the work the
-  in-flight task was doing is not. A panel that was being generated when
-  the process stopped will need to be queued again.
+  in-flight task was doing is not. Do **not** queue a replacement job
+  for it: `DurableGenerationQueue.lease_next()` selects expired
+  `running` rows and reclaims them while retries remain, so the
+  persisted job recovers on the next poll. Manual requeueing is
+  reserved for jobs that have exhausted their retries or reached a
+  terminal state — enqueuing a duplicate otherwise causes duplicate
+  generation and duplicate provider spend.
 - **provider-side state** (model deprecation, billing changes, account
   suspension, provider outages) is outside Studio. Rolling back Studio
   does not roll back the provider.

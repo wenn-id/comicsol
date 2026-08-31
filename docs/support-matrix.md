@@ -107,16 +107,19 @@ Notes on each mode:
   commands and the hardening audit each release runs, and
   [`docs/install-manual.md` → OCI image](install-manual.md#oci-image) for the
   manual and advanced installation overview.
-- **Comic Sol Studio (Web)** — a separately installed Flask application in
+- **Comic Sol Studio (Web)** — a separately installed FastAPI application in
   `web/comic_sol_web/`, pure-Python and platform-independent on Python 3.11+.
   It is a one-process runtime with a required durable data volume
   (`COMIC_SOL_WEB_DATA_ROOT`) and no default output root; the process fails
   fast when a required secret or the data root is missing. It exposes a WebMCP
   surface of `5` read and `9` write tools; the local `stdio` MCP server is
-  unchanged at exactly `17` tools. Provider routes are `agent`, `hosted`,
-  `session BYOK`, and `encrypted persisted BYOK`. Every provider route
-  is offline-qualified only; **no live provider smoke has been run** and no
-  external deployment has been performed. See
+  unchanged at exactly `17` tools. In the merged build, only the `agent`
+  provider route is registered and selectable in the running service;
+  `hosted`, `session BYOK`, and `encrypted persisted BYOK` routes exist as
+  offline adapter-level tests with no live adapter wired into the merged
+  distribution. Every provider route is offline-qualified only; **no live
+  provider smoke has been run** and no external deployment has been
+  performed. See
   [`docs/web/index.md`](web/index.md), [`docs/web/providers.md`](web/providers.md),
   and [`docs/web/deployment.md`](web/deployment.md).
 

@@ -88,7 +88,17 @@ CREDENTIAL_PATTERNS = (
         r"(?i)(?:^|[\s;,(\"'])(?:Bearer|Authorization|Token|Basic)\s+[A-Za-z0-9._\-+/=]{24,}"
     ),
     re.compile(r"(?i)\bSet-Cookie:\s*[A-Za-z0-9_]+=[A-Za-z0-9._\-+/=]{24,}"),
-    re.compile(r"(?i)\bcsrf_?token\s*=\s*[\"']?[A-Za-z0-9._\-+/=]{24,}\""),
+    # CSRF tokens appear in three real shapes: double-quoted, single-quoted,
+    # or unquoted (Set-Cookie / X-CSRF-Token header / bare assignment). A
+    # single regex must catch all three so a real csrf_token value cannot
+    # pass the leak scan because of an unrecognised quote style.
+    re.compile(
+        r"(?i)\bcsrf_?token\s*=\s*(?:"
+        r"\"[A-Za-z0-9._\-+/=]{24,}\""  # double-quoted
+        r"|'[^'\\]{24,}'"  # single-quoted (no embedded quote)
+        r"|[A-Za-z0-9._\-+/=]{24,}(?=[,\s;)\]}]|$)"  # unquoted, bounded
+        r")"
+    ),
     re.compile(r"(?i)\bx-csrf-token:\s*[A-Za-z0-9._\-+/=]{24,}"),
     re.compile(r"/home/[a-z0-9_\-]+/\.[A-Za-z0-9_./-]+"),
     re.compile(r"C:\\Users\\[^\\\s/\"]+\\"),

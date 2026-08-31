@@ -1,8 +1,11 @@
 # Demo fixture
 
-This fixture is offline-only. It is the artifact of the deterministic
-WebMCP demo flow and is included so a reviewer can reproduce the demo
-without contacting a paid provider.
+This fixture is hand-authored and offline-only. It is **not** an
+artifact of a reproducible WebMCP run: the merged E2E test does not
+invoke WebMCP, imports a different archive, and rejects its 1x1
+raster, so it cannot produce this three-panel plan or queue. The
+fixture exists so a reviewer can inspect the shape of a Plan and a
+queue without contacting a paid provider.
 
 The fixture contains:
 

@@ -117,9 +117,14 @@ requires an explicit confirmation from you:
 
 ## Inspect the queue
 
-Generation runs through a queue. You can inspect the queue at any time: which
-panels are pending, which are in flight, which finished, and which failed. The
-queue is process-local (see the deployment guide for the implications of that).
+Generation runs through a queue that is persisted to the SQLite
+`GenerationStore` (`application.sqlite3` under the data root), not
+held in process memory. You can inspect the queue at any time: which
+panels are pending, which are in flight, which finished, and which
+failed. `DurableGenerationQueue.lease_next()` reclaims eligible
+persisted jobs and expired `running` leases when the service starts.
+Only the in-memory task/service objects on `app.state` are
+process-local; the queue itself survives a restart.
 
 ## Confirm provider switches
 

@@ -183,12 +183,13 @@ is missing.
 
 - **How you start it:** the Web package exports no dedicated console script.
   The factory `comic_sol_web.app.create_app` requires a `WebConfig`; the
-  intended invocation is `python -c "import os; from
+  intended invocation is the bundled ASGI server with an explicit config
+  (for example `python -c "import os, uvicorn; from
   comic_sol_web.config import WebConfig; from comic_sol_web.app import
-  create_app; create_app(WebConfig.from_env(os.environ))"` bound to a
-  host/port by the chosen ASGI server. The
-  `/healthz` endpoint returns `{"status":"ok"}`; there is no readiness
-  endpoint.
+  create_app; uvicorn.run(create_app(WebConfig.from_env(os.environ)),
+  host='127.0.0.1', port=8000)"`), after setting the three required
+  environment variables. The `/healthz` endpoint returns
+  `{"status":"ok"}`; there is no readiness endpoint.
 - **Default output root:** none; `COMIC_SOL_WEB_DATA_ROOT` is required and
   is a separate durable volume from the runtime. The hosted process must
   never contact a user's localhost.
@@ -211,4 +212,4 @@ is missing.
 | Native archive | installed `comic-sol doctor` | Platform default (table above); runtime lives separately |
 | MCP server | `comic-sol mcp --root <absolute path>` | None — explicit `--root` required |
 | OCI image | container entrypoint | `/data` inside the container |
-| Comic Sol Studio (Web) | `python -c "import os; from comic_sol_web.config import WebConfig; from comic_sol_web.app import create_app; create_app(WebConfig.from_env(os.environ))"` + an ASGI server (uvicorn is a dependency) | None — `COMIC_SOL_WEB_DATA_ROOT` is required |
+| Comic Sol Studio (Web) | `python -c "import os, uvicorn; from comic_sol_web.config import WebConfig; from comic_sol_web.app import create_app; uvicorn.run(create_app(WebConfig.from_env(os.environ)), host='127.0.0.1', port=8000)"` (three required env vars must be set) | None — `COMIC_SOL_WEB_DATA_ROOT` is required |
