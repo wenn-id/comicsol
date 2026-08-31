@@ -45,6 +45,27 @@ The deployment therefore proves asset delivery and client-side WebMCP tool
 registration surface, not workflow execution. Rows 2–6 of the gap table
 remain `Not run`.
 
+### Reproduction config (retainer-only, not committed to `static/`)
+
+The canonical static-surface contract
+(`test_exact_static_surface_exists_and_uses_vanilla_modules`) defines the
+exact set of files that may live under `web/comic_sol_web/static/`. The
+deploy-time Vercel config must therefore NOT be added to `static/`; it is
+reproduced at deploy time from this section only. The deploy that produced
+the retained evidence was driven by `vercel deploy ./web/comic_sol_web/static
+--prod --yes --archive=tgz --name comic-sol-studio --scope wenn-projects
+--token $VERCEL_TOKEN`, where `$VERCEL_TOKEN` is a single-use maintainer
+token supplied via shell env (never committed, never pasted in chat, and
+revoked once the deployment is verified). The `web/comic_sol_web/static`
+directory is used as-is; the canonical `index.html` / `app.js` / `webmcp.js`
+/ etc. surface requires no transformation or build step. To disable
+Vercel-wide team SSO so the URL is anonymously reachable (so the evidence
+is actually verifiable), the maintainer runs the same `Authorization`
+workflow plus a project-level
+`PATCH /v9/projects/comic-sol-studio?teamId=<team>` with
+`{"ssoProtection": null}`. Both inputs are out of scope for this framework
+and require an explicit maintainer action.
+
 The sections below define the exact procedure and validation gate so that
 any future evidence is **retained, sanitized, and candidate-bound** — never
 fabricated and never inflated. What is not run remains explicitly
