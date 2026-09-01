@@ -84,8 +84,7 @@ or, for an advanced source checkout, `"$PYTHON" scripts/comic_sol.py`.
   execution smoke record **and** durable, inspectable links to the required sanitized
   output artifacts exist. Installer tests prove placement mechanics, not live host
   compatibility.
-- **Details:** [`README.md` → Install](../README.md#install-the-agent-skill) and
-  [`docs/onboarding.md`](onboarding.md).
+- **Details:** [`docs/onboarding.md`](onboarding.md).
 
 ## Codex Plugin bundle
 
@@ -97,7 +96,6 @@ identical to the Skill checkout.
 - **How you start it:** install the plugin through Codex's repo marketplace and
   start a fresh session.
 - **Default output root:** the platform default in the table above.
-- **Details:** [`README.md` → Codex Plugin](../README.md#codex-plugin-same-repository).
 
 ## Source checkout (development)
 
@@ -124,7 +122,7 @@ adds the MCP SDK for the same launcher.
 - **Project initialization:** humans may run `comic-sol init --interactive` for
   the guided flow; automation uses fully specified `comic-sol --json init`
   flags and never receives a prompt.
-- **Details:** [`README.md` → Install](../README.md#install).
+- **Details:** [source and wheel installation](install-manual.md#source-and-wheel-installation).
 
 ## Native portable archive
 
@@ -154,7 +152,6 @@ home directory, repository root, or shared folder.
   (installed) or `"$PYTHON" scripts/mcp_server.py --root …` (source).
 - **Default output root:** none; the `--root` argument is required and must be
   absolute.
-- **Details:** [`README.md` → MCP Server](../README.md#mcp-server-optional).
 
 ## OCI image
 

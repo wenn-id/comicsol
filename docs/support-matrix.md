@@ -91,7 +91,7 @@ Notes on each mode:
   (`.[mcp]`, MCP SDK pinned in the `requirements/locks/runtime-*` files, which
   are per-platform but architecture-agnostic). `--root` is always an explicit
   absolute path; see the trust boundary in
-  [`README.md` → MCP Server](../README.md#mcp-server-optional).
+  [MCP server contract](surfaces.md#mcp-server).
 - **OCI image** — a `linux/amd64` image distributed as the attested release
   assets `comic-sol-<version>-linux-x86_64.container.tar` and its CycloneDX
   SBOM `comic-sol-<version>-linux-x86_64.container.sbom.json`, not a registry

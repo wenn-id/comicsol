@@ -166,22 +166,39 @@ class ProviderGuideTests(unittest.TestCase):
 
 
 class ReadmeContractTests(unittest.TestCase):
-    """README examples include the v2.2 artifacts and the audited link set."""
+    """The README stays concise while linking the detailed contracts."""
 
     @classmethod
     def setUpClass(cls):
         cls.readme = read("README.md")
+        cls.schemas = read("references/schemas.md")
+        cls.typography = read("docs/typography.md")
+        cls.starters = read("references/starter-templates.md")
+
+    def test_readme_is_a_concise_creator_landing_page(self):
+        """Keep deep operational reference material in docs, not the landing page."""
+        self.assertLessEqual(len(self.readme.splitlines()), 220)
+        for heading in (
+            "## What Comic Sol does",
+            "## See the output",
+            "## Quick start",
+            "## Choose an image route",
+            "## What you get",
+            "## Documentation",
+        ):
+            self.assertIn(heading, self.readme)
 
     def test_artifact_listing_includes_v2_2_artifacts(self):
+        self.assertIn("references/schemas.md#artifacts", self.readme)
         for artifact in (
             "plan/character-identity-pack.json",
-            "panels/*/sfx-audit.json",
-            "qa/pages/page-001.json",
+            "panels/{panel-id}/sfx-audit.json",
+            "qa/pages/page-{NNN}.json",
             "exports/pdf-verification.json",
             "logs/reference-selection.json",
             "logs/repair-plan.json",
         ):
-            self.assertIn(artifact, self.readme, artifact)
+            self.assertIn(artifact, self.schemas, artifact)
 
     def test_artifact_listing_states_schema_and_evidence_limits(self):
         readme = collapsed(self.readme)
@@ -191,9 +208,7 @@ class ReadmeContractTests(unittest.TestCase):
         self.assertIn("mechanics", readme)
 
     def test_accessibility_limitations_are_stated_without_overclaiming(self):
-        section = self.readme.split("### Accessibility and localization limitations", 1)[1].split(
-            "\n## ", 1
-        )[0]
+        section = self.readme.split("## Important limits", 1)[1].split("\n## ", 1)[0]
         document = collapsed(section)
         for phrase in (
             "image-based",
@@ -216,21 +231,29 @@ class ReadmeContractTests(unittest.TestCase):
             "docs/typography.md",
             "docs/surfaces.md",
             "docs/support-matrix.md",
-            "#accessibility-and-localization-limitations",
         ):
             self.assertIn(f"]({link})", self.readme, link)
 
     def test_install_section_points_at_surfaces_and_matrix(self):
-        install = self.readme.split("## Install", 1)[1].split("\n## ", 1)[0]
-        self.assertIn("docs/surfaces.md", install)
-        self.assertIn("docs/support-matrix.md", install)
+        install = self.readme.split("## Quick start", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("docs/install.md", install)
+        self.assertIn("docs/install-manual.md", install)
+
+    def test_advanced_docs_do_not_send_readers_back_through_the_readme(self):
+        for document in (
+            "docs/onboarding.md",
+            "docs/support-matrix.md",
+            "docs/surfaces.md",
+        ):
+            self.assertNotIn("README.md#advanced-integrations", read(document), document)
+        self.assertIn("surfaces.md#mcp-server", read("docs/onboarding.md"))
+        self.assertIn("surfaces.md#mcp-server", read("docs/support-matrix.md"))
 
     def test_guided_initializer_keeps_an_explicit_automation_equivalent(self):
-        section = self.readme.split("### Guided project initialization", 1)[1].split("\n### ", 1)[0]
-        self.assertIn("comic-sol init --interactive", section)
-        self.assertIn("comic-sol --json init", section)
-        self.assertIn("--page-count 2", section)
-        self.assertIn("never prompts", section)
+        self.assertIn("references/starter-templates.md", self.readme)
+        self.assertIn("comic-sol init --interactive", self.starters)
+        self.assertIn("comic-sol --json init", self.starters)
+        self.assertIn("page count still defaults to 2", self.starters)
 
 
 class OnboardingTests(unittest.TestCase):
@@ -382,21 +405,21 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         normalized = [textwrap.dedent(block).rstrip() for block in blocks]
         return [block for block in normalized if block.startswith(command)]
 
-    def test_readme_documents_cross_agent_handoff_workflow(self):
+    def test_readme_summarizes_and_links_cross_agent_handoff_workflow(self):
         readme = collapsed(self.readme)
         for phrase in (
             "handoff prepare",
             "handoff inspect",
             "accept-result",
-            "record-failure",
+            "references/workflow.md#cross-agent-handoff-lifecycle",
         ):
             self.assertIn(phrase, readme, phrase)
 
     def test_readme_documents_portable_archive_export_import(self):
         readme = collapsed(self.readme)
         for phrase in (
-            "archive export",
-            "archive import",
+            "handoff export",
+            "handoff import",
         ):
             self.assertIn(phrase, readme, phrase)
 
@@ -589,14 +612,11 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         self.assertTrue(-1 < capability_pos < resume_pos < qa_pos)
         self.assertIn("otherwise preserve `BLOCKED`", section)
 
-    def test_readme_record_failure_uses_category_not_reason(self):
-        """README handoff section uses --category for record-failure."""
-        readme = collapsed(self.readme)
-        # The README must mention category in connection with record-failure
-        self.assertIn("category", readme)
-        # Must not say "failure with a reason" in the handoff section
-        handoff_section = self.readme.split("## Cross-agent handoff", 1)[1].split("\n## ", 1)[0]
-        self.assertNotIn("with a reason", handoff_section)
+    def test_workflow_record_failure_uses_category_not_reason(self):
+        """The linked canonical lifecycle uses --category for record-failure."""
+        section = self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :]
+        self.assertIn("--category CATEGORY", section)
+        self.assertNotIn("with a reason", section)
 
 
 class GoldenCreatorPathTests(unittest.TestCase):
@@ -621,20 +641,20 @@ class GoldenCreatorPathTests(unittest.TestCase):
         return document[start:] if end == -1 else document[start:end]
 
     def test_readme_creator_path_has_approved_structural_order(self):
-        """Keep every approved creator-path element in its binding order."""
+        """Keep the creator story in a short, outcome-first order."""
         advanced = self.readme.index("## Advanced integrations")
         creator = self.readme[:advanced]
         ordered_markers = (
-            "## Retained live-generated evidence",
+            "## What Comic Sol does",
+            "## See the output",
             "samples/sunlight-courier/pages/page-001.png",
             "samples/sunlight-courier/pages/page-002.png",
-            "Comic Sol is a local-first production pipeline around any compatible AI image generator. Plan anywhere. Render anywhere. Resume everywhere.",
+            "## Quick start",
             "comic-sol skill-install",
             "Make a 2-page manga about a courier delivering sunlight to an underground city.",
-            "Codex planning → Antigravity rendering",
-            "samples/sunlight-courier/exports/sunlight-courier.pdf",
-            "samples/sunlight-courier/project.json",
-            "samples/sunlight-courier/qa/report.md",
+            "## Choose an image route",
+            "handoff prepare",
+            "## What you get",
         )
         positions = tuple(creator.index(marker) for marker in ordered_markers)
         self.assertEqual(tuple(sorted(positions)), positions)
@@ -648,7 +668,8 @@ class GoldenCreatorPathTests(unittest.TestCase):
 
     def test_every_creator_path_element_precedes_advanced_integrations(self):
         """Keep all creator essentials above the advanced-integration boundary."""
-        advanced = self.readme.index("## Advanced integrations")
+        readme = collapsed(self.readme)
+        advanced = readme.index("## Advanced integrations")
         required = (
             "page-001.png",
             "page-002.png",
@@ -660,54 +681,41 @@ class GoldenCreatorPathTests(unittest.TestCase):
             "handoff export",
             "handoff import",
             "handoff accept-result",
-            "sunlight-courier.pdf",
-            "project.json",
-            "qa/report.md",
-        )
-        for marker in required:
-            self.assertLess(self.readme.index(marker), advanced, marker)
-
-    def test_handoff_example_preserves_the_complete_concise_contract(self):
-        """Keep transfer, intake, unblock, resume, and promotion in executable order."""
-        section = self.section(self.readme, "Codex planning → Antigravity rendering")
-        normalized = collapsed(section)
-        for phrase in (
-            "experimental until",
-            "linked real host execution smoke record",
-            "durable, inspectable links",
-            "has not been verified",
-            "handoff prepare",
-            "handoff inspect",
-            "handoff export",
-            "handoff import",
-            "exact `jobs[].path`",
-            "only a `ready` job",
-            "--job JOB_ID",
-            "--attempt ATTEMPT",
+            "--attempt N",
             "--executor-kind EXECUTOR_KIND",
             "--executor-id EXECUTOR_ID",
             "--path RASTER_PATH",
-            "--approve-reference",
-            "prepare again",
-            "inspect again before retries",
-            "record its real provider-neutral capability observation",
-            'comic-sol resume "$IMPORTED_PROJECT" --json',
-            "visual QA and promotion",
+            "sunlight-courier.pdf",
+            "project.json",
+            "qa/report.md",
+            "references/workflow.md#cross-agent-handoff-lifecycle",
+        )
+        for marker in required:
+            self.assertLess(readme.index(marker), advanced, marker)
+
+    def test_handoff_summary_links_the_complete_canonical_contract(self):
+        """Keep only the executable summary in README and link the full lifecycle."""
+        section = self.section(self.readme, "Choose an image route")
+        normalized = collapsed(section)
+        for phrase in (
+            "handoff prepare",
+            "handoff export",
+            "handoff import",
+            "handoff inspect",
+            "handoff accept-result",
+            "exact `jobs[].path` of a `ready` job",
+            "returned local image as `--path RASTER_PATH`",
+            "references/workflow.md#cross-agent-handoff-lifecycle",
         ):
             self.assertIn(phrase, normalized, phrase)
-        self.assertIn("installed package", normalized)
-        self.assertIn("source checkout", normalized)
-        resume = normalized.index('comic-sol resume "$IMPORTED_PROJECT" --json')
-        qa = normalized.index("visual QA and promotion")
-        self.assertLess(resume, qa)
 
     def test_skill_install_path_requires_a_distribution_that_ships_it(self):
         """Disclose rc6 availability before advertising its installer command."""
-        section = self.section(self.readme, "Install the Agent Skill")
+        section = self.section(self.readme, "Quick start")
         command = section.index("comic-sol skill-install --target codex --scope user")
         for marker in (
             "v2.0.0rc6",
-            "not published",
+            "not yet published",
             "v2.0.0rc4",
             "does not include `skill-install`",
         ):
@@ -724,6 +732,7 @@ class GoldenCreatorPathTests(unittest.TestCase):
         )
         command = "comic-sol skill-install --target codex --scope user"
         guides = {
+            "README.md": (self.readme, "Quick start"),
             "docs/install.md": (read("docs/install.md"), "Creator path"),
             "docs/onboarding.md": (read("docs/onboarding.md"), "1. Install the Agent Skill"),
             "docs/user/getting-started.md": (
@@ -737,21 +746,28 @@ class GoldenCreatorPathTests(unittest.TestCase):
                 self.assertEqual(1, section.count(qualification), name)
                 self.assertLess(section.index(qualification), section.index(command), name)
 
+    def test_named_host_claims_remain_experimental(self):
+        """Do not turn portable placement into unverified host compatibility."""
+        introduction = self.readme.split("## See the output", 1)[0]
+        for host in ("Codex", "Claude", "Antigravity", "ZCode"):
+            self.assertIn(host, introduction)
+        self.assertIn(
+            "All named host integrations remain **Experimental**",
+            introduction,
+        )
+        self.assertIn("docs/support-matrix.md", introduction)
+
     def test_codex_plugin_does_not_reintroduce_manual_skill_placement(self):
         """Keep manual Skill checkout commands out of the plugin workflow."""
-        section = self.section(self.readme, "Codex Plugin — same repository")
-        for command in (
-            "codex plugin marketplace add",
-            "codex plugin list",
-            "codex plugin add",
-        ):
-            self.assertIn(command, section)
-        self.assertNotIn("git clone", section)
-        self.assertNotIn(r".codex\skills\comic-sol", section)
+        section = self.section(self.readme, "Advanced integrations")
+        plugin = read("docs/surfaces.md").split("## Codex Plugin bundle", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("docs/surfaces.md#codex-plugin-bundle", section)
+        self.assertIn("codex plugin add", plugin)
+        self.assertNotIn(r".codex\skills\comic-sol", plugin)
 
     def test_sample_claims_keep_the_evidence_boundary(self):
         """Limit visual-quality claims to the one retained live sample."""
-        evidence = self.section(self.readme, "Retained live-generated evidence")
+        evidence = self.section(self.readme, "See the output")
         normalized = collapsed(evidence).lower()
         self.assertIn("only visual-quality sample", normalized)
         self.assertIn("one retained sample does not prove broad illustration quality", normalized)
