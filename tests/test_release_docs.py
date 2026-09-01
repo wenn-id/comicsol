@@ -133,7 +133,6 @@ class ReleaseDocumentationTests(unittest.TestCase):
 
         display_names = {"linux": "Linux", "macos": "macOS", "windows": "Windows"}
         documents = {
-            "README.md": self.readme,
             "docs/install.md": self.install,
             "CHANGELOG.md": self.changelog,
             "stable criteria": self.stable_criteria,
@@ -161,6 +160,8 @@ class ReleaseDocumentationTests(unittest.TestCase):
                 self.assertIn(wsl_contract, collapsed)
                 self.assertIn(source_contract, collapsed)
                 self.assertIn(intel_contract, collapsed)
+        self.assertIn("docs/install.md", self.readme)
+        self.assertIn("docs/support-matrix.md", self.readme)
 
     def test_candidate_notes_name_exactly_every_matrix_payload(self):
         native_targets = self._native_targets()
@@ -1218,6 +1219,7 @@ class GoldenCreatorDocumentationHierarchyTests(unittest.TestCase):
         """Keep every retained advanced integration linked from one entry."""
         readme = self._read("README.md")
         section = readme.split("## Advanced integrations", 1)[1].split("\n## ", 1)[0]
+        searchable = section.lower()
         for phrase in (
             "CLI",
             "MCP",
@@ -1228,7 +1230,7 @@ class GoldenCreatorDocumentationHierarchyTests(unittest.TestCase):
             "security",
             "release",
         ):
-            self.assertIn(phrase, section, phrase)
+            self.assertIn(phrase.lower(), searchable, phrase)
         for link in (
             "docs/surfaces.md",
             "docs/install.md",

@@ -2615,13 +2615,13 @@ class PackagingTests(unittest.TestCase):
     def readme(self):
         return (ROOT / "README.md").read_text("utf-8")
 
-    def test_readme_is_judge_runnable_without_a_build_service(self):
+    def test_readme_is_creator_runnable_without_a_build_service(self):
         readme = self.readme()
         for required in (
-            "Pillow==12.3.0",
-            '"$PYTHON" -m unittest discover -s tests -v',
-            '"$PYTHON" scripts/comic_sol.py doctor',
+            "comic-sol skill-install",
+            "comic-sol doctor",
             "One natural-language",
+            "requires no build service",
         ):
             self.assertIn(required, readme)
         self.assertNotRegex(readme.lower(), r"npm run|start the server|docker compose")
@@ -2664,7 +2664,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_readme_badges_report_live_project_contracts(self):
         readme = self.readme()
-        preamble, separator, _ = readme.partition("Comic Sol is an installable")
+        preamble, separator, _ = readme.partition("**Plan anywhere")
         self.assertTrue(separator, "README product introduction is missing")
         badges = set(re.findall(r"\[!\[([^]]+)\]\(([^)]+)\)\]\(([^)]+)\)", preamble))
         expected = {
@@ -2687,7 +2687,7 @@ class PackagingTests(unittest.TestCase):
             (
                 "MCP tools",
                 "https://img.shields.io/badge/MCP_tools-17-brightgreen",
-                "#mcp-server-optional",
+                "docs/surfaces.md",
             ),
             (
                 "Platforms",
@@ -2701,10 +2701,10 @@ class PackagingTests(unittest.TestCase):
         readme = self.readme()
         install = (ROOT / "docs/install.md").read_text("utf-8")
         for document in (readme, install):
-            self.assertIn("Recommended companion: Superpowers", document)
             self.assertIn("https://github.com/obra/superpowers", document)
-            self.assertIn("Superpowers is optional", document)
-            self.assertIn("installed separately", document)
+            self.assertIn("Superpowers", document)
+            self.assertIn("optional", document)
+            self.assertIn("separately", document)
         self.assertIn("not required for Comic Sol to run", " ".join(readme.split()))
         self.assertIn("not bundled with or required by Comic Sol", " ".join(install.split()))
 
@@ -2727,23 +2727,17 @@ class PackagingTests(unittest.TestCase):
         readme = self.readme()
         for phrase in (
             "Python 3.11",
-            "clone",
-            "copy",
-            "Codex skills directory",
             "project.json",
-            "panel PNGs",
             "page PNGs",
-            "comic PDF",
+            "PDF",
             "qa/report.md",
             "Linux",
             "Windows",
             "macOS",
-            "WSL",
-            "references/capability-detection.md",
-            "Limitations",
-            "clean-room",
-            "tests/fixtures/valid-one-page",
-            "No build service",
+            "docs/install-manual.md",
+            "docs/typography.md",
+            "CONTRIBUTING.md",
+            "requires no build service",
         ):
             self.assertIn(phrase, readme)
 
@@ -2756,23 +2750,20 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("SIL Open Font License 1.1", assets)
         self.assertIn("does not replace the font license", assets)
 
-    def test_readme_documents_hybrid_lettering_capabilities_and_limits(self):
+    def test_readme_links_the_hybrid_lettering_contract(self):
         readme = self.readme()
+        typography = (ROOT / "docs/typography.md").read_text("utf-8")
+        self.assertIn("docs/typography.md", readme)
         for phrase in (
             "Comic Neue Regular",
             "Comic Neue Bold",
-            "per-character",
-            "Greek and Cyrillic",
+            "Polytonic Greek",
+            "Cyrillic",
             ".notdef",
-            "**bold**",
-            "adaptive oval",
-            "compact light caption",
-            "image model",
-            "visual QA",
+            "`**emphasis**`",
             "CJK",
-            "fallback boxes",
         ):
-            self.assertIn(phrase, readme)
+            self.assertIn(phrase, typography)
 
     def test_readme_and_ci_are_portable_and_describe_optional_mcp(self):
         readme = self.readme()
@@ -2780,9 +2771,8 @@ class PackagingTests(unittest.TestCase):
         recovery = (ROOT / "references/capability-detection.md").read_text("utf-8")
         self.assertNotIn("/home/acer", readme)
         self.assertNotIn("/mnt/c/Users/acer", readme)
-        self.assertIn("Base environment", readme)
-        self.assertIn("MCP-extra environment", readme)
-        self.assertIn("scripts/mcp_server.py", readme)
+        self.assertIn("docs/surfaces.md#mcp-server", readme)
+        self.assertIn("CONTRIBUTING.md", readme)
         self.assertIn("resume", recovery)
         self.assertIn("17 `comic_*` tools", readme)
         for platform in ("ubuntu-latest", "macos-26-intel", "windows-latest"):

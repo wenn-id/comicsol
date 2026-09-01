@@ -179,7 +179,7 @@ message reported, then ask the agent to **resume that Comic Sol project**.
 
 | Failed check | What it means | How to fix it |
 |---|---|---|
-| `runtime` | Your Python is older than 3.11. | Install Python 3.11+, then redo step 1 with that launcher. See [`README.md` → Install](../README.md#install). |
+| `runtime` | Your Python is older than 3.11. | Install Python 3.11+, then redo step 1 with that launcher. See [source and wheel installation](install-manual.md#source-and-wheel-installation). |
 | `pillow` | The one pinned dependency is missing or the wrong version. | Installed-package users should reinstall the package. Source users should repeat the matching command in [source and wheel installation](install-manual.md#source-and-wheel-installation). |
 | `fonts` | A bundled font face is missing or unreadable. | Your copy is incomplete. Re-clone or reinstall so `assets/fonts/` is intact; see [`assets/README.md`](../assets/README.md). |
 | `templates` | A project template is missing, empty, or malformed JSON. | Reinstall to restore `templates/`; see [`docs/install.md` → Upgrade and rollback](install.md#upgrade-and-rollback). |
@@ -190,7 +190,7 @@ Warnings are not failures:
 
 | Warned check | Why it is fine |
 |---|---|
-| `mcp` | The MCP server is optional. Skip it for your first comic; see [`README.md` → MCP Server](../README.md#mcp-server-optional) later. |
+| `mcp` | The MCP server is optional. Skip it for your first comic; see the [MCP server contract](surfaces.md#mcp-server) later. |
 | `image-capability` | A partial, unavailable, or unknown image capability does not break deterministic editing. Step 3 explains why generation may still pause at `BLOCKED`. |
 
 For machine-readable diagnostics, add `--json` and read `data.ready` plus
@@ -212,7 +212,7 @@ Once your first comic exists:
   per-platform image provider setup for non-Codex agents.
 - [`references/capability-detection.md`](../references/capability-detection.md) —
   the exact capability check and `BLOCKED`-project recovery procedure.
-- [`README.md` → MCP Server](../README.md#mcp-server-optional) — expose the
+- [`docs/surfaces.md` → MCP server](surfaces.md#mcp-server) — expose the
   deterministic lifecycle as MCP tools.
 - [`docs/dogfood.md`](dogfood.md) — the optional manual creator-report route,
   local privacy checks, and separate report/showcase consent boundaries.
