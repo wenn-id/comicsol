@@ -25,7 +25,21 @@ class WebMcpCreatorFlowTests(unittest.TestCase):
         for name in ("get_comic_context", "create_comic", "revise_comic"):
             self.assertIn(f'name: "{name}"', self.app)
         self.assertIn("registerCreatorWebMcp", self.app)
-        self.assertIn("void registerCreatorWebMcp();", self.app)
+
+    def test_core_and_creator_tools_register_sequentially(self) -> None:
+        registration = re.search(
+            r"async function registerAllWebMcp\(\)\s*\{(?P<body>.*?)\}",
+            self.app,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(registration)
+        assert registration is not None
+        body = registration.group("body")
+        core = body.index("await registerWebMcp();")
+        creator = body.index("await registerCreatorWebMcp();")
+        self.assertLess(core, creator)
+        self.assertIn("void registerAllWebMcp();", self.app)
+        self.assertNotIn("void registerWebMcp();\nvoid registerCreatorWebMcp();", self.app)
 
     def test_creator_layer_reuses_existing_project_api(self) -> None:
         self.assertRegex(
