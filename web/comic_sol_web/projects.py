@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Mapping
+from typing import ContextManager, Mapping
+
+from comic_sol_web.planning.types import PlanRequest
 
 from comic_sol_web.auth import SessionPrincipal
 from comic_sol_web.engine_gateway import AcceptedRaster, EngineGateway, ProjectSnapshot
@@ -65,6 +67,18 @@ class ProjectService:
     ) -> ProjectSnapshot:
         self._authorize(principal, project_id)
         return self.gateway.update_plan(project_id, expected_revision, plan)
+
+    def planning_input(
+        self, principal: SessionPrincipal, project_id: str, expected_revision: int
+    ) -> PlanRequest:
+        self._authorize(principal, project_id)
+        return self.gateway.planning_input(project_id, expected_revision)
+
+    def planning_publication(
+        self, principal: SessionPrincipal, project_id: str
+    ) -> ContextManager[None]:
+        self._authorize(principal, project_id)
+        return self.gateway.planning_publication(project_id)
 
     def prepare_generation(
         self,

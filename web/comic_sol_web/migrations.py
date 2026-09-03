@@ -335,6 +335,49 @@ GENERATION_MIGRATIONS = (
 
 APPROVAL_MIGRATIONS = (*GENERATION_MIGRATIONS, PROVIDER_SWITCH_PROPOSAL_MIGRATION)
 
+PLANNING_MIGRATION = Migration(
+    9,
+    (
+        """
+        CREATE TABLE planning_jobs (
+            job_id TEXT PRIMARY KEY CHECK (length(job_id) = 36),
+            idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) = 36),
+            owner_id TEXT NOT NULL CHECK (length(owner_id) BETWEEN 1 AND 128),
+            project_id TEXT NOT NULL REFERENCES web_projects(project_id),
+            project_revision INTEGER NOT NULL CHECK (project_revision >= 1),
+            provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 64),
+            model TEXT NOT NULL CHECK (length(model) BETWEEN 1 AND 128),
+            state TEXT NOT NULL CHECK (state IN (
+                'queued', 'running', 'repairing', 'ready_for_review', 'failed', 'cancelled'
+            )),
+            attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 2),
+            usage_json TEXT NOT NULL DEFAULT '{}' CHECK (length(usage_json) <= 4096),
+            error_category TEXT CHECK (error_category IN (
+                'invalid_credentials', 'quota_exhausted', 'rate_limited', 'moderated',
+                'capability_missing', 'timeout', 'cancelled', 'unavailable',
+                'invalid_output', 'provider_error', 'stale_revision'
+            )),
+            lease_token TEXT CHECK (length(lease_token) = 36),
+            lease_owner TEXT CHECK (length(lease_owner) BETWEEN 1 AND 128),
+            lease_expires_at INTEGER,
+            publication_sha256 TEXT CHECK (length(publication_sha256) = 64),
+            published_revision INTEGER CHECK (published_revision >= 1),
+            created_at INTEGER NOT NULL,
+            started_at INTEGER,
+            completed_at INTEGER,
+            updated_at INTEGER NOT NULL,
+            UNIQUE (owner_id, idempotency_key)
+        )
+        """,
+        "CREATE INDEX planning_jobs_owner ON planning_jobs (owner_id, project_id, job_id)",
+        "CREATE INDEX planning_jobs_lease ON planning_jobs (state, lease_expires_at, created_at)",
+        "CREATE UNIQUE INDEX planning_jobs_active ON planning_jobs (project_id) "
+        "WHERE state IN ('queued', 'running', 'repairing')",
+    ),
+)
+
+PLANNING_MIGRATIONS = (*APPROVAL_MIGRATIONS, PLANNING_MIGRATION)
+
 
 def _validate_migrations(migrations: Sequence[Migration]) -> None:
     versions = tuple(migration.version for migration in migrations)

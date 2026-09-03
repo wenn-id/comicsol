@@ -7,6 +7,8 @@ import re
 import secrets
 import sqlite3
 import stat
+from contextlib import contextmanager
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, cast
@@ -22,6 +24,7 @@ from comic_sol_web.assets import (
 from comic_sol_web.database import Database
 from comic_sol_web.generation.types import GenerationRequest
 from comic_sol_web.migrations import APPLICATION_MIGRATIONS, Migration
+from comic_sol_web.planning.types import PlanRequest
 
 comic_sol = _load_engine_module("comic_sol")
 _character_identity = _load_engine_module("character_identity")
@@ -498,6 +501,43 @@ class EngineGateway:
                 root,
                 extra_summary={"plan": self._plan_summary(root)},
             )
+
+    def planning_input(self, project_id: str, expected_revision: int) -> PlanRequest:
+        """Read only the canonical source and request, never exposing its path."""
+        root = self._root_from_row(self._row(project_id))
+        with ProjectLock(root, read_only=True):
+            row = self._row(project_id)
+            self._check_revision(cast(int, row["revision"]), expected_revision)
+            manifest = read_project_manifest(root / "project.json")
+            request = read_contained_json(root, "source/request.json")
+            source = read_contained_bytes(
+                root, "source/input.txt", max_bytes=_project_io.MAX_SOURCE_BYTES
+            ).decode("utf-8")
+            settings = manifest.get("settings")
+            if not isinstance(settings, dict) or not isinstance(request, dict):
+                raise GatewayInputError("planning input is invalid")
+            title = manifest.get("title")
+            language = request.get("language")
+            page_count = settings.get("page_count")
+            if (
+                not isinstance(title, str) or not isinstance(language, str)
+                or isinstance(page_count, bool) or not isinstance(page_count, int)
+            ):
+                raise GatewayInputError("planning input is invalid")
+            return PlanRequest(
+                title=title, source=source, language=language, page_count=page_count,
+            )
+
+    @contextmanager
+    def planning_publication(self, project_id: str) -> Iterator[None]:
+        """Serialize lease fencing/publication with other canonical Plan writers.
+
+        The service keeps provider calls outside this short, reentrant lock.
+        A claimant also takes it before replacing an expired lease.
+        """
+        root = self._root_from_row(self._row(project_id))
+        with ProjectLock(root, read_only=True):
+            yield
 
     @staticmethod
     def _plan_candidate(
