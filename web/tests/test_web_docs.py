@@ -539,6 +539,7 @@ class WebProvidersContractTests(unittest.TestCase):
                     r"(?i)agent|hosted|BYOK|n/a",
                     f"{label} authentication cell is {auth!r}",
                 )
+        self.assertEqual("Hosted server credential only", rows["OpenAI"]["authentication"])
 
     def test_document_contains_no_credential_shaped_string(self) -> None:
         """check document contains no credential shaped string."""

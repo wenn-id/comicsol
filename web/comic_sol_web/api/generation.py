@@ -126,10 +126,21 @@ def _options_envelope(models: Any) -> list[dict[str, object]]:
             "provider": entry.provider,
             "model": entry.model,
             "capabilities": sorted(entry.capabilities),
-            "auth_modes": ["agent"] if entry.provider in {"agent", "fake"} else ["hosted", "byok"],
+            "auth_modes": list(_provider_auth_modes(entry.provider)),
         }
         for entry in models
     ]
+
+
+def _provider_auth_modes(provider: str) -> tuple[str, ...]:
+    """Return the only authentication modes admitted for a routed provider."""
+    if provider in {"agent", "fake"}:
+        return ("agent",)
+    # OpenAI is wired solely from a server-declared credential. It must never
+    # fall back to session or persisted browser-provided credentials.
+    if provider == "openai":
+        return ("hosted",)
+    return ("hosted", "byok")
 
 
 def _revision(body: dict[str, object]) -> int:
@@ -195,7 +206,7 @@ async def _available_routing_credentials(
     available: dict[str, tuple[object, ...]] = {}
     for provider in providers:
         modes: list[AuthMode] = []
-        for mode in (AuthMode.HOSTED, AuthMode.BYOK):
+        for mode in (AuthMode(value) for value in _provider_auth_modes(provider)):
             try:
                 async with resolver.resolve(principal.user_id, provider, mode):
                     modes.append(mode)

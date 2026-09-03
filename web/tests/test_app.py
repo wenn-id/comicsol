@@ -145,6 +145,7 @@ class WebApplicationTests(unittest.TestCase):
                 ["openai"], [item["provider"] for item in options.json()["options"]]
             )
             self.assertEqual("gpt-image-2-custom", options.json()["options"][0]["model"])
+            self.assertEqual(["hosted"], options.json()["options"][0]["auth_modes"])
             self.assertNotIn("credential", options.text)
             self.assertNotIn("test-openai-key", options.text)
 

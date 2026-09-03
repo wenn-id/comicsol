@@ -267,6 +267,8 @@ class GenerationService:
         selected_provider = self._providers.get(provider)
         if provider == "agent" and mode is not AuthMode.AGENT:
             raise ValueError("agent generation requires agent authentication mode")
+        if provider == "openai" and mode is not AuthMode.HOSTED:
+            raise ValueError("OpenAI generation requires hosted authentication mode")
         requests = self._projects.prepare_generation(principal, project_id, expected_revision)
         if provider == "agent":
             if not isinstance(selected_provider, AgentProvider) or any(

@@ -52,7 +52,7 @@ The columns are:
 
 | Provider | Adapter implemented | Routable in merged build | Offline-qualified (adapter-level) | Live smoke | Authentication | Evidence | Surface tier |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| OpenAI | Yes | Conditional | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Offline-qualified |
+| OpenAI | Yes | Conditional | Yes (mocked transport) | Not run | Hosted server credential only | None | Offline-qualified |
 | Google | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
 | BFL (direct) | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
 | xAI | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
