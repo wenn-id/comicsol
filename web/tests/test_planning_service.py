@@ -304,6 +304,9 @@ class PlanningServiceTests(GatewayFixture):
             from comic_sol_web.auth import require_principal
 
             app.dependency_overrides[require_principal] = lambda: self.alice
+            missing = client.get("/api/planning/jobs/" + str(uuid4()))
+            self.assertEqual(404, missing.status_code)
+            self.assertEqual("private, no-store", missing.headers.get("cache-control"))
             with patch.object(auth, "require_csrf", return_value=self.alice):
                 options = client.get("/api/planning/options")
                 self.assertEqual("private, no-store", options.headers["cache-control"])
@@ -314,7 +317,9 @@ class PlanningServiceTests(GatewayFixture):
                     "provider": "openai",
                     "model": self.provider.model,
                 }
-                self.assertEqual(400, client.post("/api/planning/jobs", json=body).status_code)
+                rejected = client.post("/api/planning/jobs", json=body)
+                self.assertEqual(400, rejected.status_code)
+                self.assertEqual("private, no-store", rejected.headers.get("cache-control"))
                 response = client.post(
                     "/api/planning/jobs", json=body, headers={"Idempotency-Key": str(uuid4())}
                 )
@@ -325,8 +330,10 @@ class PlanningServiceTests(GatewayFixture):
                 self.assertNotIn("lease", result.text)
                 self.assertNotIn("private-test-credential", result.text)
                 app.dependency_overrides[require_principal] = lambda: self.bob
-                self.assertEqual(
-                    404, client.get("/api/planning/jobs/" + response.json()["job_id"]).status_code
-                )
+                denied = client.get("/api/planning/jobs/" + response.json()["job_id"])
+                self.assertEqual(404, denied.status_code)
+                self.assertEqual("private, no-store", denied.headers.get("cache-control"))
             app.dependency_overrides[require_principal] = lambda: self.alice
-            self.assertEqual(403, client.post("/api/planning/jobs", json=body).status_code)
+            csrf_denied = client.post("/api/planning/jobs", json=body)
+            self.assertEqual(403, csrf_denied.status_code)
+            self.assertEqual("private, no-store", csrf_denied.headers.get("cache-control"))
