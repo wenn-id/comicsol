@@ -11,6 +11,7 @@ const outlet = document.getElementById("studio-view");
 const main = document.getElementById("studio-main");
 const status = document.getElementById("studio-status");
 const tabs = Array.from(document.querySelectorAll(".step-tab"));
+const CREATOR_LOCAL_STORAGE_KEY = "comic-sol:webmcp-creator-v1";
 let renderedView = null;
 
 function announce(message, tone = "") {
@@ -114,24 +115,98 @@ function creatorSafeExecute(operation) {
   };
 }
 
+function hasStudioSession() {
+  if (typeof document === "undefined") return false;
+  return document.cookie
+    .split(";")
+    .some((part) => part.trim().startsWith("comic_sol_csrf="));
+}
+
+function isBrowserLocalProject(project) {
+  return Boolean(project && typeof project.project_id === "string" && project.project_id.startsWith("local:"));
+}
+
+function validateLocalCreatorProject(project) {
+  if (!project || typeof project !== "object") return null;
+  if (typeof project.project_id !== "string" || !Number.isInteger(project.revision)) return null;
+  if (typeof project.status !== "string" || !project.summary || typeof project.summary !== "object") {
+    return null;
+  }
+  try {
+    creatorPlan(project.summary.plan);
+  } catch (_error) {
+    return null;
+  }
+  return project;
+}
+
+function loadLocalCreatorProject() {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(CREATOR_LOCAL_STORAGE_KEY);
+    return raw ? validateLocalCreatorProject(JSON.parse(raw)) : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function saveLocalCreatorProject(project) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(CREATOR_LOCAL_STORAGE_KEY, JSON.stringify(project));
+  } catch (_error) {
+    // Browser-local creator mode is best-effort; the in-memory Store still works.
+  }
+}
+
+function makeLocalCreatorProject({ title, concept, language, pageCount, visualStyle, plan }) {
+  return {
+    project_id: `local:${crypto.randomUUID()}`,
+    revision: 1,
+    status: "STORYBOARDED",
+    summary: {
+      title,
+      plan,
+      creator: {
+        concept,
+        language,
+        page_count: pageCount,
+        visual_style: visualStyle,
+      },
+    },
+  };
+}
+
 function creatorProjectSummary(project) {
   return {
     project_id: project.project_id,
     revision: project.revision,
     status: project.status,
     plan_available: Boolean(project.summary?.plan),
+    mode: isBrowserLocalProject(project) ? "browser-local" : "studio",
   };
+}
+
+async function currentCreatorProject() {
+  try {
+    const project = await getCurrentProject();
+    if (project) return project;
+  } catch (error) {
+    if (Number(error?.status || 0) !== 404) throw error;
+  }
+  return loadLocalCreatorProject();
 }
 
 async function getComicContext(input) {
   assertCreatorObject(input, []);
-  const project = await getCurrentProject();
+  const project = await currentCreatorProject();
   if (!project) return { available: false };
   return {
     available: true,
     project_id: project.project_id,
     revision: project.revision,
     status: project.status,
+    mode: isBrowserLocalProject(project) ? "browser-local" : "studio",
     plan: {
       storyPlan: project.summary.plan.storyPlan,
       characterBible: project.summary.plan.characterBible,
@@ -148,22 +223,42 @@ async function createComic(input) {
     "language",
     "page_count",
     "visual_style",
+    "plan",
   ]);
   const title = creatorString(request.title, 1, 160);
   const concept = creatorString(request.concept, 1, 200000);
   const language = creatorString(request.language, 1, 16);
   const pageCount = creatorPageCount(request.page_count);
   const visualStyle = creatorString(request.visual_style, 1, 4000);
+  const plan = creatorPlan(request.plan);
   const prompt = [
     concept,
     "",
     `Visual direction: ${visualStyle}`,
     `Create a coherent ${pageCount}-page comic or manga plan with reusable character details, storyboard beats, and visual identity.`,
   ].join("\n");
-  const project = await createProject(
-    { title, prompt, language, mode: "short_prompt", page_count: pageCount },
-    crypto.randomUUID(),
-  );
+  let project = null;
+  if (hasStudioSession()) {
+    try {
+      project = await createProject(
+        { title, prompt, language, mode: "short_prompt", page_count: pageCount },
+        crypto.randomUUID(),
+      );
+    } catch (error) {
+      if (Number(error?.status || 0) !== 404) throw error;
+    }
+  }
+  if (!project) {
+    project = makeLocalCreatorProject({
+      title,
+      concept,
+      language,
+      pageCount,
+      visualStyle,
+      plan,
+    });
+    saveLocalCreatorProject(project);
+  }
   store.setProject(project);
   navigate("plan", { focus: false });
   announce("Comic plan created. Review or revise it with your agent.", "success");
@@ -174,14 +269,40 @@ async function reviseComic(input) {
   const request = assertCreatorObject(input, ["instruction", "plan"]);
   creatorString(request.instruction, 1, 20000);
   const plan = creatorPlan(request.plan);
-  const current = await getCurrentProject();
+  const current = await currentCreatorProject();
   if (!current) throw new CreatorInputError();
-  const project = await updatePlan(current.project_id, plan, current.revision, crypto.randomUUID());
+  let project = null;
+  if (!isBrowserLocalProject(current) && hasStudioSession()) {
+    try {
+      project = await updatePlan(current.project_id, plan, current.revision, crypto.randomUUID());
+    } catch (error) {
+      if (Number(error?.status || 0) !== 404) throw error;
+    }
+  }
+  if (!project) {
+    project = {
+      ...current,
+      revision: current.revision + 1,
+      status: "STORYBOARDED",
+      summary: { ...current.summary, plan },
+    };
+    saveLocalCreatorProject(project);
+  }
   store.setProject(project);
   navigate("plan", { focus: false });
   announce("Comic plan revised from your creative direction.", "success");
   return creatorProjectSummary(project);
 }
+
+const CREATOR_PLAN_SCHEMA = creatorSchema(
+  {
+    storyPlan: { type: "string", maxLength: 1048576 },
+    characterBible: { type: "string", maxLength: 1048576 },
+    storyboard: { type: "string", maxLength: 1048576 },
+    visualIdentityPack: { type: "string", maxLength: 1048576 },
+  },
+  ["storyPlan", "characterBible", "storyboard", "visualIdentityPack"],
+);
 
 const CREATOR_TOOL_DEFINITIONS = Object.freeze([
   {
@@ -195,7 +316,7 @@ const CREATOR_TOOL_DEFINITIONS = Object.freeze([
   {
     name: "create_comic",
     description:
-      "Create a new ComicSol comic or manga project directly from a creator concept and visual direction.",
+      "Create a new ComicSol comic or manga from a creator concept. Draft the four-part Plan from the user's request and pass it here; ComicSol handles project mechanics and can fall back to browser-local mode on the hosted static Studio.",
     inputSchema: creatorSchema(
       {
         title: { type: "string", minLength: 1, maxLength: 160 },
@@ -203,8 +324,9 @@ const CREATOR_TOOL_DEFINITIONS = Object.freeze([
         language: { type: "string", minLength: 1, maxLength: 16 },
         page_count: { type: "integer", minimum: 1, maximum: 4 },
         visual_style: { type: "string", minLength: 1, maxLength: 4000 },
+        plan: CREATOR_PLAN_SCHEMA,
       },
-      ["title", "concept", "language", "page_count", "visual_style"],
+      ["title", "concept", "language", "page_count", "visual_style", "plan"],
     ),
     annotations: Object.freeze({ readOnlyHint: false }),
     execute: creatorSafeExecute(createComic),
@@ -212,7 +334,7 @@ const CREATOR_TOOL_DEFINITIONS = Object.freeze([
   {
     name: "revise_comic",
     description:
-      "Apply a creator-requested story, character, storyboard, or visual revision to the active comic after reading its current context.",
+      "Apply a creator-requested story, character, storyboard, or visual revision after reading the current comic context. Pass the fully revised four-part Plan; project revision mechanics stay inside ComicSol.",
     inputSchema: creatorSchema(
       {
         instruction: { type: "string", minLength: 1, maxLength: 20000 },
@@ -322,9 +444,18 @@ async function restoreProject() {
   try {
     if (await restoreCurrentProject(store, getCurrentProject)) {
       announce("Restored your current project.", "success");
+      return;
     }
-  } catch (_error) {
-    announce("Your saved project could not be restored safely.", "error");
+  } catch (error) {
+    if (Number(error?.status || 0) !== 404) {
+      announce("Your saved project could not be restored safely.", "error");
+      return;
+    }
+  }
+  const localProject = loadLocalCreatorProject();
+  if (localProject) {
+    store.setProject(localProject);
+    announce("Restored your browser-local creator project.", "success");
   }
 }
 
