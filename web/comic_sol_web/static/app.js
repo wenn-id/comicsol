@@ -11,8 +11,8 @@ const outlet = document.getElementById("studio-view");
 const main = document.getElementById("studio-main");
 const status = document.getElementById("studio-status");
 const tabs = Array.from(document.querySelectorAll(".step-tab"));
-const CREATOR_LOCAL_STORAGE_KEY = "comic-sol:webmcp-creator-v1";
 let renderedView = null;
+let browserLocalCreatorProject = null;
 
 function announce(message, tone = "") {
   status.textContent = message;
@@ -123,7 +123,9 @@ function hasStudioSession() {
 }
 
 function isBrowserLocalProject(project) {
-  return Boolean(project && typeof project.project_id === "string" && project.project_id.startsWith("local:"));
+  return Boolean(
+    project && typeof project.project_id === "string" && project.project_id.startsWith("local:"),
+  );
 }
 
 function validateLocalCreatorProject(project) {
@@ -141,22 +143,11 @@ function validateLocalCreatorProject(project) {
 }
 
 function loadLocalCreatorProject() {
-  if (typeof localStorage === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(CREATOR_LOCAL_STORAGE_KEY);
-    return raw ? validateLocalCreatorProject(JSON.parse(raw)) : null;
-  } catch (_error) {
-    return null;
-  }
+  return validateLocalCreatorProject(browserLocalCreatorProject);
 }
 
 function saveLocalCreatorProject(project) {
-  if (typeof localStorage === "undefined") return;
-  try {
-    localStorage.setItem(CREATOR_LOCAL_STORAGE_KEY, JSON.stringify(project));
-  } catch (_error) {
-    // Browser-local creator mode is best-effort; the in-memory Store still works.
-  }
+  browserLocalCreatorProject = validateLocalCreatorProject(project);
 }
 
 function makeLocalCreatorProject({ title, concept, language, pageCount, visualStyle, plan }) {
@@ -316,7 +307,7 @@ const CREATOR_TOOL_DEFINITIONS = Object.freeze([
   {
     name: "create_comic",
     description:
-      "Create a new ComicSol comic or manga from a creator concept. Draft the four-part Plan from the user's request and pass it here; ComicSol handles project mechanics and can fall back to browser-local mode on the hosted static Studio.",
+      "Create a new ComicSol comic or manga from a creator concept. Draft the four-part Plan from the user's request and pass it here; ComicSol handles project mechanics and can use ephemeral browser-local mode on the hosted static Studio.",
     inputSchema: creatorSchema(
       {
         title: { type: "string", minLength: 1, maxLength: 160 },
@@ -444,18 +435,11 @@ async function restoreProject() {
   try {
     if (await restoreCurrentProject(store, getCurrentProject)) {
       announce("Restored your current project.", "success");
-      return;
     }
   } catch (error) {
     if (Number(error?.status || 0) !== 404) {
       announce("Your saved project could not be restored safely.", "error");
-      return;
     }
-  }
-  const localProject = loadLocalCreatorProject();
-  if (localProject) {
-    store.setProject(localProject);
-    announce("Restored your browser-local creator project.", "success");
   }
 }
 
