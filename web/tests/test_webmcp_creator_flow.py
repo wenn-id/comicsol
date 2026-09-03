@@ -25,18 +25,17 @@ class WebMcpCreatorFlowTests(unittest.TestCase):
         self.assertIn("void registerCreatorWebMcp();", self.app)
 
     def test_creator_layer_reuses_existing_project_api(self) -> None:
-        self.assertRegex(self.app, r'import\s*\{[^}]*createProject[^}]*getCurrentProject[^}]*updatePlan[^}]*\}\s*from\s*"\.\/api\.js"')
+        self.assertRegex(
+            self.app,
+            r'import\s*\{[^}]*createProject[^}]*getCurrentProject[^}]*updatePlan[^}]*\}\s*from\s*"\.\/api\.js"',
+        )
         self.assertIn("createProject(", self.app)
         self.assertIn("getCurrentProject(", self.app)
         self.assertIn("updatePlan(", self.app)
 
     def test_creator_inputs_hide_low_level_revision_mechanics(self) -> None:
-        create_block = re.search(
-            r'name: "create_comic"(?P<body>.*?)execute:', self.app, re.DOTALL
-        )
-        revise_block = re.search(
-            r'name: "revise_comic"(?P<body>.*?)execute:', self.app, re.DOTALL
-        )
+        create_block = re.search(r'name: "create_comic"(?P<body>.*?)execute:', self.app, re.DOTALL)
+        revise_block = re.search(r'name: "revise_comic"(?P<body>.*?)execute:', self.app, re.DOTALL)
         self.assertIsNotNone(create_block)
         self.assertIsNotNone(revise_block)
         assert create_block is not None and revise_block is not None
