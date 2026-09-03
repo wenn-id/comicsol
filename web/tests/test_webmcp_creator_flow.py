@@ -11,35 +11,40 @@ from typing import ClassVar
 
 
 WEB_ROOT = Path(__file__).resolve().parents[1]
-APP = WEB_ROOT / "comic_sol_web" / "static" / "app.js"
+STATIC = WEB_ROOT / "comic_sol_web" / "static"
+APP = STATIC / "app.js"
+BOOTSTRAP = STATIC / "creator-bootstrap.js"
+INDEX = STATIC / "index.html"
 
 
 class WebMcpCreatorFlowTests(unittest.TestCase):
     app: ClassVar[str]
+    bootstrap: ClassVar[str]
+    index: ClassVar[str]
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = APP.read_text(encoding="utf-8")
+        cls.bootstrap = BOOTSTRAP.read_text(encoding="utf-8") if BOOTSTRAP.exists() else ""
+        cls.index = INDEX.read_text(encoding="utf-8")
 
     def test_app_registers_three_creator_first_tools(self) -> None:
         for name in ("get_comic_context", "create_comic", "revise_comic"):
             self.assertIn(f'name: "{name}"', self.app)
         self.assertIn("registerCreatorWebMcp", self.app)
 
-    def test_core_and_creator_tools_register_sequentially(self) -> None:
-        registration = re.search(
-            r"async function registerAllWebMcp\(\)\s*\{(?P<body>.*?)\}",
-            self.app,
-            re.DOTALL,
+    def test_creator_bootstrap_waits_for_core_surface_before_registration(self) -> None:
+        self.assertTrue(BOOTSTRAP.is_file(), "creator-bootstrap.js must exist")
+        self.assertIn('from "./app.js"', self.bootstrap)
+        self.assertIn("registerCreatorWebMcp", self.bootstrap)
+        self.assertIn("getTools", self.bootstrap)
+        self.assertIn("CORE_TOOL_COUNT = 14", self.bootstrap)
+        self.assertRegex(
+            self.bootstrap,
+            r"tools\.length\s*>=\s*CORE_TOOL_COUNT[\s\S]+await registerCreatorWebMcp\(\)",
         )
-        self.assertIsNotNone(registration)
-        assert registration is not None
-        body = registration.group("body")
-        core = body.index("await registerWebMcp();")
-        creator = body.index("await registerCreatorWebMcp();")
-        self.assertLess(core, creator)
-        self.assertIn("void registerAllWebMcp();", self.app)
-        self.assertNotIn("void registerWebMcp();\nvoid registerCreatorWebMcp();", self.app)
+        self.assertIn('<script type="module" src="./creator-bootstrap.js"></script>', self.index)
+        self.assertLess(self.index.index("./app.js"), self.index.index("./creator-bootstrap.js"))
 
     def test_creator_layer_reuses_existing_project_api(self) -> None:
         self.assertRegex(
@@ -71,15 +76,17 @@ class WebMcpCreatorFlowTests(unittest.TestCase):
         assert create_block is not None
         self.assertIn("plan: CREATOR_PLAN_SCHEMA", create_block.group("body"))
 
-    def test_app_remains_valid_javascript(self) -> None:
+    def test_scripts_remain_valid_javascript(self) -> None:
         node = shutil.which("node")
         self.assertIsNotNone(node, "Node.js is required for the WebMCP creator contract")
         assert node is not None
-        completed = subprocess.run(
-            [node, "--check", str(APP)],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        self.assertEqual(0, completed.returncode, completed.stderr)
+        for path in (APP, BOOTSTRAP):
+            with self.subTest(path=path.name):
+                completed = subprocess.run(
+                    [node, "--check", str(path)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                self.assertEqual(0, completed.returncode, completed.stderr)
