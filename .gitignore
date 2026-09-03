@@ -57,3 +57,4 @@ web/.ruff_cache/
 /samples/sunlight-courier/panels/raw/*.png
 /samples/sunlight-courier/panels/clean/*.png
 .vercel
+.worktrees/
