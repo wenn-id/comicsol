@@ -1,14 +1,21 @@
 version: 2
 updates:
   - package-ecosystem: pip
-    directory: /
+    directories:
+      - /
+      - /requirements/locks
     schedule:
       interval: weekly
-  - package-ecosystem: pip
-    directory: /requirements/locks
-    schedule:
-      interval: weekly
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
