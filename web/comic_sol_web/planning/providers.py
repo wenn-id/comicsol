@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 from collections.abc import Mapping
 import httpx
 
@@ -21,6 +22,9 @@ _TOOL_NAME = "submit_comic_sol_result"
 _MAX_TEXT = 8_192
 _MAX_EVIDENCE = 2_048
 _MAX_REGIONS = 64
+_MAX_METHOD = 128
+_MAX_REGION_BYTES = 8_192
+_MAX_ASSESSMENTS = 448
 _PLAN_KEYS = ("storyPlan", "characterBible", "storyboard", "visualIdentityPack")
 _PANEL_CHECK_IDS = (
     "character-identity",
@@ -37,6 +41,15 @@ _SUBJECTIVE_PAGE_CHECK_IDS = (
     "accidental-text-watermark",
 )
 _GENERIC_EVIDENCE = frozenset({"verified", "looks good", "ok", "pass"})
+_CHARACTER_TRAITS = (
+    "face",
+    "hair",
+    "age-appearance",
+    "clothing",
+    "accessories",
+    "proportions",
+    "immutable-traits",
+)
 
 
 def _policy(
@@ -73,6 +86,7 @@ def _usage(response: Mapping[str, object]) -> Mapping[str, int | float]:
         and key.endswith("tokens")
         and isinstance(value, int | float)
         and not isinstance(value, bool)
+        and math.isfinite(value)
         and value >= 0
     }
 
@@ -165,7 +179,91 @@ def _plan_result(payload: Mapping[str, object], usage: Mapping[str, int | float]
         key: json.dumps(payload[key], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         for key in _PLAN_KEYS
     }
-    return PlanResult(plan=plan, usage=usage)
+    try:
+        return PlanResult(plan=plan, usage=usage)
+    except ValueError:
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT) from None
+
+
+def _bounded_text(value: object, limit: int) -> str:
+    if not isinstance(value, str):
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+    normalized = " ".join(value.split())
+    if not normalized or len(normalized) > limit:
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+    return normalized
+
+
+def _bounded_region(value: object) -> Mapping[str, object]:
+    if not isinstance(value, Mapping) or not value or len(value) > 16:
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+    region = _plain(value)
+    try:
+        encoded = json.dumps(
+            region, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        )
+    except (TypeError, ValueError):
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT) from None
+    if len(encoded) > _MAX_REGION_BYTES:
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+    if not all(isinstance(key, str) and key and len(key) <= 128 for key in value):
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+    return region if isinstance(region, Mapping) else {}
+
+
+def _character_traits(request: VisualReviewRequest) -> tuple[tuple[str, str], ...]:
+    characters = request.context.get("characters")
+    if not isinstance(characters, tuple):
+        return ()
+    return tuple(
+        (character["character_id"], trait["trait"])
+        for character in characters
+        if isinstance(character, Mapping)
+        and isinstance(character.get("character_id"), str)
+        and isinstance(character.get("traits"), tuple)
+        for trait in character["traits"]
+        if isinstance(trait, Mapping)
+        and isinstance(trait.get("trait"), str)
+        and trait["trait"] in _CHARACTER_TRAITS
+    )
+
+
+def _assessments(
+    value: object, expected: tuple[tuple[str, str], ...]
+) -> tuple[Mapping[str, object], ...]:
+    if not isinstance(value, list) or len(value) > _MAX_ASSESSMENTS or len(value) != len(expected):
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+    assessments: list[Mapping[str, object]] = []
+    for assessment, identity in zip(value, expected):
+        if not isinstance(assessment, Mapping) or set(assessment) != {
+            "character_id",
+            "trait",
+            "result",
+            "severity",
+            "evidence",
+        }:
+            raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+        character_id = _bounded_text(assessment.get("character_id"), 128)
+        trait = assessment.get("trait")
+        evidence = _bounded_text(assessment.get("evidence"), _MAX_EVIDENCE)
+        if (
+            (character_id, trait) != identity
+            or trait not in _CHARACTER_TRAITS
+            or assessment.get("result") not in {"pass", "warning", "fail"}
+            or assessment.get("severity") not in {"warning", "error"}
+            or evidence.casefold() in _GENERIC_EVIDENCE
+        ):
+            raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+        assessments.append(
+            {
+                "character_id": character_id,
+                "trait": trait,
+                "result": assessment["result"],
+                "severity": assessment["severity"],
+                "evidence": evidence,
+            }
+        )
+    return tuple(assessments)
 
 
 def _review_result(
@@ -178,14 +276,12 @@ def _review_result(
         raise ProviderError(ErrorCategory.INVALID_OUTPUT)
     raw_checks = payload.get("checks")
     raw_assessments = payload.get("character_assessments")
-    if (
-        not isinstance(raw_checks, list)
-        or not isinstance(raw_assessments, list)
-        or len(raw_assessments) > 64
-    ):
+    if not isinstance(raw_checks, list) or not isinstance(raw_assessments, list):
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+    if len(raw_checks) != len(request.check_ids):
         raise ProviderError(ErrorCategory.INVALID_OUTPUT)
     checks: list[Mapping[str, object]] = []
-    for index, raw in enumerate(raw_checks):
+    for check_id, raw in zip(request.check_ids, raw_checks):
         if not isinstance(raw, Mapping) or set(raw) != {
             "id",
             "result",
@@ -196,38 +292,33 @@ def _review_result(
             "regions",
         }:
             raise ProviderError(ErrorCategory.INVALID_OUTPUT)
-        evidence = raw.get("evidence")
         regions = raw.get("regions")
-        if raw.get("id") != request.check_ids[index] if index < len(request.check_ids) else True:
-            raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+        evidence = _bounded_text(raw.get("evidence"), _MAX_EVIDENCE)
+        method = _bounded_text(raw.get("method"), _MAX_METHOD)
         if (
-            raw.get("result") not in {"pass", "warning", "fail"}
+            raw.get("id") != check_id
+            or raw.get("result") not in {"pass", "warning", "fail"}
             or raw.get("severity") not in {"info", "warning", "error"}
-            or not isinstance(evidence, str)
-            or not evidence.strip()
-            or len(evidence) > _MAX_EVIDENCE
-            or " ".join(evidence.lower().split()) in _GENERIC_EVIDENCE
-            or not isinstance(raw.get("method"), str)
-            or not raw["method"].strip()
+            or evidence.casefold() in _GENERIC_EVIDENCE
             or not isinstance(regions, list)
             or len(regions) > _MAX_REGIONS
-            or any(not isinstance(region, Mapping) or len(region) > 16 for region in regions)
         ):
             raise ProviderError(ErrorCategory.INVALID_OUTPUT)
         checks.append(
-            {**dict(raw), "reviewer": reviewer, "regions": [dict(region) for region in regions]}
+            {
+                **dict(raw),
+                "evidence": evidence,
+                "method": method,
+                "reviewer": reviewer,
+                "regions": [_bounded_region(region) for region in regions],
+            }
         )
-    if len(checks) != len(request.check_ids):
-        raise ProviderError(ErrorCategory.INVALID_OUTPUT)
-    assessments: list[Mapping[str, object]] = []
-    for assessment in raw_assessments:
-        if not isinstance(assessment, Mapping) or len(assessment) > 16:
-            raise ProviderError(ErrorCategory.INVALID_OUTPUT)
-        encoded = json.dumps(assessment, ensure_ascii=False, separators=(",", ":"))
-        if len(encoded) > _MAX_TEXT:
-            raise ProviderError(ErrorCategory.INVALID_OUTPUT)
-        assessments.append(dict(assessment))
-    return VisualReviewResult(tuple(checks), tuple(assessments), usage)
+    try:
+        return VisualReviewResult(
+            tuple(checks), _assessments(raw_assessments, _character_traits(request)), usage
+        )
+    except ValueError:
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT) from None
 
 
 class OpenAIPlanningProvider:

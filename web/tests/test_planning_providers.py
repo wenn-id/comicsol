@@ -4,6 +4,7 @@ import base64
 import json
 import unittest
 from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -12,7 +13,12 @@ from web.tests import support as _support  # noqa: F401  # Checkout import path 
 from comic_sol_web.config import WebConfig
 from comic_sol_web.generation.providers.base import ProviderError
 from comic_sol_web.planning.providers import AnthropicPlanningProvider, OpenAIPlanningProvider
-from comic_sol_web.planning.types import PlanRequest, VisualReviewRequest
+from comic_sol_web.planning.types import (
+    PlanRequest,
+    PlanResult,
+    VisualReviewRequest,
+    VisualReviewResult,
+)
 
 
 CANARY = "planning-provider-secret-that-must-not-escape"
@@ -132,8 +138,49 @@ class PlanningProviderContractTests(unittest.IsolatedAsyncioTestCase):
             await provider.generate_plan(self.request, CANARY)
         self.assertNotIn(CANARY, repr(caught.exception))
 
-    async def test_visual_review_is_bounded_to_requested_check_ids(self) -> None:
+    async def test_anthropic_forces_a_bounded_tool_and_transient_image_input(self) -> None:
+        seen: list[httpx.Request] = []
+
         async def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(
+                200,
+                json={
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "submit_comic_sol_result",
+                            "input": visual_payload(self.visual_request.check_ids),
+                        }
+                    ]
+                },
+                request=request,
+            )
+
+        provider = AnthropicPlanningProvider(
+            model="claude-sonnet-4-6", transport=httpx.MockTransport(handler)
+        )
+        result = await provider.review_visual(self.visual_request, CANARY)
+
+        self.assertEqual(
+            self.visual_request.check_ids, tuple(check["id"] for check in result.checks)
+        )
+        self.assertNotIn(CANARY, repr(result))
+        self.assertEqual("https://api.anthropic.com/v1/messages", str(seen[0].url))
+        self.assertEqual(CANARY, seen[0].headers["x-api-key"])
+        body = json.loads(seen[0].content)
+        self.assertEqual({"type": "tool", "name": "submit_comic_sol_result"}, body["tool_choice"])
+        self.assertFalse(body["tools"][0]["input_schema"]["additionalProperties"])
+        self.assertEqual("base64", body["messages"][0]["content"][1]["source"]["type"])
+        self.assertEqual(
+            base64.b64encode(PNG).decode(), body["messages"][0]["content"][1]["source"]["data"]
+        )
+
+    async def test_visual_review_is_bounded_to_requested_check_ids(self) -> None:
+        seen: list[httpx.Request] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
             return httpx.Response(
                 200,
                 json={
@@ -163,12 +210,127 @@ class PlanningProviderContractTests(unittest.IsolatedAsyncioTestCase):
             tuple(check["id"] for check in result.checks),
         )
         self.assertNotIn(CANARY, repr(result))
+        body = json.loads(seen[0].content)
+        self.assertEqual(
+            "data:image/png;base64," + base64.b64encode(PNG).decode(),
+            body["input"][0]["content"][1]["image_url"],
+        )
+
+    async def test_character_context_requires_one_bounded_assessment_per_trait(self) -> None:
+        request = VisualReviewRequest(
+            kind="panel",
+            subject_id="p01-01",
+            raster=PNG,
+            context={
+                "characters": [
+                    {
+                        "character_id": "mira",
+                        "traits": [{"trait": "face", "expected": "round face"}],
+                    }
+                ]
+            },
+            check_ids=self.visual_request.check_ids,
+        )
+
+        async def handler(http_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": json.dumps(visual_payload(request.check_ids)),
+                                }
+                            ],
+                        }
+                    ]
+                },
+                request=http_request,
+            )
+
+        provider = OpenAIPlanningProvider(
+            model="gpt-5.4-mini", transport=httpx.MockTransport(handler)
+        )
+        with self.assertRaises(ProviderError):
+            await provider.review_visual(request, CANARY)
+
+    async def test_provider_rejects_oversized_region_fields(self) -> None:
+        payload = visual_payload(self.visual_request.check_ids)
+        checks = cast(list[dict[str, object]], payload["checks"])
+        checks[0]["regions"] = [{"evidence": "x" * 9_000}]
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": json.dumps(payload)}],
+                        }
+                    ]
+                },
+                request=request,
+            )
+
+        provider = OpenAIPlanningProvider(
+            model="gpt-5.4-mini", transport=httpx.MockTransport(handler)
+        )
+        with self.assertRaises(ProviderError):
+            await provider.review_visual(self.visual_request, CANARY)
+
+    async def test_provider_rejects_oversized_review_method(self) -> None:
+        payload = visual_payload(self.visual_request.check_ids)
+        checks = cast(list[dict[str, object]], payload["checks"])
+        checks[0]["method"] = "x" * 129
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": json.dumps(payload)}],
+                        }
+                    ]
+                },
+                request=request,
+            )
+
+        provider = OpenAIPlanningProvider(
+            model="gpt-5.4-mini", transport=httpx.MockTransport(handler)
+        )
+        with self.assertRaises(ProviderError):
+            await provider.review_visual(self.visual_request, CANARY)
 
     def test_values_are_immutable_and_redact_source_and_raster(self) -> None:
         self.assertNotIn("Private source", repr(self.request))
         self.assertNotIn(base64.b64encode(PNG).decode(), repr(self.visual_request))
         with self.assertRaises(TypeError):
             self.visual_request.context["new"] = "value"  # type: ignore[index]
+
+    def test_malformed_context_results_and_usage_fail_deterministically(self) -> None:
+        with self.assertRaises(ValueError):
+            VisualReviewRequest(
+                kind="panel",
+                subject_id="p01-01",
+                raster=PNG,
+                context=[],  # type: ignore[arg-type]
+                check_ids=self.visual_request.check_ids,
+            )
+        with self.assertRaises(ValueError):
+            PlanResult(
+                plan={key: "{}" for key in plan_payload()},
+                usage=cast(dict[str, int | float], {"debug": "secret"}),
+            )
+        with self.assertRaises(ValueError):
+            VisualReviewResult(
+                checks=(), character_assessments=(), usage={"input_tokens": float("nan")}
+            )
 
 
 class PlanningConfigurationTests(unittest.TestCase):
