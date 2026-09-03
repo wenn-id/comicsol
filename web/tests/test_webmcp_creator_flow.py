@@ -53,10 +53,11 @@ class WebMcpCreatorFlowTests(unittest.TestCase):
         self.assertIn("localStorage.getItem", self.app)
         self.assertIn("localStorage.setItem", self.app)
         self.assertIn('mode: "browser-local"', self.app)
+        self.assertIn("const CREATOR_PLAN_SCHEMA = creatorSchema(", self.app)
         create_block = re.search(r'name: "create_comic"(?P<body>.*?)execute:', self.app, re.DOTALL)
         self.assertIsNotNone(create_block)
         assert create_block is not None
-        self.assertIn("plan: creatorSchema(", create_block.group("body"))
+        self.assertIn("plan: CREATOR_PLAN_SCHEMA", create_block.group("body"))
 
     def test_app_remains_valid_javascript(self) -> None:
         node = shutil.which("node")
