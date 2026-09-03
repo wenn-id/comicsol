@@ -90,14 +90,17 @@ class WebConfigTests(unittest.TestCase):
         self.assertNotIn(SESSION_SECRET, repr(config))
         self.assertNotIn(ENCRYPTION_SECRET, repr(config))
 
-    def test_openai_image_model_defaults_and_is_bounded(self):
+    def test_provider_model_defaults_and_are_bounded(self):
         from comic_sol_web.config import WebConfig
 
-        self.assertEqual("gpt-image-2", WebConfig.from_env(valid_environment()).openai_image_model)
+        defaults = WebConfig.from_env(valid_environment())
+        self.assertEqual("gpt-image-2", defaults.openai_image_model)
+        self.assertEqual("gpt-5.4-mini", defaults.openai_planning_model)
+        self.assertEqual("claude-sonnet-4-6", defaults.anthropic_planning_model)
         environment = valid_environment()
         environment["COMIC_SOL_WEB_OPENAI_IMAGE_MODEL"] = "gpt-image-2-custom"
         self.assertEqual("gpt-image-2-custom", WebConfig.from_env(environment).openai_image_model)
-        environment["COMIC_SOL_WEB_OPENAI_IMAGE_MODEL"] = "invalid model"
+        environment["COMIC_SOL_WEB_ANTHROPIC_PLANNING_MODEL"] = "invalid model"
         with self.assertRaises(ValueError) as caught:
             WebConfig.from_env(environment)
         self.assertNotIn("invalid model", str(caught.exception))
@@ -141,9 +144,7 @@ class WebApplicationTests(unittest.TestCase):
                 self.assertEqual(200, bootstrap.status_code)
                 options = client.get("/api/generation/options")
             self.assertEqual(200, options.status_code)
-            self.assertEqual(
-                ["openai"], [item["provider"] for item in options.json()["options"]]
-            )
+            self.assertEqual(["openai"], [item["provider"] for item in options.json()["options"]])
             self.assertEqual("gpt-image-2-custom", options.json()["options"][0]["model"])
             self.assertEqual(["hosted"], options.json()["options"][0]["auth_modes"])
             self.assertNotIn("credential", options.text)

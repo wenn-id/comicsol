@@ -31,6 +31,10 @@ CREDENTIAL_KEY_REFS_VAR = "COMIC_SOL_WEB_CREDENTIAL_KEY_REFS"
 CREDENTIAL_ACTIVE_KEY_ID_VAR = "COMIC_SOL_WEB_CREDENTIAL_ACTIVE_KEY_ID"
 OPENAI_IMAGE_MODEL_VAR = "COMIC_SOL_WEB_OPENAI_IMAGE_MODEL"
 DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-2"
+OPENAI_PLANNING_MODEL_VAR = "COMIC_SOL_WEB_OPENAI_PLANNING_MODEL"
+ANTHROPIC_PLANNING_MODEL_VAR = "COMIC_SOL_WEB_ANTHROPIC_PLANNING_MODEL"
+DEFAULT_OPENAI_PLANNING_MODEL = "gpt-5.4-mini"
+DEFAULT_ANTHROPIC_PLANNING_MODEL = "claude-sonnet-4-6"
 
 REQUIRED_VARIABLES = (SESSION_SECRET_VAR, ENCRYPTION_SECRET_VAR, DATA_ROOT_VAR)
 
@@ -112,6 +116,13 @@ def _openai_image_model(environ: Mapping[str, str]) -> str:
     return model
 
 
+def _planning_model(environ: Mapping[str, str], variable: str, default: str) -> str:
+    model = environ.get(variable, default)
+    if not isinstance(model, str) or _MODEL_IDENTIFIER.fullmatch(model) is None:
+        raise WebConfigError(f"{variable} is invalid")
+    return model
+
+
 @dataclass(frozen=True)
 class WebConfig:
     """Immutable Web configuration.
@@ -128,7 +139,22 @@ class WebConfig:
     master_key_references: Mapping[str, str] = field(repr=False)
     active_credential_key_id: str | None = field(repr=False)
     openai_image_model: str = DEFAULT_OPENAI_IMAGE_MODEL
+    openai_planning_model: str = DEFAULT_OPENAI_PLANNING_MODEL
+    anthropic_planning_model: str = DEFAULT_ANTHROPIC_PLANNING_MODEL
     local_mode: bool = False
+
+    @property
+    def planning_model_options(self) -> Mapping[str, str]:
+        return MappingProxyType(
+            {
+                provider: model
+                for provider, model in (
+                    ("openai", self.openai_planning_model),
+                    ("anthropic", self.anthropic_planning_model),
+                )
+                if provider in self.hosted_secret_references
+            }
+        )
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> WebConfig:
@@ -186,6 +212,12 @@ class WebConfig:
             master_key_references=master_key_references,
             active_credential_key_id=active_key_id,
             openai_image_model=_openai_image_model(environ),
+            openai_planning_model=_planning_model(
+                environ, OPENAI_PLANNING_MODEL_VAR, DEFAULT_OPENAI_PLANNING_MODEL
+            ),
+            anthropic_planning_model=_planning_model(
+                environ, ANTHROPIC_PLANNING_MODEL_VAR, DEFAULT_ANTHROPIC_PLANNING_MODEL
+            ),
             local_mode=False,
         )
 
@@ -213,5 +245,11 @@ class WebConfig:
             master_key_references=MappingProxyType({}),
             active_credential_key_id=None,
             openai_image_model=_openai_image_model(environ),
+            openai_planning_model=_planning_model(
+                environ, OPENAI_PLANNING_MODEL_VAR, DEFAULT_OPENAI_PLANNING_MODEL
+            ),
+            anthropic_planning_model=_planning_model(
+                environ, ANTHROPIC_PLANNING_MODEL_VAR, DEFAULT_ANTHROPIC_PLANNING_MODEL
+            ),
             local_mode=True,
         )
