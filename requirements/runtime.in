@@ -7,5 +7,5 @@
 # Mirrors the install dependencies and the mcp extra declared in pyproject.toml,
 # plus an explicitly hash-verified pip for later --require-hashes installs.
 pillow==12.3.0
-mcp==2.0.0
+mcp==2.1.1
 pip==26.2.1

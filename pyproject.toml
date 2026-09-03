@@ -50,7 +50,7 @@ Changelog = "https://github.com/wenn-id/comicsol/blob/main/CHANGELOG.md"
 "Security Policy" = "https://github.com/wenn-id/comicsol/blob/main/SECURITY.md"
 
 [project.optional-dependencies]
-mcp = ["mcp==2.0.0"]
+mcp = ["mcp==2.1.1"]
 
 [project.scripts]
 comic-sol = "comic_sol_product.cli:main"
