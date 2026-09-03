@@ -46,12 +46,10 @@ class WebMcpCreatorFlowTests(unittest.TestCase):
             self.assertNotIn(forbidden, create_block.group("body"))
             self.assertNotIn(forbidden, revise_block.group("body"))
 
-    def test_creator_flow_has_hosted_browser_fallback(self) -> None:
-        self.assertIn(
-            'const CREATOR_LOCAL_STORAGE_KEY = "comic-sol:webmcp-creator-v1";', self.app
-        )
-        self.assertIn("localStorage.getItem", self.app)
-        self.assertIn("localStorage.setItem", self.app)
+    def test_creator_flow_has_ephemeral_hosted_browser_fallback(self) -> None:
+        self.assertIn("let browserLocalCreatorProject = null;", self.app)
+        self.assertNotIn("localStorage", self.app)
+        self.assertNotIn("sessionStorage", self.app)
         self.assertIn('mode: "browser-local"', self.app)
         self.assertIn("const CREATOR_PLAN_SCHEMA = creatorSchema(", self.app)
         create_block = re.search(r'name: "create_comic"(?P<body>.*?)execute:', self.app, re.DOTALL)
