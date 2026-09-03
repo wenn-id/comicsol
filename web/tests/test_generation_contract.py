@@ -263,7 +263,7 @@ class CatalogAndRegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             (
                 ("fake", "fake-raster-v1", True),
-                ("openai", "gpt-image-1", True),
+                ("openai", "gpt-image-2", True),
                 ("google", "gemini-2.5-flash-image", True),
                 ("bfl", "flux-1.1-pro", True),
                 ("replicate", "black-forest-labs/flux-1.1-pro", True),

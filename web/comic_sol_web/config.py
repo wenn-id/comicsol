@@ -29,6 +29,8 @@ DATA_ROOT_VAR = "COMIC_SOL_WEB_DATA_ROOT"
 HOSTED_SECRET_REFS_VAR = "COMIC_SOL_WEB_HOSTED_SECRET_REFS"
 CREDENTIAL_KEY_REFS_VAR = "COMIC_SOL_WEB_CREDENTIAL_KEY_REFS"
 CREDENTIAL_ACTIVE_KEY_ID_VAR = "COMIC_SOL_WEB_CREDENTIAL_ACTIVE_KEY_ID"
+OPENAI_IMAGE_MODEL_VAR = "COMIC_SOL_WEB_OPENAI_IMAGE_MODEL"
+DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-2"
 
 REQUIRED_VARIABLES = (SESSION_SECRET_VAR, ENCRYPTION_SECRET_VAR, DATA_ROOT_VAR)
 
@@ -38,6 +40,9 @@ REQUIRED_VARIABLES = (SESSION_SECRET_VAR, ENCRYPTION_SECRET_VAR, DATA_ROOT_VAR)
 MINIMUM_SECRET_LENGTH = 32
 _UNSAFE_CHARACTERS = re.compile(r"[\x00-\x1f\x7f\s]")
 _PATH_UNSAFE_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
+# Keep model identifiers compatible with the durable generation-store
+# boundary. They are configuration values, never request-controlled input.
+_MODEL_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}\Z")
 
 
 class WebConfigError(ValueError):
@@ -99,6 +104,14 @@ def _parse_secret_references(
     return MappingProxyType(references)
 
 
+def _openai_image_model(environ: Mapping[str, str]) -> str:
+    """Return the trusted, bounded OpenAI image-model identifier."""
+    model = environ.get(OPENAI_IMAGE_MODEL_VAR, DEFAULT_OPENAI_IMAGE_MODEL)
+    if not isinstance(model, str) or _MODEL_IDENTIFIER.fullmatch(model) is None:
+        raise WebConfigError(f"{OPENAI_IMAGE_MODEL_VAR} is invalid")
+    return model
+
+
 @dataclass(frozen=True)
 class WebConfig:
     """Immutable Web configuration.
@@ -114,6 +127,7 @@ class WebConfig:
     hosted_secret_references: Mapping[str, str] = field(repr=False)
     master_key_references: Mapping[str, str] = field(repr=False)
     active_credential_key_id: str | None = field(repr=False)
+    openai_image_model: str = DEFAULT_OPENAI_IMAGE_MODEL
     local_mode: bool = False
 
     @classmethod
@@ -171,6 +185,7 @@ class WebConfig:
             hosted_secret_references=hosted_secret_references,
             master_key_references=master_key_references,
             active_credential_key_id=active_key_id,
+            openai_image_model=_openai_image_model(environ),
             local_mode=False,
         )
 
@@ -197,5 +212,6 @@ class WebConfig:
             ),
             master_key_references=MappingProxyType({}),
             active_credential_key_id=None,
+            openai_image_model=_openai_image_model(environ),
             local_mode=True,
         )

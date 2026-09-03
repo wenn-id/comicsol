@@ -20,16 +20,17 @@ The columns are:
 - **Adapter implemented** — a provider adapter module exists and is exercised
   by merged adapter tests behind `httpx.MockTransport`.
 - **Routable in merged build** — the route is actually reachable through the
-  merged `create_app` composition root. **Only the agent route is**, and only
-  when the startup capability set exposes `text_to_image`.
-  `web/comic_sol_web/app.py::_generation_service` registers a
-  `ProviderRegistry((AgentProvider(...),))` — one provider — and
-  `GenerationService._runtime_options()` excludes every catalog entry with no
-  registered adapter, then emits the agent model only when
+  merged `create_app` composition root. OpenAI is available only when the
+  server environment declares `OPENAI_API_KEY`; the agent route is available
+  only when the startup capability set exposes `text_to_image`.
+  `web/comic_sol_web/app.py::_generation_service` registers an
+  `AgentProvider(...)` and conditionally adds `OpenAIProvider(...)`; the
+  credential stays inside `CredentialBroker`. `GenerationService._runtime_options()`
+  excludes every catalog entry with no registered adapter, then emits the agent model only when
   `text_to_image` is in the intersection of the agent's declared
   capabilities and the startup-supplied `active_agent_image_capabilities`
-  (empty by default). No paid provider is selectable in the merged build,
-  and a bare start exposes no executable route at all.
+  (empty by default). OpenAI's configured model defaults to `gpt-image-2`.
+  A bare start with neither agent capability nor an OpenAI key exposes no executable route.
 - **Offline-qualified (adapter-level)** — a deterministic, zero-cost,
   contract-tested flow exercises the adapter with a mocked transport. This is
   **not** an end-to-end route qualification.
@@ -41,7 +42,8 @@ The columns are:
 > **Wiring caveat, stated once and applied to every row**
 >
 > Adapter-level implementation and offline adapter tests do **not** make a
-> route available to a user of the merged build. Every paid row below is
+> route available to a user of the merged build. Only OpenAI can be selected
+> when its declared server credential is present; all other paid rows remain
 > `Routable in merged build: No`. The only end-to-end offline-qualified route
 > is the deterministic `FakeProvider` used by
 > `web/tests/test_web_e2e.py`, which is a test fixture, not a shippable
@@ -50,7 +52,7 @@ The columns are:
 
 | Provider | Adapter implemented | Routable in merged build | Offline-qualified (adapter-level) | Live smoke | Authentication | Evidence | Surface tier |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| OpenAI | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
+| OpenAI | Yes | Conditional | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Offline-qualified |
 | Google | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
 | BFL (direct) | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
 | xAI | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
@@ -63,9 +65,9 @@ The columns are:
 | Active-agent image generation | Partial (`AgentProvider` is the one registered provider) | Yes | Yes (agent-native handoff exercised offline) | Not run | Agent-native | None | Experimental |
 
 *> `Not run` in the live-smoke column means the route was NOT exercised against a
-> live provider. Passing offline adapter tests did not change that. `Routable in
-> merged build: No` means a user of the merged build cannot select the route at
-> all.*
+> live provider. Passing offline adapter tests did not change that. `Conditional`
+> means OpenAI appears only with a declared server credential; `No` means a user
+> of the merged build cannot select the route at all.*
 
 ## Open regions
 
@@ -110,7 +112,8 @@ no local ComfyUI evidence was recorded.
 The published model identifiers below match the merged generation catalog
 exactly (`web/comic_sol_web/generation/catalog.py`):
 
-- **OpenAI** — `gpt-image-1`
+- **OpenAI** — `gpt-image-2` by default, configurable through
+  `COMIC_SOL_WEB_OPENAI_IMAGE_MODEL`
 - **Google** — `gemini-2.5-flash-image`
 - **BFL (direct)** — `flux-1.1-pro`
 - **xAI** — `grok-imagine-image-2.0`

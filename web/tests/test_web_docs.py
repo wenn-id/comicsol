@@ -369,15 +369,8 @@ class WebProvidersContractTests(unittest.TestCase):
                     f"which is not one of {sorted(approved)}",
                 )
 
-    def test_every_paid_route_states_that_it_is_not_routable_in_the_merged_build(self) -> None:
-        """Only the agent route is registered in the merged composition root.
-
-        The agent route is routable only when startup capabilities expose
-        ``text_to_image``; with the documented bare start the capability set
-        is empty and the agent route is also unavailable. The unconditional
-        matrix-cell assertion below therefore applies to the shipped matrix
-        shape, not to runtime availability under the bare-start invocation.
-        """
+    def test_only_openai_is_conditionally_routable_in_the_merged_build(self) -> None:
+        """OpenAI needs a declared server key; every other paid route is off."""
         paid = {
             "OpenAI",
             "Google",
@@ -390,17 +383,16 @@ class WebProvidersContractTests(unittest.TestCase):
             "ComfyUI (remote)",
         }
         rows = self.matrix_rows()
-        for label in sorted(paid & set(rows)):
+        for label in sorted((paid - {"OpenAI"}) & set(rows)):
             with self.subTest(provider=label):
                 self.assertEqual(
                     "No",
                     rows[label].get("routable in merged build", ""),
                     f"{label} must state it is not routable in the merged build",
                 )
+        self.assertEqual("Conditional", rows.get("OpenAI", {}).get("routable in merged build", ""))
         self.assertEqual(
-            "Yes",
-            rows.get("Active-agent image generation", {}).get("routable in merged build", ""),
-            "agent route must be the one routable route in the merged build",
+            "Yes", rows.get("Active-agent image generation", {}).get("routable in merged build", "")
         )
         agent_doc = collapsed(read("docs/web/providers.md"))
         self.assertIn("text_to_image", agent_doc)
@@ -1187,17 +1179,12 @@ class RuntimeBoundaryContractTests(unittest.TestCase):
         """Parse `app.py` to an AST so we can inspect its composition root."""
         return ast.parse(self._app_source())
 
-    def test_paid_provider_adapters_are_not_wired_into_create_app(self) -> None:
-        """Fail if a paid adapter (OpenAI, Google, BFL, xAI, Stability,
-        Replicate, fal, Cloudflare) is ever passed to ProviderRegistry in the
-        merged app.py, since the docs currently label them Not routable."""
+    def test_only_openai_provider_is_conditionally_wired_into_create_app(self) -> None:
+        """OpenAI is the sole paid adapter that can be registered at runtime."""
         source = self._app_source()
-        # The only registered provider in the merged build is AgentProvider.
-        # The paid adapter classes live in separate provider modules and are
-        # imported only there; a leak of any of their names into the
-        # composition root should fail this contract.
+        self.assertIn('if "openai" in config.hosted_secret_references:', source)
+        self.assertIn("OpenAIProvider(model=config.openai_image_model)", source)
         paid_adapters = [
-            "OpenAIProvider",
             "GoogleProvider",
             "BFLProvider",
             "XAIProvider",
@@ -1210,34 +1197,21 @@ class RuntimeBoundaryContractTests(unittest.TestCase):
             with self.subTest(adapter=name):
                 self.assertNotIn(name, source, f"{name} must not be wired in app.py")
 
-    def test_registry_has_exactly_one_provider_agent(self) -> None:
-        """Fail if the merged registry tuple does not list AgentProvider as
-        the sole registered provider, which would contradict the docs."""
+    def test_registry_constructs_agent_and_conditional_openai_providers(self) -> None:
+        """The provider tuple grows only when the trusted OpenAI key exists."""
         source = self._app_source()
         self.assertIn("AgentProvider(", source)
-        # The ProviderRegistry constructor in _generation_service takes a
-        # single tuple; count the comma-separated entries inside it to ensure
-        # there is exactly one provider. This is a structural guard, not a
-        # text coincidence.
-        match = re.search(r"ProviderRegistry\(\((.*?)\)\)", source, re.DOTALL)
-        self.assertIsNotNone(match, "ProviderRegistry single-tuple not found")
-        assert match is not None
-        inner = match.group(1)
-        registered = re.findall(r"(\w+Provider)\(", inner)
-        self.assertEqual(
-            ["AgentProvider"],
-            registered,
-            f"merged registry must register only AgentProvider, got {registered}",
-        )
+        self.assertIn("providers = [AgentProvider(active_agent_capabilities)]", source)
+        self.assertIn("providers.append(OpenAIProvider(model=config.openai_image_model))", source)
+        self.assertIn("ProviderRegistry(tuple(providers))", source)
 
-    def test_catalog_entries_for_paid_providers_exist_but_are_not_routed(self) -> None:
+    def test_catalog_entries_for_paid_providers_exist(self) -> None:
         """Fail if a paid provider has no catalog entry at all, or if the
         providers.md matrix claims a row the catalog cannot support.
 
-        The providers.md matrix lists OpenAI/Google/BFL/etc. as adapter
-        implemented but not routable. This test cross-checks the catalog
-        actually carries those providers, so the docs are grounded in a real
-        model identifier list."""
+        The providers.md matrix lists OpenAI/Google/BFL/etc. This test
+        cross-checks the catalog actually carries those providers, so the docs
+        are grounded in real model identifiers."""
         doc = (WEB_DOCS / "providers.md").read_text(encoding="utf-8")
         # The known model identifiers are asserted to exist in the catalog.
         # Test-only fixture providers (FakeProvider) are not user-selectable

@@ -2,6 +2,16 @@ from __future__ import annotations
 
 from .types import ProviderModel
 
+OPENAI_IMAGE_MODEL = "gpt-image-2"
+OPENAI_IMAGE_CAPABILITIES = frozenset(
+    {
+        "custom_dimensions",
+        "image_to_image",
+        "reference_images",
+        "text_to_image",
+    }
+)
+
 CATALOG: tuple[ProviderModel, ...] = (
     ProviderModel(
         provider="fake",
@@ -11,15 +21,8 @@ CATALOG: tuple[ProviderModel, ...] = (
     ),
     ProviderModel(
         provider="openai",
-        model="gpt-image-1",
-        capabilities=frozenset(
-            {
-                "custom_dimensions",
-                "image_to_image",
-                "reference_images",
-                "text_to_image",
-            }
-        ),
+        model=OPENAI_IMAGE_MODEL,
+        capabilities=OPENAI_IMAGE_CAPABILITIES,
         enabled=True,
     ),
     ProviderModel(

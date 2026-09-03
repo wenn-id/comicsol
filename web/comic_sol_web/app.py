@@ -123,6 +123,7 @@ def _generation_service(request: Request) -> object:
     from comic_sol_web.generation.credentials import CredentialBroker
     from comic_sol_web.generation.providers.agent import AgentProvider
     from comic_sol_web.generation.providers.base import ProviderRegistry
+    from comic_sol_web.generation.providers.openai import OpenAIProvider
     from comic_sol_web.generation.service import GenerationService
 
     projects = _project_service(request)
@@ -136,10 +137,13 @@ def _generation_service(request: Request) -> object:
         active_key_id=config.active_credential_key_id,
     )
     active_agent_capabilities = request.app.state.agent_image_capabilities
+    providers = [AgentProvider(active_agent_capabilities)]
+    if "openai" in config.hosted_secret_references:
+        providers.append(OpenAIProvider(model=config.openai_image_model))
     service = GenerationService(
         gateway.database,
         projects,
-        ProviderRegistry((AgentProvider(active_agent_capabilities),)),
+        ProviderRegistry(tuple(providers)),
         gateway.staging_root,
         credentials=credentials,
         assets=_asset_store(request),
