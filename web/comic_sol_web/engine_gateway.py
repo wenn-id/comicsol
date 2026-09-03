@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import secrets
 import sqlite3
@@ -661,6 +662,39 @@ class EngineGateway:
         return panel_ids
 
     @staticmethod
+    def _initial_prompt_payloads(
+        character_bible: Mapping[str, object],
+        storyboard: Mapping[str, object],
+    ) -> dict[str, bytes]:
+        prompts: dict[str, bytes] = {}
+        characters = character_bible.get("characters")
+        if isinstance(characters, list):
+            for character in characters:
+                if not isinstance(character, dict) or not isinstance(character.get("id"), str):
+                    continue
+                character_id = character["id"]
+                prompts[f"prompts/references/{character_id}.txt"] = (
+                    "Create a clean turnaround reference for this approved character.\n"
+                    + json.dumps(character, ensure_ascii=False, sort_keys=True)
+                    + "\n"
+                ).encode("utf-8")
+        pages = storyboard.get("pages")
+        if isinstance(pages, list):
+            for page in pages:
+                if not isinstance(page, dict) or not isinstance(page.get("panels"), list):
+                    continue
+                for panel in page["panels"]:
+                    if not isinstance(panel, dict) or not isinstance(panel.get("id"), str):
+                        continue
+                    panel_id = panel["id"]
+                    prompts[f"prompts/panels/{panel_id}.txt"] = (
+                        "Create this approved comic panel without lettering.\n"
+                        + json.dumps(panel, ensure_ascii=False, sort_keys=True)
+                        + "\n"
+                    ).encode("utf-8")
+        return prompts
+
+    @staticmethod
     def _initial_plan_manifest(
         root: Path,
         payloads: Mapping[str, bytes],
@@ -682,6 +716,9 @@ class EngineGateway:
             name: {"path": relative, "sha256": hashlib.sha256(payload).hexdigest()}
             for name, (relative, payload) in artifact_payloads.items()
         }
+        # A validated first Plan contains both planning and storyboard outputs.
+        # Publish their terminal canonical state in the same project transaction.
+        manifest["status"] = "STORYBOARDED"
         manifest["updated_at"] = comic_sol._utc_now()
         return canonical_artifact_bytes(manifest)
 
@@ -723,6 +760,10 @@ class EngineGateway:
                 if first_plan:
                     for field, relative in _PLAN_FIELDS.items():
                         transaction.stage_bytes(relative, payloads[field])
+                    for relative, payload in self._initial_prompt_payloads(
+                        character_bible, storyboard
+                    ).items():
+                        transaction.stage_bytes(relative, payload)
                     transaction.stage_bytes(
                         "project.json",
                         self._initial_plan_manifest(
@@ -1465,6 +1506,7 @@ class EngineGateway:
                 root, f"pages/{subject}.png", max_bytes=_raster_limits.MAX_ENCODED_RASTER_BYTES
             )
             context = {
+                "project_id": project_id,
                 "page": page,
                 "page_sha256": hashlib.sha256(raster).hexdigest(),
                 "lettering": {

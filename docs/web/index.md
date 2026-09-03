@@ -8,10 +8,14 @@ surface contracts the Web distribution guarantees.
 > **Scope truth**
 >
 > This documentation describes the implementation merged into `wenn-id/comicsol`
-> at the pinned baseline and the offline work package that qualifies it. Passing
-> offline contract tests are **not** live verification. Anything labelled
-> *offline-qualified* is deterministic and contract-tested but has **not** been
-> run against a live provider in this work package.
+> at the pinned baseline plus the offline work packages WP-1…WP-3 that qualify
+> the local Studio runtime. Passing offline contract tests are **not** live
+> verification. Anything labelled *offline-qualified* is deterministic and
+> contract-tested but has **not** been run against a live provider in this work
+> package. The full `prompt → plan → review → image → panel QA → page QA → PDF`
+> loop is now reproducible offline with the `live` task set
+> (`web/tests/test_live_golden_path.py`); the same loop has **not** been
+> exercised against a real OpenAI or Anthropic endpoint in this branch.
 
 ## Workflow at a glance
 
@@ -32,35 +36,20 @@ Each step is detailed in the sections below.
 
 ## Sign in
 
-**Studio does not currently ship an OAuth sign-in route.** The merged
-`web/comic_sol_web/app.py::create_app` composition root includes the
-`projects`, `generation`, `approvals`, and `assets` routers; an
-authentication router is **not yet included**, so no `/api/auth/login`
-is served by the merged application. The `WebConfig` also has no
-GitHub-client configuration. `/healthz` is unauthenticated and
-deterministic; every project and generation route currently requires a
-principal, but the route that issues one is not present in the merged
-build.
-
-**The intended end state** — the path the build will require once the
-auth router is wired — is:
-
-- the user opens the Studio in a browser and authenticates through
-  GitHub OAuth (`web/comic_sol_web/auth.py` contains the construction
-  logic, but the router is not registered by `create_app` in the merged
-  build);
-- Studio stores only a keyed digest of the OAuth state; a replay is
-  rejected on consume;
-- after the callback succeeds, the browser holds an `HttpOnly` session
-  cookie, every state-changing request carries CSRF protection, and the
-  server never streams a provider credential to the browser.
+Studio exposes a local-bootstrap session route at
+`POST /api/auth/local-session` that issues an `HttpOnly` session cookie bound
+to the loopback principal. In this build the route is wired only to the local
+bootstrap auth router; GitHub OAuth wiring is tracked as a future release
+blocker. `/healthz` is unauthenticated and deterministic; every project,
+generation, planning, and workflow route currently requires a principal
+issued by the bootstrap route.
 
 Signing in does not configure a provider. The user chooses a generation
 route (and, for BYOK routes, supplies or authorizes their own
-credentials) only after the project is planned. The sign-in wiring is
-tracked as a release blocker; the **steps after sign-in below are the
-documented user path that the build will require once the auth router
-is added — not a flow that is exercised by the merged code today.**
+credentials) only after the project is planned. The local-bootstrap
+route must not be exposed beyond the loopback interface; the operator
+binds `COMIC_SOL_WEB_HOST` to a loopback address (default
+`127.0.0.1`) before starting the runtime.
 
 ## Entry modes
 

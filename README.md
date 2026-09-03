@@ -39,6 +39,12 @@ All named host integrations remain **Experimental** until their live evidence sa
 
 Agent Skills, CLI, MCP, the Codex Plugin, and Comic Sol Studio are adapters around that same deterministic project engine.
 
+Studio's full local `prompt → plan → review → image → QA → PDF` path is
+offline-qualified with deterministic fake providers and restart coverage. This
+does not mean any paid provider route is live-verified; see the
+[Studio provider matrix](docs/web/providers.md) and
+[live-evidence framework](docs/web/live-evidence.md).
+
 ## See the output
 
 ### Sunlight Courier

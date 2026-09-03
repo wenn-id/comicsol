@@ -44,11 +44,15 @@ The columns are:
 > Adapter-level implementation and offline adapter tests do **not** make a
 > route available to a user of the merged build. Only OpenAI can be selected
 > when its declared server credential is present; all other paid rows remain
-> `Routable in merged build: No`. The only end-to-end offline-qualified route
-> is the deterministic `FakeProvider` used by
-> `web/tests/test_web_e2e.py`, which is a test fixture, not a shippable
-> provider. Registering paid adapters in the composition root is production
-> work outside this documentation work package.
+> `Routable in merged build: No`. Two end-to-end offline-qualified routes exist:
+> the deterministic `FakeProvider` used by `web/tests/test_web_e2e.py` and
+> `web/tests/test_live_golden_path.py`, which is a test fixture rather than a
+> shippable provider. `test_live_golden_path.py` drives the entire
+> `prompt → plan → human review → image → panel QA → page QA → composition →
+> PDF` loop with fake planning, fake image, and fake visual-review adapters plus
+> the real engine, and asserts the loop survives an app restart. Registering
+> paid adapters in the composition root is production work outside this
+> documentation work package.
 
 | Provider | Adapter implemented | Routable in merged build | Offline-qualified (adapter-level) | Live smoke | Authentication | Evidence | Surface tier |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -67,7 +71,9 @@ The columns are:
 *> `Not run` in the live-smoke column means the route was NOT exercised against a
 > live provider. Passing offline adapter tests did not change that. `Conditional`
 > means OpenAI appears only with a declared server credential; `No` means a user
-> of the merged build cannot select the route at all.*
+> of the merged build cannot select the route at all. Approving a Plan is the
+> boundary at which image spending starts; provider switching is never automatic
+> and always requires an explicit confirmation.*
 
 ## Open regions
 

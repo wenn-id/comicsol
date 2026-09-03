@@ -6,10 +6,31 @@ TLS expectations, and the limits of a single-process deployment.
 
 ## Deployment status
 
-**Not deployed.** No production deployment has been performed as part of
-this work package; no external deployment URL is claimed. The guidance
-below is the operator-facing contract for any future deployment, qualified
-against the merged code, but not yet rehearsed against a live target.
+**Backend not deployed.** Retained external evidence covers static UI assets
+only; no production FastAPI runtime or live provider execution is claimed.
+The guidance below is the operator-facing contract for a local runtime,
+qualified by the provider-free golden path but not yet rehearsed against a
+live provider.
+
+## Local start
+
+PowerShell:
+
+```powershell
+$env:COMIC_SOL_WEB_DATA_ROOT = "C:\absolute\path\to\comic-sol-data"
+$env:OPENAI_API_KEY = "set-in-your-shell"
+$env:ANTHROPIC_API_KEY = "set-in-your-shell"
+comic-sol-web
+```
+
+`ANTHROPIC_API_KEY` is optional when OpenAI handles planning and visual QA.
+A ChatGPT subscription does not include OpenAI API credit. Plan approval is
+the boundary that starts image spending; Studio never switches providers
+automatically. The activity drawer exposes sanitized durable workflow events,
+not raw logs or provider payloads.
+
+Local mode must remain bound to loopback. Do not expose its bootstrap-session
+route directly to a LAN or the public internet.
 
 ## One-process runtime
 
