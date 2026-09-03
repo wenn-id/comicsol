@@ -9,6 +9,7 @@ creates no application, filesystem, or database state.
 from __future__ import annotations
 
 import re
+import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -113,6 +114,7 @@ class WebConfig:
     hosted_secret_references: Mapping[str, str] = field(repr=False)
     master_key_references: Mapping[str, str] = field(repr=False)
     active_credential_key_id: str | None = field(repr=False)
+    local_mode: bool = False
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> WebConfig:
@@ -169,4 +171,31 @@ class WebConfig:
             hosted_secret_references=hosted_secret_references,
             master_key_references=master_key_references,
             active_credential_key_id=active_key_id,
+            local_mode=False,
+        )
+
+    @classmethod
+    def local_from_env(cls, environ: Mapping[str, str]) -> "WebConfig":
+        """Build loopback-only configuration without persisted local secrets."""
+        raw_data_root = _require(environ, DATA_ROOT_VAR)
+        data_root = Path(raw_data_root)
+        if not data_root.is_absolute():
+            raise WebConfigError(f"{DATA_ROOT_VAR} must be an absolute path")
+        return cls(
+            session_secret=secrets.token_urlsafe(48),
+            encryption_secret=secrets.token_urlsafe(48),
+            data_root=data_root,
+            hosted_secret_references=MappingProxyType(
+                {
+                    provider: variable
+                    for provider, variable in {
+                        "openai": "OPENAI_API_KEY",
+                        "anthropic": "ANTHROPIC_API_KEY",
+                    }.items()
+                    if environ.get(variable)
+                }
+            ),
+            master_key_references=MappingProxyType({}),
+            active_credential_key_id=None,
+            local_mode=True,
         )

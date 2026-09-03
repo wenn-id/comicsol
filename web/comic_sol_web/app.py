@@ -20,6 +20,7 @@ from starlette.types import Receive, Scope, Send
 
 from comic_sol_web.api.approvals import create_approvals_router
 from comic_sol_web.api.assets import create_assets_router
+from comic_sol_web.api.auth import create_local_session_router
 from comic_sol_web.api.generation import create_generation_router
 from comic_sol_web.api.projects import create_projects_router
 
@@ -71,6 +72,27 @@ def _project_service(request: Request) -> "ProjectService":
     config = request.app.state.web_config
     service = ProjectService(EngineGateway.open(Path(config.data_root)))
     request.app.state.projects = service
+    return service
+
+
+def _auth_service(request: Request) -> object:
+    """Construct local session storage from the same database as projects."""
+    existing = getattr(request.app.state, "auth", None)
+    if existing is not None:
+        return existing
+
+    from comic_sol_web.auth import AuthService
+
+    config = request.app.state.web_config
+    if not config.local_mode:
+        raise RuntimeError("local authentication is unavailable")
+    service = AuthService(
+        _project_service(request).gateway.database,
+        session_secret=config.session_secret,
+        github_oauth=None,
+        secure_cookies=False,
+    )
+    request.app.state.auth = service
     return service
 
 
@@ -178,6 +200,8 @@ def create_app(
     )
     app.include_router(create_approvals_router(_approval_service, _generation_service))
     app.include_router(create_assets_router(_asset_store, _generation_service))
+    if _config.local_mode:
+        app.include_router(create_local_session_router(_auth_service))
 
     @app.get("/healthz")
     def healthz() -> Response:

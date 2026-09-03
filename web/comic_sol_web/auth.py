@@ -109,10 +109,11 @@ class AuthService:
         database: Database,
         *,
         session_secret: str,
-        github_oauth: GitHubOAuthProtocol,
+        github_oauth: GitHubOAuthProtocol | None,
         clock: Callable[[], float] = time.time,
         state_ttl_seconds: int = 600,
         session_ttl_seconds: int = 8 * 60 * 60,
+        secure_cookies: bool = True,
     ) -> None:
         if not session_secret or state_ttl_seconds <= 0 or session_ttl_seconds <= 0:
             raise ValueError("valid session security settings are required")
@@ -122,6 +123,7 @@ class AuthService:
         self._clock = clock
         self.state_ttl_seconds = state_ttl_seconds
         self.session_ttl_seconds = session_ttl_seconds
+        self.secure_cookies = secure_cookies
         self.session_cookie_name = SESSION_COOKIE_NAME
         self.csrf_cookie_name = CSRF_COOKIE_NAME
         self.oauth_binding_cookie_name = OAUTH_BINDING_COOKIE_NAME
@@ -156,6 +158,8 @@ class AuthService:
         ).hexdigest()
 
     def begin_oauth(self, redirect_uri: str) -> tuple[str, str, str]:
+        if self._github_oauth is None:
+            raise AuthError("OAuth is unavailable")
         if not redirect_uri.startswith("https://"):
             raise AuthError("OAuth redirect URI must use HTTPS")
         state = secrets.token_urlsafe(32)
@@ -218,6 +222,8 @@ class AuthService:
         code: str,
         redirect_uri: str,
     ) -> AuthenticatedSession:
+        if self._github_oauth is None:
+            raise AuthError("OAuth is unavailable")
         self._consume_oauth_state(state, binding)
         principal = await self._github_oauth.exchange_code(code=code, redirect_uri=redirect_uri)
         return self.create_session(principal)
@@ -309,7 +315,7 @@ class AuthService:
             self.session_cookie_name,
             session.session_token,
             max_age=self.session_ttl_seconds,
-            secure=True,
+            secure=self.secure_cookies,
             httponly=True,
             samesite="lax",
             path="/",
@@ -318,22 +324,26 @@ class AuthService:
             self.csrf_cookie_name,
             session.csrf_token,
             max_age=self.session_ttl_seconds,
-            secure=True,
+            secure=self.secure_cookies,
             httponly=False,
             samesite="lax",
             path="/",
         )
 
     def clear_session_cookies(self, response: Response) -> None:
-        response.delete_cookie(self.session_cookie_name, secure=True, httponly=True, path="/")
-        response.delete_cookie(self.csrf_cookie_name, secure=True, httponly=False, path="/")
+        response.delete_cookie(
+            self.session_cookie_name, secure=self.secure_cookies, httponly=True, path="/"
+        )
+        response.delete_cookie(
+            self.csrf_cookie_name, secure=self.secure_cookies, httponly=False, path="/"
+        )
 
     def set_oauth_binding_cookie(self, response: Response, binding: str) -> None:
         response.set_cookie(
             self.oauth_binding_cookie_name,
             binding,
             max_age=self.state_ttl_seconds,
-            secure=True,
+            secure=self.secure_cookies,
             httponly=True,
             samesite="lax",
             path="/api/auth/callback",
@@ -341,7 +351,10 @@ class AuthService:
 
     def clear_oauth_binding_cookie(self, response: Response) -> None:
         response.delete_cookie(
-            self.oauth_binding_cookie_name, secure=True, httponly=True, path="/api/auth/callback"
+            self.oauth_binding_cookie_name,
+            secure=self.secure_cookies,
+            httponly=True,
+            path="/api/auth/callback",
         )
 
 

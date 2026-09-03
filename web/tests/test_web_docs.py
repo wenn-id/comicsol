@@ -1247,15 +1247,16 @@ class RuntimeBoundaryContractTests(unittest.TestCase):
                 with self.subTest(model=entry.model):
                     self.assertIn(entry.model, doc, f"catalog model {entry.model} not documented")
 
-    def test_create_app_registers_no_auth_router(self) -> None:
-        """Fail if an authentication/OAuth router is wired into create_app.
+    def test_create_app_registers_only_the_local_bootstrap_auth_router(self) -> None:
+        """Fail if an OAuth router is wired into create_app.
 
         `docs/web/security.md` and `docs/web/index.md` both state that the
         merged build ships no OAuth sign-in route. This asserts the scope
         boundary against the composition root: every `include_router(...)`
         call inside `create_app` must name a factory from the allowed
-        router set, and no auth/login/callback/oauth/github router may
-        appear. Wiring one without updating the docs fails here.
+        router set, and only the explicit local-session bootstrap route may
+        be authentication-related. Wiring OAuth without updating the docs
+        fails here.
         """
         tree = self._generation_service_ast()
         create_app = next(
@@ -1287,17 +1288,18 @@ class RuntimeBoundaryContractTests(unittest.TestCase):
                 "create_generation_router",
                 "create_approvals_router",
                 "create_assets_router",
+                "create_local_session_router",
             ],
             registered,
             f"create_app router set drifted from the documented scope: {registered}",
         )
-        for forbidden in ("auth", "login", "callback", "oauth", "github"):
+        for forbidden in ("login", "callback", "oauth", "github"):
             for name in registered:
                 with self.subTest(router=name, forbidden=forbidden):
                     self.assertNotIn(
                         forbidden,
                         name.lower(),
-                        f"{name} looks like an authentication router; "
+                        f"{name} looks like an OAuth router; "
                         "docs/web/security.md states none is registered",
                     )
 

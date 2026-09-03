@@ -211,6 +211,20 @@ class AuthServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("HttpOnly", csrf_cookie)
         self.assertNotIn(SESSION_SECRET, "".join(cookies))
 
+    def test_oauth_is_unavailable_without_a_client(self) -> None:
+        local = AuthService(
+            self.database,
+            session_secret=SESSION_SECRET,
+            github_oauth=None,
+            secure_cookies=False,
+        )
+        with self.assertRaises(AuthError):
+            local.begin_oauth("https://example.test/callback")
+        authenticated = local.create_session(SessionPrincipal("local-user", "local"))
+        response = Response()
+        local.set_session_cookies(response, authenticated)
+        self.assertNotIn("Secure", "".join(response.headers.getlist("set-cookie")))
+
     async def test_anonymous_and_stale_sessions_fail_closed(self) -> None:
         app = FastAPI()
         app.state.auth = self.service
