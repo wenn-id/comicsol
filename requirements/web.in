@@ -20,7 +20,7 @@ cryptography==50.0.1
 python-multipart==0.0.32
 starlette==1.6.0
 build==1.5.0
-coverage==7.15.4
+coverage==7.16.0
 mypy==2.3.1
 pip==26.2.1
 pip-tools==7.6.1
