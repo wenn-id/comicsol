@@ -13,7 +13,7 @@
 # clients are added here. pip is pinned explicitly so the interpreter that
 # later performs --require-hashes installs is itself hash-verified.
 fastapi==0.141.1
-uvicorn==0.35.0
+uvicorn==0.52.4
 httpx==0.28.1
 authlib==1.7.2
 cryptography==50.0.1
