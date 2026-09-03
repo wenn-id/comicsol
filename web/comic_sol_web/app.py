@@ -24,6 +24,7 @@ from comic_sol_web.api.auth import create_local_session_router
 from comic_sol_web.api.generation import create_generation_router
 from comic_sol_web.api.planning import create_planning_router
 from comic_sol_web.api.projects import create_projects_router
+from comic_sol_web.api.workflows import create_workflows_router
 
 if TYPE_CHECKING:
     from comic_sol_web.assets import AssetStore
@@ -211,6 +212,25 @@ def _approval_service(request: Request) -> object:
     return service
 
 
+def _workflow_service(request: Request) -> object:
+    """Construct durable orchestration only after an authenticated request."""
+    existing = getattr(request.app.state, "workflow", None)
+    if existing is not None:
+        return existing
+
+    from comic_sol_web.workflow import WorkflowService
+
+    projects = _project_service(request)
+    service = WorkflowService(
+        projects.gateway.database,
+        projects,
+        _planning_service(request),
+        _generation_service(request),
+    )
+    request.app.state.workflow = service
+    return service
+
+
 def create_app(
     _config: "WebConfig",
     *,
@@ -234,6 +254,7 @@ def create_app(
     app.state.agent_image_capabilities = active_agent_image_capabilities
     app.include_router(create_projects_router(_project_service))
     app.include_router(create_planning_router(_planning_service))
+    app.include_router(create_workflows_router(_workflow_service))
     app.include_router(
         create_generation_router(
             _generation_service,

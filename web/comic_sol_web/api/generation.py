@@ -88,6 +88,8 @@ def _job_envelope(job: Any, expected_revision: int | None = None) -> dict[str, o
         "job_id": job.job_id,
         "project_id": job.project_id,
         "project_revision": job.project_revision,
+        "subject_kind": job.request.subject_kind,
+        "subject_id": job.request.subject_id,
         "state": job.state.value,
         "provider": job.provider,
         "model": job.model,

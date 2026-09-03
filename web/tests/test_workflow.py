@@ -1,6 +1,14 @@
 """Offline canonical review and finalization boundary coverage."""
 
 import json
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
+import asyncio
+from contextlib import asynccontextmanager
 from unittest import mock
 
 from comic_sol_web.engine_gateway import (
@@ -11,6 +19,11 @@ from comic_sol_web.engine_gateway import (
 )
 from comic_sol_web.planning.types import VisualReviewResult
 from comic_sol_web.projects import ProjectService
+from comic_sol_web.auth import SessionPrincipal
+from comic_sol_web.database import Database
+from comic_sol_web.generation.types import AuthMode, JobState
+from comic_sol_web.migrations import WORKFLOW_MIGRATIONS, apply_migrations
+from comic_sol_web.workflow import WorkflowConflictError, WorkflowService
 from scripts import comic_sol
 from scripts.core_primitives import PANEL_CHECK_IDS
 from scripts.project_io import ProjectTransaction
@@ -316,3 +329,436 @@ class CanonicalWorkflowGatewayTests(GatewayFixture):
                 self.service.prepare_pages(self.alice, snapshot.project_id, snapshot.revision)
         updated = self.service.snapshot(self.alice, snapshot.project_id)
         self.assertEqual(snapshot.revision + 1, updated.revision)
+
+
+class _WorkflowProjects:
+    def __init__(self):
+        self.revision = 4
+        self.status = "STORYBOARDED"
+        self.finalize_calls = 0
+        self.prepare_pages_calls = 0
+        self.stale_page = False
+
+    def snapshot(self, principal, project_id, expected_revision=None):
+        if principal.user_id != "alice" or project_id != "project-1":
+            raise ProjectUnavailableError("project unavailable")
+        if expected_revision is not None and expected_revision != self.revision:
+            raise StaleProjectRevisionError(expected_revision, self.revision)
+        return SimpleNamespace(
+            project_id=project_id,
+            revision=self.revision,
+            status=self.status,
+            summary={"page_count": 1},
+        )
+
+    def finalize(self, principal, project_id, expected_revision):
+        self.snapshot(principal, project_id, expected_revision)
+        self.finalize_calls += 1
+        self.revision += 1
+        self.status = "COMPLETE"
+        return self.snapshot(principal, project_id), Path("ignored.pdf")
+
+    def prepare_pages(self, principal, project_id, expected_revision):
+        self.snapshot(principal, project_id, expected_revision)
+        self.prepare_pages_calls += 1
+        self.revision += 1
+        self.status = "COMPOSED"
+        return self.snapshot(principal, project_id)
+
+    def panel_review_input(self, principal, project_id, expected_revision, panel_id):
+        self.snapshot(principal, project_id, expected_revision)
+        return SimpleNamespace(subject_id=panel_id)
+
+    def publish_panel_review(
+        self, principal, project_id, expected_revision, panel_id, review
+    ):
+        self.snapshot(principal, project_id, expected_revision)
+        self.revision += 1
+        return self.snapshot(principal, project_id)
+
+    def page_review_input(self, principal, project_id, expected_revision, page_number):
+        self.snapshot(principal, project_id, expected_revision)
+        if self.stale_page:
+            raise StaleProjectRevisionError(expected_revision, expected_revision)
+        return SimpleNamespace(subject_id=f"page-{page_number:03d}")
+
+    def publish_page_review(
+        self, principal, project_id, expected_revision, page_number, review
+    ):
+        self.snapshot(principal, project_id, expected_revision)
+        self.revision += 1
+        return self.snapshot(principal, project_id)
+
+
+class _WorkflowCredentials:
+    @asynccontextmanager
+    async def resolve(self, owner_id, provider, auth_mode):
+        yield "fixture-credential"
+
+
+class _WorkflowReviewer:
+    provider_id = "openai"
+    model = "gpt-5.4-mini"
+
+    def __init__(self):
+        self.failed = False
+        self.calls = 0
+
+    async def review_visual(self, request, credential):
+        self.calls += 1
+        return SimpleNamespace(
+            checks=(
+                {
+                    "result": "fail" if self.failed else "pass",
+                    "severity": "error",
+                },
+            )
+        )
+
+
+class _WorkflowPlanning:
+    def __init__(self):
+        self.job = SimpleNamespace(
+            job_id="00000000-0000-4000-8000-000000000001",
+            owner_id="alice",
+            project_id="project-1",
+            project_revision=3,
+            provider="openai",
+            model="gpt-5.4-mini",
+            state="ready_for_review",
+            published_revision=4,
+        )
+        self.reviewer = _WorkflowReviewer()
+        self.providers = {(self.job.provider, self.job.model): self.reviewer}
+        self.credentials = _WorkflowCredentials()
+
+    def get(self, principal, job_id):
+        if principal.user_id != self.job.owner_id or job_id != self.job.job_id:
+            raise ProjectUnavailableError("planning job unavailable")
+        return self.job
+
+
+class _WorkflowGeneration:
+    def __init__(self, projects):
+        self.projects = projects
+        self.jobs = []
+        self.submit_calls = 0
+        self.run_calls = 0
+
+    def _runtime_options(self):
+        return (
+            SimpleNamespace(
+                provider="openai",
+                model="gpt-image-2",
+                capabilities=frozenset({"text_to_image"}),
+                enabled=True,
+            ),
+        )
+
+    def list_jobs(self, principal, project_id, expected_revision, limit=50):
+        self.projects.snapshot(principal, project_id, expected_revision)
+        return tuple(self.jobs)
+
+    def queue(
+        self,
+        principal,
+        project_id,
+        expected_revision,
+        *,
+        provider,
+        model,
+        auth_mode,
+        max_retries,
+    ):
+        self.projects.snapshot(principal, project_id, expected_revision)
+        return tuple(self.jobs)
+
+    async def run_once(self, worker_id, lease_seconds=30):
+        self.run_calls += 1
+        return next((job for job in self.jobs if job.state is JobState.QUEUED), None)
+
+    def submit_staged_raster(self, principal, job_id, expected_revision):
+        job = next(job for job in self.jobs if job.job_id == job_id)
+        self.projects.snapshot(principal, job.project_id, expected_revision)
+        self.submit_calls += 1
+        self.projects.revision += 1
+        job.state = JobState.ACCEPTED
+        job.accepted_project_revision = self.projects.revision
+        return job
+
+    def attempts(self, job_id):
+        return ()
+
+
+def _panel_job(*, state=JobState.ACCEPTED, revision=4, suffix="1"):
+    return SimpleNamespace(
+        job_id=suffix * 64,
+        project_id="project-1",
+        project_revision=revision,
+        state=state,
+        provider="openai",
+        model="gpt-image-2",
+        auth_mode=AuthMode.HOSTED,
+        attempt_number=1,
+        accepted_project_revision=revision if state is JobState.ACCEPTED else None,
+        request=SimpleNamespace(
+            job_id=f"engine-panel-{suffix}",
+            subject_kind="panel",
+            subject_id=f"p01-0{suffix}",
+        ),
+    )
+
+
+class DurableWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.database = Database(Path(self.temporary.name) / "workflow.sqlite3")
+        apply_migrations(self.database, WORKFLOW_MIGRATIONS)
+        self.projects = _WorkflowProjects()
+        self.planning = _WorkflowPlanning()
+        with self.database.transaction() as connection:
+            connection.execute(
+                "INSERT INTO web_projects (project_id, owner_id, storage_name, revision, engine_state) "
+                "VALUES ('project-1', 'alice', 'fixture', 4, 'STORYBOARDED')"
+            )
+            connection.execute(
+                "INSERT INTO planning_jobs (job_id, idempotency_key, owner_id, project_id, "
+                "project_revision, provider, model, state, publication_sha256, published_revision, "
+                "created_at, completed_at, updated_at) VALUES (?, ?, 'alice', 'project-1', 3, "
+                "'openai', 'gpt-5.4-mini', 'ready_for_review', ?, 4, 900, 950, 950)",
+                (
+                    self.planning.job.job_id,
+                    "00000000-0000-4000-8000-000000000002",
+                    "a" * 64,
+                ),
+            )
+        self.generation = _WorkflowGeneration(self.projects)
+        self.now = 1_000
+        self.service = WorkflowService(
+            self.database,
+            self.projects,
+            self.planning,
+            self.generation,
+            clock=lambda: self.now,
+        )
+        self.alice = SessionPrincipal("alice", "alice")
+        self.bob = SessionPrincipal("bob", "bob")
+
+    def approve(self):
+        return self.service.approve_plan(
+            self.alice,
+            "project-1",
+            4,
+            planning_job_id=self.planning.job.job_id,
+            image_provider="openai",
+            image_model="gpt-image-2",
+            image_auth_mode="hosted",
+            idempotency_key=str(uuid4()),
+        )
+
+    def test_approval_requires_reviewed_plan_and_freezes_provider_selection(self):
+        workflow = self.approve()
+        self.assertEqual("references", workflow.phase)
+        self.assertEqual("openai", workflow.planning_provider)
+        self.assertEqual("gpt-image-2", workflow.image_model)
+
+        with self.database.transaction() as connection, self.assertRaises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE production_workflows SET image_model = 'silent-fallback' "
+                "WHERE project_id = 'project-1'"
+            )
+
+        self.planning.job.state = "failed"
+        with self.assertRaises(WorkflowConflictError):
+            self.service.approve_plan(
+                self.alice,
+                "project-1",
+                4,
+                planning_job_id=self.planning.job.job_id,
+                image_provider="openai",
+                image_model="gpt-image-2",
+                image_auth_mode="hosted",
+                idempotency_key=str(uuid4()),
+            )
+
+    def test_events_are_append_only_bounded_and_owner_scoped(self):
+        self.approve()
+        events = self.service.events_after(self.alice, "project-1", 0)
+        self.assertEqual(["plan.validated"], [event.type for event in events])
+        self.assertEqual((), self.service.events_after(self.bob, "project-1", 0))
+        with self.database.transaction() as connection, self.assertRaises(sqlite3.IntegrityError):
+            connection.execute("DELETE FROM workflow_events")
+        with self.assertRaises(ValueError):
+            self.service.events_after(self.alice, "project-1", 0, limit=101)
+
+    def test_pause_resume_are_revision_bound_and_replay_safe(self):
+        approved = self.approve()
+        paused = self.service.pause(self.alice, "project-1", approved.revision)
+        self.assertEqual("paused", paused.state)
+        with self.assertRaises(WorkflowConflictError):
+            self.service.resume(self.alice, "project-1", approved.revision - 1)
+        resumed = self.service.resume(self.alice, "project-1", approved.revision)
+        self.assertEqual("running", resumed.state)
+        self.assertEqual("references", resumed.phase)
+
+    def test_export_recovery_does_not_finalize_twice(self):
+        approved = self.approve()
+        self.projects.status = "COMPLETE"
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE production_workflows SET phase = 'export' WHERE project_id = ?",
+                (approved.project_id,),
+            )
+        completed = asyncio.run(self.service.advance_once("worker-a"))
+        self.assertIsNotNone(completed)
+        self.assertEqual("complete", completed.state)
+        self.assertEqual(0, self.projects.finalize_calls)
+
+    def test_pause_before_promotion_retains_staged_job(self):
+        approved = self.approve()
+        self.generation.jobs = [_panel_job(state=JobState.VALIDATING)]
+        self.service.pause(self.alice, approved.project_id, approved.revision)
+        self.assertIsNone(asyncio.run(self.service.advance_once("worker-a")))
+        self.assertEqual(0, self.generation.submit_calls)
+        self.assertIs(JobState.VALIDATING, self.generation.jobs[0].state)
+
+    def test_expired_lease_is_reclaimed_without_duplicate_promotion(self):
+        approved = self.approve()
+        self.generation.jobs = [_panel_job(state=JobState.VALIDATING)]
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE production_workflows SET lease_token = ?, lease_owner = ?, "
+                "lease_expires_at = ? WHERE project_id = ?",
+                (str(uuid4()), "dead-worker", self.now - 1, approved.project_id),
+            )
+        restarted = WorkflowService(
+            self.database,
+            self.projects,
+            self.planning,
+            self.generation,
+            clock=lambda: self.now,
+        )
+        first = asyncio.run(restarted.advance_once("worker-b"))
+        self.assertEqual(5, first.revision)
+        asyncio.run(restarted.advance_once("worker-c"))
+        self.assertEqual(1, self.generation.submit_calls)
+
+    def test_eight_extra_calls_blocks_without_silent_provider_switch(self):
+        approved = self.approve()
+        self.generation.jobs = [_panel_job()]
+        self.planning.reviewer.failed = True
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE production_workflows SET phase = 'panel-qa', extra_calls = 8 "
+                "WHERE project_id = ?",
+                (approved.project_id,),
+            )
+        blocked = asyncio.run(self.service.advance_once("worker-a"))
+        self.assertEqual("blocked", blocked.state)
+        self.assertEqual("retry_exhausted", blocked.error_category)
+        self.assertEqual("openai", blocked.image_provider)
+        self.assertEqual("gpt-image-2", blocked.image_model)
+
+    def test_failed_page_qa_blocks_with_evidence(self):
+        approved = self.approve()
+        self.planning.reviewer.failed = True
+        self.projects.status = "COMPOSED"
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE production_workflows SET phase = 'page-qa' WHERE project_id = ?",
+                (approved.project_id,),
+            )
+        blocked = asyncio.run(self.service.advance_once("worker-a"))
+        self.assertEqual("blocked", blocked.state)
+        self.assertEqual("page_qa_failed", blocked.error_category)
+        self.assertEqual(
+            ["qa.page_failed", "workflow.blocked"],
+            [event.type for event in self.service.events_after(self.alice, "project-1", 1)],
+        )
+
+    def test_resume_from_composition_runs_one_deterministic_boundary(self):
+        approved = self.approve()
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE production_workflows SET phase = 'composition' WHERE project_id = ?",
+                (approved.project_id,),
+            )
+        self.service.pause(self.alice, "project-1", approved.revision)
+        self.service.resume(self.alice, "project-1", approved.revision)
+        current = asyncio.run(self.service.advance_once("worker-a"))
+        self.assertEqual("page-qa", current.phase)
+        self.assertEqual(1, self.projects.prepare_pages_calls)
+
+    def test_stale_page_binding_returns_to_composition_without_reusing_review(self):
+        approved = self.approve()
+        self.projects.status = "COMPOSED"
+        self.projects.stale_page = True
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE production_workflows SET phase = 'page-qa' WHERE project_id = ?",
+                (approved.project_id,),
+            )
+        current = asyncio.run(self.service.advance_once("worker-a"))
+        self.assertEqual("running", current.state)
+        self.assertEqual("composition", current.phase)
+        self.assertEqual(0, self.planning.reviewer.calls)
+
+
+class GenerationEnvelopeWorkflowTests(unittest.TestCase):
+    def test_job_envelope_exposes_subject_without_request_payload_or_path(self):
+        from comic_sol_web.api.generation import _job_envelope
+
+        job = SimpleNamespace(
+            job_id="j" * 64,
+            project_id="project-1",
+            project_revision=3,
+            state=JobState.QUEUED,
+            provider="openai",
+            model="gpt-image-2",
+            auth_mode=AuthMode.HOSTED,
+            attempt_number=1,
+            retry_count=0,
+            max_retries=2,
+            external_job_id=None,
+            accepted_project_revision=None,
+            request=SimpleNamespace(
+                subject_kind="panel",
+                subject_id="p01-01",
+                prompt="private prompt",
+                references=(Path("C:/private/reference.png"),),
+            ),
+        )
+        envelope = _job_envelope(job, 3)
+        self.assertEqual("panel", envelope["subject_kind"])
+        self.assertEqual("p01-01", envelope["subject_id"])
+        rendered = json.dumps(envelope)
+        self.assertNotIn("private prompt", rendered)
+        self.assertNotIn("C:/private", rendered)
+
+    def test_workflow_routes_register_without_constructing_storage(self):
+        from comic_sol_web.app import create_app
+        from comic_sol_web.config import WebConfig
+        from web.tests.support import valid_environment
+        from web.tests.test_app import registered_api_routes
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary) / "not-created"
+            app = create_app(WebConfig.from_env(valid_environment(data_root)))
+            routes = {
+                (path, methods)
+                for path, methods in registered_api_routes(app)
+                if path.startswith("/api/workflows")
+            }
+            self.assertEqual(
+                {
+                    ("/api/workflows", frozenset({"POST"})),
+                    ("/api/workflows/{project_id}", frozenset({"GET"})),
+                    ("/api/workflows/{project_id}/pause", frozenset({"POST"})),
+                    ("/api/workflows/{project_id}/resume", frozenset({"POST"})),
+                    ("/api/workflows/{project_id}/events", frozenset({"GET"})),
+                },
+                routes,
+            )
+            self.assertFalse(data_root.exists())
+            self.assertFalse(hasattr(app.state, "workflow"))

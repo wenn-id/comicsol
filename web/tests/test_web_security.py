@@ -1292,6 +1292,8 @@ class TestSensitiveDataRedaction(WiredAppFixture):
             "job_id",
             "project_id",
             "project_revision",
+            "subject_kind",
+            "subject_id",
             "state",
             "provider",
             "model",
@@ -1302,6 +1304,8 @@ class TestSensitiveDataRedaction(WiredAppFixture):
             "can_cancel",
         }
         self.assertTrue(set(envelope) <= allowed_keys, set(envelope))
+        self.assertIn(envelope["subject_kind"], {"reference", "panel"})
+        self.assertIsInstance(envelope["subject_id"], str)
         for key in ("credential", "cookie", "token", "session", "api_key"):
             self.assertNotIn(key, envelope)
         blob = queued.text.lower()

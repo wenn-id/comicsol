@@ -378,6 +378,100 @@ PLANNING_MIGRATION = Migration(
 
 PLANNING_MIGRATIONS = (*APPROVAL_MIGRATIONS, PLANNING_MIGRATION)
 
+WORKFLOW_MIGRATION = Migration(
+    10,
+    (
+        """
+        CREATE TABLE production_workflows (
+            project_id TEXT PRIMARY KEY REFERENCES web_projects(project_id) ON DELETE RESTRICT,
+            owner_id TEXT NOT NULL CHECK (length(owner_id) BETWEEN 1 AND 128),
+            current_revision INTEGER NOT NULL CHECK (current_revision >= 1),
+            state TEXT NOT NULL CHECK (state IN ('running', 'paused', 'blocked', 'complete')),
+            phase TEXT NOT NULL CHECK (phase IN (
+                'references', 'panels', 'panel-qa', 'lettering', 'composition',
+                'page-qa', 'export', 'complete'
+            )),
+            planning_job_id TEXT NOT NULL REFERENCES planning_jobs(job_id) ON DELETE RESTRICT,
+            planning_provider TEXT NOT NULL CHECK (length(planning_provider) BETWEEN 1 AND 64),
+            planning_model TEXT NOT NULL CHECK (length(planning_model) BETWEEN 1 AND 128),
+            image_provider TEXT NOT NULL CHECK (length(image_provider) BETWEEN 1 AND 64),
+            image_model TEXT NOT NULL CHECK (length(image_model) BETWEEN 1 AND 128),
+            image_auth_mode TEXT NOT NULL CHECK (image_auth_mode IN ('agent', 'hosted', 'byok')),
+            approval_idempotency_key TEXT NOT NULL CHECK (length(approval_idempotency_key) = 36),
+            lease_token TEXT CHECK (length(lease_token) = 36),
+            lease_owner TEXT CHECK (length(lease_owner) BETWEEN 1 AND 128),
+            lease_expires_at INTEGER,
+            error_category TEXT CHECK (error_category IN (
+                'invalid_credentials', 'quota_exhausted', 'rate_limited', 'moderated',
+                'capability_missing', 'timeout', 'cancelled', 'unavailable',
+                'invalid_output', 'provider_error', 'retry_exhausted',
+                'page_qa_failed', 'stale_revision'
+            )),
+            extra_calls INTEGER NOT NULL DEFAULT 0 CHECK (extra_calls BETWEEN 0 AND 8),
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            completed_at INTEGER,
+            UNIQUE (owner_id, approval_idempotency_key)
+        )
+        """,
+        "CREATE INDEX production_workflows_lease ON production_workflows "
+        "(state, lease_expires_at, created_at, project_id)",
+        """
+        CREATE TRIGGER production_workflows_provenance_immutable
+        BEFORE UPDATE OF planning_job_id, planning_provider, planning_model,
+                         image_provider, image_model, image_auth_mode,
+                         approval_idempotency_key
+        ON production_workflows
+        BEGIN
+            SELECT RAISE(ABORT, 'workflow provider provenance is immutable');
+        END
+        """,
+        """
+        CREATE TABLE workflow_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL CHECK (length(owner_id) BETWEEN 1 AND 128),
+            project_id TEXT NOT NULL REFERENCES production_workflows(project_id) ON DELETE RESTRICT,
+            project_revision INTEGER NOT NULL CHECK (project_revision >= 1),
+            type TEXT NOT NULL CHECK (type IN (
+                'planning.started', 'planning.repairing', 'plan.validated',
+                'workflow.waiting_for_plan_approval', 'generation.reference_started',
+                'generation.panel_completed', 'qa.panel_failed', 'qa.panel_passed',
+                'generation.panel_retrying', 'composition.completed',
+                'qa.page_passed', 'qa.page_failed', 'export.ready',
+                'workflow.blocked', 'workflow.resumed', 'workflow.paused',
+                'workflow.complete'
+            )),
+            phase TEXT NOT NULL CHECK (length(phase) BETWEEN 1 AND 32),
+            status TEXT NOT NULL CHECK (length(status) BETWEEN 1 AND 32),
+            provider TEXT CHECK (length(provider) BETWEEN 1 AND 64),
+            model TEXT CHECK (length(model) BETWEEN 1 AND 128),
+            attempt INTEGER CHECK (attempt BETWEEN 1 AND 1000),
+            progress_json TEXT NOT NULL DEFAULT '{}' CHECK (length(progress_json) <= 4096),
+            summary TEXT NOT NULL CHECK (length(summary) BETWEEN 1 AND 512),
+            created_at INTEGER NOT NULL
+        )
+        """,
+        "CREATE INDEX workflow_events_owner_cursor ON workflow_events "
+        "(owner_id, project_id, event_id)",
+        """
+        CREATE TRIGGER workflow_events_no_update
+        BEFORE UPDATE ON workflow_events
+        BEGIN
+            SELECT RAISE(ABORT, 'workflow events are append-only');
+        END
+        """,
+        """
+        CREATE TRIGGER workflow_events_no_delete
+        BEFORE DELETE ON workflow_events
+        BEGIN
+            SELECT RAISE(ABORT, 'workflow events are append-only');
+        END
+        """,
+    ),
+)
+
+WORKFLOW_MIGRATIONS = (*PLANNING_MIGRATIONS, WORKFLOW_MIGRATION)
+
 
 def _validate_migrations(migrations: Sequence[Migration]) -> None:
     versions = tuple(migration.version for migration in migrations)
