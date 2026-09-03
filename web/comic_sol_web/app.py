@@ -132,9 +132,9 @@ def _generation_service(request: Request) -> object:
     config = request.app.state.web_config
     credentials = _generation_credentials(request)
     active_agent_capabilities = request.app.state.agent_image_capabilities
-    providers: list[ProviderAdapter] = [AgentProvider(active_agent_capabilities)]
+    providers = [AgentProvider(active_agent_capabilities)]
     if "openai" in config.hosted_secret_references:
-        providers.append(OpenAIProvider(model=config.openai_image_model))
+        providers.append(OpenAIProvider(model=config.openai_image_model))  # pyright: ignore[reportArgumentType]
     service = GenerationService(
         gateway.database,
         projects,

@@ -4,10 +4,13 @@ import {
   getGenerationOptions,
   getGenerationRecommendations,
   getProject,
+  getWorkflow,
   listGenerationJobs,
   pauseForSwitch,
+  pauseWorkflow,
   queueGeneration,
   rejectProposal,
+  resumeWorkflow,
   retryGeneration,
   submitStagedRaster,
 } from "../api.js";
@@ -128,13 +131,14 @@ function showPromotionDialog(job, project, refresh, announce, trigger) {
   confirm.focus();
 }
 
-function renderJob(job, project, refresh, announce) {
+function renderJob(job, project, refresh, announce, workflow) {
   const displayState = JOB_STATES.has(job.state) ? job.state : "unknown";
   const revisionCurrent = job.project_revision === project.revision;
   const card = element("article", null, { class: "card job-card" });
   card.append(
     element("h3", `${job.provider} / ${job.model}`),
     element("p", `Status: ${displayState}`, { class: `job-state state-${displayState}` }),
+    element("p", `Subject: ${job.subject_kind || "panel"}/${job.subject_id || job.job_id}`),
     element("p", `Authentication mode: ${job.auth_mode}`),
     element(
       "p",
@@ -182,11 +186,21 @@ function renderJob(job, project, refresh, announce) {
       }
     }));
   }
-  if (!actions.childElementCount) {
+  if (!actions.childElementCount && !workflow) {
     actions.append(element("p", "No actions are available for this historical or terminal job."));
   }
   card.append(actions);
   return card;
+}
+
+function groupBy(items, key) {
+  const map = new Map();
+  for (const item of items) {
+    const k = key(item);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(item);
+  }
+  return map;
 }
 
 export function renderGenerateView({ store, announce, navigate }) {
@@ -253,7 +267,14 @@ export function renderGenerateView({ store, announce, navigate }) {
 
   const queueHeading = element("h3", "Generation queue");
   const queue = element("div", null, { class: "card-grid", "aria-live": "polite" });
-  section.append(queueHeading, queue, button("Open Review", true, () => navigate("review")));
+  const workflowControls = element("div", null, { class: "card workflow-controls" });
+  workflowControls.append(element("h3", "Workflow controls"));
+  const pauseBtn = element("button", "Pause workflow", { type: "button", class: "button" });
+  const resumeBtn = element("button", "Resume workflow", { type: "button", class: "button" });
+  pauseBtn.disabled = true;
+  resumeBtn.disabled = true;
+  workflowControls.append(pauseBtn, resumeBtn);
+  section.append(queueHeading, queue, workflowControls, button("Open Review", true, () => navigate("review")));
 
   let confirmedSelection = null;
   const selectedOption = () => optionCache?.find(
@@ -324,15 +345,64 @@ export function renderGenerateView({ store, announce, navigate }) {
     }, REFRESH_DELAY_MS);
   }
 
-  function renderQueue(current) {
+  function renderQueue(current, workflow) {
     queue.replaceChildren();
-    for (const job of current.generation.jobs) {
-      queue.append(renderJob(job, current.project, refresh, announce));
+    const groups = groupBy(current.generation.jobs, (job) => `${job.subject_kind || "panel"}`);
+    for (const [subject, jobs] of groups) {
+      const groupCard = element("section", null, { class: "card subject-group" });
+      groupCard.append(element("h4", `Subject: ${subject}`));
+      for (const job of jobs) {
+        groupCard.append(renderJob(job, current.project, refresh, announce, workflow));
+      }
+      queue.append(groupCard);
     }
     if (!current.generation.jobs.length) {
       queue.append(element("p", "No generation jobs yet."));
     }
   }
+
+  async function syncWorkflow() {
+    const proj = store.getState().project;
+    if (!proj) return null;
+    try {
+      const res = await getWorkflow(proj.project_id);
+      const workflow = res.workflow || res;
+      store.setWorkflow(workflow);
+      pauseBtn.disabled = !workflow.can_pause;
+      resumeBtn.disabled = !workflow.can_resume;
+      return workflow;
+    } catch (error) {
+      pauseBtn.disabled = true;
+      resumeBtn.disabled = true;
+      return null;
+    }
+  }
+  pauseBtn.addEventListener("click", async () => {
+    const proj = store.getState().project;
+    if (!proj) return;
+    pauseBtn.disabled = true;
+    try {
+      await pauseWorkflow(proj.project_id, proj.revision);
+      announce("Workflow paused.", "success");
+      await syncWorkflow();
+    } catch (error) {
+      announce(error.message, "error");
+      pauseBtn.disabled = false;
+    }
+  });
+  resumeBtn.addEventListener("click", async () => {
+    const proj = store.getState().project;
+    if (!proj) return;
+    resumeBtn.disabled = true;
+    try {
+      await resumeWorkflow(proj.project_id, proj.revision);
+      announce("Workflow resumed.", "success");
+      await syncWorkflow();
+    } catch (error) {
+      announce(error.message, "error");
+      resumeBtn.disabled = false;
+    }
+  });
 
   async function load() {
     try {

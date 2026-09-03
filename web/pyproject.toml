@@ -44,6 +44,7 @@ comic_sol_web = [
     "static/index.html",
     "static/app.js",
     "static/api.js",
+    "static/activity.js",
     "static/webmcp.js",
     "static/state.js",
     "static/styles.css",

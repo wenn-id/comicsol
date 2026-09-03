@@ -23,6 +23,7 @@ STATIC_ASSETS = {
     "static/index.html",
     "static/app.js",
     "static/api.js",
+    "static/activity.js",
     "static/webmcp.js",
     "static/state.js",
     "static/styles.css",
@@ -205,7 +206,15 @@ class StudioContractTests(unittest.TestCase):
         self.assertIn("encodeURIComponent(projectId)", self.api)
         route_literals = set(re.findall(r'["\'](/api/[^"\']*)["\']', self.scripts))
         self.assertEqual(
-            {"/api/projects", "/api/generation", "/api/approvals", "/api/assets"},
+            {
+                "/api/projects",
+                "/api/generation",
+                "/api/approvals",
+                "/api/assets",
+                "/api/auth/local-session",
+                "/api/planning",
+                "/api/workflows",
+            },
             route_literals,
         )
         self.assertNotRegex(
@@ -524,6 +533,69 @@ check(activeStore.getState().project.revision === 9, "active project was overwri
         )
         self.assertNotRegex(self.scripts, r"Authorization|Bearer|api[_-]?key|filesystem|pathname")
         self.assertRegex(self.state, r"Object\.freeze")
+
+    def test_task7_planning_and_workflow_api_envelopes_are_strict(self) -> None:
+        for symbol in (
+            "bootstrapLocalSession",
+            "getPlanningOptions",
+            "queuePlanning",
+            "getPlanningJob",
+            "approveWorkflow",
+            "getWorkflow",
+            "pauseWorkflow",
+            "resumeWorkflow",
+            "workflowEventsUrl",
+        ):
+            self.assertRegex(self.api, rf"function\s+{symbol}\b")
+        self.assertIn('"/api/auth/local-session"', self.api)
+        self.assertIn('"/api/planning"', self.api)
+        self.assertIn('"/api/workflows"', self.api)
+        self.assertIn("events?after", self.api)
+        # Strict envelope validation must guard the planning and workflow branches.
+        self.assertRegex(self.api, r"project_id.*revision.*\u003c", re.DOTALL)
+        self.assertRegex(self.api, r"function\s+envelopeMatches\b")
+
+    def test_task7_state_branches_for_planning_and_workflow_are_immutable(self) -> None:
+        for marker in (
+            "setPlanningJob",
+            "replacePlanningJob",
+            "setWorkflow",
+            "replaceWorkflow",
+        ):
+            self.assertIn(marker, self.state)
+        # Every planning/workflow store action must guard against stale revisions.
+        for guard in (
+            "project_id.*expected_revision",
+            "requestEpoch",
+        ):
+            self.assertRegex(self.state, guard)
+
+    def test_task7_start_routes_through_planning_and_openai_image_selectors(self) -> None:
+        for marker in (
+            "getPlanningOptions",
+            "queuePlanning",
+            "bootstrapLocalSession",
+            "planningProvider",
+            "planningModel",
+            "imageModel",
+            "Create project",
+        ):
+            self.assertIn(marker, self.start)
+        # Missing credentials must be shown by environment variable name only.
+        self.assertRegex(self.start, r"required_environment_variable")
+        # No model values are ever hard-coded in the option text.
+        self.assertNotRegex(self.start, r"sk-[A-Za-z0-9]{16}")
+
+    def test_task7_plan_approves_workflow_with_image_model_and_blocks_stale(self) -> None:
+        self.assertIn("approveWorkflow", self.plan)
+        self.assertIn("imageModel", self.plan)
+        self.assertIn("getPlanningJob", self.plan)
+        self.assertRegex(self.plan, r"poll.*ready_for_review|pollUntilReady|pollForReady")
+        # The plan view must never bypass the review gate before calling approveWorkflow.
+        approve_pos = self.plan.index("approveWorkflow")
+        review_pos = self.plan.index("Ready for review", 0) if "Ready for review" in self.plan else -1
+        self.assertGreater(review_pos, -1)
+        self.assertLess(review_pos, approve_pos)
 
 
 if __name__ == "__main__":

@@ -74,6 +74,7 @@ def _reject(error: Exception) -> NoReturn:
 
 def _job_envelope(job: Any, expected_revision: int | None = None) -> dict[str, object]:
     revision_current = expected_revision is not None and job.project_revision == expected_revision
+    request = getattr(job, "request", None)
     can_cancel = revision_current and (
         job.state.value
         in {
@@ -88,8 +89,8 @@ def _job_envelope(job: Any, expected_revision: int | None = None) -> dict[str, o
         "job_id": job.job_id,
         "project_id": job.project_id,
         "project_revision": job.project_revision,
-        "subject_kind": job.request.subject_kind,
-        "subject_id": job.request.subject_id,
+        "subject_kind": getattr(request, "subject_kind", None),
+        "subject_id": getattr(request, "subject_id", None),
         "state": job.state.value,
         "provider": job.provider,
         "model": job.model,

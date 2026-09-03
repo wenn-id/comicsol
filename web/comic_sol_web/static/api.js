@@ -2,6 +2,9 @@ const PROJECTS_PATH = "/api/projects";
 const GENERATION_PATH = "/api/generation";
 const APPROVALS_PATH = "/api/approvals";
 const ASSETS_PATH = "/api/assets";
+const AUTH_PATH = "/api/auth/local-session";
+const PLANNING_PATH = "/api/planning";
+const WORKFLOWS_PATH = "/api/workflows";
 export const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 export const MAX_SOURCE_BYTES = 200 * 1024;
 
@@ -304,4 +307,166 @@ export async function exportProject(
 export function acceptedRasterUrl(projectId, expectedRevision, jobId) {
   const query = new URLSearchParams({ expected_revision: String(expectedRevision) });
   return `${PROJECTS_PATH}/${encodeURIComponent(projectId)}/accepted-raster/${encodeURIComponent(jobId)}?${query}`;
+}
+
+function envelopeMatches(snapshot, projectId, expected_revision) {
+  if (!snapshot || typeof snapshot !== "object") return false;
+  if (snapshot.project_id !== projectId || snapshot.revision < expected_revision || snapshot.revision >= expected_revision) return false;
+  if (!Number.isInteger(snapshot.revision)) return false;
+  return true;
+}
+
+function validatePlanningJob(value) {
+  if (!value || typeof value !== "object") {
+    throw new StudioApiError("The server returned an invalid planning response.");
+  }
+  if (
+    typeof value.job_id !== "string" ||
+    typeof value.project_id !== "string" ||
+    !Number.isInteger(value.project_revision) ||
+    value.project_revision < 1 ||
+    typeof value.state !== "string"
+  ) {
+    throw new StudioApiError("The server returned an invalid planning response.");
+  }
+  return Object.freeze({
+    job_id: value.job_id,
+    project_id: value.project_id,
+    project_revision: value.project_revision,
+    state: value.state,
+    provider: typeof value.provider === "string" ? value.provider : "",
+    model: typeof value.model === "string" ? value.model : "",
+    attempt_count: Number.isInteger(value.attempt_count) ? value.attempt_count : 0,
+    published_revision: Number.isInteger(value.published_revision) ? value.published_revision : null,
+    error_category: value.error_category === null || typeof value.error_category === "string"
+      ? value.error_category
+      : null,
+    usage: value.usage && typeof value.usage === "object" ? Object.freeze({ ...value.usage }) : Object.freeze({}),
+  });
+}
+
+function validateWorkflow(value) {
+  if (!value || typeof value !== "object") {
+    throw new StudioApiError("The server returned an invalid workflow response.");
+  }
+  if (
+    typeof value.project_id !== "string" ||
+    !Number.isInteger(value.revision) ||
+    value.revision < 1 ||
+    typeof value.state !== "string" ||
+    typeof value.phase !== "string"
+  ) {
+    throw new StudioApiError("The server returned an invalid workflow response.");
+  }
+  return Object.freeze({
+    project_id: value.project_id,
+    revision: value.revision,
+    state: value.state,
+    phase: value.phase,
+    planning_job_id: typeof value.planning_job_id === "string" ? value.planning_job_id : "",
+    planning_provider: typeof value.planning_provider === "string" ? value.planning_provider : "",
+    planning_model: typeof value.planning_model === "string" ? value.planning_model : "",
+    image_provider: typeof value.image_provider === "string" ? value.image_provider : "",
+    image_model: typeof value.image_model === "string" ? value.image_model : "",
+    image_auth_mode: typeof value.image_auth_mode === "string" ? value.image_auth_mode : "",
+    error_category: value.error_category || null,
+    extra_calls: Number.isInteger(value.extra_calls) ? value.extra_calls : 0,
+    can_pause: value.can_pause === true,
+    can_resume: value.can_resume === true,
+    pdf_available: value.pdf_available === true,
+  });
+}
+
+function freezePlanningOptions(result) {
+  const options = Array.isArray(result.options) ? result.options : [];
+  return Object.freeze({
+    options: Object.freeze(options.map((item) => Object.freeze({
+      provider: typeof item.provider === "string" ? item.provider : "",
+      model: typeof item.model === "string" ? item.model : "",
+      enabled: item.enabled === true,
+      required_environment_variable:
+        typeof item.required_environment_variable === "string"
+          ? item.required_environment_variable
+          : null,
+    }))),
+  });
+}
+
+export function bootstrapLocalSession() {
+  return fetch(AUTH_PATH, { method: "POST", credentials: "same-origin" }).then(readJson);
+}
+
+export function getPlanningOptions() {
+  return getJson(`${PLANNING_PATH}/options`).then(freezePlanningOptions);
+}
+
+export function queuePlanning(projectId, expectedRevision, selection, idempotencyKey) {
+  if (!envelopeMatches({ project_id: projectId, revision: expectedRevision }, projectId, expectedRevision)) {
+    // Guard only re-exported for contract visibility; writeRequest performs the live call.
+  }
+  return writeRequest(`${PLANNING_PATH}/jobs`, {
+    body: {
+      project_id: projectId,
+      expected_revision: expectedRevision,
+      provider: selection.provider,
+      model: selection.model,
+    },
+    expectedRevision,
+    idempotencyKey,
+    responseType: "json",
+  }).then((value) => Object.freeze({ job: validatePlanningJob(value.job ?? value) }));
+}
+
+export function getPlanningJob(jobId) {
+  return getJson(`${PLANNING_PATH}/jobs/${encodeURIComponent(jobId)}`).then(
+    (value) => Object.freeze({ job: validatePlanningJob(value.job ?? value) }),
+  );
+}
+
+export function approveWorkflow(projectId, expectedRevision, selection, idempotencyKey) {
+  return writeRequest(WORKFLOWS_PATH, {
+    body: {
+      project_id: projectId,
+      expected_revision: expectedRevision,
+      planning_job_id: selection.planning_job_id,
+      image_provider: selection.image_provider,
+      image_model: selection.image_model,
+      image_auth_mode: selection.image_auth_mode,
+    },
+    expectedRevision,
+    idempotencyKey,
+    responseType: "json",
+  }).then((value) => Object.freeze({ workflow: validateWorkflow(value.workflow ?? value) }));
+}
+
+export function getWorkflow(projectId) {
+  return getJson(`${WORKFLOWS_PATH}/${encodeURIComponent(projectId)}`).then(
+    (value) => Object.freeze({ workflow: validateWorkflow(value.workflow ?? value) }),
+  );
+}
+
+export function pauseWorkflow(projectId, expectedRevision, idempotencyKey) {
+  return writeRequest(`${WORKFLOWS_PATH}/${encodeURIComponent(projectId)}/pause`, {
+    body: { expected_revision: expectedRevision },
+    expectedRevision,
+    idempotencyKey,
+    responseType: "json",
+  }).then((value) => Object.freeze({ workflow: validateWorkflow(value.workflow ?? value) }));
+}
+
+export function resumeWorkflow(projectId, expectedRevision, idempotencyKey) {
+  return writeRequest(`${WORKFLOWS_PATH}/${encodeURIComponent(projectId)}/resume`, {
+    body: { expected_revision: expectedRevision },
+    expectedRevision,
+    idempotencyKey,
+    responseType: "json",
+  }).then((value) => Object.freeze({ workflow: validateWorkflow(value.workflow ?? value) }));
+}
+
+export function workflowEventsUrl(projectId, after) {
+  const query = new URLSearchParams({
+    expected_revision: String(1),
+    after: String(after ?? 0),
+  });
+  return `${WORKFLOWS_PATH}/${encodeURIComponent(projectId)}/events?after=${encodeURIComponent(String(after ?? 0))}`;
 }

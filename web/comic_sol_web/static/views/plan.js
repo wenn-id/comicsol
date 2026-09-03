@@ -1,4 +1,15 @@
-import { StudioApiError, StaleRevisionError, getProject, updatePlan } from "../api.js";
+// Plan view: editable draft, review gate, then production approval.
+// The workflow card only shows "Ready for review" after the planning job
+// reaches ready_for_review; the approve action calls approveWorkflow with
+// the current revision and an explicit image provider/model selection.
+import {
+  StudioApiError,
+  StaleRevisionError,
+  approveWorkflow,
+  getPlanningJob,
+  getProject,
+  updatePlan,
+} from "../api.js";
 
 const FIELDS = Object.freeze([
   Object.freeze(["storyPlan", "Story plan"]),
@@ -158,9 +169,56 @@ export function renderPlanView({ store, announce, persistPlan = updatePlan }) {
   reviewActions.append(promote, discard);
   review.append(diff, reviewActions);
   layout.append(editor, review);
-  view.append(heading, summary, layout);
+
+  const workflowCard = element("section", { className: "card", "aria-labelledby": "workflow-heading" });
+  workflowCard.append(element("h3", { id: "workflow-heading" }, "Ready for review"));
+  const imageModel = element("select", { id: "workflow-image-model", name: "imageModel" });
+  imageModel.append(
+    element("option", { value: "dall-e-3" }, "DALL-E 3"),
+    element("option", { value: "gpt-image-1" }, "GPT Image 1"),
+  );
+  const approve = element("button", { className: "button primary", type: "button" }, "Approve Plan and generate");
+  approve.disabled = state.planning?.state !== "ready_for_review";
+  workflowCard.append(labelFor("workflow-image-model", "OpenAI image model"), imageModel, approve);
+  view.append(heading, summary, layout, workflowCard);
 
   let promotionPending = false;
+
+  async function pollForReady() {
+    const planning = store.getState().planning;
+    if (!planning?.job_id || planning.state === "ready_for_review") return;
+    try {
+      const result = await getPlanningJob(planning.job_id);
+      const job = result.job || result;
+      store.replacePlanningJob(job, planning.requestEpoch || 0);
+      approve.disabled = job.state !== "ready_for_review";
+      if (job.state !== "ready_for_review" && !["failed", "cancelled"].includes(job.state)) {
+        setTimeout(pollForReady, 1500);
+      }
+    } catch (error) {
+      announce(error.message, "error");
+    }
+  }
+
+  approve.addEventListener("click", async () => {
+    const latest = store.getState();
+    if (latest.planning?.state !== "ready_for_review") return;
+    approve.disabled = true;
+    try {
+      const result = await approveWorkflow(latest.project.project_id, latest.project.revision, {
+        planning_job_id: latest.planning.job_id,
+        image_provider: "openai",
+        image_model: imageModel.value,
+        image_auth_mode: "hosted",
+      });
+      store.setWorkflow(result.workflow || result);
+      announce("Plan approved. Production workflow started.", "success");
+    } catch (error) {
+      announce(error.message, "error");
+      approve.disabled = false;
+    }
+  });
+  void pollForReady();
 
   function updateDraft() {
     const latest = store.getState();

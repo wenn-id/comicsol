@@ -2,6 +2,7 @@ import {
   acceptedRasterUrl,
   exportProject,
   getProject,
+  getWorkflow,
   listGenerationJobs,
   retryGeneration,
   runQa,
@@ -320,6 +321,46 @@ export function renderReviewView({ store, announce, navigate }) {
     "aria-describedby": "export-guidance",
   });
   exportCard.append(element("h3", "Export", { id: "export-heading" }));
+
+  const workflowCard = element("section", null, {
+    class: "card", "aria-labelledby": "workflow-review-heading",
+  });
+  workflowCard.append(element("h3", "Workflow state", { id: "workflow-review-heading" }));
+  const workflowStatus = element("p", "Click refresh to load workflow state.", { role: "status", "aria-live": "polite" });
+  const refreshWorkflow = element("button", "Refresh workflow", { type: "button", class: "button" });
+  const pdfHolder = element("div", null, { class: "pdf-action" });
+  workflowCard.append(workflowStatus, refreshWorkflow, pdfHolder);
+  section.append(workflowCard);
+
+  async function loadWorkflowState() {
+    try {
+      const res = await getWorkflow(project.project_id);
+      const workflow = res.workflow || res;
+      const blocked = workflow.state === "blocked";
+      const parts = [`State: ${workflow.state}`, `Phase: ${workflow.phase}`];
+      if (blocked) parts.push("Blocked");
+      if (workflow.error_category) parts.push(`Reason: ${workflow.error_category}`);
+      workflowStatus.textContent = parts.join(" · ");
+      pdfHolder.replaceChildren();
+      if (workflow.pdf_available === true && workflow.state === "complete") {
+        const pdfButton = button("Download composed PDF", async (event) => {
+          const control = event.currentTarget;
+          control.disabled = true;
+          try {
+            const result = await exportProject(project.project_id, project.revision, "pdf", true);
+            attachExportDownload(pdfHolder, result, "pdf", announce);
+          } catch (error) {
+            control.disabled = false;
+            announce(error.message, "error");
+          }
+        });
+        pdfHolder.append(pdfButton);
+      }
+    } catch (error) {
+      workflowStatus.textContent = "Workflow state is unavailable for this project.";
+    }
+  }
+  refreshWorkflow.addEventListener("click", () => { void loadWorkflowState(); });
   const formatLabel = element("label", "Supported format", { for: "export-format" });
   const format = element("select", null, { id: "export-format", name: "format" });
   format.append(

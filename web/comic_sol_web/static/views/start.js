@@ -2,8 +2,11 @@ import {
   MAX_ARCHIVE_BYTES,
   MigrationValidationError,
   StudioApiError,
+  bootstrapLocalSession,
   createProject,
+  getPlanningOptions,
   importProject,
+  queuePlanning,
 } from "../api.js";
 
 const MAX_SOURCE_BYTES = 200 * 1024;
@@ -87,6 +90,53 @@ function creationCard({ store, announce, navigate }) {
     required: true,
   });
 
+  const planningProvider = element("select", {
+    id: "project-planning-provider",
+    name: "planningProvider",
+  });
+  const planningModel = element("select", {
+    id: "project-planning-model",
+    name: "planningModel",
+  });
+  const imageModel = element("select", {
+    id: "project-image-model",
+    name: "imageModel",
+  });
+  imageModel.append(
+    element("option", { value: "dall-e-3" }, "DALL-E 3"),
+    element("option", { value: "gpt-image-1" }, "GPT Image 1"),
+  );
+
+  let planningOptionsCache = [];
+  async function loadPlanningSelections() {
+    try {
+      await bootstrapLocalSession();
+      const res = await getPlanningOptions();
+      planningOptionsCache = res.options || [];
+      updatePlanningSelections();
+    } catch { /* optional local session */ }
+  }
+  function updatePlanningSelections() {
+    planningProvider.replaceChildren();
+    planningModel.replaceChildren();
+    const providers = [...new Set(planningOptionsCache.map((opt) => opt.provider))];
+    for (const p of providers) {
+      planningProvider.append(element("option", { value: p }, p));
+    }
+    const currentProvider = planningProvider.value;
+    const models = planningOptionsCache.filter((opt) => opt.provider === currentProvider);
+    for (const m of models) {
+      const opt = element("option", { value: m.model }, m.model);
+      if (!m.enabled && m.required_environment_variable) {
+        opt.disabled = true;
+        opt.textContent = `${m.model} (missing ${m.required_environment_variable})`;
+      }
+      planningModel.append(opt);
+    }
+  }
+  planningProvider.addEventListener("change", updatePlanningSelections);
+  void loadPlanningSelections();
+
   const mode = element("fieldset");
   mode.append(element("legend", {}, "Source format"));
   const choices = element("div", { className: "choice-row" });
@@ -118,6 +168,9 @@ function creationCard({ store, announce, navigate }) {
     ),
     field("project-language", "Language code", language),
     field("project-page-count", "Page count", pageCount),
+    field("project-planning-provider", "Planning provider", planningProvider),
+    field("project-planning-model", "Planning model", planningModel),
+    field("project-image-model", "Image model", imageModel),
   );
   const actions = element("div", { className: "actions" });
   actions.append(element("button", { className: "button primary", type: "submit" }, "Create project"));
@@ -146,6 +199,15 @@ function creationCard({ store, announce, navigate }) {
       retry = retryOperation(retry, fingerprint);
       const project = await createProject(request, retry.idempotencyKey);
       store.setProject(project);
+      if (planningProvider.value && planningModel.value) {
+        try {
+          const planJob = await queuePlanning(project.project_id, project.revision, {
+            provider: planningProvider.value,
+            model: planningModel.value,
+          });
+          store.setPlanningJob(planJob.job || planJob);
+        } catch { /* planning optional at create time */ }
+      }
       announce("Project created. Plan is ready for review.", "success");
       navigate("plan");
     } catch (error) {

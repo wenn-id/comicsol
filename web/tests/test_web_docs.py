@@ -1260,6 +1260,8 @@ class RuntimeBoundaryContractTests(unittest.TestCase):
         self.assertEqual(
             [
                 "create_projects_router",
+                "create_planning_router",
+                "create_workflows_router",
                 "create_generation_router",
                 "create_approvals_router",
                 "create_assets_router",
