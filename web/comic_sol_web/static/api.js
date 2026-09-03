@@ -167,10 +167,16 @@ export function updatePlan(projectId, plan, expectedRevision, idempotencyKey) {
 }
 
 export async function getCurrentProject() {
-  const response = await fetch(`${PROJECTS_PATH}/current`, {
-    method: "GET", credentials: "same-origin", headers: { Accept: "application/json" },
-  });
-  if (response.status === 204) return null;
+  let response;
+  try {
+    response = await fetch(`${PROJECTS_PATH}/current`, {
+      method: "GET", credentials: "same-origin", headers: { Accept: "application/json" },
+    });
+  } catch (_error) {
+    return null;
+  }
+  if (response.status === 404 || response.status === 204) return null;
+  if (!response.ok) return null;
   return readEnvelope(response);
 }
 
