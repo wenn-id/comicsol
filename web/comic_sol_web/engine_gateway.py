@@ -24,17 +24,24 @@ from comic_sol_web.assets import (
 from comic_sol_web.database import Database
 from comic_sol_web.generation.types import GenerationRequest
 from comic_sol_web.migrations import APPLICATION_MIGRATIONS, Migration
-from comic_sol_web.planning.types import PlanRequest
+from comic_sol_web.planning.types import PlanRequest, VisualReviewRequest, VisualReviewResult
 
 comic_sol = _load_engine_module("comic_sol")
 _character_identity = _load_engine_module("character_identity")
+_character_quality = _load_engine_module("character_quality")
+_compose_pages = _load_engine_module("compose_pages")
 _core_primitives = _load_engine_module("core_primitives")
 _export_pdf = _load_engine_module("export_pdf")
 _handoff = _load_engine_module("handoff")
 _handoff_archive = _load_engine_module("handoff_archive")
 _input_limits = _load_engine_module("input_limits")
+_letter_panels = _load_engine_module("letter_panels")
+_normalize_panels = _load_engine_module("normalize_panels")
+_page_quality = _load_engine_module("page_quality")
 _project_io = _load_engine_module("project_io")
 _raster_limits = _load_engine_module("raster_limits")
+_quality_records = _load_engine_module("quality_records")
+_repair_strategy = _load_engine_module("repair_strategy")
 _schema = _load_engine_module("schema")
 _validation = _load_engine_module("validate_project")
 
@@ -520,12 +527,17 @@ class EngineGateway:
             language = request.get("language")
             page_count = settings.get("page_count")
             if (
-                not isinstance(title, str) or not isinstance(language, str)
-                or isinstance(page_count, bool) or not isinstance(page_count, int)
+                not isinstance(title, str)
+                or not isinstance(language, str)
+                or isinstance(page_count, bool)
+                or not isinstance(page_count, int)
             ):
                 raise GatewayInputError("planning input is invalid")
             return PlanRequest(
-                title=title, source=source, language=language, page_count=page_count,
+                title=title,
+                source=source,
+                language=language,
+                page_count=page_count,
             )
 
     @contextmanager
@@ -1137,6 +1149,379 @@ class EngineGateway:
                 root,
                 extra_summary={"qa": qa, "plan": self._plan_summary(root)},
             )
+
+    @contextmanager
+    def _review_project(
+        self, project_id: str, expected_revision: int, *, mutation: bool = False
+    ) -> Iterator[Path]:
+        """Bind review work to one engine generation, including interrupted writes."""
+        initial = self._row(project_id)
+        self._check_revision(cast(int, initial["revision"]), expected_revision)
+        root = self._root_from_row(initial)
+        with ProjectLock(root):
+            prior_state = self._engine_state(root)
+            if mutation:
+                with self.database.transaction() as connection:
+                    row = self._reconcile_row(connection, project_id, prior_state)
+                    self._check_revision(cast(int, row["revision"]), expected_revision)
+            else:
+                with self.database.read() as connection:
+                    row = self._checked_row(connection, project_id, expected_revision)
+                    if row["engine_state"] != prior_state:
+                        raise StaleProjectRevisionError(expected_revision, expected_revision + 1)
+            try:
+                yield root
+            finally:
+                if mutation and self._engine_state(root) != prior_state:
+                    self._ensure_revision(
+                        project_id, expected_revision, expected_revision + 1, root
+                    )
+
+    def _review_snapshot(
+        self, project_id: str, expected_revision: int, root: Path
+    ) -> ProjectSnapshot:
+        row = self._row(project_id)
+        revision = expected_revision + (row["engine_state"] != self._engine_state(root))
+        self._ensure_revision(project_id, expected_revision, revision, root)
+        return self._snapshot_for(project_id, revision, root)
+
+    @staticmethod
+    def _storyboard_panel(root: Path, panel_id: str) -> tuple[dict, list[dict]]:
+        if (
+            not isinstance(panel_id, str)
+            or _core_primitives.PANEL_ID_PATTERN.fullmatch(panel_id) is None
+        ):
+            raise GatewayInputError("panel ID is invalid")
+        storyboard = read_contained_json(root, "plan/storyboard.json")
+        panels = comic_sol._storyboard_panels(storyboard)
+        panel = next((panel for panel in panels if panel.get("id") == panel_id), None)
+        if panel is None:
+            raise GatewayInputError("panel is absent from the current storyboard")
+        return panel, panels
+
+    @staticmethod
+    def _character_context(root: Path, panel_id: str) -> dict:
+        return cast(
+            dict,
+            _character_quality.character_consistency_context(
+                read_contained_json(root, "plan/character-identity-pack.json"),
+                read_contained_json(root, "plan/character-bible.json"),
+                read_contained_json(root, _character_quality.REFERENCE_PLAN_PATH),
+                panel_id,
+                storyboard=read_contained_json(root, "plan/storyboard.json"),
+            ),
+        )
+
+    def panel_review_input(
+        self, project_id: str, expected_revision: int, panel_id: str
+    ) -> VisualReviewRequest:
+        with self._review_project(project_id, expected_revision) as root:
+            panel, panels = self._storyboard_panel(root, panel_id)
+            position = panels.index(panel)
+            context = self._character_context(root, panel_id)
+            context.update(
+                {
+                    "panel": panel,
+                    "requested_dimensions": {
+                        "width": panel["rect"]["width"],
+                        "height": panel["rect"]["height"],
+                    },
+                    "generated_sfx": [
+                        item for item in panel.get("text", []) if comic_sol.is_generated_sfx(item)
+                    ],
+                    "adjacent_panels": panels[max(0, position - 1) : position]
+                    + panels[position + 1 : position + 2],
+                    "raw_path": f"panels/raw/{panel_id}.png",
+                }
+            )
+            raster = read_contained_bytes(
+                root, context["raw_path"], max_bytes=_raster_limits.MAX_ENCODED_RASTER_BYTES
+            )
+            context["raw_sha256"] = hashlib.sha256(raster).hexdigest()
+            return VisualReviewRequest(
+                "panel", panel_id, raster, context, _core_primitives.PANEL_CHECK_IDS
+            )
+
+    @staticmethod
+    def _review_checks(review: VisualReviewResult, expected_ids: tuple[str, ...]) -> list[dict]:
+        if not isinstance(review, VisualReviewResult):
+            raise GatewayInputError("visual review result is invalid")
+
+        # Provider values are deeply immutable; canonical validators consume JSON values.
+        def thaw(value: object) -> object:
+            if isinstance(value, Mapping):
+                return {key: thaw(item) for key, item in value.items()}
+            if isinstance(value, tuple | list):
+                return [thaw(item) for item in value]
+            return value
+
+        checks = cast(list[dict], thaw(review.checks))
+        categories = _quality_records.validate_quality_checks(checks, expected_ids)
+        if categories:
+            raise GatewayInputError("visual review checks are invalid: " + ", ".join(categories))
+        return checks
+
+    @staticmethod
+    def _panel_bindings(root: Path, panel_id: str) -> dict:
+        relative = f"panels/{panel_id}/normalization.json"
+        payload = read_contained_bytes(root, relative)
+        normalization = loads_bounded_json(payload, source="normalization record")
+        source, clean = normalization["source"], normalization["clean"]
+        return {
+            "raw_path": source["path"],
+            "raw_sha256": source["sha256"],
+            "raw_width": source["size"][0],
+            "raw_height": source["size"][1],
+            "clean_path": clean["path"],
+            "clean_sha256": clean["sha256"],
+            "clean_width": clean["size"][0],
+            "clean_height": clean["size"][1],
+            "normalization_path": relative,
+            "normalization_sha256": hashlib.sha256(payload).hexdigest(),
+        }
+
+    @staticmethod
+    def _panels_accepted(root: Path) -> bool:
+        panels = comic_sol._storyboard_panels(read_contained_json(root, "plan/storyboard.json"))
+        if not panels:
+            return False
+        for panel in panels:
+            try:
+                record = read_contained_json(root, f"qa/panels/{panel['id']}.json")
+            except FileNotFoundError:
+                return False
+            if record.get("decision") not in {
+                "accept",
+                "accept-warning",
+            } or comic_sol._accepted_panel_problem(root, record):
+                return False
+        return True
+
+    @staticmethod
+    def _validate_review_warnings(warnings: list[str]) -> None:
+        for warning in warnings:
+            _input_limits.validate_narrative(
+                warning,
+                message=_input_limits.WARNING_LIMIT_MESSAGE,
+                max_chars=_input_limits.MAX_WARNING_CHARS,
+            )
+
+    @staticmethod
+    def _record_review_warnings(root: Path, warnings: list[str], transaction) -> None:
+        if warnings:
+            manifest = read_project_manifest(root / "project.json", normalize_legacy=False)
+            manifest["warnings"] = list(dict.fromkeys([*manifest["warnings"], *warnings]))
+            transaction.stage_bytes("project.json", canonical_artifact_bytes(manifest))
+
+    def publish_panel_review(
+        self, project_id: str, expected_revision: int, panel_id: str, review: VisualReviewResult
+    ) -> ProjectSnapshot:
+        with self._review_project(project_id, expected_revision, mutation=True) as root:
+            panel, _ = self._storyboard_panel(root, panel_id)
+            checks = self._review_checks(review, _core_primitives.PANEL_CHECK_IDS)
+            identity = checks[0]
+            context = self._character_context(root, panel_id)
+            if context["characters"]:
+                checks[0] = _character_quality.build_character_identity_check(
+                    context,
+                    [dict(item) for item in review.character_assessments],
+                    method=identity["method"],
+                    reviewer=identity["reviewer"],
+                )
+            elif review.character_assessments:
+                raise GatewayInputError("character-free panel cannot contain trait assessments")
+            if _character_quality.validate_character_identity_check(checks[0]):
+                raise GatewayInputError("character review is invalid")
+            failures = [
+                check
+                for check in checks
+                if check["result"] == "fail" and check["severity"] == "error"
+            ]
+            warnings = [
+                check["evidence"]
+                for check in checks
+                if check["result"] == "warning" or check["severity"] == "warning"
+            ]
+            self._validate_review_warnings(warnings)
+            record = {
+                "schema_version": "2.0",
+                "kind": "panel-qa",
+                "subject_id": panel_id,
+                "checks": checks,
+                "decision": "regenerate"
+                if failures
+                else "accept-warning"
+                if warnings
+                else "accept",
+                "review": {
+                    "method": identity["method"],
+                    "reviewer": identity["reviewer"],
+                    "reviewed_at": comic_sol._utc_now(),
+                },
+                "unresolved_warnings": warnings,
+            }
+            # Validate provider-authored material before normalization can publish files.
+            for check in checks:
+                if _repair_strategy.validate_defect_regions(check):
+                    raise GatewayInputError("visual review defect regions are invalid")
+            dimensions = (panel["rect"]["width"], panel["rect"]["height"])
+            try:
+                bindings = self._panel_bindings(root, panel_id)
+                current = not _validation.validate_panel_provenance(
+                    root, {"subject_id": panel_id, "bindings": bindings}
+                )
+                current = (
+                    current and (bindings["clean_width"], bindings["clean_height"]) == dimensions
+                )
+            except (FileNotFoundError, KeyError, TypeError, ValueError):
+                current = False
+            if not current:
+                _normalize_panels.normalize_panel(
+                    root, panel_id, f"panels/raw/{panel_id}.png", dimensions, mode="exact"
+                )
+            record["bindings"] = self._panel_bindings(root, panel_id)
+            issues = list(_validation.validate_panel_record(record)) + list(
+                _validation.validate_panel_provenance(root, record)
+            )
+            if issues or _character_quality.validate_character_quality_provenance(root, record):
+                raise GatewayInputError("panel review provenance is invalid")
+            with ProjectTransaction(root, "web-panel-review") as transaction:
+                transaction.stage_bytes(
+                    f"qa/panels/{panel_id}.json", canonical_artifact_bytes(record)
+                )
+                self._record_review_warnings(root, warnings, transaction)
+            if failures:
+                _repair_strategy.plan_and_write_repair_plan(root, localized_edit_supported=False)
+                comic_sol.invalidate_from(root, "generation")
+            elif self._panels_accepted(root):
+                status = read_project_manifest(root / "project.json")["status"]
+                if status == "STORYBOARDED" and comic_sol._references_ready(root):
+                    comic_sol.transition(root, "REFERENCES_READY")
+                    status = "REFERENCES_READY"
+                if status == "REFERENCES_READY":
+                    comic_sol.transition(root, "PANELS_READY")
+                    status = "PANELS_READY"
+                if status == "PANELS_READY":
+                    comic_sol.transition(root, "QA_READY")
+                comic_sol.record_stage(root, "generation")
+            return self._review_snapshot(project_id, expected_revision, root)
+
+    def prepare_pages(self, project_id: str, expected_revision: int) -> ProjectSnapshot:
+        with self._review_project(project_id, expected_revision, mutation=True) as root:
+            if not self._panels_accepted(root):
+                raise GatewayInputError("all current panels require accepted QA before composition")
+            status = read_project_manifest(root / "project.json")["status"]
+            if status not in {"QA_READY", "LETTERED", "COMPOSED"}:
+                raise GatewayInputError("project is not ready for deterministic page preparation")
+            stale = {
+                action.stage
+                for action in comic_sol.build_resume_plan(root)
+                if action.artifact == "stage" and action.action in {"regenerate", "rerun"}
+            }
+            if "lettering" in stale:
+                _letter_panels.letter_project(root)
+                comic_sol.record_stage(root, "lettering")
+            if status == "QA_READY":
+                comic_sol.transition(root, "LETTERED")
+            if "composition" in stale:
+                _compose_pages.compose_project(root)
+                comic_sol.record_stage(root, "composition")
+            if status != "COMPOSED":
+                comic_sol.transition(root, "COMPOSED")
+            return self._review_snapshot(project_id, expected_revision, root)
+
+    @staticmethod
+    def _storyboard_page(root: Path, page_number: int) -> dict:
+        if isinstance(page_number, bool) or not isinstance(page_number, int) or page_number < 1:
+            raise GatewayInputError("page number is invalid")
+        storyboard = read_contained_json(root, "plan/storyboard.json")
+        page = next(
+            (page for page in storyboard["pages"] if page.get("number") == page_number), None
+        )
+        if page is None:
+            raise GatewayInputError("page is absent from the current storyboard")
+        return cast(dict, page)
+
+    def _require_composed_page(self, root: Path, page_number: int) -> dict:
+        page = self._storyboard_page(root, page_number)
+        if read_project_manifest(root / "project.json")["status"] not in {
+            "COMPOSED",
+            "EXPORTED",
+            "COMPLETE",
+            "COMPLETE_WITH_WARNINGS",
+        } or not self._panels_accepted(root):
+            raise GatewayInputError(
+                "page review requires current composed pages and accepted panels"
+            )
+        return page
+
+    def page_review_input(
+        self, project_id: str, expected_revision: int, page_number: int
+    ) -> VisualReviewRequest:
+        with self._review_project(project_id, expected_revision) as root:
+            page = self._require_composed_page(root, page_number)
+            subject = f"page-{page_number:03d}"
+            raster = read_contained_bytes(
+                root, f"pages/{subject}.png", max_bytes=_raster_limits.MAX_ENCODED_RASTER_BYTES
+            )
+            context = {
+                "page": page,
+                "page_sha256": hashlib.sha256(raster).hexdigest(),
+                "lettering": {
+                    panel["id"]: read_contained_json(root, f"panels/{panel['id']}/lettering.json")
+                    for panel in page["panels"]
+                },
+            }
+            return VisualReviewRequest(
+                "page", subject, raster, context, _page_quality.SUBJECTIVE_PAGE_CHECK_IDS
+            )
+
+    def publish_page_review(
+        self, project_id: str, expected_revision: int, page_number: int, review: VisualReviewResult
+    ) -> ProjectSnapshot:
+        with self._review_project(project_id, expected_revision, mutation=True) as root:
+            self._require_composed_page(root, page_number)
+            checks = self._review_checks(review, _page_quality.SUBJECTIVE_PAGE_CHECK_IDS)
+            if review.character_assessments:
+                raise GatewayInputError("page review cannot contain panel character assessments")
+            self._validate_review_warnings(
+                [
+                    check["evidence"]
+                    for check in checks
+                    if check["result"] == "warning" or check["severity"] == "warning"
+                ]
+            )
+            _page_quality.publish_page_quality_record(
+                root,
+                page_number,
+                checks,
+                reviewer=checks[0]["reviewer"],
+                reviewed_at=comic_sol._utc_now(),
+            )
+            record = read_contained_json(root, f"qa/pages/page-{page_number:03d}.json")
+            with ProjectTransaction(root, "web-page-review-warnings") as transaction:
+                self._record_review_warnings(root, record["unresolved_warnings"], transaction)
+            return self._review_snapshot(project_id, expected_revision, root)
+
+    def finalize(self, project_id: str, expected_revision: int) -> tuple[ProjectSnapshot, Path]:
+        with self._review_project(project_id, expected_revision, mutation=True) as root:
+            manifest = read_project_manifest(root / "project.json")
+            if not self._panels_accepted(root):
+                raise GatewayInputError("finalization requires current accepted panel QA")
+            for page_number in range(1, manifest["settings"]["page_count"] + 1):
+                issues = _page_quality.validate_page_quality(root, page_number)
+                if issues:
+                    raise GatewayInputError("finalization requires current accepted page QA")
+                record = read_contained_json(root, f"qa/pages/page-{page_number:03d}.json")
+                if record.get("decision") not in {"accept", "accept-warning"}:
+                    raise GatewayInputError("finalization requires current accepted page QA")
+            comic_sol.finalize_project(root)
+            pdf = contained_project_path(
+                root, f"exports/{manifest['project_id']}.pdf", must_exist=True
+            )
+            if not read_contained_bytes(root, pdf.relative_to(root)).startswith(b"%PDF-"):
+                raise GatewayError("finalization did not produce a verified PDF")
+            return self._review_snapshot(project_id, expected_revision, root), pdf
 
     def export(
         self,
