@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 
 WEB_ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +15,8 @@ APP = WEB_ROOT / "comic_sol_web" / "static" / "app.js"
 
 
 class WebMcpCreatorFlowTests(unittest.TestCase):
+    app: ClassVar[str]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = APP.read_text(encoding="utf-8")
