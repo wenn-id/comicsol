@@ -40,7 +40,7 @@ function render(state) {
     if (tab.dataset.view === "review") tab.disabled = !canReview;
   }
   outlet.replaceChildren();
-  const context = { store, announce, navigate };
+  const context = { store, announce, navigate, persistPlan: persistCreatorPlan };
   if (state.view === "plan" && canPlan) outlet.append(renderPlanView(context));
   else if (state.view === "generate" && canGenerate) outlet.append(renderGenerateView(context));
   else if (state.view === "review" && canReview) outlet.append(renderReviewView(context));
@@ -179,9 +179,16 @@ function creatorProjectSummary(project) {
 }
 
 async function currentCreatorProject() {
+  const selected = store.getState().project;
   try {
     const project = await getCurrentProject();
-    if (project) return project;
+    if (project) {
+      if (
+        selected?.project_id === project.project_id
+        && selected.revision === project.revision
+      ) return selected;
+      return project;
+    }
   } catch (error) {
     if (Number(error?.status || 0) !== 404) throw error;
   }
@@ -235,6 +242,10 @@ async function createComic(input) {
         { title, prompt, language, mode: "short_prompt", page_count: pageCount },
         crypto.randomUUID(),
       );
+      project = {
+        ...project,
+        summary: { ...project.summary, plan },
+      };
     } catch (error) {
       if (Number(error?.status || 0) !== 404) throw error;
     }
@@ -256,33 +267,55 @@ async function createComic(input) {
   return creatorProjectSummary(project);
 }
 
+async function persistCreatorPlan(projectId, plan, expectedRevision) {
+  if (!projectId.startsWith("local:")) {
+    return updatePlan(projectId, plan, expectedRevision, crypto.randomUUID());
+  }
+  const current = loadLocalCreatorProject();
+  if (
+    !current
+    || current.project_id !== projectId
+    || current.revision !== expectedRevision
+  ) throw new CreatorInputError();
+  const project = {
+    ...current,
+    revision: current.revision + 1,
+    status: "STORYBOARDED",
+    summary: { ...current.summary, plan },
+  };
+  saveLocalCreatorProject(project);
+  return project;
+}
+
 async function reviseComic(input) {
   const request = assertCreatorObject(input, ["instruction", "plan"]);
   creatorString(request.instruction, 1, 20000);
   const plan = creatorPlan(request.plan);
   const current = await currentCreatorProject();
   if (!current) throw new CreatorInputError();
-  let project = null;
-  if (!isBrowserLocalProject(current) && hasStudioSession()) {
-    try {
-      project = await updatePlan(current.project_id, plan, current.revision, crypto.randomUUID());
-    } catch (error) {
-      if (Number(error?.status || 0) !== 404) throw error;
-    }
+  const selected = store.getState().project;
+  if (
+    selected?.project_id !== current.project_id
+    || selected.revision !== current.revision
+  ) {
+    store.setProject(current);
   }
-  if (!project) {
-    project = {
-      ...current,
-      revision: current.revision + 1,
-      status: "STORYBOARDED",
-      summary: { ...current.summary, plan },
-    };
-    saveLocalCreatorProject(project);
-  }
-  store.setProject(project);
   navigate("plan", { focus: false });
-  announce("Comic plan revised from your creative direction.", "success");
-  return creatorProjectSummary(project);
+  const accepted = document.dispatchEvent(new CustomEvent("comic-sol:plan-proposal", {
+    cancelable: true,
+    detail: { expectedRevision: current.revision, changes: plan },
+  }));
+  const pending = store.getState().draft;
+  if (
+    !accepted
+    || !pending
+    || pending.origin !== "agent"
+    || pending.expectedRevision !== current.revision
+  ) {
+    throw new CreatorInputError();
+  }
+  announce("Agent-proposed Plan changes are ready for creator review.");
+  return { ...creatorProjectSummary(store.getState().project), review_required: true };
 }
 
 const CREATOR_PLAN_SCHEMA = creatorSchema(
@@ -325,7 +358,7 @@ const CREATOR_TOOL_DEFINITIONS = Object.freeze([
   {
     name: "revise_comic",
     description:
-      "Apply a creator-requested story, character, storyboard, or visual revision after reading the current comic context. Pass the fully revised four-part Plan; project revision mechanics stay inside ComicSol.",
+      "Propose a creator-requested story, character, storyboard, or visual revision after reading the current comic context. Pass the fully revised four-part Plan; ComicSol keeps it as a draft until the creator reviews and promotes it.",
     inputSchema: creatorSchema(
       {
         instruction: { type: "string", minLength: 1, maxLength: 20000 },

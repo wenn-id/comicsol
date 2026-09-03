@@ -65,10 +65,12 @@ accepts a title, concept, language, page count, visual style, and a structured
 four-part Plan drafted by the browser agent. Comic Sol immediately turns that
 into the active project shown in the Studio. `get_comic_context` explicitly
 returns the active story plan, character bible, storyboard, and visual identity
-so the agent can reason about the work it is editing. `revise_comic` applies a
+so the agent can reason about the work it is editing. `revise_comic` stages a
 new complete Plan after a request such as “make the protagonist more arrogant
-and make the ending bittersweet.” The user talks about the comic; Comic Sol
-handles project mechanics.
+and make the ending bittersweet.” The active Plan remains unchanged until the
+creator reviews the proposal and selects **Promote to working copy**. The user
+talks about the comic; Comic Sol handles project mechanics without silently
+committing agent-supplied revisions.
 
 That creator surface sits on top of the existing 14 production-oriented WebMCP
 primitives for project state, generation routing, job state, provider-switch
