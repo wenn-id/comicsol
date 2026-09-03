@@ -46,6 +46,18 @@ class WebMcpCreatorFlowTests(unittest.TestCase):
             self.assertNotIn(forbidden, create_block.group("body"))
             self.assertNotIn(forbidden, revise_block.group("body"))
 
+    def test_creator_flow_has_hosted_browser_fallback(self) -> None:
+        self.assertIn(
+            'const CREATOR_LOCAL_STORAGE_KEY = "comic-sol:webmcp-creator-v1";', self.app
+        )
+        self.assertIn("localStorage.getItem", self.app)
+        self.assertIn("localStorage.setItem", self.app)
+        self.assertIn('mode: "browser-local"', self.app)
+        create_block = re.search(r'name: "create_comic"(?P<body>.*?)execute:', self.app, re.DOTALL)
+        self.assertIsNotNone(create_block)
+        assert create_block is not None
+        self.assertIn("plan: creatorSchema(", create_block.group("body"))
+
     def test_app_remains_valid_javascript(self) -> None:
         node = shutil.which("node")
         self.assertIsNotNone(node, "Node.js is required for the WebMCP creator contract")
