@@ -42,12 +42,12 @@ class StudioCompactLayoutTests(unittest.TestCase):
         )
 
     def test_responsive_overrides_follow_the_base_drawer_rules(self) -> None:
-        drawer_rule = self.styles.rfind("#activity-drawer {")
-        self.assertGreater(drawer_rule, -1)
-        self.assertGreater(self.styles.rfind("@media (max-width: 63.99rem)"), drawer_rule)
+        base_drawer_rule = self.styles.find("#activity-drawer {")
+        self.assertGreater(base_drawer_rule, -1)
+        self.assertGreater(self.styles.rfind("@media (max-width: 63.99rem)"), base_drawer_rule)
         self.assertGreater(
             self.styles.rfind("@media (min-width: 64rem) and (min-height: 42rem)"),
-            drawer_rule,
+            base_drawer_rule,
         )
 
     def test_activity_drawer_defaults_collapsed_until_user_opens_it(self) -> None:
