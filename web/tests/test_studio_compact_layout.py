@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 
 WEB_ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +13,10 @@ STATIC_ROOT = WEB_ROOT / "comic_sol_web" / "static"
 
 
 class StudioCompactLayoutTests(unittest.TestCase):
+    start: ClassVar[str]
+    styles: ClassVar[str]
+    activity: ClassVar[str]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.start = (STATIC_ROOT / "views" / "start.js").read_text(encoding="utf-8")
