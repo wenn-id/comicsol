@@ -2,10 +2,46 @@
 
 from __future__ import annotations
 
+import ipaddress
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from comic_sol_web.auth import AuthError, AuthService, require_principal
+from comic_sol_web.auth import AuthError, AuthService, SessionPrincipal, require_principal
+
+
+def _service_from(source: Any, request: Request) -> AuthService:
+    service = source(request) if callable(source) else source
+    if not isinstance(service, AuthService):
+        raise RuntimeError("authentication service is unavailable")
+    return service
+
+
+def create_local_session_router(service_source: Any) -> APIRouter:
+    """Create the local-only bootstrap endpoint for a fixed local principal."""
+    router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+    @router.post("/local-session")
+    async def local_session(request: Request) -> JSONResponse:
+        host = request.client.host if request.client is not None else ""
+        try:
+            is_loopback = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            is_loopback = False
+        if not is_loopback:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="local session rejected"
+            )
+        service = _service_from(service_source, request)
+        authenticated = service.create_session(SessionPrincipal("comic-sol-local-user", "local"))
+        response = JSONResponse(
+            {"user_id": authenticated.principal.user_id, "login": authenticated.principal.login}
+        )
+        service.set_session_cookies(response, authenticated)
+        return response
+
+    return router
 
 
 def create_auth_router(

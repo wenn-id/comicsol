@@ -1,4 +1,16 @@
-import { StudioApiError, StaleRevisionError, getProject, updatePlan } from "../api.js";
+// Plan view: editable draft, review gate, then production approval.
+// The workflow card only shows "Ready for review" after the planning job
+// reaches ready_for_review; the approve action calls approveWorkflow with
+// the current revision and an explicit image provider/model selection.
+import {
+  StudioApiError,
+  StaleRevisionError,
+  approveWorkflow,
+  getGenerationOptions,
+  getPlanningJob,
+  getProject,
+  updatePlan,
+} from "../api.js";
 
 const FIELDS = Object.freeze([
   Object.freeze(["storyPlan", "Story plan"]),
@@ -158,9 +170,77 @@ export function renderPlanView({ store, announce, persistPlan = updatePlan }) {
   reviewActions.append(promote, discard);
   review.append(diff, reviewActions);
   layout.append(editor, review);
-  view.append(heading, summary, layout);
+
+  const workflowCard = element("section", { className: "card", "aria-labelledby": "workflow-heading" });
+  workflowCard.append(element("h3", { id: "workflow-heading" }, "Ready for review"));
+  const imageModel = element("select", { id: "workflow-image-model", name: "imageModel" });
+  const approve = element("button", { className: "button primary", type: "button" }, "Approve Plan and generate");
+  approve.disabled = true;
+  workflowCard.append(labelFor("workflow-image-model", "OpenAI image model"), imageModel, approve);
+  view.append(heading, summary, layout, workflowCard);
 
   let promotionPending = false;
+
+  async function loadImageModels() {
+    try {
+      const result = await getGenerationOptions();
+      const options = (result.options || []).filter(
+        (option) => option.enabled && option.capabilities?.includes("text_to_image"),
+      );
+      imageModel.replaceChildren(
+        ...options.map((option) => element(
+          "option",
+          { value: `${option.provider}:${option.model}` },
+          `${option.provider}: ${option.model}`,
+        )),
+      );
+      approve.disabled = !options.length || store.getState().planning?.state !== "ready_for_review";
+    } catch (error) {
+      announce(error.message, "error");
+    }
+  }
+
+  async function pollForReady() {
+    const planning = store.getState().planning;
+    if (!planning?.job_id || planning.state === "ready_for_review") return;
+    try {
+      const result = await getPlanningJob(planning.job_id);
+      const job = result.job || result;
+      store.replacePlanningJob(job, planning.requestEpoch || 0);
+      if (job.state === "ready_for_review") {
+        const published = await getProject(job.project_id);
+        store.replaceProject(published);
+      }
+      approve.disabled = job.state !== "ready_for_review" || !imageModel.value;
+      if (job.state !== "ready_for_review" && !["failed", "cancelled"].includes(job.state)) {
+        setTimeout(pollForReady, 1500);
+      }
+    } catch (error) {
+      announce(error.message, "error");
+    }
+  }
+
+  approve.addEventListener("click", async () => {
+    const latest = store.getState();
+    if (latest.planning?.state !== "ready_for_review") return;
+    approve.disabled = true;
+    try {
+      const [imageProvider, imageModelName] = imageModel.value.split(":", 2);
+      const result = await approveWorkflow(latest.project.project_id, latest.project.revision, {
+        planning_job_id: latest.planning.job_id,
+        image_provider: imageProvider,
+        image_model: imageModelName,
+        image_auth_mode: "hosted",
+      });
+      store.setWorkflow(result.workflow || result);
+      announce("Plan approved. Production workflow started.", "success");
+    } catch (error) {
+      announce(error.message, "error");
+      approve.disabled = false;
+    }
+  });
+  void loadImageModels();
+  void pollForReady();
 
   function updateDraft() {
     const latest = store.getState();

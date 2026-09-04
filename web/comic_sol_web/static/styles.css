@@ -182,3 +182,78 @@ dialog {
 }
 dialog::backdrop { background: rgb(20 12 32 / 70%); }
 .revision-label { font-weight: 750; }
+
+#studio-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 1rem;
+}
+
+#activity-drawer {
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 0.75rem 2rem rgb(50 30 80 / 10%);
+  padding: 1rem;
+  min-width: 320px;
+  max-width: 720px;
+  resize: horizontal;
+  overflow: auto;
+}
+
+#activity-drawer[data-collapsed="true"] { padding-block: 0.5rem; }
+
+.activity-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.activity-toggle {
+  border: 0;
+  background: transparent;
+  font-weight: 750;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  color: var(--accent-strong);
+}
+
+.activity-resize {
+  flex: 1;
+  min-width: 8rem;
+  cursor: ew-resize;
+}
+
+.activity-list {
+  display: grid;
+  gap: 0.5rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.activity-card {
+  border-left: 0.3rem solid var(--accent);
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+  border-radius: 0.5rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.activity-field {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.activity-label {
+  color: var(--muted);
+  font-weight: 750;
+  min-width: 4.5rem;
+  text-transform: lowercase;
+}
+
+.activity-value { word-break: break-word; }

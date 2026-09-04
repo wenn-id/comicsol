@@ -34,42 +34,18 @@ A request that fails any of these is rejected before it mutates state.
 
 ## Authentication and CSRF
 
-**Studio does not currently ship an OAuth sign-in route.** The merged
-`web/comic_sol_web/app.py::create_app` composition root includes only
-the `projects`, `generation`, `approvals`, and `assets` routers plus
-`/healthz` and static; it does **not** register an authentication
-router, so no `/api/auth/login` or OAuth callback is served by the
-merged application. `WebConfig` has no GitHub-client configuration in
-the merged build. The scope boundary is the same as in
-[Sign in](index.md#sign-in): `/healthz` is unauthenticated and
-deterministic; every project and generation route currently requires
-a `SessionPrincipal`, but the route that issues one is not present
-in the merged build. The session-and-CSRF machinery below is the
-**documented intended end-state** of the build, not an active path
-that the merged code exercises today. The security contract test
-`RuntimeBoundaryContractTests::test_create_app_registers_no_auth_router`
-locks the current scope by AST-scanning the composition root and
-asserting no `auth` / `login` / `callback` / `oauth` / `github`
-router is included.
+Studio registers only the local-bootstrap authentication router. A client
+calls `POST /api/auth/local-session`; the server returns an `HttpOnly` session
+cookie and CSRF material for subsequent state-changing requests. Project,
+planning, workflow, generation, approval, and asset routes require the issued
+`SessionPrincipal`; `/healthz` remains unauthenticated and deterministic.
+GitHub OAuth is not wired in this build.
 
-**Intended end-state (once the auth router is wired)**, the flow is:
-
-- the user opens the Studio in a browser and authenticates through
-  GitHub OAuth (`web/comic_sol_web/auth.py` contains the construction
-  logic, but the router is not registered by `create_app` in the
-  merged build);
-- the browser is bound to a one-time OAuth state and a separate
-  cookie-level binding; the server records only keyed digests of
-  those values, never the plaintext, and any replay is rejected on
-  consume;
-- after the OAuth callback succeeds, the browser holds an `HttpOnly`
-  session cookie and a paired CSRF cookie; the session cookie is
-  `HttpOnly` and is never returned to JavaScript; the CSRF header is
-  paired against a per-session token via `AuthService.require_csrf`,
-  and a missing, mismatched, or expired token is rejected before the
-  handler mutates state;
-- the same-origin policy plus the same-site cookie model isolate the
-  session from third-party contexts.
+The bootstrap route assumes a trusted single-user machine. Bind local mode to
+loopback only. Exposing it directly to a LAN or public network lets an
+untrusted caller mint a local session and violates the runtime trust boundary.
+A missing or mismatched CSRF token is rejected before mutation, and the
+browser never receives provider credentials.
 
 ## Ownership and opaque IDs
 

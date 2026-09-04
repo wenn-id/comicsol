@@ -9,6 +9,8 @@ creates no application, filesystem, or database state.
 from __future__ import annotations
 
 import re
+import secrets
+import ipaddress
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +30,12 @@ DATA_ROOT_VAR = "COMIC_SOL_WEB_DATA_ROOT"
 HOSTED_SECRET_REFS_VAR = "COMIC_SOL_WEB_HOSTED_SECRET_REFS"
 CREDENTIAL_KEY_REFS_VAR = "COMIC_SOL_WEB_CREDENTIAL_KEY_REFS"
 CREDENTIAL_ACTIVE_KEY_ID_VAR = "COMIC_SOL_WEB_CREDENTIAL_ACTIVE_KEY_ID"
+OPENAI_IMAGE_MODEL_VAR = "COMIC_SOL_WEB_OPENAI_IMAGE_MODEL"
+DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-2"
+OPENAI_PLANNING_MODEL_VAR = "COMIC_SOL_WEB_OPENAI_PLANNING_MODEL"
+ANTHROPIC_PLANNING_MODEL_VAR = "COMIC_SOL_WEB_ANTHROPIC_PLANNING_MODEL"
+DEFAULT_OPENAI_PLANNING_MODEL = "gpt-5.4-mini"
+DEFAULT_ANTHROPIC_PLANNING_MODEL = "claude-sonnet-4-6"
 
 REQUIRED_VARIABLES = (SESSION_SECRET_VAR, ENCRYPTION_SECRET_VAR, DATA_ROOT_VAR)
 
@@ -37,6 +45,9 @@ REQUIRED_VARIABLES = (SESSION_SECRET_VAR, ENCRYPTION_SECRET_VAR, DATA_ROOT_VAR)
 MINIMUM_SECRET_LENGTH = 32
 _UNSAFE_CHARACTERS = re.compile(r"[\x00-\x1f\x7f\s]")
 _PATH_UNSAFE_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
+# Keep model identifiers compatible with the durable generation-store
+# boundary. They are configuration values, never request-controlled input.
+_MODEL_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}\Z")
 
 
 class WebConfigError(ValueError):
@@ -98,6 +109,21 @@ def _parse_secret_references(
     return MappingProxyType(references)
 
 
+def _openai_image_model(environ: Mapping[str, str]) -> str:
+    """Return the trusted, bounded OpenAI image-model identifier."""
+    model = environ.get(OPENAI_IMAGE_MODEL_VAR, DEFAULT_OPENAI_IMAGE_MODEL)
+    if not isinstance(model, str) or _MODEL_IDENTIFIER.fullmatch(model) is None:
+        raise WebConfigError(f"{OPENAI_IMAGE_MODEL_VAR} is invalid")
+    return model
+
+
+def _planning_model(environ: Mapping[str, str], variable: str, default: str) -> str:
+    model = environ.get(variable, default)
+    if not isinstance(model, str) or _MODEL_IDENTIFIER.fullmatch(model) is None:
+        raise WebConfigError(f"{variable} is invalid")
+    return model
+
+
 @dataclass(frozen=True)
 class WebConfig:
     """Immutable Web configuration.
@@ -113,6 +139,24 @@ class WebConfig:
     hosted_secret_references: Mapping[str, str] = field(repr=False)
     master_key_references: Mapping[str, str] = field(repr=False)
     active_credential_key_id: str | None = field(repr=False)
+    openai_image_model: str = DEFAULT_OPENAI_IMAGE_MODEL
+    openai_planning_model: str = DEFAULT_OPENAI_PLANNING_MODEL
+    anthropic_planning_model: str = DEFAULT_ANTHROPIC_PLANNING_MODEL
+    local_mode: bool = False
+    host: str = "127.0.0.1"
+
+    @property
+    def planning_model_options(self) -> Mapping[str, str]:
+        return MappingProxyType(
+            {
+                provider: model
+                for provider, model in (
+                    ("openai", self.openai_planning_model),
+                    ("anthropic", self.anthropic_planning_model),
+                )
+                if provider in self.hosted_secret_references
+            }
+        )
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> WebConfig:
@@ -169,4 +213,52 @@ class WebConfig:
             hosted_secret_references=hosted_secret_references,
             master_key_references=master_key_references,
             active_credential_key_id=active_key_id,
+            openai_image_model=_openai_image_model(environ),
+            openai_planning_model=_planning_model(
+                environ, OPENAI_PLANNING_MODEL_VAR, DEFAULT_OPENAI_PLANNING_MODEL
+            ),
+            anthropic_planning_model=_planning_model(
+                environ, ANTHROPIC_PLANNING_MODEL_VAR, DEFAULT_ANTHROPIC_PLANNING_MODEL
+            ),
+            local_mode=False,
+        )
+
+    @classmethod
+    def local_from_env(cls, environ: Mapping[str, str]) -> "WebConfig":
+        """Build loopback-only configuration without persisted local secrets."""
+        raw_data_root = _require(environ, DATA_ROOT_VAR)
+        data_root = Path(raw_data_root)
+        if not data_root.is_absolute():
+            raise WebConfigError(f"{DATA_ROOT_VAR} must be an absolute path")
+        host = environ.get("COMIC_SOL_WEB_HOST", "127.0.0.1")
+        try:
+            if not ipaddress.ip_address(host).is_loopback:
+                raise ValueError
+        except ValueError:
+            raise WebConfigError("COMIC_SOL_WEB_HOST must be a loopback IP address") from None
+        return cls(
+            session_secret=secrets.token_urlsafe(48),
+            encryption_secret=secrets.token_urlsafe(48),
+            data_root=data_root,
+            hosted_secret_references=MappingProxyType(
+                {
+                    provider: variable
+                    for provider, variable in {
+                        "openai": "OPENAI_API_KEY",
+                        "anthropic": "ANTHROPIC_API_KEY",
+                    }.items()
+                    if environ.get(variable)
+                }
+            ),
+            master_key_references=MappingProxyType({}),
+            active_credential_key_id=None,
+            host=host,
+            openai_image_model=_openai_image_model(environ),
+            openai_planning_model=_planning_model(
+                environ, OPENAI_PLANNING_MODEL_VAR, DEFAULT_OPENAI_PLANNING_MODEL
+            ),
+            anthropic_planning_model=_planning_model(
+                environ, ANTHROPIC_PLANNING_MODEL_VAR, DEFAULT_ANTHROPIC_PLANNING_MODEL
+            ),
+            local_mode=True,
         )

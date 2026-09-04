@@ -132,6 +132,9 @@ const apiUrl = moduleUrl(`
   }
 `);
 const webmcpUrl = moduleUrl(`export async function registerWebMcp() { return false; }`);
+const activityUrl = moduleUrl(`
+  export function mountActivityDrawer() { return { setProject() {} }; }
+`);
 const viewsUrl = moduleUrl(`
   let proposalHandler = null;
   export function renderStartView() { return {}; }
@@ -203,6 +206,7 @@ let source = original
   .replace('from "./api.js"', `from ${JSON.stringify(apiUrl)}`)
   .replace('from "./webmcp.js"', `from ${JSON.stringify(webmcpUrl)}`)
   .replace('from "./state.js"', `from ${JSON.stringify(__STATE_MODULE__)}`)
+  .replace('from "./activity.js"', `from ${JSON.stringify(activityUrl)}`)
   .replaceAll('from "./views/start.js"', `from ${JSON.stringify(viewsUrl)}`)
   .replaceAll('from "./views/plan.js"', `from ${JSON.stringify(viewsUrl)}`)
   .replaceAll('from "./views/generate.js"', `from ${JSON.stringify(viewsUrl)}`)

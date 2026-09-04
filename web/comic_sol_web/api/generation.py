@@ -74,6 +74,7 @@ def _reject(error: Exception) -> NoReturn:
 
 def _job_envelope(job: Any, expected_revision: int | None = None) -> dict[str, object]:
     revision_current = expected_revision is not None and job.project_revision == expected_revision
+    request = getattr(job, "request", None)
     can_cancel = revision_current and (
         job.state.value
         in {
@@ -88,6 +89,8 @@ def _job_envelope(job: Any, expected_revision: int | None = None) -> dict[str, o
         "job_id": job.job_id,
         "project_id": job.project_id,
         "project_revision": job.project_revision,
+        "subject_kind": getattr(request, "subject_kind", None),
+        "subject_id": getattr(request, "subject_id", None),
         "state": job.state.value,
         "provider": job.provider,
         "model": job.model,
@@ -126,10 +129,21 @@ def _options_envelope(models: Any) -> list[dict[str, object]]:
             "provider": entry.provider,
             "model": entry.model,
             "capabilities": sorted(entry.capabilities),
-            "auth_modes": ["agent"] if entry.provider in {"agent", "fake"} else ["hosted", "byok"],
+            "auth_modes": list(_provider_auth_modes(entry.provider)),
         }
         for entry in models
     ]
+
+
+def _provider_auth_modes(provider: str) -> tuple[str, ...]:
+    """Return the only authentication modes admitted for a routed provider."""
+    if provider in {"agent", "fake"}:
+        return ("agent",)
+    # OpenAI is wired solely from a server-declared credential. It must never
+    # fall back to session or persisted browser-provided credentials.
+    if provider == "openai":
+        return ("hosted",)
+    return ("hosted", "byok")
 
 
 def _revision(body: dict[str, object]) -> int:
@@ -195,7 +209,7 @@ async def _available_routing_credentials(
     available: dict[str, tuple[object, ...]] = {}
     for provider in providers:
         modes: list[AuthMode] = []
-        for mode in (AuthMode.HOSTED, AuthMode.BYOK):
+        for mode in (AuthMode(value) for value in _provider_auth_modes(provider)):
             try:
                 async with resolver.resolve(principal.user_id, provider, mode):
                     modes.append(mode)

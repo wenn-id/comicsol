@@ -40,6 +40,7 @@ from comic_sol_web.generation.providers.agent import (
 )
 from comic_sol_web.generation.providers.base import ProviderError, ProviderRegistry
 from comic_sol_web.generation.providers.fake import FakeProvider
+from comic_sol_web.generation.providers.openai import OpenAIProvider
 from comic_sol_web.generation.receipts import AUTHORIZED_RECEIPT_FIELDS, sanitize_usage
 from comic_sol_web.generation.service import (
     GenerationConflictError,
@@ -613,6 +614,34 @@ class GenerationQueueFixture(unittest.TestCase):
 
 
 class DurableQueueTests(GenerationQueueFixture):
+    def test_openai_rejects_forged_byok_before_project_preparation(self) -> None:
+        service = GenerationService(
+            self.database,
+            self.projects,
+            ProviderRegistry((OpenAIProvider("gpt-image-2"),)),
+            self.staging_root,
+            credentials=self.credentials,
+            clock=self.clock,
+        )
+        prepare_calls = self.projects.prepare_calls
+
+        for mode in (AuthMode.BYOK, AuthMode.AGENT, "byok", "agent"):
+            with self.subTest(auth_mode=mode), self.assertRaisesRegex(ValueError, "hosted"):
+                service.queue(
+                    self.alice,
+                    self.projects.project_id,
+                    self.projects.revision,
+                    provider="openai",
+                    model="gpt-image-2",
+                    auth_mode=mode,
+                )
+
+        self.assertEqual(prepare_calls, self.projects.prepare_calls)
+        with self.database.read() as connection:
+            self.assertEqual(
+                0, connection.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0]
+            )
+
     def test_curated_options_and_recommendations_are_stable_sanitized_and_offline(self) -> None:
         queued = self.queue()
         app = FastAPI()

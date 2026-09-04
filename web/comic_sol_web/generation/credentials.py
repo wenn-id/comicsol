@@ -179,9 +179,11 @@ class CredentialBroker:
             raise InvalidCredentialOwnerError("credential owner is invalid")
         return user_id
 
-    @staticmethod
-    def _validate_provider(provider: str) -> str:
-        if not isinstance(provider, str) or provider not in _PROVIDER_IDS:
+    def _validate_provider(self, provider: str, *, hosted: bool = False) -> str:
+        planning_providers = (
+            {"openai", "anthropic"} & self._hosted_secret_references.keys() if hosted else set()
+        )
+        if not isinstance(provider, str) or provider not in _PROVIDER_IDS | planning_providers:
             raise UnknownProviderError("credential provider is unsupported")
         return provider
 
@@ -424,8 +426,8 @@ class CredentialBroker:
         auth_mode: AuthMode | str,
     ) -> AsyncIterator[str | None]:
         owner = self._validate_owner(user_id)
-        provider_id = self._validate_provider(provider)
         mode = self._validate_auth_mode(auth_mode)
+        provider_id = self._validate_provider(provider, hosted=mode is AuthMode.HOSTED)
         plaintext: str | None = None
         try:
             if mode is AuthMode.AGENT:

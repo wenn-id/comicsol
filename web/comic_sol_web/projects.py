@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Mapping
+from typing import ContextManager, Mapping
+
+from comic_sol_web.planning.types import PlanRequest, VisualReviewRequest, VisualReviewResult
 
 from comic_sol_web.auth import SessionPrincipal
 from comic_sol_web.engine_gateway import AcceptedRaster, EngineGateway, ProjectSnapshot
@@ -66,6 +68,18 @@ class ProjectService:
         self._authorize(principal, project_id)
         return self.gateway.update_plan(project_id, expected_revision, plan)
 
+    def planning_input(
+        self, principal: SessionPrincipal, project_id: str, expected_revision: int
+    ) -> PlanRequest:
+        self._authorize(principal, project_id)
+        return self.gateway.planning_input(project_id, expected_revision)
+
+    def planning_publication(
+        self, principal: SessionPrincipal, project_id: str
+    ) -> ContextManager[None]:
+        self._authorize(principal, project_id)
+        return self.gateway.planning_publication(project_id)
+
     def prepare_generation(
         self,
         principal: SessionPrincipal,
@@ -117,6 +131,52 @@ class ProjectService:
     ) -> ProjectSnapshot:
         self._authorize(principal, project_id)
         return self.gateway.run_qa(project_id, expected_revision)
+
+    def panel_review_input(
+        self, principal: SessionPrincipal, project_id: str, expected_revision: int, panel_id: str
+    ) -> VisualReviewRequest:
+        self._authorize(principal, project_id)
+        return self.gateway.panel_review_input(project_id, expected_revision, panel_id)
+
+    def publish_panel_review(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        expected_revision: int,
+        panel_id: str,
+        review: VisualReviewResult,
+    ) -> ProjectSnapshot:
+        self._authorize(principal, project_id)
+        return self.gateway.publish_panel_review(project_id, expected_revision, panel_id, review)
+
+    def prepare_pages(
+        self, principal: SessionPrincipal, project_id: str, expected_revision: int
+    ) -> ProjectSnapshot:
+        self._authorize(principal, project_id)
+        return self.gateway.prepare_pages(project_id, expected_revision)
+
+    def page_review_input(
+        self, principal: SessionPrincipal, project_id: str, expected_revision: int, page_number: int
+    ) -> VisualReviewRequest:
+        self._authorize(principal, project_id)
+        return self.gateway.page_review_input(project_id, expected_revision, page_number)
+
+    def publish_page_review(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        expected_revision: int,
+        page_number: int,
+        review: VisualReviewResult,
+    ) -> ProjectSnapshot:
+        self._authorize(principal, project_id)
+        return self.gateway.publish_page_review(project_id, expected_revision, page_number, review)
+
+    def finalize(
+        self, principal: SessionPrincipal, project_id: str, expected_revision: int
+    ) -> tuple[ProjectSnapshot, Path]:
+        self._authorize(principal, project_id)
+        return self.gateway.finalize(project_id, expected_revision)
 
     def export(
         self,

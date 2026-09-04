@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import binascii
+import io
 from collections.abc import Mapping, Sequence
 
 import httpx
+from PIL import Image, UnidentifiedImageError
 
-from ..catalog import CATALOG
+from ..catalog import OPENAI_IMAGE_CAPABILITIES
 from ..types import ErrorCategory, GenerationRequest, GenerationResult, JobState, ProviderModel
 from .base import ProviderError
 from .http import (
@@ -20,8 +22,8 @@ from .http import (
 _API_ORIGIN = "https://api.openai.com"
 _GENERATIONS_URL = f"{_API_ORIGIN}/v1/images/generations"
 _EDITS_URL = f"{_API_ORIGIN}/v1/images/edits"
-_MODEL = next(model for model in CATALOG if model.provider == "openai")
-_ALLOWED_DIMENSIONS = frozenset({(1024, 1024), (1024, 1536), (1536, 1024)})
+_NATIVE_DIMENSIONS = ((1024, 1024), (1024, 1536), (1536, 1024))
+_MAX_REQUEST_PIXELS = 40_000_000
 _MAX_REFERENCES = 16
 _DEFAULT_MAX_RESPONSE_BYTES = 20 * 1024 * 1024
 
@@ -33,10 +35,20 @@ class OpenAIProvider:
 
     def __init__(
         self,
+        model: str,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         max_response_bytes: int = _DEFAULT_MAX_RESPONSE_BYTES,
     ) -> None:
+        if not isinstance(model, str) or not model:
+            raise ValueError("OpenAI image model is invalid")
+        self.model = model
+        self._model = ProviderModel(
+            provider=self.provider_id,
+            model=model,
+            capabilities=OPENAI_IMAGE_CAPABILITIES,
+            enabled=True,
+        )
         self._transport = transport
         self._policy = TransportPolicy(
             approved_origins=frozenset({_API_ORIGIN}),
@@ -47,11 +59,11 @@ class OpenAIProvider:
         )
 
     async def list_models(self) -> Sequence[ProviderModel]:
-        return (_MODEL,)
+        return (self._model,)
 
     async def estimate(self, request: GenerationRequest, model: str) -> Mapping[str, object]:
         self._validate_request(request, model)
-        return {"currency": "USD", "model": _MODEL.model, "unit": "image"}
+        return {"currency": "USD", "model": self.model, "unit": "image"}
 
     async def generate(
         self,
@@ -61,7 +73,8 @@ class OpenAIProvider:
     ) -> GenerationResult:
         self._validate_request(request, model)
         headers = _credential_headers(credential)
-        size = f"{request.width}x{request.height}"
+        provider_size = _provider_size(request.width, request.height)
+        size = f"{provider_size[0]}x{provider_size[1]}"
         async with BoundedHTTPClient(self._policy, transport=self._transport) as client:
             if request.references:
                 files = self._reference_files(request)
@@ -91,13 +104,21 @@ class OpenAIProvider:
                     },
                     error_classifier=_classify_error,
                 )
-        raster = _response_raster(response, self._policy.max_response_bytes)
+        raster = _normalize_raster(
+            _response_raster(response, self._policy.max_response_bytes),
+            request.width,
+            request.height,
+        )
         return GenerationResult(
             external_job_id=None,
             state=JobState.ACCEPTED,
             raster_bytes=raster,
             media_type="image/png",
-            effective_parameters={"height": request.height, "model": model, "width": request.width},
+            effective_parameters={
+                "model": model,
+                "provider_size": size,
+                "requested_size": f"{request.width}x{request.height}",
+            },
             usage=_response_usage(response),
         )
 
@@ -114,11 +135,17 @@ class OpenAIProvider:
         raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
 
     def _validate_request(self, request: GenerationRequest, model: str) -> None:
-        if model != _MODEL.model or not request.required_capabilities <= _MODEL.capabilities:
+        if model != self.model or not request.required_capabilities <= self._model.capabilities:
             raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
         if request.negative_prompt is not None or request.provider_options:
             raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
-        if (request.width, request.height) not in _ALLOWED_DIMENSIONS:
+        if (
+            isinstance(request.width, bool)
+            or isinstance(request.height, bool)
+            or request.width < 1
+            or request.height < 1
+            or request.width * request.height > _MAX_REQUEST_PIXELS
+        ):
             raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
         if len(request.references) > _MAX_REFERENCES:
             raise ProviderError(ErrorCategory.CAPABILITY_MISSING)
@@ -187,3 +214,41 @@ def _response_usage(response: Mapping[str, object]) -> Mapping[str, int | float 
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             usage[key] = value
     return usage
+
+
+def _provider_size(width: int, height: int) -> tuple[int, int]:
+    """Select OpenAI's closest native orientation without distorting art."""
+    if width == height:
+        return _NATIVE_DIMENSIONS[0]
+    return _NATIVE_DIMENSIONS[2] if width > height else _NATIVE_DIMENSIONS[1]
+
+
+def _normalize_raster(content: bytes, width: int, height: int) -> bytes:
+    """Center-crop then re-encode an exact RGB PNG for canonical handoff."""
+    try:
+        with Image.open(io.BytesIO(content)) as source:
+            source.load()
+            source_width, source_height = source.size
+            if source_width < 1 or source_height < 1:
+                raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+            if source_width * height > source_height * width:
+                crop_width = source_height * width // height
+                left = (source_width - crop_width) // 2
+                box = (left, 0, left + crop_width, source_height)
+            else:
+                crop_height = source_width * height // width
+                top = (source_height - crop_height) // 2
+                box = (0, top, source_width, top + crop_height)
+            normalized = (
+                source.crop(box).convert("RGB").resize((width, height), Image.Resampling.LANCZOS)
+            )
+            rendered = io.BytesIO()
+            normalized.save(rendered, format="PNG", optimize=False, compress_level=9)
+    except ProviderError:
+        raise
+    except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError):
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT) from None
+    result, media_type = validate_raster(rendered.getvalue(), "image/png")
+    if media_type != "image/png":
+        raise ProviderError(ErrorCategory.INVALID_OUTPUT)
+    return result

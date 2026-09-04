@@ -206,9 +206,18 @@ class GenerationService:
             if not entry.enabled:
                 continue
             try:
-                self._providers.get(entry.provider)
+                provider = self._providers.get(entry.provider)
             except KeyError:
                 continue
+            # OpenAI is the one operator-configured image model. Its adapter
+            # receives the bounded trusted config value at app composition,
+            # while the catalog remains the capability source for every
+            # provider. Do not accept a model from request data here.
+            if entry.provider == "openai":
+                configured_model = getattr(provider, "model", None)
+                if isinstance(configured_model, str) and configured_model:
+                    options.append(replace(entry, model=configured_model))
+                    continue
             options.append(entry)
         try:
             agent = self._providers.get("agent")
@@ -258,6 +267,8 @@ class GenerationService:
         selected_provider = self._providers.get(provider)
         if provider == "agent" and mode is not AuthMode.AGENT:
             raise ValueError("agent generation requires agent authentication mode")
+        if provider == "openai" and mode is not AuthMode.HOSTED:
+            raise ValueError("OpenAI generation requires hosted authentication mode")
         requests = self._projects.prepare_generation(principal, project_id, expected_revision)
         if provider == "agent":
             if not isinstance(selected_provider, AgentProvider) or any(

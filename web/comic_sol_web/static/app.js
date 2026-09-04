@@ -5,10 +5,13 @@ import { renderStartView } from "./views/start.js";
 import { renderPlanView } from "./views/plan.js";
 import { renderGenerateView } from "./views/generate.js";
 import { disposeReviewView, renderReviewView } from "./views/review.js";
+import { mountActivityDrawer } from "./activity.js";
 
 const store = createStore();
 const outlet = document.getElementById("studio-view");
 const main = document.getElementById("studio-main");
+const shell = document.getElementById("studio-shell");
+const activityDrawer = mountActivityDrawer(shell);
 const status = document.getElementById("studio-status");
 const tabs = Array.from(document.querySelectorAll(".step-tab"));
 let renderedView = null;
@@ -428,6 +431,7 @@ document.addEventListener("comic-sol:project-selected", (event) => {
     return;
   }
   store.setProject(project);
+  activityDrawer.setProject(project.project_id);
   event.detail.accepted = true;
   announce("Project opened. Plan is ready for review.", "success");
 });
@@ -476,4 +480,14 @@ async function restoreProject() {
   }
 }
 
-void restoreProject();
+async function startStudio() {
+  try {
+    const { bootstrapLocalSession } = await import("./api.js");
+    await bootstrapLocalSession();
+  } catch {
+    // Hosted deployments do not expose the loopback-only bootstrap route.
+  }
+  await restoreProject();
+}
+
+void startStudio();

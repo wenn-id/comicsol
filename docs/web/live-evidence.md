@@ -11,8 +11,14 @@ exact-candidate companion to the honest state recorded in
 
 ## Current status
 
-**One evidence row is retained: a static-only external deployment.** As of
-this work package:
+**One external evidence bundle is retained: a static-only deployment.** The
+complete local workflow is separately **offline-qualified** by
+`web/tests/test_live_golden_path.py`; that deterministic test uses fake
+planning, image, and visual-review adapters, survives an application restart,
+and validates accepted PNG and exported PDF magic bytes. It is test evidence,
+not a live-evidence row and not a provider-quality claim.
+
+As of this work package:
 
 - An external Studio deployment has been exercised and published — **static
   UI only**. See "Retained evidence" below.

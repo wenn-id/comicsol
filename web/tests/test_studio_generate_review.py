@@ -524,6 +524,48 @@ check(findAll(body, (node) => node.tagName === "A" && node.attributes.has("downl
         self.assertIn("prefers-reduced-motion: reduce", self.styles)
         self.assertRegex(self.styles, r":focus-visible")
 
+    def test_task7_generate_groups_jobs_by_subject_and_never_blank_acceptances(self) -> None:
+        self.assertIn("subject_kind", self.generate)
+        self.assertIn("subject_id", self.generate)
+        self.assertIn("getWorkflow", self.generate)
+        self.assertIn("groupBy", self.generate)
+        # A missing accepted image must not be replaced with an empty placeholder.
+        self.assertNotRegex(self.generate, r"innerHTML|insertAdjacentHTML")
+        # Pause/resume controls for the running workflow.
+        self.assertIn("pauseWorkflow", self.generate)
+        self.assertIn("resumeWorkflow", self.generate)
+        self.assertRegex(self.generate, r"workflow\.can_pause")
+        self.assertRegex(self.generate, r"workflow\.can_resume")
+
+    def test_task7_review_presents_findings_pages_and_pdf_action(self) -> None:
+        self.assertIn("getWorkflow", self.review)
+        self.assertIn("pdf_available", self.review)
+        self.assertIn("blocked", self.review)
+        self.assertIn("error_category", self.review)
+        # Composed-page and QA findings come from the server, never re-composed.
+        self.assertNotRegex(
+            self.review,
+            r"createElement\([\"']canvas|drawImage|getImageData|putImageData|toDataURL",
+        )
+        # PDF download is exposed only when the workflow completed.
+        self.assertRegex(self.review, r"state\s*===?\s*['\"]complete")
+        self.assertRegex(self.review, r"download|href")
+
+    def test_task7_activity_drawer_mounts_toggles_and_clamps_width(self) -> None:
+        activity = (STATIC_ROOT / "activity.js").read_text(encoding="utf-8")
+        self.assertIn("EventSource", activity)
+        # Polling fallback uses the same last-seen cursor.
+        self.assertRegex(activity, r"fetch\(eventsUrl\(lastId\),")
+        self.assertIn("new EventSource(eventsUrl(lastId))", activity)
+        # Width clamp bounds and persistence scope only the drawer preference.
+        self.assertRegex(activity, r"Math\.min\((?:720|MAX_WIDTH),\s*Math\.max\((?:320|MIN_WIDTH),")
+        self.assertRegex(activity, r"localStorage")
+        # Events render with textContent only, never HTML injection.
+        self.assertRegex(activity, r"textContent")
+        self.assertNotRegex(activity, r"innerHTML|insertAdjacentHTML|document\.write")
+        # The drawer mounts beside the Studio main region.
+        self.assertIn("studio-main", activity)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -35,6 +35,8 @@ from comic_sol_web.generation.providers.agent import AgentProvider
 from comic_sol_web.generation.providers.base import ProviderRegistry
 from comic_sol_web.generation.providers.fake import FakeProvider
 from comic_sol_web.generation.service import GenerationService
+from comic_sol_web.generation.store import GenerationJob
+from comic_sol_web.generation.types import AuthMode
 from comic_sol_web.migrations import apply_migrations
 from comic_sol_web.projects import ProjectService
 
@@ -95,6 +97,32 @@ def headers(revision: int = 0, *, key: str | None = None) -> dict[str, str]:
     }
 
 
+class DeterministicFixtureGenerationService(GenerationService):
+    """Return jobs in the same tie-break order used by the durable worker queue."""
+
+    def queue(
+        self,
+        principal: SessionPrincipal,
+        project_id: str,
+        expected_revision: int,
+        *,
+        provider: str,
+        model: str,
+        auth_mode: AuthMode | str,
+        max_retries: int = 2,
+    ) -> tuple[GenerationJob, ...]:
+        jobs = super().queue(
+            principal,
+            project_id,
+            expected_revision,
+            provider=provider,
+            model=model,
+            auth_mode=auth_mode,
+            max_retries=max_retries,
+        )
+        return tuple(sorted(jobs, key=lambda job: job.job_id))
+
+
 def pump(generation: GenerationService, count: int = 16) -> None:
     """Run the offline worker loop the deterministic number of times."""
     for _ in range(count):
@@ -114,7 +142,7 @@ class WiredAppFixture(unittest.TestCase):
         self.projects = ProjectService(self.gateway)
         self.assets = AssetStore(self.database, self.data_root)
         self.clock_value = 1_000
-        self.generation = GenerationService(
+        self.generation = DeterministicFixtureGenerationService(
             self.database,
             self.projects,
             ProviderRegistry(
