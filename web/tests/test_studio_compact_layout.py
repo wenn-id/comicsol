@@ -41,6 +41,15 @@ class StudioCompactLayoutTests(unittest.TestCase):
             r"@media \(max-width: 63\.99rem\)[\s\S]*body\s*\{[^}]*overflow-y:\s*auto",
         )
 
+    def test_responsive_overrides_follow_the_base_drawer_rules(self) -> None:
+        drawer_rule = self.styles.rfind("#activity-drawer {")
+        self.assertGreater(drawer_rule, -1)
+        self.assertGreater(self.styles.rfind("@media (max-width: 63.99rem)"), drawer_rule)
+        self.assertGreater(
+            self.styles.rfind("@media (min-width: 64rem) and (min-height: 42rem)"),
+            drawer_rule,
+        )
+
     def test_activity_drawer_defaults_collapsed_until_user_opens_it(self) -> None:
         self.assertIn("if (!raw) return { collapsed: true, width: 420 };", self.activity)
         self.assertGreaterEqual(
