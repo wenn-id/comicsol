@@ -1,18 +1,16 @@
 # Devpost Submission Kit — Comic Sol Studio (WebMCP Challenge)
 
-Copy-paste ready. Verified against the Official Rules (2026-09-01).
-Deadline: **2026-09-03 13:00 PT / 16:00 EDT**.
+Copy-paste ready. Deadline: **2026-09-03 13:00 PT / 16:00 EDT**.
 
-## Title (pick one)
+## Title
 
-- Comic Sol Studio — agent-native comic creation with WebMCP
-- Comic Sol Studio: humans and agents, making comics together
+**Comic Sol Studio — create and revise manga by talking to a browser agent**
 
 ## Tagline
 
-A browser-resident model context plans, generates, and QA-checks a comic
-project through 14 WebMCP tools — while the human stays in control of
-every approval.
+Turn a natural-language comic idea into a reviewable story, character bible,
+storyboard, and visual identity — then revise it conversationally through
+WebMCP instead of operating the editor step by step.
 
 ## Live URL
 
@@ -20,126 +18,117 @@ every approval.
 https://comic-sol-studio.vercel.app
 ```
 
-Static Studio UI: `index.html`, `app.js`, `api.js`, `state.js`,
-`styles.css`, `webmcp.js`, `views/`. 14 WebMCP tools register client-side:
-5 read (`get_project_state`, `list_generation_options`,
-`recommend_provider`, `list_generation_jobs`, `get_qa_summary`) + 9 write
-(`create_project`, `import_project`, `update_project_plan`,
-`queue_generation`, `submit_generated_asset`, `approve_provider_switch`,
-`reject_provider_switch`, `run_qa`, `export_project`).
-
-> **Honest note (keep in the submission):** the deployed surface is the
-> Studio UI and the WebMCP tool registration surface. The FastAPI
-> backend, SQLite store, and durable generation queue are not deployed;
-> API routes return 404 by design. Full workflow execution is
-> offline-qualified through deterministic contract tests
-> (`web/tests/test_web_e2e.py`, FakeProvider) and documented in the repo.
-
-## Public code repository
+## Public repository
 
 ```
 https://github.com/wenn-id/comicsol
 ```
 
-- License: MIT — visible in About section (repo API `license.spdx_id=MIT`).
-- WebMCP implementation: `web/comic_sol_web/static/webmcp.js` —
-  `document.modelContext.registerTool({name, description, inputSchema,
-  execute})` for all 14 tools (`registerWebMcp()`, line 817).
-- Pre-existing project, meaningfully extended during the Submission
-  Period with timestamped commits:
-  - `8a137a9` feat(web): add safe ComfyUI execution routes
-  - `0f33374` feat(web): expose verified WebMCP site tools
-  - `fbef19c` docs(web): qualify and document WebMCP Studio
-  - `f0410be` docs: add Web/Studio live evidence collection framework
+MIT licensed.
 
-## Text description (400–800 words; paste into the form)
+## What to show first
 
-**Why this is a strong fit for WebMCP.** Comics are collaboration: story
-→ plan → page breakdown → panel generation → visual QA → export. Today
-that loop is manual or spread across disconnected tools. WebMCP lets a
-website hand an agent a precise, typed tool surface — no scraping the UI,
-no fragile selectors. Comic Sol Studio defines exactly what an agent may
-do: create a project, inspect state, queue generation, submit rasters,
-approve or reject a provider switch, run QA, export. The agent acts like
-a production assistant that knows the API without being shown the DOM.
+The page exposes **17 WebMCP tools** in two layers:
 
-**How it creates a better user experience.** The human keeps every
-judgment call. Creating a project, updating the plan, approving a
-provider switch, and exporting are explicit approvals; generation and QA
-are delegated. A writer can say "set up a dark noir detective story, six
-panels, translate the plan" and the agent drafts the Plan. The artist
-then reviews, approves a provider, and the agent queues panels, checks
-QA, and preps the export. Control stays with the human; the repetitive
-coordination disappears.
+- **3 creator-first tools** registered by `app.js`:
+  `create_comic`, `get_comic_context`, `revise_comic`.
+- **14 production primitives** registered by `webmcp.js` for project state,
+  generation, provider decisions, QA, and export.
 
-**What people and agents can do together that was difficult before.**
-An agent inside the browser can now walk the full comic production
-pipeline against a live product: read the project state, list what
-generation options exist, queue work against an approved provider,
-submit the produced raster, run QA, and export a portable archive —
-without a custom integration, an API key in the page, or scraping. The
-same surface that serves the human teams also serves their agents, so
-the product improves for both at once.
+The three creator tools intentionally hide revision IDs, idempotency keys,
+provider selection, and generation job IDs from the creative request.
 
-**How WebMCP was implemented.** `web/comic_sol_web/static/webmcp.js`
-registers the exact tool list through
-`document.modelContext.registerTool(...)`, each with a strict
-`inputSchema` (project ID, revision bounds, idempotency keys, UUID /
-hex patterns), `additionalProperties: false`, and an `execute` bound to
-the Studio API layer (`api.js`). The tool list is contract-tested:
-`web/tests/test_web_docs.py::WebMcpSurfaceContractTests` fails on any
-drift between the published list and the merged module. Security model:
-a provider credential is never exposed to the browser, written into a
-project archive, recorded in a receipt, emitted to a log, or included in
-this submission. Generation receipts carry only
-`{provider, model, auth_mode, usage, checksum}`.
+### Live hosted behavior
 
-**Honest scope note.** The deployed URL serves the Studio UI and the
-WebMCP tool registration surface; the FastAPI backend, SQLite store, and
-durable generation queue are not deployed on the free Vercel tier, so
-API routes return 404. Workflow execution is offline-qualified: the E2E
-suite (`web/tests/test_web_e2e.py`) drives the full HTTP flow through a
-deterministic FakeProvider with zero network calls, and all 2,446 tests
-(root 1,937 + web 509) pass at the exact head `f0410be`.
+The Vercel deployment is a static Studio, so FastAPI, SQLite, and the durable
+generation queue are **not deployed**. The three creator-first tools therefore
+have an **ephemeral browser-local mode**: the agent can create a Plan, read it,
+and revise it while the tab remains open. The Plan is held only in memory and
+is not written to `localStorage` or `sessionStorage`; refreshing the page clears
+it.
 
-## Demonstration video script (≤ 3 minutes)
+The 14 production primitives remain the backend-oriented surface. Generation,
+QA, provider switching, and export are qualified by the repository's offline
+backend tests and must **not** be presented as live Vercel execution.
 
-Record with OBS or the OS screen recorder. Must have audio. Upload to
-YouTube, set Public, paste the link on the submission form.
+## Text description (paste into Devpost)
+
+**Comic Sol Studio turns WebMCP from API remote control into a creative
+interface.** A comic workflow is naturally multi-step: turn an idea into a
+story, define characters, break it into pages and panels, establish a visual
+identity, generate assets, check consistency, and export. A normal browser
+agent would have to inspect the DOM and reproduce those UI steps. Comic Sol
+instead exposes typed WebMCP tools that describe what the product can do.
+
+For the creator, the important layer is deliberately small. `create_comic`
+accepts a title, concept, language, page count, visual style, and a structured
+four-part Plan drafted by the browser agent. Comic Sol immediately turns that
+into the active project shown in the Studio. `get_comic_context` explicitly
+returns the active story plan, character bible, storyboard, and visual identity
+so the agent can reason about the work it is editing. `revise_comic` stages a
+new complete Plan after a request such as “make the protagonist more arrogant
+and make the ending bittersweet.” The active Plan remains unchanged until the
+creator reviews the proposal and selects **Promote to working copy**. The user
+talks about the comic; Comic Sol handles project mechanics without silently
+committing agent-supplied revisions.
+
+That creator surface sits on top of the existing 14 production-oriented WebMCP
+primitives for project state, generation routing, job state, provider-switch
+approval, QA, asset submission, and export. Those lower-level tools preserve
+strict closed schemas, revision binding, and idempotency boundaries for a full
+Studio backend. The new layer is additive rather than a replacement.
+
+The hosted Vercel demo is intentionally honest about its boundary. It is a
+static deployment, so it does not pretend to run the FastAPI/SQLite generation
+backend. Instead, `create_comic`, `get_comic_context`, and `revise_comic` can
+operate in an ephemeral in-memory browser mode. This makes the core WebMCP user
+experience directly demonstrable on the hosted site without storing private
+story content in browser persistence. Refreshing the page clears that local
+project. Backend generation, QA, provider switching, and export remain
+qualified through deterministic repository tests rather than claimed as live
+hosted behavior.
+
+The result is the difference between **“an agent can operate Comic Sol”** and
+**“a creator can make and revise a comic with Comic Sol by talking to an
+agent.”** WebMCP removes the coordination layer between creative intent and the
+application while keeping the product's structured workflow and safety
+boundaries explicit.
+
+## Demo video script (target: 2:30–2:50)
 
 | Time | Visual | Narration |
 |---|---|---|
-| 0:00–0:20 | Open `https://comic-sol-studio.vercel.app` in Chrome (149+, `chrome://flags/#enable-webmcp-testing` enabled), or ChatGPT desktop in-app browser. | "This is Comic Sol Studio, built for the WebMCP Challenge. It's a web app where a human and an agent make a comic together — the website exposes structured tools to the browser's model context." |
-| 0:20–0:50 | DevTools / agent panel showing `document.modelContext.registerTool` definitions; scroll the 14 tools. | "The site registers 14 tools with the agent: create a project, inspect its state, list generation options, queue generation, submit a raster, approve or reject a provider switch, run QA, and export. Each tool has a strict input schema, so the agent can't guess — it gets a precise interface." |
-| 0:50–1:40 | Run the offline E2E flow locally (commands below); show `create_project` → plan available → `queue_generation` → job listed → `run_qa` → `export_project`. | "Behind the scenes, the same flow is exercised end-to-end by a deterministic test harness with a fake provider — no network calls. The agent drive is the WebMCP surface; the engine stays provider-neutral and never sees a credential." |
-| 1:40–2:20 | Show `web/comic_sol_web/static/webmcp.js` in the editor; point at `registerWebMcp()` and one tool's `inputSchema`. Show repo page with MIT license. | "Here's the implementation — `registerWebMcp` registers every tool against `document.modelContext`. The published tool list is contract-tested: if it drifts from the merged module, CI fails. The repo is open source, MIT licensed." |
-| 2:20–2:55 | Recap: 14 tools, human approvals, honest scope note. | "What's new: an agent inside the browser can now coordinate a full comic production pipeline — plan, generate, QA, export — while the human keeps every approval. That's the agent-native web: one surface for people and their agents." |
+| 0:00–0:20 | Open the hosted Studio with WebMCP enabled. | “Making a comic normally means moving between story planning, character notes, storyboards, generation, and revisions. I wanted the creator to talk about the comic instead of operating all of those steps.” |
+| 0:20–1:00 | Ask the browser agent: **“Create a 4-page dark fantasy manga about a ronin protecting a cursed child. Cinematic black-and-white ink.”** Show the `create_comic` call and the resulting Plan in the Studio. | “The agent converts my intent into Comic Sol's structured Plan and calls one creator-facing tool. I never provide a revision ID, provider, or job ID.” |
+| 1:00–1:40 | Ask: **“Make the ronin more arrogant and change the ending from tragic to bittersweet.”** Show `get_comic_context`, then `revise_comic`, then the updated Plan. | “For a revision the agent first reads the actual comic context, reasons over the character bible and storyboard, and updates the project. This is where WebMCP removes real UI coordination.” |
+| 1:40–2:10 | Show `app.js` creator tool definitions, then `webmcp.js` core definitions. | “There are three high-level creator tools on top of fourteen production primitives. The simple creative interface does not remove the strict low-level contracts needed by the full backend.” |
+| 2:10–2:35 | Show the hosted URL and briefly mention ephemeral mode / tests. | “This hosted build is static, so create and revise use an ephemeral in-memory mode and never persist the private Plan in browser storage. Generation, QA, and export are backend-qualified in the repository; I don't claim those as live Vercel execution.” |
+| 2:35–2:50 | Return to the revised Plan. | “The point is simple: the agent is no longer just controlling Comic Sol's API. The creator is creating with Comic Sol.” |
 
-### Local offline flow (for the video, step 0:50–1:40)
+## Demo prompt
 
-```bash
-cd /home/acer/comicsol-wp17
-source ~/.venvs/comicsol-wp16/bin/activate
-PYTHONPATH=. python -m unittest web.tests.test_web_e2e -v
-```
+Use this exact first prompt so the result is easy to understand on video:
 
-Expected tail: `OK` — the E2E suite drives the HTTP endpoints through a
-fake-auth fixture and the deterministic `FakeProvider` (`fake-raster-v1`),
-asserting `create_project` → plan → `queue_generation` → job →
-submission → (1x1 raster rejected by WP3 validation, documented) →
-`run_qa` → `export_project`.
+> Create a 4-page dark fantasy manga titled **The Cursed Heir**. A proud ronin
+> protects a child who is secretly heir to the clan that destroyed his family.
+> Use cinematic black-and-white ink, strong silhouettes, sparse dialogue, and a
+> tragic-looking final page.
 
-> Do not claim any live paid provider call, a local ComfyUI run, or a
-> `document.modelContext` session that was not actually recorded. The
-> script above is the honest, reproducible core.
+Then revise with:
 
-## Submission checklist
+> Make the ronin more arrogant and guarded. Change the final page to bittersweet:
+> the child leaves with him at dawn, but the ronin still does not know the
+> child's true identity.
 
-- [ ] Join hackathon (`https://webmcp.devpost.com/register`)
-- [ ] Live URL: `https://comic-sol-studio.vercel.app`
-- [ ] Video: record ≤ 3 min with audio, YouTube Public, no third-party
-      music/trademarks
-- [ ] Repo: `https://github.com/wenn-id/comicsol` (MIT visible)
-- [ ] Description: paste the block above
-- [ ] No credentials anywhere; no login credentials needed (static URL)
-- [ ] Submit before **2026-09-03 13:00 PT / 16:00 EDT**
+## Verification / honesty checklist
+
+- [ ] Hosted page registers the 3 creator tools plus the existing 14 core tools.
+- [ ] Record `create_comic` on the hosted page.
+- [ ] Record `get_comic_context` → `revise_comic` on the same tab.
+- [ ] Confirm refresh clears the ephemeral browser-local project.
+- [ ] Do not claim live image generation, live QA, live export, paid-provider
+      execution, or deployed FastAPI/SQLite unless separately verified before
+      recording.
+- [ ] Show the public MIT repository.
+- [ ] Upload a public demo video with audio.
+- [ ] Submit before **2026-09-03 13:00 PT / 16:00 EDT**.

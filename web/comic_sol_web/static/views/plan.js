@@ -92,7 +92,7 @@ export function editorHasChanges(controls, workingPlan) {
   return FIELDS.some(([key]) => controls[key].value !== workingPlan[key]);
 }
 
-export function renderPlanView({ store, announce }) {
+export function renderPlanView({ store, announce, persistPlan = updatePlan }) {
   const state = store.getState();
   const project = state.project;
   const view = element("section", { "aria-labelledby": "plan-heading" });
@@ -221,7 +221,7 @@ export function renderPlanView({ store, announce }) {
     updateDraft();
     announce("Saving the reviewed Plan to the canonical project…");
     try {
-      const result = await persistReviewedDraft(store, draft, () => updatePlan(
+      const result = await persistReviewedDraft(store, draft, () => persistPlan(
         latest.project.project_id,
         draft.changes,
         draft.expectedRevision,
