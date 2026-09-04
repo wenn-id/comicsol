@@ -69,6 +69,24 @@ their publication rights, provenance, and QA evidence are retained.
 Mechanics-only examples: [First Light Signal](samples/first-light-signal) and
 [The Quiet Ledger](samples/the-quiet-ledger).
 
+### Live agent-host lanes (Codex · Antigravity · ComfyUI)
+
+Comic Sol is provider- and host-neutral: the same locked story spec can be driven from
+different AI agent hosts, each supplying its own image route. Per the
+[host smoke contract](docs/agent-host-smoke.md), no named agent host is yet **Verified**;
+Codex and Antigravity retain local live records linked below (both **Experimental**,
+output kept on the tester's lane and referenced by digest, not published here). Local
+ComfyUI is an image provider, not an agent host, and is an experimental reference
+executor (see [Image-generator support](docs/support-matrix.md#image-generator-support)).
+
+| Agent host | Image route | Live record | Status |
+|---|---|---|---|
+| Codex | Agent-native image tool | [codex-2026-08-30](docs/agent-host-smoke/codex-2026-08-30.md) | Experimental |
+| Google Antigravity | Agent-native image tool | [google-antigravity-2026-08-30](docs/agent-host-smoke/google-antigravity-2026-08-30.md) | Experimental |
+| Local ComfyUI | Declared external adapter (SD 1.5) | reference executor, local smoke only | Experimental (image route) |
+
+Generated page rasters and PDFs are kept off this repository by design — do not commit build output.
+
 ## Quick start
 
 ### 1. Install the Agent Skill
