@@ -31,10 +31,13 @@ class StudioCompactLayoutTests(unittest.TestCase):
         self.assertRegex(desktop, r"#studio-shell\s*\{[^}]*min-height:\s*0[^}]*height:\s*100%")
         self.assertRegex(desktop, r"\.start-create-form\s*\{[^}]*display:\s*grid")
         self.assertRegex(desktop, r"\.compact-fields\s*\{[^}]*grid-template-columns:\s*repeat\(2")
-        self.assertRegex(self.styles, r"@media \(max-width: 63\.99rem\)[\s\S]*body\s*\{[^}]*overflow-y:\s*auto")
+        self.assertRegex(
+            self.styles,
+            r"@media \(max-width: 63\.99rem\)[\s\S]*body\s*\{[^}]*overflow-y:\s*auto",
+        )
 
     def test_activity_drawer_defaults_collapsed_until_user_opens_it(self) -> None:
-        self.assertIn('if (!raw) return { collapsed: true, width: 420 };', self.activity)
+        self.assertIn("if (!raw) return { collapsed: true, width: 420 };", self.activity)
         self.assertGreaterEqual(
             len(re.findall(r"return \{ collapsed: true, width: 420 \};", self.activity)),
             2,
