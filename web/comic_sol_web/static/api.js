@@ -27,7 +27,6 @@ export class StudioConflictError extends StudioApiError {
   constructor() {
     super("The Studio operation conflicts with the current project state.", 409);
     this.name = "StudioConflictError";
-    this.status = 409;
   }
 }
 
@@ -312,12 +311,7 @@ export function acceptedRasterUrl(projectId, expectedRevision, jobId) {
 
 function envelopeMatches(snapshot, projectId, expectedRevision) {
   if (!snapshot || typeof snapshot !== "object") return false;
-  if (
-    snapshot.project_id !== projectId ||
-    !Number.isInteger(snapshot.revision) ||
-    snapshot.revision < expectedRevision ||
-    snapshot.revision > expectedRevision
-  ) {
+  if (snapshot.project_id !== projectId || !Number.isInteger(snapshot.revision) || snapshot.revision < expectedRevision || snapshot.revision > expectedRevision) {
     return false;
   }
   return true;
