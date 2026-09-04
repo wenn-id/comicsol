@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import secrets
+import ipaddress
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -142,6 +143,7 @@ class WebConfig:
     openai_planning_model: str = DEFAULT_OPENAI_PLANNING_MODEL
     anthropic_planning_model: str = DEFAULT_ANTHROPIC_PLANNING_MODEL
     local_mode: bool = False
+    host: str = "127.0.0.1"
 
     @property
     def planning_model_options(self) -> Mapping[str, str]:
@@ -228,6 +230,12 @@ class WebConfig:
         data_root = Path(raw_data_root)
         if not data_root.is_absolute():
             raise WebConfigError(f"{DATA_ROOT_VAR} must be an absolute path")
+        host = environ.get("COMIC_SOL_WEB_HOST", "127.0.0.1")
+        try:
+            if not ipaddress.ip_address(host).is_loopback:
+                raise ValueError
+        except ValueError:
+            raise WebConfigError("COMIC_SOL_WEB_HOST must be a loopback IP address") from None
         return cls(
             session_secret=secrets.token_urlsafe(48),
             encryption_secret=secrets.token_urlsafe(48),
@@ -244,6 +252,7 @@ class WebConfig:
             ),
             master_key_references=MappingProxyType({}),
             active_credential_key_id=None,
+            host=host,
             openai_image_model=_openai_image_model(environ),
             openai_planning_model=_planning_model(
                 environ, OPENAI_PLANNING_MODEL_VAR, DEFAULT_OPENAI_PLANNING_MODEL

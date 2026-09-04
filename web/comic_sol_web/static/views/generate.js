@@ -329,7 +329,10 @@ export function renderGenerateView({ store, announce, navigate }) {
 
   async function refresh() {
     try {
-      return await syncProjectAndJobs();
+      const current = await syncProjectAndJobs();
+      const workflow = await syncWorkflow();
+      if (section.isConnected) renderQueue(store.getState(), workflow);
+      return current;
     } catch (error) {
       localStatus.textContent = error.message;
       announce(error.message, "error");
@@ -421,7 +424,8 @@ export function renderGenerateView({ store, announce, navigate }) {
         await refresh();
         return;
       }
-      renderQueue(current);
+      const workflow = await syncWorkflow();
+      renderQueue(store.getState(), workflow);
       const recommendationJob = current.generation.jobs[0];
       if (recommendationJob) {
         const result = await getGenerationRecommendations(

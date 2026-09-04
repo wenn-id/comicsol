@@ -166,11 +166,11 @@ export function mountActivityDrawer(container) {
 
   function close() {
     if (sse) { sse.close(); sse = null; }
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   }
 
   function destroy() {
     close();
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     root.remove();
   }
 

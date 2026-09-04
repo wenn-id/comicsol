@@ -239,8 +239,8 @@ def _normalize_raster(content: bytes, width: int, height: int) -> bytes:
                 crop_height = source_width * height // width
                 top = (source_height - crop_height) // 2
                 box = (0, top, source_width, top + crop_height)
-            normalized = source.crop(box).convert("RGB").resize(
-                (width, height), Image.Resampling.LANCZOS
+            normalized = (
+                source.crop(box).convert("RGB").resize((width, height), Image.Resampling.LANCZOS)
             )
             rendered = io.BytesIO()
             normalized.save(rendered, format="PNG", optimize=False, compress_level=9)

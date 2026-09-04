@@ -109,9 +109,7 @@ _PROGRESS_KEYS = frozenset(
     }
 )
 _TERMINAL_ENGINE_STATES = frozenset({"COMPLETE", "COMPLETE_WITH_WARNINGS"})
-_ACTIVE_JOB_STATES = frozenset(
-    {JobState.QUEUED, JobState.RUNNING, JobState.POLLING}
-)
+_ACTIVE_JOB_STATES = frozenset({JobState.QUEUED, JobState.RUNNING, JobState.POLLING})
 
 
 def _snapshot(row: sqlite3.Row) -> WorkflowSnapshot:
@@ -243,12 +241,23 @@ class WorkflowService:
             ).fetchone()
         if replay is not None:
             identity = (
-                replay["project_id"], replay["planning_job_id"],
-                replay["image_provider"], replay["image_model"], replay["image_auth_mode"],
+                replay["project_id"],
+                replay["planning_job_id"],
+                replay["image_provider"],
+                replay["image_model"],
+                replay["image_auth_mode"],
             )
-            if identity != (
-                project_id, planning_job_id, image_provider, image_model, mode.value,
-            ) or job.published_revision != expected_revision:
+            if (
+                identity
+                != (
+                    project_id,
+                    planning_job_id,
+                    image_provider,
+                    image_model,
+                    mode.value,
+                )
+                or job.published_revision != expected_revision
+            ):
                 raise WorkflowConflictError("workflow idempotency conflict")
             return _snapshot(replay)
 
@@ -584,27 +593,26 @@ class WorkflowService:
         return tuple(latest.values())
 
     def _reviewed(self, row: sqlite3.Row, job_id: str) -> bool:
-        pattern = f'%"job_id":"{job_id}"%'
         with self.database.read() as connection:
             return (
                 connection.execute(
                     "SELECT 1 FROM workflow_events WHERE owner_id = ? AND project_id = ? "
                     "AND type IN ('qa.panel_passed', 'qa.panel_failed') "
-                    "AND progress_json LIKE ? LIMIT 1",
-                    (row["owner_id"], row["project_id"], pattern),
+                    "AND json_extract(progress_json, '$.job_id') = ? LIMIT 1",
+                    (row["owner_id"], row["project_id"], job_id),
                 ).fetchone()
                 is not None
             )
 
     def _panel_failures(self, row: sqlite3.Row, subject_id: str) -> int:
-        pattern = f'%"subject_id":"{subject_id}"%'
         with self.database.read() as connection:
             return cast(
                 int,
                 connection.execute(
                     "SELECT COUNT(*) FROM workflow_events WHERE owner_id = ? AND project_id = ? "
-                    "AND type = 'qa.panel_failed' AND progress_json LIKE ?",
-                    (row["owner_id"], row["project_id"], pattern),
+                    "AND type = 'qa.panel_failed' "
+                    "AND json_extract(progress_json, '$.subject_id') = ?",
+                    (row["owner_id"], row["project_id"], subject_id),
                 ).fetchone()[0],
             )
 
@@ -627,9 +635,7 @@ class WorkflowService:
             async with asyncio.timeout(max(1, min(60, self._lease_seconds))):
                 return await provider.review_visual(request, credential)
 
-    def _block(
-        self, row: sqlite3.Row, token: str, category: str, summary: str
-    ) -> WorkflowSnapshot:
+    def _block(self, row: sqlite3.Row, token: str, category: str, summary: str) -> WorkflowSnapshot:
         return self._advance_row(
             row,
             token,
@@ -659,9 +665,10 @@ class WorkflowService:
             accepted = self.generation.submit_staged_raster(
                 principal, validating.job_id, validating.project_revision
             )
-            revision = accepted.accepted_project_revision or self.projects.snapshot(
-                principal, row["project_id"]
-            ).revision
+            revision = (
+                accepted.accepted_project_revision
+                or self.projects.snapshot(principal, row["project_id"]).revision
+            )
             kind = validating.request.subject_kind
             event = None
             progress = None
@@ -882,7 +889,9 @@ class WorkflowService:
                 ).fetchall()
                 if isinstance(json.loads(event[0]).get("page_number"), int)
             }
-        page_number = next((number for number in range(1, page_count + 1) if number not in passed), None)
+        page_number = next(
+            (number for number in range(1, page_count + 1) if number not in passed), None
+        )
         if page_number is None:
             return self._advance_row(row, token, phase="export")
         try:

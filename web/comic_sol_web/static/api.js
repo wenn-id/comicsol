@@ -464,9 +464,5 @@ export function resumeWorkflow(projectId, expectedRevision, idempotencyKey) {
 }
 
 export function workflowEventsUrl(projectId, after) {
-  const query = new URLSearchParams({
-    expected_revision: String(1),
-    after: String(after ?? 0),
-  });
   return `${WORKFLOWS_PATH}/${encodeURIComponent(projectId)}/events?after=${encodeURIComponent(String(after ?? 0))}`;
 }

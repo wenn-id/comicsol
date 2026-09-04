@@ -12,7 +12,7 @@ from comic_sol_web.config import WebConfig
 
 def main() -> int:
     config = WebConfig.local_from_env(os.environ)
-    uvicorn.run(create_app(config), host="127.0.0.1", port=8765, log_level="info")
+    uvicorn.run(create_app(config), host=config.host, port=8765, log_level="info")
     return 0
 
 

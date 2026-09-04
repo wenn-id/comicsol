@@ -184,7 +184,12 @@ def _planning_service(request: Request) -> object:
     options = []
     for provider, model, adapter, environment in (
         ("openai", config.openai_planning_model, OpenAIPlanningProvider, "OPENAI_API_KEY"),
-        ("anthropic", config.anthropic_planning_model, AnthropicPlanningProvider, "ANTHROPIC_API_KEY"),
+        (
+            "anthropic",
+            config.anthropic_planning_model,
+            AnthropicPlanningProvider,
+            "ANTHROPIC_API_KEY",
+        ),
     ):
         enabled = provider in config.hosted_secret_references
         options.append(PlanningModel(provider, model, enabled, None if enabled else environment))
@@ -192,7 +197,10 @@ def _planning_service(request: Request) -> object:
             providers.append(adapter(model=model))
     projects = _project_service(request)
     service = PlanningService(
-        projects.gateway.database, projects, providers, _generation_credentials(request),
+        projects.gateway.database,
+        projects,
+        providers,
+        _generation_credentials(request),
         model_options=options,
     )
     request.app.state.planning = service

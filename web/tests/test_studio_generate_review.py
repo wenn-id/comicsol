@@ -548,20 +548,17 @@ check(findAll(body, (node) => node.tagName === "A" && node.attributes.has("downl
             r"createElement\([\"']canvas|drawImage|getImageData|putImageData|toDataURL",
         )
         # PDF download is exposed only when the workflow completed.
-        self.assertRegex(self.review, r"(?:pdf_available|state === \"complete\"|state\s*===?\s*['\"]complete)")
+        self.assertRegex(self.review, r"state\s*===?\s*['\"]complete")
         self.assertRegex(self.review, r"download|href")
 
     def test_task7_activity_drawer_mounts_toggles_and_clamps_width(self) -> None:
         activity = (STATIC_ROOT / "activity.js").read_text(encoding="utf-8")
         self.assertIn("EventSource", activity)
         # Polling fallback uses the same last-seen cursor.
-        self.assertIn("after", activity)
-        marker_seen = activity.index("EventSource")
-        fallback_seen = activity.index("after", marker_seen)
-        self.assertGreater(fallback_seen, marker_seen)
+        self.assertRegex(activity, r"fetch\(eventsUrl\(lastId\),")
+        self.assertIn("new EventSource(eventsUrl(lastId))", activity)
         # Width clamp bounds and persistence scope only the drawer preference.
-        self.assertRegex(activity, r"320")
-        self.assertRegex(activity, r"720")
+        self.assertRegex(activity, r"Math\.min\((?:720|MAX_WIDTH),\s*Math\.max\((?:320|MIN_WIDTH),")
         self.assertRegex(activity, r"localStorage")
         # Events render with textContent only, never HTML injection.
         self.assertRegex(activity, r"textContent")

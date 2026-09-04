@@ -92,22 +92,66 @@ def _usage(response: Mapping[str, object]) -> Mapping[str, int | float]:
 
 
 def _plan_schema() -> dict[str, object]:
+    def array_document(name: str) -> dict[str, object]:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [name],
+            "properties": {name: {"type": "array", "items": {"type": "object"}}},
+        }
+
     return {
         "type": "object",
         "additionalProperties": False,
         "required": list(_PLAN_KEYS),
-        "properties": {key: {"type": "object"} for key in _PLAN_KEYS},
+        "properties": {
+            "storyPlan": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["schema_version"],
+                "properties": {"schema_version": {"type": "string"}},
+            },
+            "characterBible": array_document("characters"),
+            "storyboard": array_document("pages"),
+            "visualIdentityPack": array_document("characters"),
+        },
     }
 
 
 def _visual_schema(check_ids: tuple[str, ...]) -> dict[str, object]:
+    check = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["id", "result", "severity", "evidence", "method", "reviewer", "regions"],
+        "properties": {
+            "id": {"type": "string", "enum": list(check_ids)},
+            "result": {"type": "string", "enum": ["pass", "warning", "fail"]},
+            "severity": {"type": "string", "enum": ["info", "warning", "error"]},
+            "evidence": {"type": "string"},
+            "method": {"type": "string"},
+            "reviewer": {"type": "string"},
+            "regions": {"type": "array", "items": {"type": "object"}},
+        },
+    }
+    assessment = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["character_id", "trait", "result", "severity", "evidence"],
+        "properties": {
+            "character_id": {"type": "string"},
+            "trait": {"type": "string", "enum": list(_CHARACTER_TRAITS)},
+            "result": {"type": "string", "enum": ["pass", "warning", "fail"]},
+            "severity": {"type": "string", "enum": ["warning", "error"]},
+            "evidence": {"type": "string"},
+        },
+    }
     return {
         "type": "object",
         "additionalProperties": False,
         "required": ["checks", "character_assessments"],
         "properties": {
-            "checks": {"type": "array", "minItems": len(check_ids), "maxItems": len(check_ids)},
-            "character_assessments": {"type": "array", "maxItems": 64},
+            "checks": {"type": "array", "items": check},
+            "character_assessments": {"type": "array", "items": assessment},
         },
     }
 

@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -16,9 +17,10 @@ from comic_sol_web.auth import SessionPrincipal, require_principal
 from comic_sol_web.config import WebConfig
 from comic_sol_web.engine_gateway import EngineGateway
 from comic_sol_web.generation.approvals import ProviderSwitchApprovals
+from comic_sol_web.generation.credentials import CredentialBroker
 from comic_sol_web.generation.providers.base import ProviderRegistry
 from comic_sol_web.generation.service import GenerationService
-from comic_sol_web.generation.types import GenerationResult, JobState
+from comic_sol_web.generation.types import GenerationResult, JobState, ProviderAdapter
 from comic_sol_web.planning.service import PlanningService
 from comic_sol_web.planning.types import PlanResult, VisualReviewResult
 from comic_sol_web.projects import ProjectService
@@ -121,12 +123,12 @@ class LiveGoldenPathTests(unittest.TestCase):
             gateway.database,
             projects,
             (FakePlanningAndVisualReviewProvider(projects, self.principal),),
-            credentials,
+            cast(CredentialBroker, credentials),
         )
         generation = GenerationService(
             gateway.database,
             projects,
-            ProviderRegistry((FakeImageProvider(),)),
+            ProviderRegistry((cast(ProviderAdapter, FakeImageProvider()),)),
             gateway.staging_root,
             credentials=credentials,
             assets=assets,
@@ -137,9 +139,7 @@ class LiveGoldenPathTests(unittest.TestCase):
         app.state.generation = generation
         app.state.generation_credentials = credentials
         app.state.approvals = ProviderSwitchApprovals(gateway.database)
-        app.state.workflow = WorkflowService(
-            gateway.database, projects, planning, generation
-        )
+        app.state.workflow = WorkflowService(gateway.database, projects, planning, generation)
         app.state.auth = FakeAuth(self.principal)
         app.dependency_overrides[require_principal] = lambda: self.principal
         self.app = app
@@ -215,7 +215,8 @@ class LiveGoldenPathTests(unittest.TestCase):
         )
         self.assertEqual(200, response.status_code, response.text)
         job = next(
-            item for item in response.json()["jobs"]
+            item
+            for item in response.json()["jobs"]
             if item["subject_kind"] == "panel" and item.get("artifact_job_id")
         )
         return (

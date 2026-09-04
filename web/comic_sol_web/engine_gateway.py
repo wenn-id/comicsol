@@ -1416,17 +1416,42 @@ class EngineGateway:
                 )
             except (FileNotFoundError, KeyError, TypeError, ValueError):
                 current = False
+            prepared = None
             if not current:
-                _normalize_panels.normalize_panel(
-                    root, panel_id, f"panels/raw/{panel_id}.png", dimensions, mode="exact"
+                prepared = _normalize_panels._prepare(
+                    root,
+                    _normalize_panels.NormalizationSpec(
+                        panel_id, f"panels/raw/{panel_id}.png", dimensions, "exact"
+                    ),
                 )
-            record["bindings"] = self._panel_bindings(root, panel_id)
-            issues = list(_validation.validate_panel_record(record)) + list(
-                _validation.validate_panel_provenance(root, record)
-            )
+                normalization = json.loads(prepared.record_bytes)
+                source, clean = normalization["source"], normalization["clean"]
+                normalization_path = f"panels/{panel_id}/normalization.json"
+                record["bindings"] = {
+                    "raw_path": source["path"],
+                    "raw_sha256": source["sha256"],
+                    "raw_width": source["size"][0],
+                    "raw_height": source["size"][1],
+                    "clean_path": clean["path"],
+                    "clean_sha256": clean["sha256"],
+                    "clean_width": clean["size"][0],
+                    "clean_height": clean["size"][1],
+                    "normalization_path": normalization_path,
+                    "normalization_sha256": hashlib.sha256(prepared.record_bytes).hexdigest(),
+                }
+            else:
+                record["bindings"] = self._panel_bindings(root, panel_id)
+            issues = list(_validation.validate_panel_record(record))
+            if prepared is None:
+                issues += list(_validation.validate_panel_provenance(root, record))
             if issues or _character_quality.validate_character_quality_provenance(root, record):
                 raise GatewayInputError("panel review provenance is invalid")
             with ProjectTransaction(root, "web-panel-review") as transaction:
+                if prepared is not None:
+                    transaction.stage_bytes(f"panels/{panel_id}/clean.png", prepared.clean_bytes)
+                    transaction.stage_bytes(
+                        f"panels/{panel_id}/normalization.json", prepared.record_bytes
+                    )
                 transaction.stage_bytes(
                     f"qa/panels/{panel_id}.json", canonical_artifact_bytes(record)
                 )

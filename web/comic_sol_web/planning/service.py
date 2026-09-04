@@ -238,7 +238,15 @@ class PlanningService:
                     "ELSE 'repairing' END, lease_token = ?, lease_owner = ?, lease_expires_at = ?, "
                     "started_at = COALESCE(started_at, ?), updated_at = ? WHERE job_id = ? AND (state = 'queued' OR "
                     "(state IN ('running', 'repairing') AND lease_expires_at <= ?))",
-                    (token, worker_id, now + self._lease_seconds, now, now, candidate["job_id"], now),
+                    (
+                        token,
+                        worker_id,
+                        now + self._lease_seconds,
+                        now,
+                        now,
+                        candidate["job_id"],
+                        now,
+                    ),
                 )
                 if cursor.rowcount != 1:
                     return None

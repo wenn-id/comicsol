@@ -369,9 +369,7 @@ class _WorkflowProjects:
         self.snapshot(principal, project_id, expected_revision)
         return SimpleNamespace(subject_id=panel_id)
 
-    def publish_panel_review(
-        self, principal, project_id, expected_revision, panel_id, review
-    ):
+    def publish_panel_review(self, principal, project_id, expected_revision, panel_id, review):
         self.snapshot(principal, project_id, expected_revision)
         self.revision += 1
         return self.snapshot(principal, project_id)
@@ -382,9 +380,7 @@ class _WorkflowProjects:
             raise StaleProjectRevisionError(expected_revision, expected_revision)
         return SimpleNamespace(subject_id=f"page-{page_number:03d}")
 
-    def publish_page_review(
-        self, principal, project_id, expected_revision, page_number, review
-    ):
+    def publish_page_review(self, principal, project_id, expected_revision, page_number, review):
         self.snapshot(principal, project_id, expected_revision)
         self.revision += 1
         return self.snapshot(principal, project_id)

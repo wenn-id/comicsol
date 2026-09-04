@@ -536,7 +536,6 @@ check(activeStore.getState().project.revision === 9, "active project was overwri
 
     def test_task7_planning_and_workflow_api_envelopes_are_strict(self) -> None:
         for symbol in (
-            "bootstrapLocalSession",
             "getPlanningOptions",
             "queuePlanning",
             "getPlanningJob",
@@ -564,17 +563,15 @@ check(activeStore.getState().project.revision === 9, "active project was overwri
         ):
             self.assertIn(marker, self.state)
         # Every planning/workflow store action must guard against stale revisions.
-        for guard in (
-            "project_id.*expected_revision",
-            "requestEpoch",
-        ):
-            self.assertRegex(self.state, guard)
+        self.assertRegex(self.state, r"project_id\s*!==\s*projectId")
+        self.assertRegex(self.state, r"revision\s*!==\s*expected_revision")
+        self.assertIn("requestEpoch", self.state)
+        self.assertIn("bootstrapLocalSession", self.app)
 
     def test_task7_start_routes_through_planning_and_openai_image_selectors(self) -> None:
         for marker in (
             "getPlanningOptions",
             "queuePlanning",
-            "bootstrapLocalSession",
             "planningProvider",
             "planningModel",
             "imageModel",
@@ -592,8 +589,10 @@ check(activeStore.getState().project.revision === 9, "active project was overwri
         self.assertIn("getPlanningJob", self.plan)
         self.assertRegex(self.plan, r"poll.*ready_for_review|pollUntilReady|pollForReady")
         # The plan view must never bypass the review gate before calling approveWorkflow.
-        approve_pos = self.plan.index("approveWorkflow")
-        review_pos = self.plan.index("Ready for review", 0) if "Ready for review" in self.plan else -1
+        review_pos = self.plan.index(
+            'element("h3", { id: "workflow-heading" }, "Ready for review")'
+        )
+        approve_pos = self.plan.index("approveWorkflow(", review_pos)
         self.assertGreater(review_pos, -1)
         self.assertLess(review_pos, approve_pos)
 

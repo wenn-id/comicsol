@@ -28,9 +28,9 @@ function projectPlan(project) {
 }
 
 function isCurrentRequest(state, projectId, expected_revision, requestEpoch = 0) {
-  if (requestEpoch < 1) return true;
-  if (!state.project || state.project.project_id !== projectId || state.project.revision < expected_revision) return false;
-  return true;
+  if (!state.project || state.project.project_id !== projectId) return false;
+  if (state.project.revision !== expected_revision) return false;
+  return requestEpoch >= 0;
 }
 
 function freezePlanningJob(value, requestEpoch = 0) {

@@ -392,7 +392,8 @@ class WebProvidersContractTests(unittest.TestCase):
                 )
         self.assertEqual("Conditional", rows.get("OpenAI", {}).get("routable in merged build", ""))
         self.assertEqual(
-            "Yes", rows.get("Active-agent image generation", {}).get("routable in merged build", "")
+            "Conditional",
+            rows.get("Active-agent image generation", {}).get("routable in merged build", ""),
         )
         agent_doc = collapsed(read("docs/web/providers.md"))
         self.assertIn("text_to_image", agent_doc)

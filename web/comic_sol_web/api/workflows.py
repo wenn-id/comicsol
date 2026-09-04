@@ -71,7 +71,9 @@ def _reject(error: Exception) -> NoReturn:
         raise error from None
     if isinstance(error, (WorkflowUnavailableError, ProjectUnavailableError)):
         raise HTTPException(404, "workflow unavailable", headers=_PRIVATE_HEADERS) from None
-    if isinstance(error, (WorkflowConflictError, StaleProjectRevisionError, GenerationConflictError)):
+    if isinstance(
+        error, (WorkflowConflictError, StaleProjectRevisionError, GenerationConflictError)
+    ):
         raise HTTPException(409, "workflow state conflict", headers=_PRIVATE_HEADERS) from None
     if isinstance(error, (GatewayError, KeyError, TypeError, ValueError)):
         raise HTTPException(400, "workflow request rejected", headers=_PRIVATE_HEADERS) from None

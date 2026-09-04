@@ -68,13 +68,17 @@ class LocalRuntimeTests(unittest.TestCase):
 
     def test_launcher_uses_loopback_host(self) -> None:
         launched_app = object()
-        with patch("comic_sol_web.__main__.WebConfig.local_from_env", return_value=self.config), patch(
-            "comic_sol_web.__main__.uvicorn.run"
-        ) as run, patch("comic_sol_web.__main__.create_app", return_value=launched_app):
+        with (
+            patch("comic_sol_web.__main__.WebConfig.local_from_env", return_value=self.config),
+            patch("comic_sol_web.__main__.uvicorn.run") as run,
+            patch("comic_sol_web.__main__.create_app", return_value=launched_app),
+        ):
             from comic_sol_web.__main__ import main
 
             self.assertEqual(0, main())
-        run.assert_called_once_with(launched_app, host="127.0.0.1", port=8765, log_level="info")
+        run.assert_called_once_with(
+            launched_app, host=self.config.host, port=8765, log_level="info"
+        )
 
 
 if __name__ == "__main__":

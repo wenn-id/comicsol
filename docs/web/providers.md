@@ -66,7 +66,7 @@ The columns are:
 | Cloudflare | Yes | No | Yes (mocked transport) | Not run | Hosted, session BYOK, encrypted persisted BYOK | None | Not routable |
 | ComfyUI (remote) | Yes | No | Yes (mocked transport) | Not run | BYOK endpoint URL | None | Not routable |
 | ComfyUI (local, agent handoff) | No | No | Not run | Not run | Agent-native (no Studio credential) | None | Experimental |
-| Active-agent image generation | Partial (`AgentProvider` is the one registered provider) | Yes | Yes (agent-native handoff exercised offline) | Not run | Agent-native | None | Experimental |
+| Active-agent image generation | Partial (`AgentProvider` is the one registered provider) | Conditional | Yes (agent-native handoff exercised offline) | Not run | Agent-native | None | Experimental |
 
 *> `Not run` in the live-smoke column means the route was NOT exercised against a
 > live provider. Passing offline adapter tests did not change that. `Conditional`

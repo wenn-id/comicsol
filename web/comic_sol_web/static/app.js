@@ -480,4 +480,14 @@ async function restoreProject() {
   }
 }
 
-void restoreProject();
+async function startStudio() {
+  try {
+    const { bootstrapLocalSession } = await import("./api.js");
+    await bootstrapLocalSession();
+  } catch {
+    // Hosted deployments do not expose the loopback-only bootstrap route.
+  }
+  await restoreProject();
+}
+
+void startStudio();

@@ -30,11 +30,11 @@ def create_local_session_router(service_source: Any) -> APIRouter:
         except ValueError:
             is_loopback = False
         if not is_loopback:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="local session rejected")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="local session rejected"
+            )
         service = _service_from(service_source, request)
-        authenticated = service.create_session(
-            SessionPrincipal("comic-sol-local-user", "local")
-        )
+        authenticated = service.create_session(SessionPrincipal("comic-sol-local-user", "local"))
         response = JSONResponse(
             {"user_id": authenticated.principal.user_id, "login": authenticated.principal.login}
         )

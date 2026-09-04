@@ -2,7 +2,6 @@ import {
   MAX_ARCHIVE_BYTES,
   MigrationValidationError,
   StudioApiError,
-  bootstrapLocalSession,
   createProject,
   getPlanningOptions,
   importProject,
@@ -110,7 +109,6 @@ function creationCard({ store, announce, navigate }) {
   let planningOptionsCache = [];
   async function loadPlanningSelections() {
     try {
-      await bootstrapLocalSession();
       const res = await getPlanningOptions();
       planningOptionsCache = res.options || [];
       updatePlanningSelections();
@@ -199,6 +197,7 @@ function creationCard({ store, announce, navigate }) {
       retry = retryOperation(retry, fingerprint);
       const project = await createProject(request, retry.idempotencyKey);
       store.setProject(project);
+      let planningStatus = "Planning was skipped because no planning provider is available.";
       if (planningProvider.value && planningModel.value) {
         try {
           const planJob = await queuePlanning(project.project_id, project.revision, {
@@ -206,9 +205,12 @@ function creationCard({ store, announce, navigate }) {
             model: planningModel.value,
           });
           store.setPlanningJob(planJob.job || planJob);
-        } catch { /* planning optional at create time */ }
+          planningStatus = "Planning queued. The Plan will be ready for review when processing completes.";
+        } catch {
+          planningStatus = "Project created, but planning could not be queued. Retry planning before review.";
+        }
       }
-      announce("Project created. Plan is ready for review.", "success");
+      announce(`Project created. ${planningStatus}`, "success");
       navigate("plan");
     } catch (error) {
       safeFailure(error, announce);

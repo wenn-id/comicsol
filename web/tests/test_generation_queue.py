@@ -638,7 +638,9 @@ class DurableQueueTests(GenerationQueueFixture):
 
         self.assertEqual(prepare_calls, self.projects.prepare_calls)
         with self.database.read() as connection:
-            self.assertEqual(0, connection.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0])
+            self.assertEqual(
+                0, connection.execute("SELECT COUNT(*) FROM generation_jobs").fetchone()[0]
+            )
 
     def test_curated_options_and_recommendations_are_stable_sanitized_and_offline(self) -> None:
         queued = self.queue()

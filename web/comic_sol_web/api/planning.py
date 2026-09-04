@@ -113,12 +113,17 @@ def create_planning_router(service_source: Any) -> APIRouter:
     async def get(
         request: Request,
         response: Response,
+        background_tasks: BackgroundTasks,
         job_id: str,
         principal: Annotated[SessionPrincipal, Depends(require_principal)],
     ) -> dict[str, object]:
         response.headers["Cache-Control"] = "private, no-store"
         try:
-            return _envelope(service(request).get(principal, job_id))
+            planner = service(request)
+            job = planner.get(principal, job_id)
+            if job.state not in {"ready_for_review", "failed", "cancelled"}:
+                background_tasks.add_task(_consume_planning_queue, planner)
+            return _envelope(job)
         except Exception as error:
             _reject(error)
 
