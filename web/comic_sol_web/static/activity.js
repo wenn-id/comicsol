@@ -11,7 +11,7 @@ const MAX_WIDTH = 720;
 function loadPrefs() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { collapsed: false, width: 420 };
+    if (!raw) return { collapsed: true, width: 420 };
     const parsed = JSON.parse(raw);
     const collapsed = parsed.collapsed === true;
     const width = Number.isFinite(parsed.width)
@@ -19,7 +19,7 @@ function loadPrefs() {
       : 420;
     return { collapsed, width };
   } catch {
-    return { collapsed: false, width: 420 };
+    return { collapsed: true, width: 420 };
   }
 }
 

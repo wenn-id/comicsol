@@ -51,9 +51,12 @@ function safeFailure(error, announce) {
 }
 
 function creationCard({ store, announce, navigate }) {
-  const card = element("section", { className: "card", "aria-labelledby": "create-heading" });
+  const card = element("section", {
+    className: "card start-create-card",
+    "aria-labelledby": "create-heading",
+  });
   card.append(element("h3", { id: "create-heading" }, "Create a project"));
-  const form = element("form", { id: "create-project-form" });
+  const form = element("form", { id: "create-project-form", className: "start-create-form" });
   let retry = null;
 
   const title = element("input", {
@@ -155,6 +158,17 @@ function creationCard({ store, announce, navigate }) {
   }
   mode.append(choices);
 
+  const projectMetaFields = element("div", { className: "compact-fields" });
+  projectMetaFields.append(
+    field("project-language", "Language code", language),
+    field("project-page-count", "Page count", pageCount),
+  );
+  const planningFields = element("div", { className: "compact-fields" });
+  planningFields.append(
+    field("project-planning-provider", "Planning provider", planningProvider),
+    field("project-planning-model", "Planning model", planningModel),
+  );
+
   form.append(
     field("project-title", "Project title", title),
     mode,
@@ -164,10 +178,8 @@ function creationCard({ store, announce, navigate }) {
       source,
       "At most 200 KiB of UTF-8. Content is sent only to the project API.",
     ),
-    field("project-language", "Language code", language),
-    field("project-page-count", "Page count", pageCount),
-    field("project-planning-provider", "Planning provider", planningProvider),
-    field("project-planning-model", "Planning model", planningModel),
+    projectMetaFields,
+    planningFields,
     field("project-image-model", "Image model", imageModel),
   );
   const actions = element("div", { className: "actions" });
@@ -283,7 +295,10 @@ function importCard({ store, announce, navigate }) {
 }
 
 export function renderStartView(context) {
-  const view = element("section", { "aria-labelledby": "start-heading" });
+  const view = element("section", {
+    className: "start-view",
+    "aria-labelledby": "start-heading",
+  });
   const heading = element("div", { className: "view-heading" });
   heading.append(
     element("h2", { id: "start-heading" }, "Start a comic"),
