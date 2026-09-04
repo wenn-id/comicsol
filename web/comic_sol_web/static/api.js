@@ -27,6 +27,7 @@ export class StudioConflictError extends StudioApiError {
   constructor() {
     super("The Studio operation conflicts with the current project state.", 409);
     this.name = "StudioConflictError";
+    this.status = 409;
   }
 }
 
@@ -309,10 +310,16 @@ export function acceptedRasterUrl(projectId, expectedRevision, jobId) {
   return `${PROJECTS_PATH}/${encodeURIComponent(projectId)}/accepted-raster/${encodeURIComponent(jobId)}?${query}`;
 }
 
-function envelopeMatches(snapshot, projectId, expected_revision) {
+function envelopeMatches(snapshot, projectId, expectedRevision) {
   if (!snapshot || typeof snapshot !== "object") return false;
-  if (snapshot.project_id !== projectId || snapshot.revision < expected_revision || snapshot.revision >= expected_revision) return false;
-  if (!Number.isInteger(snapshot.revision)) return false;
+  if (
+    snapshot.project_id !== projectId ||
+    !Number.isInteger(snapshot.revision) ||
+    snapshot.revision < expectedRevision ||
+    snapshot.revision > expectedRevision
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -401,9 +408,6 @@ export function getPlanningOptions() {
 }
 
 export function queuePlanning(projectId, expectedRevision, selection, idempotencyKey) {
-  if (!envelopeMatches({ project_id: projectId, revision: expectedRevision }, projectId, expectedRevision)) {
-    // Guard only re-exported for contract visibility; writeRequest performs the live call.
-  }
   return writeRequest(`${PLANNING_PATH}/jobs`, {
     body: {
       project_id: projectId,
@@ -414,7 +418,19 @@ export function queuePlanning(projectId, expectedRevision, selection, idempotenc
     expectedRevision,
     idempotencyKey,
     responseType: "json",
-  }).then((value) => Object.freeze({ job: validatePlanningJob(value.job ?? value) }));
+  }).then((value) => {
+    const job = validatePlanningJob(value.job ?? value);
+    if (
+      !envelopeMatches(
+        { project_id: job.project_id, revision: job.project_revision },
+        projectId,
+        expectedRevision,
+      )
+    ) {
+      throw new StudioApiError("The server returned an invalid planning response.");
+    }
+    return Object.freeze({ job });
+  });
 }
 
 export function getPlanningJob(jobId) {
