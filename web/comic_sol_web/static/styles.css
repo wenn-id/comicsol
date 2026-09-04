@@ -129,135 +129,6 @@ footer { border-top: 1px solid var(--line); padding-block: 1rem 2rem; color: var
   nav, .step-tab { width: 100%; }
 }
 
-@media (max-width: 63.99rem) {
-  body { overflow-y: auto; }
-  #studio-shell {
-    grid-template-columns: minmax(0, 1fr);
-    width: min(72rem, calc(100% - 2rem));
-    margin-inline: auto;
-  }
-  #studio-shell > main { width: 100%; }
-  #activity-drawer {
-    width: 100% !important;
-    min-width: 0;
-    max-width: none;
-    resize: none;
-  }
-  .compact-fields { grid-template-columns: minmax(0, 1fr); }
-}
-
-@media (min-width: 64rem) and (min-height: 42rem) {
-  html,
-  body { height: 100%; }
-
-  body {
-    overflow: hidden;
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto auto;
-  }
-
-  .site-header {
-    align-items: center;
-    padding-block: 0.65rem 0.45rem;
-  }
-  h1 { font-size: clamp(2rem, 4vw, 3rem); }
-  .eyebrow { font-size: 0.8rem; }
-  .step-tab {
-    min-height: 2.35rem;
-    padding: 0.5rem 0.9rem;
-  }
-
-  #studio-shell {
-    min-height: 0;
-    height: 100%;
-    width: min(92rem, calc(100% - 2rem));
-    margin-inline: auto;
-    align-items: stretch;
-  }
-
-  #studio-shell > main {
-    width: 100%;
-    margin: 0;
-  }
-
-  main {
-    min-height: 0;
-    height: 100%;
-    overflow: auto;
-    padding-block: 0.4rem;
-  }
-
-  .start-view {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    min-height: 0;
-    height: 100%;
-    overflow: hidden;
-  }
-
-  .start-view .view-heading { margin-bottom: 0.55rem; }
-  .start-view .view-heading h2 { margin-block: 0.15rem; }
-  .start-view .view-heading p {
-    margin: 0.2rem 0;
-    font-size: 0.95rem;
-  }
-
-  .start-view .card-grid {
-    min-height: 0;
-    height: 100%;
-    grid-template-columns: minmax(0, 1.15fr) minmax(20rem, 0.85fr);
-    align-items: stretch;
-  }
-
-  .start-view .card {
-    min-height: 0;
-    padding: 0.75rem 1rem;
-    overflow: auto;
-  }
-  .start-view .card h3 { margin-bottom: 0.45rem; }
-
-  .start-create-card {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .start-create-form {
-    display: grid;
-    align-content: start;
-    gap: 0.25rem;
-    min-height: 0;
-  }
-
-  .start-create-form .field,
-  .start-create-form fieldset { margin-block: 0.2rem; }
-  .start-create-form .field-help { font-size: 0.78rem; }
-  .start-create-form textarea {
-    min-height: 5rem;
-    height: 5.5rem;
-    resize: none;
-  }
-  .start-create-form .choice-row { margin-top: 0.2rem; }
-  .start-create-form .actions { margin-top: 0.25rem; }
-
-  .compact-fields {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.65rem;
-  }
-  .compact-fields .field { margin-block: 0.1rem; }
-
-  .status-region {
-    min-height: 2rem;
-    padding-block: 0.35rem;
-  }
-  footer {
-    padding-block: 0.35rem 0.6rem;
-    font-size: 0.85rem;
-  }
-  footer p { margin: 0.2rem 0; }
-
-  #activity-drawer { align-self: start; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -396,3 +267,132 @@ dialog::backdrop { background: rgb(20 12 32 / 70%); }
 }
 
 .activity-value { word-break: break-word; }
+
+@media (max-width: 63.99rem) {
+  body { overflow-y: auto; }
+  #studio-shell {
+    grid-template-columns: minmax(0, 1fr);
+    width: min(72rem, calc(100% - 2rem));
+    margin-inline: auto;
+  }
+  #studio-shell > main { width: 100%; }
+  #activity-drawer {
+    width: 100% !important;
+    min-width: 0;
+    max-width: none;
+    resize: none;
+  }
+  .compact-fields { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (min-width: 64rem) and (min-height: 42rem) {
+  html,
+  body { height: 100%; }
+
+  body {
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+  }
+
+  .site-header {
+    align-items: center;
+    padding-block: 0.65rem 0.45rem;
+  }
+  h1 { font-size: clamp(2rem, 4vw, 3rem); }
+  .eyebrow { font-size: 0.8rem; }
+  .step-tab {
+    min-height: 2.35rem;
+    padding: 0.5rem 0.9rem;
+  }
+
+  #studio-shell {
+    min-height: 0;
+    height: 100%;
+    width: min(92rem, calc(100% - 2rem));
+    margin-inline: auto;
+    align-items: stretch;
+  }
+
+  #studio-shell > main {
+    width: 100%;
+    margin: 0;
+  }
+
+  main {
+    min-height: 0;
+    height: 100%;
+    overflow: auto;
+    padding-block: 0.4rem;
+  }
+
+  .start-view {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .start-view .view-heading { margin-bottom: 0.55rem; }
+  .start-view .view-heading h2 { margin-block: 0.15rem; }
+  .start-view .view-heading p {
+    margin: 0.2rem 0;
+    font-size: 0.95rem;
+  }
+
+  .start-view .card-grid {
+    min-height: 0;
+    height: 100%;
+    grid-template-columns: minmax(0, 1.15fr) minmax(20rem, 0.85fr);
+    align-items: stretch;
+  }
+
+  .start-view .card {
+    min-height: 0;
+    padding: 0.75rem 1rem;
+    overflow: auto;
+  }
+  .start-view .card h3 { margin-bottom: 0.45rem; }
+
+  .start-create-card {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .start-create-form {
+    display: grid;
+    align-content: start;
+    gap: 0.25rem;
+    min-height: 0;
+  }
+
+  .start-create-form .field,
+  .start-create-form fieldset { margin-block: 0.2rem; }
+  .start-create-form .field-help { font-size: 0.78rem; }
+  .start-create-form textarea {
+    min-height: 5rem;
+    height: 5.5rem;
+    resize: none;
+  }
+  .start-create-form .choice-row { margin-top: 0.2rem; }
+  .start-create-form .actions { margin-top: 0.25rem; }
+
+  .compact-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+  .compact-fields .field { margin-block: 0.1rem; }
+
+  .status-region {
+    min-height: 2rem;
+    padding-block: 0.35rem;
+  }
+  footer {
+    padding-block: 0.35rem 0.6rem;
+    font-size: 0.85rem;
+  }
+  footer p { margin: 0.2rem 0; }
+
+  #activity-drawer { align-self: start; }
+}
