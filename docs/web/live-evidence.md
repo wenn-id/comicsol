@@ -75,7 +75,7 @@ The sections below define the exact procedure and validation gate so that
 any future evidence is **retained, sanitized, and candidate-bound** — never
 fabricated and never inflated. What is not run remains explicitly
 unverified, matching the offline-qualified state already documented in
-[`providers.md`](providers.md).
+the provider matrix.
 
 ## Four distinct evidence states
 
