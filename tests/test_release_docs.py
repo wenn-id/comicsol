@@ -368,8 +368,8 @@ class ReleaseDocumentationTests(unittest.TestCase):
         workflow = (self.root / "skills/comic-sol/references/workflow.md").read_text(
             encoding="utf-8"
         )
-        listing = (self.root / "submission/listing.md").read_text(encoding="utf-8")
-        cases = (self.root / "submission/test-cases.md").read_text(encoding="utf-8")
+        listing = (self.root / "docs/plugin-directory/listing.md").read_text(encoding="utf-8")
+        cases = (self.root / "docs/plugin-directory/test-cases.md").read_text(encoding="utf-8")
         public_docs = " ".join("\n".join((self.readme, listing, cases)).split())
 
         self.assertIn("platform-specific", provider_setup)

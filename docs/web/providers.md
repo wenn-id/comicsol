@@ -143,4 +143,4 @@ this work package.
 - [Security and privacy](security.md)
 - [Deployment](deployment.md)
 - [Rollback and recovery](rollback.md)
-- [Provider evidence table](../../submission/webmcp/provider-evidence.md)
+- [Live evidence collection framework](live-evidence.md)

@@ -8,7 +8,7 @@ claims.
 
 > **One sentence, no exceptions**
 >
-> A provider credential is never exposed to the browser, written into a project archive, recorded in a receipt, emitted to a log, or included in this submission.
+> A provider credential is never exposed to the browser, written into a project archive, recorded in a receipt, emitted to a log, or included in this documentation.
 >
 > That single rule is the non-negotiable contract every other section in this document supports.
 

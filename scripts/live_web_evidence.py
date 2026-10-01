@@ -8,8 +8,7 @@ real native portable release-asset smoke. It never calls a provider,
 reads credentials, or persists prompts.
 
 It is the publication gate for the evidence tracked in
-``docs/web/live-evidence.md`` (issue #321) and the submission companion
-``submission/webmcp/live-evidence.md``.
+``docs/web/live-evidence.md`` (issue #321).
 
 Usage
 -----

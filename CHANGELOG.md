@@ -5,6 +5,17 @@
 `docs/releases/milestone-delivery.md` records what each milestone delivered and which tag
 carries it.
 
+### Removed
+
+- Removed the Devpost WebMCP challenge materials (`marketing/devpost/` and
+  `submission/webmcp/`, including the demo script, demo fixture, limitations,
+  verification log, and submission-side evidence companion) and their contract
+  tests. The WebMCP tool list now lives at `docs/web/webmcp-tools.md`, and the
+  provider evidence state is tracked only in `docs/web/providers.md`.
+- Moved the official plugin directory listing and reviewer test cases from
+  `submission/` to `docs/plugin-directory/`.
+- Removed the archived PR #312 review-reply drafts from `docs/agent-host-smoke/`.
+
 ### Added
 
 - Added the Web documentation and challenge submission for the separately
