@@ -216,7 +216,7 @@ authorized**, so every provider route below is at most *offline-qualified* or
 ## Tool surfaces
 
 - The WebMCP client surface is exactly **five read tools and nine write
-  tools** (see `submission/webmcp/tools.md`).
+  tools** (see [WebMCP tool surface](webmcp-tools.md)).
 - The local MCP surface remains **exactly 17 `comic_*` tools**; WP17 does not
   change it.
 - The hosted server never opens a connection to a user's `localhost`. Local
@@ -227,14 +227,14 @@ authorized**, so every provider route below is at most *offline-qualified* or
 
 - **Deployment:** not deployed. No production instance exists and no external
   deployment URL is claimed in this work package.
-- **Recording:** no video was recorded. The submission ships a narration/demo
-  script instead.
+- **Recording:** no video was recorded.
 - **Live provider smoke:** none was run. No paid provider call was authorized
   or made.
 
 ## Related documents
 
 - [Provider matrix](providers.md)
+- [WebMCP tool surface](webmcp-tools.md)
 - [Security and privacy](security.md)
 - [Deployment](deployment.md)
 - [Rollback and recovery](rollback.md)

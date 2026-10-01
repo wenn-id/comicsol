@@ -981,7 +981,7 @@ class CreatorPositioningMetadataTests(unittest.TestCase):
         cls.marketplace = json.loads(
             (cls.root / ".agents/plugins/marketplace.json").read_text(encoding="utf-8")
         )
-        cls.listing = (cls.root / "submission/listing.md").read_text(encoding="utf-8")
+        cls.listing = (cls.root / "docs/plugin-directory/listing.md").read_text(encoding="utf-8")
 
     def test_creator_facing_short_description_is_consistent(self):
         """Publish one short description through every metadata surface."""

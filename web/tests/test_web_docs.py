@@ -31,7 +31,6 @@ from comic_sol_web.generation.catalog import CATALOG
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DOCS = ROOT / "docs" / "web"
-SUBMISSION = ROOT / "submission" / "webmcp"
 APP_SOURCE = ROOT / "web" / "comic_sol_web" / "app.py"
 GENERATION_SERVICE_SOURCE = ROOT / "web" / "comic_sol_web" / "generation" / "service.py"
 
@@ -60,7 +59,7 @@ WEBMCP_WRITE_TOOLS = frozenset(
 )
 
 # Credential, token, header, and path/endpoint/payload shapes that must never
-# appear in any WP17 document or submission artifact. Each pattern is a single
+# appear in any WP17 document. Each pattern is a single
 # prohibited shape; new ones are added when the documentation contract is
 # extended. The list covers:
 #   - vendor API key formats (sk-, sk-proj-, ghp_, github_pat_, AKIA, xoxb-,
@@ -566,7 +565,7 @@ class WebSecurityContractTests(unittest.TestCase):
         statement = (
             "A provider credential is never exposed to the browser, written into a "
             "project archive, recorded in a receipt, emitted to a log, or included "
-            "in this submission."
+            "in this documentation."
         )
         self.assertIn(statement, collapsed(self.document.replace(">", " ")))
 
@@ -831,7 +830,7 @@ class WebMcpSurfaceContractTests(unittest.TestCase):
         cls.webmcp_source = (ROOT / "web" / "comic_sol_web" / "static" / "webmcp.js").read_text(
             encoding="utf-8"
         )
-        cls.tool_list = read("submission/webmcp/tools.md")
+        cls.tool_list = read("docs/web/webmcp-tools.md")
 
     def test_the_merged_module_registers_exactly_five_read_and_nine_write_tools(self) -> None:
         """check the merged module registers exactly five read and nine write tools."""
@@ -873,9 +872,7 @@ class WebMcpSurfaceContractTests(unittest.TestCase):
         tools = re.findall(r"@mcp\.tool\(\)\n(?:@[^\n]+\n)*def (comic_[a-z_]+)\(", source)
         self.assertEqual(17, len(tools), sorted(tools))
         self.assertEqual(17, len(set(tools)))
-        for document in ("docs/web/index.md", "submission/webmcp/README.md"):
-            with self.subTest(document=document):
-                self.assertIn("exactly 17", collapsed(read(document)), document)
+        self.assertIn("exactly 17", collapsed(read("docs/web/index.md")))
 
 
 class WebDocumentationLinkTests(unittest.TestCase):
@@ -883,7 +880,6 @@ class WebDocumentationLinkTests(unittest.TestCase):
 
     def _markdown_documents(self) -> list[Path]:
         documents = sorted(WEB_DOCS.rglob("*.md"))
-        documents.extend(sorted(SUBMISSION.rglob("*.md")))
         self.assertTrue(documents, "no WP17 documents were found")
         return documents
 
@@ -974,192 +970,6 @@ class WebDocumentationLinkTests(unittest.TestCase):
             for pattern in CREDENTIAL_PATTERNS:
                 with self.subTest(document=path.name, pattern=pattern.pattern):
                     self.assertIsNone(pattern.search(text), pattern.pattern)
-
-
-class SubmissionContractTests(unittest.TestCase):
-    """`submission/webmcp/` is bounded, honest, and evidence-backed."""
-
-    overview: ClassVar[str]
-    normalized: ClassVar[str]
-    tool_list: ClassVar[str]
-    tool_list_normalized: ClassVar[str]
-    document: ClassVar[str]
-    bodies: ClassVar[dict[str, str]]
-    demo: ClassVar[str]
-    verification: ClassVar[str]
-    limitations: ClassVar[str]
-    fixture_dir: ClassVar[Path]
-    evidence: ClassVar[list[str]]
-
-    REQUIRED_FILES = (
-        "README.md",
-        "tools.md",
-        "provider-evidence.md",
-        "demo.md",
-        "verification.md",
-        "limitations.md",
-    )
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        """setUpClass."""
-        cls.overview = read("submission/webmcp/README.md")
-        cls.normalized = collapsed(cls.overview)
-
-    def test_every_required_submission_document_exists(self) -> None:
-        """check every required submission document exists."""
-        for name in self.REQUIRED_FILES:
-            with self.subTest(document=name):
-                self.assertTrue(
-                    (SUBMISSION / name).is_file(),
-                    f"submission/webmcp/{name} is missing",
-                )
-
-    def test_overview_covers_every_required_submission_topic(self) -> None:
-        """check overview covers every required submission topic."""
-        for heading in (
-            "Submission overview",
-            "Source repository",
-            "Architecture summary",
-            "WebMCP tool surface",
-            "Security and privacy summary",
-            "Demo instructions",
-            "Limitations",
-            "Provider evidence",
-            "Verification commands and results",
-        ):
-            with self.subTest(heading=heading):
-                self.assertIn(f"## {heading}", self.overview, heading)
-
-    def test_source_repository_link_is_the_canonical_repository(self) -> None:
-        """check source repository link is the canonical repository."""
-        repository = collapsed(section(self.overview, "Source repository"))
-        self.assertIn("https://github.com/wenn-id/comicsol", repository)
-
-    def test_deployment_and_video_status_are_honest(self) -> None:
-        """check deployment and video status are honest."""
-        status = collapsed(section(self.overview, "Deployment and recording status"))
-        self.assertIn("not deployed", status.lower())
-        self.assertIn("no video was recorded", status.lower())
-        lowered = self.normalized.lower()
-        for banned in (
-            "live at https://",
-            "watch the demo at https://",
-            "video: https://",
-            "youtube.com/watch",
-            "youtu.be/",
-            "loom.com/share",
-        ):
-            with self.subTest(phrase=banned):
-                self.assertNotIn(banned, lowered, banned)
-
-    def test_any_rendered_offline_screenshot_has_a_retained_artifact(self) -> None:
-        """Any referenced screenshot must exist and be committed.
-
-        WP17 produced no demo screenshots (the environment exposed no
-        `document.modelContext`, so the WebMCP client could not be driven to a
-        rendered screen). The narration/demo script stands in their place.
-        This test still guards any future screenshot: a referenced image must
-        be a real, committed local file, never a remote or fabricated one.
-        """
-        for path in sorted(SUBMISSION.rglob("*.md")):
-            text = path.read_text(encoding="utf-8")
-            for match in re.finditer(r"!\[[^\]]*\]\(([^)\s]+)\)", text):
-                target = match.group(1)
-                if target.startswith(("http://", "https://")):
-                    self.fail(f"{path.name} embeds a remote image {target!r}")
-                resolved = (path.parent / target).resolve()
-                with self.subTest(document=path.name, image=target):
-                    self.assertTrue(
-                        resolved.is_file(),
-                        f"{path.relative_to(ROOT)} references missing image {target!r}",
-                    )
-
-    def test_demo_states_that_no_screenshots_were_produced(self) -> None:
-        """check demo states that no screenshots were produced."""
-        demo = collapsed(read("submission/webmcp/demo.md"))
-        self.assertIn("no screenshots", demo.lower())
-
-    def test_screenshots_are_labelled_as_offline_deterministic_output(self) -> None:
-        """check screenshots are labelled as offline deterministic output."""
-        demo = collapsed(read("submission/webmcp/demo.md"))
-        self.assertIn("offline", demo.lower())
-        self.assertIn("FakeProvider", demo)
-        self.assertIn(
-            "No screenshot in this submission shows a live paid provider result",
-            demo,
-        )
-
-    def test_submission_makes_no_adoption_or_visual_quality_claim(self) -> None:
-        """check submission makes no adoption or visual quality claim."""
-        for name in self.REQUIRED_FILES:
-            lowered = collapsed(read(f"submission/webmcp/{name}")).lower()
-            for banned in (
-                "thousands of users",
-                "widely adopted",
-                "production-proven",
-                "studio-quality art",
-                "best-in-class",
-                "state of the art results",
-            ):
-                with self.subTest(document=name, phrase=banned):
-                    self.assertNotIn(banned, lowered, banned)
-
-    def test_verification_document_records_command_and_outcome_pairs(self) -> None:
-        """check verification document records command and outcome pairs."""
-        verification = read("submission/webmcp/verification.md")
-        self.assertIn("| Command | Result |", verification)
-        # Every recorded gate must resolve to an explicit outcome, never a blank.
-        rows = [
-            [cell.strip() for cell in line.strip("|").split("|")]
-            for line in verification.splitlines()
-            if line.startswith("|")
-        ]
-        data_rows = [
-            row
-            for row in rows
-            if len(row) >= 2 and row[0] not in {"Command", ""} and not set(row[0]) <= {"-", ":"}
-        ]
-        self.assertTrue(data_rows, "the verification table has no rows")
-        for row in data_rows:
-            with self.subTest(command=row[0]):
-                self.assertTrue(row[1], f"{row[0]} has no recorded result")
-                self.assertRegex(
-                    row[1],
-                    r"(?i)pass|fail|not run|skipped|unavailable",
-                    f"{row[0]} result {row[1]!r} is not an explicit outcome",
-                )
-
-    def test_limitations_document_lists_every_unavailable_evidence_class(self) -> None:
-        """check limitations document lists every unavailable evidence class."""
-        limitations = collapsed(read("submission/webmcp/limitations.md"))
-        for phrase in (
-            "No external deployment",
-            "No video recording",
-            "No live paid provider call",
-            "No local ComfyUI",
-            "No active-agent WebMCP",
-        ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, limitations, phrase)
-
-    def test_demo_fixture_is_sanitized_and_present(self) -> None:
-        """check demo fixture is sanitized and present."""
-        fixture = SUBMISSION / "demo-project"
-        self.assertTrue(fixture.is_dir(), "submission/webmcp/demo-project is missing")
-        files = sorted(path for path in fixture.rglob("*") if path.is_file())
-        self.assertTrue(files, "the demo fixture contains no files")
-        for path in files:
-            if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".pdf", ".zip"}:
-                continue
-            text = path.read_text(encoding="utf-8")
-            for pattern in CREDENTIAL_PATTERNS:
-                with self.subTest(path=path.name, pattern=pattern.pattern):
-                    self.assertIsNone(pattern.search(text), pattern.pattern)
-            lowered = text.lower()
-            for leaked in ("authorization:", "bearer ", "api_key", "apikey", "secret="):
-                with self.subTest(path=path.name, phrase=leaked):
-                    self.assertNotIn(leaked, lowered, leaked)
 
 
 class RuntimeBoundaryContractTests(unittest.TestCase):

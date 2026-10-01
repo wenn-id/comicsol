@@ -408,32 +408,15 @@ class FrameworkDocumentTests(unittest.TestCase):
 
     ROOT = Path(__file__).resolve().parents[1]
     DOC = ROOT / "docs" / "web" / "live-evidence.md"
-    SUBMISSION_DOC = ROOT / "submission" / "webmcp" / "live-evidence.md"
 
     def test_docs_present(self) -> None:
         self.assertTrue(self.DOC.is_file(), "docs/web/live-evidence.md is missing")
-        self.assertTrue(
-            self.SUBMISSION_DOC.is_file(), "submission/webmcp/live-evidence.md is missing"
-        )
 
     def test_framework_documents_all_eight_acceptance_criteria(self) -> None:
         text = self.DOC.read_text(encoding="utf-8")
         for criterion in range(1, 9):
             with self.subTest(criterion=criterion):
                 self.assertIn(f"| {criterion} |", text, f"missing acceptance row #{criterion}")
-
-    def test_submission_documents_six_evidence_gaps(self) -> None:
-        text = self.SUBMISSION_DOC.read_text(encoding="utf-8").lower()
-        for gap in (
-            "working live url",
-            "active-agent webmcp",
-            "comfyui",
-            "paid/live provider",
-            "screenshot",
-            "native portable",
-        ):
-            with self.subTest(gap=gap):
-                self.assertIn(gap, text, f"missing evidence gap {gap!r}")
 
     def test_framework_doc_states_current_status_explicitly(self) -> None:
         text = self.DOC.read_text(encoding="utf-8")

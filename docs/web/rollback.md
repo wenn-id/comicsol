@@ -206,8 +206,7 @@ following are **not recoverable by rollback**:
 After any rollback, restore, or rotation, the following should pass:
 
 - `GET /healthz` returns `{"status":"ok"}` with a 200 response.
-- the documented test suite passes against the restored volume (see
-  the verification log in the submission).
+- the documented test suite passes against the restored volume.
 - the process answers on its documented port and the reverse proxy in
   front of it reports healthy.
 

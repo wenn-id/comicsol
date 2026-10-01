@@ -102,9 +102,9 @@ On Windows, use `.venv\Scripts\python.exe` for the same commands. The capability
 detection and image-provider setup references are intentionally host-specific; other
 bundle differences fail validation.
 
-## Web documentation and submission
+## Web documentation
 
-Changes under `docs/web/`, `submission/webmcp/`, and the Web documentation
+Changes under `docs/web/` and the Web documentation
 contract tests must pass the Web docs suite in addition to the root suite:
 
 ```bash
@@ -114,8 +114,7 @@ contract tests must pass the Web docs suite in addition to the root suite:
 Every claim in the Web docs is grounded in merged code. Do not mark a
 provider route live-verified solely because unit tests pass, do not claim a
 deployment that was not performed, and never place a credential, token, path,
-endpoint, cookie, private story, or raw provider payload in the docs or the
-submission. Missing evidence is recorded as an honest limitation, never
+endpoint, cookie, private story, or raw provider payload in the docs. Missing evidence is recorded as an honest limitation, never
 fabricated.
 
 ## Creator dogfood reports

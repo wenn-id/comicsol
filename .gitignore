@@ -26,7 +26,7 @@ Thumbs.db
 *.p12
 *.pfx
 
-# Build Week generated outputs (not part of the skill package)
+# Locally generated comic outputs (not part of the skill package)
 comic-sol-output/
 
 # Coverage reports from the local quality baseline
@@ -56,5 +56,6 @@ web/.ruff_cache/
 # Materialized sample compatibility copies
 /samples/sunlight-courier/panels/raw/*.png
 /samples/sunlight-courier/panels/clean/*.png
+
+# Vercel CLI link metadata
 .vercel
-.worktrees/

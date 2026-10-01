@@ -6,8 +6,7 @@ routes and execution paths the project may describe as live-verified. It
 implements the evidence-tracking contract in
 [issue #321](https://github.com/wenn-id/comicsol/issues/321) and is the
 exact-candidate companion to the honest state recorded in
-[`providers.md`](providers.md), [`deployment.md`](deployment.md), and
-[`submission/webmcp/provider-evidence.md`](../../submission/webmcp/provider-evidence.md).
+[`providers.md`](providers.md) and [`deployment.md`](deployment.md).
 
 ## Current status
 
@@ -76,7 +75,7 @@ The sections below define the exact procedure and validation gate so that
 any future evidence is **retained, sanitized, and candidate-bound** — never
 fabricated and never inflated. What is not run remains explicitly
 unverified, matching the offline-qualified state already documented in
-`submission/webmcp/`.
+[`providers.md`](providers.md).
 
 ## Four distinct evidence states
 
@@ -220,11 +219,11 @@ accept path and every rejection path.
 | 2 | External deployment startup, health, restart persistence, backup/restore, rollback, secret rotation exercised & recorded | `deployment/deployment.json` rows + `docs/web/deployment.md` operator contract |
 | 3 | Active-agent WebMCP demonstrated through real capability surface | `agent-webmcp/agent-webmcp.json` |
 | 4 | Local ComfyUI demonstrated through agent-native handoff | `comfyui/comfyui.json` |
-| 5 | Every live-verified route has one cost-bounded exact-candidate smoke | `provider-smoke/*.json` + `submission/webmcp/provider-evidence.md` |
+| 5 | Every live-verified route has one cost-bounded exact-candidate smoke | `provider-smoke/*.json` + `docs/web/providers.md` |
 | 6 | Screenshots/video/narration produced only from executed flows and sanitized | `media/*.json` |
 | 7 | Claimed native portable assets published and smoke-qualified | `release-asset-smoke/*.json` + `scripts/portable_release_smoke.py` |
 | 8 | Current-head CI + release qualification pass for the immutable candidate | this PR's CI + the repo release gates |
-| 9 | Docs, submission, and matrices match retained evidence | `submission/webmcp/provider-evidence.md` evidence links |
+| 9 | Docs and matrices match retained evidence | `docs/web/providers.md` evidence links |
 | 10 | No credential/token/path/story committed | the gate's secret + containment validation |
 
 ## Related documents
