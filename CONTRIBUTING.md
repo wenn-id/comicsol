@@ -102,20 +102,12 @@ On Windows, use `.venv\Scripts\python.exe` for the same commands. The capability
 detection and image-provider setup references are intentionally host-specific; other
 bundle differences fail validation.
 
-## Web documentation
+## Comic Sol Studio
 
-Changes under `docs/web/` and the Web documentation
-contract tests must pass the Web docs suite in addition to the root suite:
-
-```bash
-.venv/bin/python -m unittest web.tests.test_web_docs
-```
-
-Every claim in the Web docs is grounded in merged code. Do not mark a
-provider route live-verified solely because unit tests pass, do not claim a
-deployment that was not performed, and never place a credential, token, path,
-endpoint, cookie, private story, or raw provider payload in the docs. Missing evidence is recorded as an honest limitation, never
-fabricated.
+The browser distribution and its WebMCP surface moved to
+[`wenn-id/comic-sol-studio`](https://github.com/wenn-id/comic-sol-studio). Studio pins an exact engine commit, so an
+engine change that alters `comic_sol_product.engine` behavior Studio relies on
+should be followed by a Studio pull request that bumps `ENGINE_COMMIT`.
 
 ## Creator dogfood reports
 

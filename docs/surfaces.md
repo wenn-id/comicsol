@@ -169,38 +169,16 @@ persists outside that volume.
 
 ## Comic Sol Studio (Web)
 
-The Web distribution (`web/comic_sol_web/`) is a separately installed FastAPI
-application that exposes the same deterministic lifecycle through a browser
-and a WebMCP client (`5` read + `9` write tools). The local `stdio` MCP server
-remains exactly `17` tools. The Web surface is **not** a replacement for the
-core CLI: the engine, the local MCP server, the wheel, and the native archive
-are unchanged. The Web surface has no default output root; an explicit
-`COMIC_SOL_WEB_DATA_ROOT` volume is required and the process fails fast if it
-is missing.
+The Web distribution is a separately installed FastAPI application that
+exposes the same deterministic lifecycle through a browser and a WebMCP client.
+It lives in [`wenn-id/comic-sol-studio`](https://github.com/wenn-id/comic-sol-studio) and installs this engine as the
+`comic-sol` wheel, pinned to an exact engine commit. The local `stdio` MCP
+server remains exactly `17` tools. The Web surface is **not** a replacement for
+the core CLI: the engine, the local MCP server, the wheel, and the native
+archive are unchanged.
 
-- **How you start it:** the Web package exports no dedicated console script.
-  The factory `comic_sol_web.app.create_app` requires a `WebConfig`; the
-  intended invocation is the bundled ASGI server with an explicit config
-  (for example `python -c "import os, uvicorn; from
-  comic_sol_web.config import WebConfig; from comic_sol_web.app import
-  create_app; uvicorn.run(create_app(WebConfig.from_env(os.environ)),
-  host='127.0.0.1', port=8000)"`), after setting the three required
-  environment variables. The `/healthz` endpoint returns
-  `{"status":"ok"}`; there is no readiness endpoint.
-- **Default output root:** none; `COMIC_SOL_WEB_DATA_ROOT` is required and
-  is a separate durable volume from the runtime. The hosted process must
-  never contact a user's localhost.
-- **Provider model:** the merged build registers only the WebMCP
-  `agent` route, and it is selectable only when the startup invocation
-  supplies trusted `text_to_image` capability; the documented bare
-  start command exposes no executable route. `hosted`,
-  `session BYOK`, and `encrypted persisted BYOK` are **offline
-  adapter contracts**, not routes the merged application serves. The
-  agent route is agent-native; the hosted route (when wired) would be
-  the only route that does not require a credential in the browser.
-- **Details:** [`docs/web/index.md`](web/index.md), [`docs/web/deployment.md`](web/deployment.md),
-  [`docs/web/rollback.md`](web/rollback.md), [`docs/web/security.md`](web/security.md),
-  [`docs/web/providers.md`](web/providers.md).
+- **How you start it, default output root, provider model, and deployment:**
+  see the [Studio documentation](https://github.com/wenn-id/comic-sol-studio#documentation).
 
 ## Surface summary
 
@@ -213,4 +191,4 @@ is missing.
 | Native archive | installed `comic-sol doctor` | Platform default (table above); runtime lives separately |
 | MCP server | `comic-sol mcp --root <absolute path>` | None — explicit `--root` required |
 | OCI image | container entrypoint | `/data` inside the container |
-| Comic Sol Studio (Web) | `python -c "import os, uvicorn; from comic_sol_web.config import WebConfig; from comic_sol_web.app import create_app; uvicorn.run(create_app(WebConfig.from_env(os.environ)), host='127.0.0.1', port=8000)"` (three required env vars must be set) | None — `COMIC_SOL_WEB_DATA_ROOT` is required |
+| Comic Sol Studio (Web) | See [`wenn-id/comic-sol-studio`](https://github.com/wenn-id/comic-sol-studio) | None — `COMIC_SOL_WEB_DATA_ROOT` is required |

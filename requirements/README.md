@@ -13,7 +13,6 @@ byte it installs.
 | `locks/release-{linux,macos,windows}-x86_64.txt` | `release.in` | Release builds, the portable runtime, SBOM generation, qualification |
 | `locks/quality-linux-x86_64.txt` | `quality.in` | Ruff, mypy, and coverage quality gates |
 | `locks/audit-python311.txt` | `audit.in` | `pip-audit` security gate |
-| `locks/web-{linux,macos,windows}-x86_64.txt` | `web.in` | Isolated `comic-sol-web` distribution and its CI (`web/`) |
 
 ## Regeneration procedure
 
@@ -39,17 +38,6 @@ python -m piptools compile --allow-unsafe --generate-hashes \
   --output-file=requirements/locks/quality-linux-x86_64.txt --strip-extras requirements/quality.in
 python -m piptools compile --allow-unsafe --generate-hashes \
   --output-file=requirements/locks/audit-python311.txt --strip-extras requirements/audit.in
-```
-
-The isolated Web family uses the same flags on each of the three platforms:
-
-```bash
-python -m piptools compile --allow-unsafe --generate-hashes \
-  --output-file=requirements/locks/web-linux-x86_64.txt --strip-extras requirements/web.in
-python -m piptools compile --allow-unsafe --generate-hashes \
-  --output-file=requirements/locks/web-macos-x86_64.txt --strip-extras requirements/web.in
-python -m piptools compile --allow-unsafe --generate-hashes \
-  --output-file=requirements/locks/web-windows-x86_64.txt --strip-extras requirements/web.in
 ```
 
 `--strip-extras` is required with pip-tools 7.6.1: without it the resolver emits

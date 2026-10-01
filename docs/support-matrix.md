@@ -107,25 +107,12 @@ Notes on each mode:
   commands and the hardening audit each release runs, and
   [`docs/install-manual.md` → OCI image](install-manual.md#oci-image) for the
   manual and advanced installation overview.
-- **Comic Sol Studio (Web)** — a separately installed FastAPI application in
-  `web/comic_sol_web/`, pure-Python and platform-independent on Python 3.11+.
-  It is a one-process runtime with a required durable data volume
-  (`COMIC_SOL_WEB_DATA_ROOT`) and no default output root; the process fails
-  fast when a required secret or the data root is missing. It exposes a WebMCP
-  surface of `5` read and `9` write tools; the local `stdio` MCP server is
-  unchanged at exactly `17` tools. In the merged build, only the `agent`
-  provider route is registered, and it is **selectable only when the
-  startup invocation supplies trusted `text_to_image` image capability**
-  (`create_app(active_agent_image_capabilities=...)`); the documented
-  bare start command leaves that set empty, so the default configuration
-  exposes **no executable generation route**. The `hosted`,
-  `session BYOK`, and `encrypted persisted BYOK` routes exist as
-  offline adapter-level contracts with no live adapter wired into the
-  merged distribution. Every provider route is offline-qualified only;
-  **no live provider smoke has been run** and no external deployment has
-  been performed. See
-  [`docs/web/index.md`](web/index.md), [`docs/web/providers.md`](web/providers.md),
-  and [`docs/web/deployment.md`](web/deployment.md).
+- **Comic Sol Studio (Web)** — a separately installed FastAPI application,
+  pure-Python and platform-independent on Python 3.11+, that installs this engine
+  as the `comic-sol` wheel. It lives in
+  [`wenn-id/comic-sol-studio`](https://github.com/wenn-id/comic-sol-studio), which owns its support, provider, and
+  deployment documentation. The local `stdio` MCP server in this repository is
+  unchanged at exactly `17` tools.
 
 ## Runtime extras
 
