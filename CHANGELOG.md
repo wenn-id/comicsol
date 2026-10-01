@@ -7,6 +7,12 @@ carries it.
 
 ### Removed
 
+- Moved Comic Sol Studio (the `web/` distribution and its WebMCP tool surface) to
+  [`wenn-id/comic-sol-studio`](https://github.com/wenn-id/comic-sol-studio) with its
+  history. That move took `web/`, `docs/web/`, `requirements/web.in` and the
+  `web-*` locks, the Web Tests workflow, `vercel.json`, `evidence/web-live/`, and the
+  Web live-evidence gate (`scripts/live_web_evidence.py` and its tests). Studio pins
+  an exact engine commit and installs this engine as the `comic-sol` wheel.
 - Removed the Devpost WebMCP challenge materials (`marketing/devpost/` and
   `submission/webmcp/`, including the demo script, demo fixture, limitations,
   verification log, and submission-side evidence companion) and their contract

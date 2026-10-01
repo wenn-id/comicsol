@@ -39,11 +39,8 @@ All named host integrations remain **Experimental** until their live evidence sa
 
 Agent Skills, CLI, MCP, the Codex Plugin, and Comic Sol Studio are adapters around that same deterministic project engine.
 
-Studio's full local `prompt → plan → review → image → QA → PDF` path is
-offline-qualified with deterministic fake providers and restart coverage. This
-does not mean any paid provider route is live-verified; see the
-[Studio provider matrix](docs/web/providers.md) and
-[live-evidence framework](docs/web/live-evidence.md).
+Comic Sol Studio, the browser distribution with its WebMCP tool surface, lives in
+[`wenn-id/comic-sol-studio`](https://github.com/wenn-id/comic-sol-studio) and installs this engine as the `comic-sol` wheel.
 
 ## See the output
 
@@ -174,7 +171,7 @@ Read [privacy](PRIVACY.md), [terms](TERMS.md), [support](SUPPORT.md), and
 
 ## Advanced integrations
 
-- **Run anywhere:** [surfaces](docs/surfaces.md) · [support matrix](docs/support-matrix.md) · [Studio](docs/web/index.md)
+- **Run anywhere:** [surfaces](docs/surfaces.md) · [support matrix](docs/support-matrix.md) · [Studio](https://github.com/wenn-id/comic-sol-studio)
 - **Install:** [native](docs/install.md) · [CLI, wheel, source, OCI, and native archive](docs/install-manual.md)
 - **Trust:** [MCP trust boundary](docs/surfaces.md#mcp-server) · [security](SECURITY.md) · [release chain](docs/releases/release-trust-chain.md) · [rollback](docs/releases/rollback-runbook.md)
 
