@@ -7,6 +7,10 @@ carries it.
 
 ### Removed
 
+- Removed AGENTS.md Article 9 (new product surfaces require adoption evidence or a
+  waiver) and the surface-freeze review it mirrored in `CONTRIBUTING.md`,
+  `docs/surfaces.md`, the pull request template, and their contract tests
+  (`tests/test_surface_freeze_policy.py`).
 - Moved Comic Sol Studio (the `web/` distribution and its WebMCP tool surface) to
   [`wenn-id/comic-sol-studio`](https://github.com/wenn-id/comic-sol-studio) with its
   history. That move took `web/`, `docs/web/`, `requirements/web.in` and the
