@@ -179,7 +179,7 @@ jobs:
           echo "summary_sha256=$(sha256sum live-visual-assets/v2.2-live-visual-summary.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "reviewer_attestation_sha256=$REVIEWER_ATTESTATION_SHA256" >> "$GITHUB_OUTPUT"
       - name: Preserve live visual evidence as current-run evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: live-visual-evidence
           path: live-visual-assets/*
@@ -240,7 +240,7 @@ jobs:
           python scripts/portable_release_smoke.py --runtime native/comic-sol
           python scripts/assemble_release.py --runtime native/comic-sol --environment native/build-environment.sbom.json --output release --platform ${{ matrix.platform }} --architecture ${{ matrix.arch }}
       - name: Upload native bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: comic-sol-${{ matrix.platform }}-${{ matrix.arch }}
           path: release/*
@@ -255,7 +255,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: '3.11.15'
@@ -288,7 +288,7 @@ jobs:
           docker save comic-sol:${{ needs.prepare.outputs.version }} \
             --output container-assets/comic-sol-${{ needs.prepare.outputs.version }}-linux-x86_64.container.tar
       - name: Upload candidate container image
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: comic-sol-container
           path: container-assets/*
@@ -314,7 +314,7 @@ jobs:
           mkdir source-assets
           cp dist/*.whl dist/*.tar.gz installers/install.sh installers/install.ps1 source-assets/
       - name: Upload source packages and installers
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: comic-sol-source
           path: source-assets/*
@@ -354,11 +354,11 @@ jobs:
           python-version: '3.11.15'
       - name: Install pinned release validator
         run: python -m pip install --require-hashes -r requirements/locks/release-linux-x86_64.txt
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: comic-sol-*
           path: bundles
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: live-visual-evidence
           path: bundles/live-visual-evidence
@@ -515,7 +515,7 @@ jobs:
               output.write(f"manifest_sha256={manifest_sha}\n")
           PY
       - name: Preserve candidate identity as run evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: candidate-identity
           path: |
@@ -741,19 +741,19 @@ jobs:
           ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: candidate-identity
           path: evidence-input/candidate
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: benchmark-results
           path: evidence-input/benchmark
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: live-visual-evidence
           path: evidence-input/live-visual
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: release-qualification-summary
           path: evidence-input/qualification
@@ -967,7 +967,7 @@ jobs:
             --markdown-output release-evidence.md
           sha256sum release-evidence.json release-evidence.md > release-evidence.sha256
       - name: Preserve promotion evidence as a current-run artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-evidence-${{ github.run_attempt }}
           path: |
