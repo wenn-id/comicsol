@@ -234,10 +234,15 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install pip==26.2.1 pip-tools==7.6.1
-      - run: |
-          python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/base-${{ matrix.lock }}-x86_64.txt --strip-extras requirements/base.in
-          python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/runtime-${{ matrix.lock }}-x86_64.txt --strip-extras requirements/runtime.in
-          python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/release-${{ matrix.lock }}-x86_64.txt --strip-extras requirements/release.in
+      - env:
+          CUSTOM_COMPILE_COMMAND: pip-compile --allow-unsafe --generate-hashes --output-file=requirements/locks/base-${{ matrix.lock }}-x86_64.txt --strip-extras requirements/base.in
+        run: python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/base-${{ matrix.lock }}-x86_64.txt --strip-extras requirements/base.in
+      - env:
+          CUSTOM_COMPILE_COMMAND: pip-compile --allow-unsafe --generate-hashes --output-file=requirements/locks/runtime-${{ matrix.lock }}-x86_64.txt --strip-extras requirements/runtime.in
+        run: python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/runtime-${{ matrix.lock }}-x86_64.txt --strip-extras requirements/runtime.in
+      - env:
+          CUSTOM_COMPILE_COMMAND: pip-compile --allow-unsafe --generate-hashes --output-file=requirements/locks/release-${{ matrix.lock }}-x86_64.txt --strip-extras requirements/release.in
+        run: python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/release-${{ matrix.lock }}-x86_64.txt --strip-extras requirements/release.in
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: pillow-locks-${{ matrix.lock }}
