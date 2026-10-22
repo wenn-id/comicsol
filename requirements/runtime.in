@@ -7,5 +7,6 @@
 # Mirrors the install dependencies and the mcp extra declared in pyproject.toml,
 # plus an explicitly hash-verified pip for later --require-hashes installs.
 pillow==13.0.0
-mcp==2.0.0
+mcp==2.2.0
+opentelemetry-api==1.45.1
 pip==26.2.1
