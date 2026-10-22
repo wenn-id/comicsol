@@ -68,18 +68,18 @@ class NativeDistributionContractTests(unittest.TestCase):
                 "version": RELEASE_VERSION,
             },
             {
-                "bom-ref": "Pillow==12.3.0",
+                "bom-ref": "Pillow==13.0.0",
                 "name": "Pillow",
-                "purl": "pkg:pypi/pillow@12.3.0",
+                "purl": "pkg:pypi/pillow@13.0.0",
                 "type": "library",
-                "version": "12.3.0",
+                "version": "13.0.0",
             },
             {
-                "bom-ref": "mcp==2.0.0",
+                "bom-ref": "mcp==2.2.0",
                 "name": "mcp",
-                "purl": "pkg:pypi/mcp@2.0.0",
+                "purl": "pkg:pypi/mcp@2.2.0",
                 "type": "library",
-                "version": "2.0.0",
+                "version": "2.2.0",
             },
             {
                 "bom-ref": "pyinstaller==6.15.0",
@@ -649,7 +649,7 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("--uid 10001", dockerfile)
         self.assertIn("--gid 10001", dockerfile)
         self.assertIn(
-            "mcp==2.0.0",
+            "mcp==2.2.0",
             dockerfile
             + (root / "requirements/locks/runtime-linux-x86_64.txt").read_text(encoding="utf-8"),
         )
@@ -741,7 +741,7 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("SHA256SUMS.sigstore.json", workflow)
         self.assertIn("--bundle", workflow)
         self.assertIn(
-            "mcp==2.0.0",
+            "mcp==2.2.0",
             workflow
             + (root / "requirements/locks/release-linux-x86_64.txt").read_text(encoding="utf-8"),
         )
@@ -885,9 +885,9 @@ class NativeDistributionContractTests(unittest.TestCase):
                 self.assertTrue(blocks)
                 for block in blocks:
                     self.assertRegex("\n".join(block), r"--hash=sha256:[0-9a-f]{64}")
-                self.assertIn("pillow==12.3.0", lock.lower())
+                self.assertIn("pillow==13.0.0", lock.lower())
                 if kind != "base":
-                    self.assertIn("mcp==2.0.0", lock.lower())
+                    self.assertIn("mcp==2.2.0", lock.lower())
 
     def test_dead_quality_and_lifecycle_surfaces_are_removed(self):
         root = Path(__file__).resolve().parents[1]

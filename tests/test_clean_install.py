@@ -120,7 +120,7 @@ class WheelMetadataContractTests(unittest.TestCase):
             "Project-URL: Issue Tracker, https://github.com/wenn-id/comicsol/issues",
             "Project-URL: Security Policy, https://github.com/wenn-id/comicsol/blob/main/SECURITY.md",
             "Requires-Python: >=3.11",
-            "Requires-Dist: Pillow==12.3.0",
+            "Requires-Dist: Pillow==13.0.0",
             "",
         ]
     )
