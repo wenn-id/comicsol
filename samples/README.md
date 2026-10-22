@@ -105,7 +105,7 @@ an honestly accepted-with-warnings project looks like.
 
 ## Build the deterministic examples
 
-From the repository root, with Python 3.11+ and `Pillow==12.3.0` installed:
+From the repository root, with Python 3.11+ and `Pillow==13.0.0` installed:
 
 ```bash
 "$PYTHON" scripts/build_examples.py

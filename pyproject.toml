@@ -39,7 +39,7 @@ classifiers = [
     "Topic :: Multimedia :: Graphics",
     "Topic :: Multimedia :: Graphics :: Graphics Conversion",
 ]
-dependencies = ["Pillow==12.3.0"]
+dependencies = ["Pillow==13.0.0"]
 
 [project.urls]
 Homepage = "https://github.com/wenn-id/comicsol"

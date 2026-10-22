@@ -112,7 +112,7 @@ class SupportMatrixDocumentTests(unittest.TestCase):
 
     def test_extra_table_matches_the_declared_dependencies(self):
         self.assertIn("`mcp==2.0.0`", self.document)
-        self.assertIn("`Pillow==12.3.0`", self.document)
+        self.assertIn("`Pillow==13.0.0`", self.document)
 
 
 class ProviderGuideTests(unittest.TestCase):

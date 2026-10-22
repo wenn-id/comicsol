@@ -68,11 +68,11 @@ class NativeDistributionContractTests(unittest.TestCase):
                 "version": RELEASE_VERSION,
             },
             {
-                "bom-ref": "Pillow==12.3.0",
+                "bom-ref": "Pillow==13.0.0",
                 "name": "Pillow",
-                "purl": "pkg:pypi/pillow@12.3.0",
+                "purl": "pkg:pypi/pillow@13.0.0",
                 "type": "library",
-                "version": "12.3.0",
+                "version": "13.0.0",
             },
             {
                 "bom-ref": "mcp==2.0.0",
@@ -885,7 +885,7 @@ class NativeDistributionContractTests(unittest.TestCase):
                 self.assertTrue(blocks)
                 for block in blocks:
                     self.assertRegex("\n".join(block), r"--hash=sha256:[0-9a-f]{64}")
-                self.assertIn("pillow==12.3.0", lock.lower())
+                self.assertIn("pillow==13.0.0", lock.lower())
                 if kind != "base":
                     self.assertIn("mcp==2.0.0", lock.lower())
 

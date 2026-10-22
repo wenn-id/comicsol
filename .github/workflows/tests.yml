@@ -214,3 +214,31 @@ jobs:
         docker build -t comic-sol:pr .
         docker run --rm --entrypoint comic-sol comic-sol:pr --version
         python scripts/container_runtime_audit.py --image comic-sol:pr --expect-version "$(python -c 'from comic_sol_product import __version__; print(__version__)')"
+
+  regenerate-pillow-locks:
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            lock: linux
+          - os: macos-latest
+            lock: macos
+          - os: windows-latest
+            lock: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pip==26.2.1 pip-tools==7.6.1
+      - run: |
+          python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/base-${{ matrix.lock }}-x86_64.txt --strip-extras requirements/base.in
+          python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/runtime-${{ matrix.lock }}-x86_64.txt --strip-extras requirements/runtime.in
+          python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/release-${{ matrix.lock }}-x86_64.txt --strip-extras requirements/release.in
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pillow-locks-${{ matrix.lock }}
+          path: requirements/locks/*-${{ matrix.lock }}-x86_64.txt

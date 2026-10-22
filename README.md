@@ -194,7 +194,7 @@ to run.
 Milestones v2.0, v2.1, and v2.2 are complete but unreleased; see the
 [delivery record](docs/releases/milestone-delivery.md). Published native artifacts
 use `SHA256SUMS` and Sigstore verification. Development and test commands—including
-the offline Python 3.11+ and Pillow 12.3.0 suite—live in
+the offline Python 3.11+ and Pillow 13.0.0 suite—live in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
