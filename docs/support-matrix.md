@@ -119,7 +119,7 @@ Notes on each mode:
 | Extra | Needed for | Dependency |
 |---|---|---|
 | none | full deterministic CLI lifecycle | `Pillow==13.0.0` |
-| `mcp` | `comic-sol mcp` stdio server, 17 `comic_*` tools | `mcp==2.2.0` |
+| `mcp` | `comic-sol mcp` stdio server, 17 `comic_*` tools | `mcp==2.3.0` |
 
 The MCP extra changes no deterministic behavior; without it, MCP tests skip
 gracefully and every other command works unchanged.
