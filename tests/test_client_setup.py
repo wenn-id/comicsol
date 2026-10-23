@@ -792,6 +792,53 @@ class ClientSetupTests(unittest.TestCase):
         self.assertIn("# user note after integration", saved)
         self.assertEqual(tomllib.loads(saved), {})
 
+    def test_codex_uninstall_keeps_comment_above_following_section(self):
+        config = self.home / ".codex" / "config.toml"
+        config.parent.mkdir(parents=True)
+        config.write_text(
+            "[mcp_servers.comic-sol]\n"
+            'command = "comic-sol"\n'
+            'args = ["mcp", "--root", "/tmp/comic-sol"]\n\n'
+            "# note about the next table\n"
+            "[mcp_servers.other]\n"
+            'command = "other"\n',
+            encoding="utf-8",
+        )
+        result = uninstall_clients(self.output, adapters=[CodexAdapter(config)])[0]
+        saved = config.read_text(encoding="utf-8")
+        self.assertEqual(result.status, "removed")
+        self.assertIn("# note about the next table", saved)
+        self.assertEqual(tomllib.loads(saved), {"mcp_servers": {"other": {"command": "other"}}})
+
+    def test_codex_setup_does_not_turn_comment_text_after_unicode_separator_into_table(self):
+        config = self.home / ".codex" / "config.toml"
+        config.parent.mkdir(parents=True)
+        config.write_text(
+            '[mcp_servers.comic-sol]\ncommand = "old"\nargs = ["old"]\n\n'
+            "# see\u2028[mcp_servers.github]\n"
+            '[profiles.work]\nmodel = "gpt-test"\n',
+            encoding="utf-8",
+        )
+        result = setup_clients(
+            self.output, adapters=[CodexAdapter(config)], executable=self.launcher
+        )[0]
+        saved = config.read_text(encoding="utf-8")
+        parsed = tomllib.loads(saved)
+        self.assertEqual(result.status, "configured")
+        self.assertIn("# see\u2028[mcp_servers.github]", saved)
+        self.assertEqual(set(parsed["mcp_servers"]), {"comic-sol"})
+        self.assertEqual(parsed["profiles"], {"work": {"model": "gpt-test"}})
+
+    def test_codex_edit_refuses_changes_outside_comic_sol_table(self):
+        from comic_sol_product.clients import _assert_only_comic_sol_changed
+
+        before = '[mcp_servers.comic-sol]\ncommand = "a"\n[profiles.work]\nmodel = "x"\n'
+        changed_other = '[mcp_servers.comic-sol]\ncommand = "b"\n[profiles.work]\nmodel = "y"\n'
+        changed_owned = '[mcp_servers.comic-sol]\ncommand = "b"\n[profiles.work]\nmodel = "x"\n'
+        _assert_only_comic_sol_changed(before, changed_owned)
+        with self.assertRaises(ValueError):
+            _assert_only_comic_sol_changed(before, changed_other)
+
     def test_codex_uninstall_removes_quoted_key_section(self):
         config = self.home / ".codex" / "config.toml"
         config.parent.mkdir(parents=True)

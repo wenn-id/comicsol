@@ -360,10 +360,33 @@ def _scan_toml_line(line: str, state: str | None) -> str | None:
     return state
 
 
+def _split_lines(text: str) -> list[str]:
+    """Split on LF only, keeping line endings.
+
+    ``str.splitlines`` also breaks on U+2028, U+2029 and U+0085, which TOML
+    treats as ordinary text inside comments and strings.
+    """
+    return re.findall(r"[^\n]*\n|[^\n]+", text)
+
+
+def _assert_only_comic_sol_changed(old: str, new: str) -> None:
+    """Refuse an edit that changes anything besides ``mcp_servers.comic-sol``."""
+    before = tomllib.loads(old)
+    after = tomllib.loads(new)
+    before_servers = dict(before.pop("mcp_servers", None) or {})
+    after_servers = dict(after.pop("mcp_servers", None) or {})
+    before_servers.pop(MCP_SERVER_NAME, None)
+    after_servers.pop(MCP_SERVER_NAME, None)
+    if before != after or before_servers != after_servers:
+        raise ValueError(
+            f"Codex config edit would change settings outside mcp_servers.{MCP_SERVER_NAME}"
+        )
+
+
 def _section_spans(text: str, pattern: re.Pattern[str]):
     state: str | None = None
     offset = 0
-    for line in text.splitlines(keepends=True):
+    for line in _split_lines(text):
         end = offset + len(line)
         if state is None and pattern.fullmatch(line):
             yield offset, end
@@ -376,7 +399,7 @@ def _table_end(text: str, start: int, end: int) -> int:
     state: str | None = None
     content_end = start
     offset = start
-    for line in text[start:end].splitlines(keepends=True):
+    for line in _split_lines(text[start:end]):
         line_end = offset + len(line)
         stripped = line.strip()
         if state is not None or (stripped and not stripped.startswith("#")):
@@ -424,17 +447,21 @@ class CodexAdapter:
                 if not text or text.endswith("\n\n")
                 else ("\n" if text.endswith("\n") else "\n\n")
             )
-            return text + separator + replacement, True
+            result = text + separator + replacement
+            _assert_only_comic_sol_changed(text, result)
+            return result, True
         start, _ = matches[0]
         next_sections = [span for span in _section_spans(text, _ANY_SECTION_RE) if span[0] > start]
-        end = next_sections[0][0] if next_sections else _table_end(text, start, len(text))
+        next_start = next_sections[0][0] if next_sections else len(text)
+        end = _table_end(text, start, next_start)
         old = text[start:end]
         if replacement and old.strip() == replacement.strip():
             return text, False
         result = text[:start] + replacement
-        if replacement and next_sections and not replacement.endswith("\n\n"):
+        if replacement and next_sections and end == next_start and not replacement.endswith("\n\n"):
             result += "\n"
         result += text[end:]
+        _assert_only_comic_sol_changed(text, result)
         return result, True
 
     def mutate(self, config: str, entry: dict[str, Any]) -> tuple[str, bool]:
