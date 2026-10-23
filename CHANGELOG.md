@@ -235,6 +235,10 @@ carries it.
 
 ### Fixed
 
+- `comic-sol setup` and `uninstall` no longer delete comments or other settings from
+  `~/.codex/config.toml`. Comments above the next table are kept, Unicode line separators
+  inside comments no longer turn commented text into live TOML tables, and any edit that
+  would change settings outside `mcp_servers.comic-sol` is refused before the file is written.
 - `--json` output with non-ASCII text, such as a Japanese project title, no longer fails with
   `CS-PROJ-001` when stdout is piped on Windows with a legacy code page such as cp1252. Both the
   `comic-sol` CLI and `scripts/comic_sol.py` now write UTF-8 to stdout and stderr.
