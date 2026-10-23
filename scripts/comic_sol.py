@@ -213,7 +213,7 @@ SENSITIVE_KEY = re.compile(
 )
 REQUEST_SETTING_ALLOWLIST = frozenset({"mode", "language", "title"})
 REQUEST_MODES = frozenset({"short_prompt", "pasted_story", "source_file", "resume"})
-REQUIRED_PILLOW = "12.3.0"
+REQUIRED_PILLOW = "13.0.0"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 EVENT_DETAIL_KINDS = {
     "project_id": "identifier",

@@ -75,7 +75,7 @@ Notes on each mode:
 
 - **Codex Skill / Plugin** — platform-independent. The agent session needs no
   specific OS; the deterministic scripts need one Python 3.11+ launcher and
-  `Pillow==12.3.0` (installed from the hash-locked `requirements/locks/base-*`
+  `Pillow==13.0.0` (installed from the hash-locked `requirements/locks/base-*`
   files). Image generation is supplied by the agent session, not the OS.
 - **Source / development** — any host that runs Python 3.11+. The offline test
   suite is provider-neutral and runs on all four platforms.
@@ -118,8 +118,8 @@ Notes on each mode:
 
 | Extra | Needed for | Dependency |
 |---|---|---|
-| none | full deterministic CLI lifecycle | `Pillow==12.3.0` |
-| `mcp` | `comic-sol mcp` stdio server, 17 `comic_*` tools | `mcp==2.0.0` |
+| none | full deterministic CLI lifecycle | `Pillow==13.0.0` |
+| `mcp` | `comic-sol mcp` stdio server, 17 `comic_*` tools | `mcp==2.2.0` |
 
 The MCP extra changes no deterministic behavior; without it, MCP tests skip
 gracefully and every other command works unchanged.
