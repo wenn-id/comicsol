@@ -206,7 +206,7 @@ def validate_sbom_schema(sbom_path: Path) -> None:
         from cyclonedx.schema import SchemaVersion
         from cyclonedx.validation.json import JsonValidator
     except ImportError as error:  # pragma: no cover - release-only dependency
-        raise RuntimeError("install cyclonedx-bom==7.3.1 to validate release SBOMs") from error
+        raise RuntimeError("install cyclonedx-bom==7.5.0 to validate release SBOMs") from error
     validation_error = JsonValidator(SchemaVersion.V1_6).validate_str(
         sbom_path.read_text(encoding="utf-8")
     )
