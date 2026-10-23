@@ -4758,8 +4758,17 @@ def _render_handoff_cli(command: str, result: object) -> str:
     )
 
 
+def _use_utf8_standard_streams() -> None:
+    """Write UTF-8 even when a piped stdout inherits a legacy code page such as cp1252."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the deterministic Comic Sol lifecycle CLI."""
+    _use_utf8_standard_streams()
     from .command_service import CommandService
 
     service = CommandService(

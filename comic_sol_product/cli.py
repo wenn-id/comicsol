@@ -871,7 +871,16 @@ def _run(
     raise ValueError(f"unsupported command: {arguments.command}")
 
 
+def _use_utf8_standard_streams() -> None:
+    """Write UTF-8 even when a piped stdout inherits a legacy code page such as cp1252."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _use_utf8_standard_streams()
     raw_arguments = sys.argv[1:] if argv is None else list(argv)
     try:
         arguments = build_parser().parse_args(raw_arguments)
