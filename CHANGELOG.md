@@ -235,6 +235,9 @@ carries it.
 
 ### Fixed
 
+- `--json` output with non-ASCII text, such as a Japanese project title, no longer fails with
+  `CS-PROJ-001` when stdout is piped on Windows with a legacy code page such as cp1252. Both the
+  `comic-sol` CLI and `scripts/comic_sol.py` now write UTF-8 to stdout and stderr.
 - Reconciled the release and project-schema documentation with implementation authorities.
   The current native archive matrix is Linux x86_64, macOS arm64, and Windows x86_64.
   WSL2 uses the Linux x86_64 archive; it has no separate native archive. Source installation
