@@ -23,6 +23,7 @@ from scripts.handoff import (
     validate_generation_receipt,
     validate_handoff_manifest,
 )
+from scripts.layouts import layout_rects
 from scripts.input_limits import InputResourceLimitError
 from scripts.validate_project import validate_project
 from tests.support import make_symlink
@@ -576,6 +577,39 @@ class HandoffPrepareInspectTests(unittest.TestCase):
     def _effective_job(snapshot, job_id):
         return HandoffLifecycleGoldenTests._effective_job(snapshot, job_id)
 
+    def _twelve_panel_project(self):
+        root, project = self._planner_project()
+        manifest = comic_sol.read_json(project / "project.json")
+        panel_ids = [f"p{page:02d}-{panel:02d}" for page in range(1, 5) for panel in range(1, 4)]
+        manifest["settings"].update({"page_count": 4, "panel_count": 12})
+        manifest["panels"] = panel_ids
+        comic_sol.atomic_write_json(project / "project.json", manifest)
+
+        storyboard = comic_sol.read_json(project / "plan/storyboard.json")
+        panel_template = storyboard["pages"][0]["panels"][0]
+        rectangles = layout_rects("three-horizontal")
+        storyboard["pages"] = []
+        for page_number in range(1, 5):
+            panels = []
+            for panel_number, rect in enumerate(rectangles, 1):
+                panel_id = f"p{page_number:02d}-{panel_number:02d}"
+                panel = deepcopy(panel_template)
+                panel["id"] = panel_id
+                panel["order"] = panel_number
+                panel["rect"] = rect
+                for text_number, text in enumerate(panel["text"], 1):
+                    text["id"] = f"{panel_id}-t{text_number:02d}"
+                panels.append(panel)
+                (project / f"prompts/panels/{panel_id}.txt").write_text(
+                    f"Mira catches the last vial in panel {panel_id}.",
+                    encoding="utf-8",
+                )
+            storyboard["pages"].append(
+                {"number": page_number, "layout": "three-horizontal", "panels": panels}
+            )
+        comic_sol.atomic_write_json(project / "plan/storyboard.json", storyboard)
+        return root, project
+
     def _legacy_planner_project(self):
         root, project = self._planner_project()
         manifest = comic_sol.read_json(project / "project.json")
@@ -801,6 +835,32 @@ class HandoffPrepareInspectTests(unittest.TestCase):
         self.assertEqual(before, self._tree_snapshot(project))
         self.assertEqual(before_inspection, inspect(project))
         self.assertEqual([], self._transaction_names(project))
+
+    def test_panel_retry_limits_share_the_project_extra_call_budget(self):
+        _root, project = self._twelve_panel_project()
+        prepare = _require_api(self, comic_sol, "prepare_handoff")
+        prepare(project)
+        _manifest, reference_jobs = self._manifest_jobs(project)
+        HandoffPrepareInspectTests._activate_current_reference(
+            self,
+            project,
+            reference_jobs["reference", "mira"],
+        )
+
+        prepared = prepare(project)
+
+        self.assertEqual("panel", prepared["phase"])
+        _manifest, jobs = self._manifest_jobs(project)
+        panel_jobs = [job for job in jobs.values() if job["subject_kind"] == "panel"]
+        self.assertEqual(12, len(panel_jobs))
+        self.assertTrue(all(0 <= job["retry_limit"] <= 2 for job in panel_jobs))
+        self.assertLessEqual(sum(job["retry_limit"] for job in panel_jobs), 8)
+        self.assertLessEqual(12 + sum(job["retry_limit"] for job in panel_jobs), 20)
+
+        before = self._tree_snapshot(project)
+        repeated = prepare(project)
+        self.assertFalse(repeated["changed"])
+        self.assertEqual(before, self._tree_snapshot(project))
 
     def test_reference_phase_publishes_only_budget_zero_reference_work(self):
         prepare = _require_api(self, comic_sol, "prepare_handoff")
@@ -1578,7 +1638,22 @@ class HandoffIntakeFailureTests(unittest.TestCase):
                 ),
             )
             self.assertFalse((project / panel_job["target_path"]).exists())
-            self.assertFalse((project / "logs/generation-counters.json").exists())
+            counters_path = project / "logs/generation-counters.json"
+            counters = comic_sol.read_json(counters_path)
+            if attempt == 1:
+                self.assertEqual(0, counters["global_extra_calls"])
+            else:
+                self.assertEqual(attempt - 1, counters["global_extra_calls"])
+            self.assertEqual(
+                {
+                    "p01-01": {
+                        "initial": 1,
+                        "transient_repeats": 0,
+                        "visual_retries": 0,
+                    }
+                },
+                counters["panels"],
+            )
             if attempt == 1:
                 first_failure = self._artifact_snapshot(project)
                 duplicate_arguments = self._failure_arguments(panel_job, attempt=1)
@@ -1632,7 +1707,32 @@ class HandoffIntakeFailureTests(unittest.TestCase):
         )
         counters = comic_sol.read_json(project / "logs/generation-counters.json")
         self.assertEqual(1, counters["panels"]["p01-01"]["initial"])
+        self.assertEqual(1, counters["global_extra_calls"])
+
+    def test_safety_refusal_fails_the_job_without_another_attempt(self):
+        record_failure = _require_api(self, comic_sol, "record_handoff_failure")
+        _root, project, panel_job = self._prepared_panel()
+
+        result = record_failure(
+            project,
+            **self._failure_arguments(panel_job, attempt=1, category="safety_refusal"),
+        )
+
+        self.assertEqual("failed", result["status"])
+        counters = comic_sol.read_json(project / "logs/generation-counters.json")
         self.assertEqual(0, counters["global_extra_calls"])
+        self.assertEqual(1, counters["panels"]["p01-01"]["initial"])
+        snapshot = comic_sol.inspect_handoff(project)
+        effective = self._effective_job(snapshot, panel_job["job_id"])
+        self.assertEqual("failed", effective["status"])
+        self.assertIsNone(effective["next_attempt"])
+        before = self._artifact_snapshot(project)
+        with self.assertRaisesRegex(HandoffContractError, "exhausted|failed"):
+            record_failure(
+                project,
+                **self._failure_arguments(panel_job, attempt=2),
+            )
+        self.assertEqual(before, self._artifact_snapshot(project))
 
     def test_reference_activation_requires_approval_and_never_overwrites_canonical(self):
         accept = _require_api(self, comic_sol, "accept_handoff_result")
