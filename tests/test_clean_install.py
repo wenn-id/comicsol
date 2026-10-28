@@ -231,6 +231,27 @@ class CleanInstallSmokeTests(unittest.TestCase):
         self.config = self.root / "home" / ".codex" / "config.toml"
         self.config.parent.mkdir(parents=True)
 
+    def test_install_uses_hash_locked_dependencies_before_local_wheel(self):
+        python = self.root / "python"
+        lock = self.root / "runtime-lock.txt"
+        wheel = self.root / "comic-sol.whl"
+        with mock.patch.object(clean_install_smoke, "run") as run:
+            clean_install_smoke.install_locked_wheel(python, lock, wheel, cwd=self.root)
+
+        self.assertEqual(
+            [
+                mock.call(
+                    [str(python), "-m", "pip", "install", "--require-hashes", "-r", str(lock)],
+                    cwd=self.root,
+                ),
+                mock.call(
+                    [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+                    cwd=self.root,
+                ),
+            ],
+            run.call_args_list,
+        )
+
     def write_codex_entry(self, command: str, arguments: list[str]) -> None:
         self.config.write_text(
             "[mcp_servers.comic-sol]\n"
