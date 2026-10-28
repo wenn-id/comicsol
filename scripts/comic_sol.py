@@ -818,6 +818,9 @@ def _resume_stage_material(
     if not panel_ids:
         raise ValueError("storyboard has no panels")
     if material_kind == "generation":
+        panels_by_id = {
+            cast(str, panel["id"]): panel for panel in panels if isinstance(panel.get("id"), str)
+        }
         visual_panels = []
         for panel in panels:
             visual_panel = dict(panel)
@@ -845,6 +848,11 @@ def _resume_stage_material(
                 record_panel_id = record.get("subject_id")
                 source_prompt_path = f"prompts/panels/{panel_id}.txt"
                 references = []
+                scene_id = panels_by_id[panel_id].get("scene_id")
+                if isinstance(scene_id, str):
+                    scene_relative = f"references/scenes/{scene_id}.png"
+                    if _contained_project_path(project_dir, Path(scene_relative)).exists():
+                        references.append(scene_relative)
             else:
                 record_panel_id = record.get("panel_id")
                 source_prompt_path = record.get("source_prompt_path")

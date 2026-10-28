@@ -193,6 +193,11 @@ class ResumeTests(unittest.TestCase):
                 if record.get("schema_version") == "2.0":
                     references = []
                     source_prompt_path = f"prompts/panels/{panel['id']}.txt"
+                    scene_id = panel.get("scene_id")
+                    if isinstance(scene_id, str):
+                        scene_relative = f"references/scenes/{scene_id}.png"
+                        if (self.project / scene_relative).exists():
+                            references.append(scene_relative)
                 else:
                     references = record["generation"]["reference_paths"]
                     source_prompt_path = record["source_prompt_path"]
@@ -1530,6 +1535,37 @@ class ResumeTests(unittest.TestCase):
         )
         panel = next(action for action in actions if action.artifact == "p01-01")
         self.assertEqual("regenerate", generation.action)
+        self.assertEqual("regenerate", panel.action)
+
+    def test_v2_scene_reference_change_invalidates_generation_and_panel(self):
+        scene_path = self.project / "references/scenes/hall.png"
+        Image.new("RGB", (512, 512), "green").save(scene_path)
+        self._write_json("qa/panels/p01-01.json", self._panel_record_v2())
+        self._write_cache_snapshot()
+        baseline = build_resume_plan(self.project)
+        self.assertEqual(
+            "reuse",
+            next(
+                action
+                for action in baseline
+                if action.artifact == "stage" and action.stage == "generation"
+            ).action,
+        )
+        self.assertEqual(
+            "reuse",
+            next(action for action in baseline if action.artifact == "p01-01").action,
+        )
+
+        Image.new("RGB", (512, 512), "purple").save(scene_path)
+        actions = build_resume_plan(self.project)
+        generation = next(
+            action
+            for action in actions
+            if action.artifact == "stage" and action.stage == "generation"
+        )
+        panel = next(action for action in actions if action.artifact == "p01-01")
+        self.assertEqual("regenerate", generation.action)
+        self.assertIn("cache key changed", generation.reason)
         self.assertEqual("regenerate", panel.action)
 
     def test_malformed_accepted_panel_record_is_not_reused(self):
