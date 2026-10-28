@@ -1,0 +1,117 @@
+name: Refresh dependency locks
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compile:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: macos-latest
+            platform: macos
+          - os: windows-latest
+            platform: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Install pip-tools
+        run: python -m pip install --disable-pip-version-check 'pip-tools==7.6.1'
+      - name: Refresh platform-specific locks
+        shell: bash
+        run: |
+          for family in base runtime release; do
+            python -m piptools compile --upgrade --allow-unsafe --generate-hashes \
+              --output-file="requirements/locks/${family}-${{ matrix.platform }}-x86_64.txt" \
+              --strip-extras "requirements/${family}.in"
+          done
+      - name: Refresh platform-independent locks
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          python -m piptools compile --upgrade --allow-unsafe --generate-hashes \
+            --output-file=requirements/locks/quality-linux-x86_64.txt \
+            --strip-extras requirements/quality.in
+          python -m piptools compile --upgrade --allow-unsafe --generate-hashes \
+            --output-file=requirements/locks/audit-python311.txt \
+            --strip-extras requirements/audit.in
+      - name: Upload platform locks
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dependency-locks-${{ matrix.platform }}
+          path: |
+            requirements/locks/base-${{ matrix.platform }}-x86_64.txt
+            requirements/locks/runtime-${{ matrix.platform }}-x86_64.txt
+            requirements/locks/release-${{ matrix.platform }}-x86_64.txt
+          if-no-files-found: error
+      - name: Upload Linux-only locks
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dependency-locks-linux-only
+          path: |
+            requirements/locks/quality-linux-x86_64.txt
+            requirements/locks/audit-python311.txt
+          if-no-files-found: error
+  propose:
+    needs: compile
+    runs-on: ubuntu-latest
+    outputs:
+      operation: ${{ steps.refresh-pr.outputs.pull-request-operation }}
+      branch: ${{ steps.refresh-pr.outputs.pull-request-branch }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download generated locks
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: dependency-locks-*
+          path: requirements/locks
+          merge-multiple: true
+      - name: Create or update lock-refresh pull request
+        id: refresh-pr
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
+        with:
+          token: ${{ github.token }}
+          branch: automation/refresh-dependency-locks
+          base: main
+          delete-branch: true
+          add-paths: requirements/locks/*.txt
+          commit-message: 'chore(deps): refresh hash-locked dependencies'
+          title: 'chore(deps): refresh hash-locked dependencies'
+          body: |
+            Refresh generated hash locks from their canonical `requirements/*.in` inputs.
+
+            The locks were compiled with `pip-tools==7.6.1` on native Linux, macOS, and Windows runners. Review the platform-specific diffs and required CI checks before merging.
+
+            Related: #365.
+  dispatch-tests:
+    needs: propose
+    if: ${{ needs.propose.outputs.operation == 'created' || needs.propose.outputs.operation == 'updated' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch required test suite for the generated commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_BRANCH: ${{ needs.propose.outputs.branch }}
+        run: gh workflow run tests.yml --ref "$PR_BRANCH"

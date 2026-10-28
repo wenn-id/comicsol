@@ -40,6 +40,17 @@ def venv_paths(root: Path) -> tuple[Path, Path]:
     return root / "bin" / "python", root / "bin" / "comic-sol"
 
 
+def install_locked_wheel(python: Path, lock: Path, wheel: Path, *, cwd: Path) -> None:
+    run(
+        [str(python), "-m", "pip", "install", "--require-hashes", "-r", str(lock)],
+        cwd=cwd,
+    )
+    run(
+        [str(python), "-m", "pip", "install", "--no-deps", str(wheel)],
+        cwd=cwd,
+    )
+
+
 def read_codex_entry(config: Path, output_root: Path, executable: Path) -> dict[str, object]:
     """Read and validate the exact MCP entry produced for Codex."""
     record = tomllib.loads(config.read_text(encoding="utf-8"))
@@ -103,9 +114,11 @@ def main() -> int:
     """Verify a clean installation in a temporary environment."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--wheel", required=True, type=Path)
+    parser.add_argument("--lock", required=True, type=Path)
     parser.add_argument("--mcp", action="store_true")
     arguments = parser.parse_args()
     wheel = arguments.wheel.resolve()
+    lock = arguments.lock.resolve(strict=True)
     repository = Path(__file__).resolve().parents[1]
 
     with tempfile.TemporaryDirectory(prefix="comic-sol-clean-") as temporary:
@@ -113,8 +126,7 @@ def main() -> int:
         environment_root = root / "venv with spaces"
         venv.EnvBuilder(with_pip=True, clear=True).create(environment_root)
         python, executable = venv_paths(environment_root)
-        requirement = f"{wheel}[mcp]" if arguments.mcp else str(wheel)
-        run([str(python), "-m", "pip", "install", requirement], cwd=root)
+        install_locked_wheel(python, lock, wheel, cwd=root)
 
         output_root = root / "projects"
         doctor = json.loads(

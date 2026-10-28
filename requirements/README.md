@@ -14,6 +14,16 @@ byte it installs.
 | `locks/quality-linux-x86_64.txt` | `quality.in` | Ruff, mypy, and coverage quality gates |
 | `locks/audit-python311.txt` | `audit.in` | `pip-audit` security gate |
 
+## Scheduled lock refresh
+
+The weekly `.github/workflows/refresh-dependency-locks.yml` workflow runs
+`pip-compile --upgrade` on native Linux, macOS, and Windows runners, then opens
+or updates one pull request with the generated lock files. The workflow dispatches
+the required Tests workflow on that pull request branch because pull requests
+created with `GITHUB_TOKEN` do not trigger `pull_request` workflows. Review the
+cross-platform diffs and required checks before merging; lock refreshes are never
+auto-merged.
+
 ## Regeneration procedure
 
 Install `pip-tools==7.6.1` on the target platform, then compile that platform's
