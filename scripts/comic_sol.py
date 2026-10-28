@@ -1212,6 +1212,35 @@ def _accepted_panel_problem(
     return None
 
 
+def _expected_panel_ids(project_dir: Path, manifest: dict[str, object]) -> set[str]:
+    """Return valid panel IDs declared by the manifest or canonical storyboard."""
+    manifest_panels = manifest.get("panels")
+    expected_panel_ids = (
+        {
+            panel_id
+            for panel_id in manifest_panels
+            if isinstance(panel_id, str) and PANEL_ID_PATTERN.fullmatch(panel_id)
+        }
+        if isinstance(manifest_panels, list)
+        else set()
+    )
+    try:
+        storyboard_path = contained_project_path(
+            project_dir, "plan/storyboard.json", must_exist=True
+        )
+        storyboard = read_json(storyboard_path)
+        expected_panel_ids.update(
+            panel_id
+            for panel in _storyboard_panels(storyboard)
+            if isinstance((panel_id := panel.get("id")), str)
+            and PANEL_ID_PATTERN.fullmatch(panel_id)
+        )
+    except (OSError, UnicodeError, ValueError, KeyError):
+        # Manifest IDs remain useful when the storyboard is unavailable.
+        pass
+    return expected_panel_ids
+
+
 def build_resume_plan(project_dir: Path) -> list[ResumeAction]:
     """Return a read-only deterministic reuse/repair plan for a generated project."""
     project_dir = Path(project_dir).resolve()
@@ -1309,7 +1338,10 @@ def build_resume_plan(project_dir: Path) -> list[ResumeAction]:
         action.stage == "generation" and action.artifact == "stage" and action.action == "reuse"
         for action in actions
     )
+    expected_panel_ids = _expected_panel_ids(project_dir, manifest)
     for record_path in sorted((project_dir / "qa/panels").glob("*.json")):
+        if record_path.stem not in expected_panel_ids:
+            continue
         try:
             record = read_json(record_path)
         except (OSError, UnicodeError, ValueError) as error:
@@ -1487,42 +1519,18 @@ def _panel_review_counts(project_dir: Path, manifest: dict[str, object]) -> dict
     Expected IDs come from both the recovered manifest and the canonical
     storyboard. ``accepted`` counts either supported acceptance spelling,
     ``failed`` counts an explicit repair decision, and ``pending`` includes
-    records without a decision plus expected panels with no QA record. A record
-    that cannot be read is reported under ``unreadable`` so a corrupt project
-    stays diagnosable instead of silently under-counting.
+    records without a decision plus expected panels with no QA record. An
+    expected record that cannot be read is reported under ``unreadable``.
     """
     counts = {"accepted": 0, "failed": 0, "pending": 0, "unreadable": 0}
-    manifest_panels = manifest.get("panels")
-    expected_panel_ids = (
-        {
-            panel_id
-            for panel_id in manifest_panels
-            if isinstance(panel_id, str) and PANEL_ID_PATTERN.fullmatch(panel_id)
-        }
-        if isinstance(manifest_panels, list)
-        else set()
-    )
-
-    try:
-        storyboard_path = contained_project_path(
-            project_dir, "plan/storyboard.json", must_exist=True
-        )
-        storyboard = read_json(storyboard_path)
-        expected_panel_ids.update(
-            panel_id
-            for panel in _storyboard_panels(storyboard)
-            if isinstance((panel_id := panel.get("id")), str)
-            and PANEL_ID_PATTERN.fullmatch(panel_id)
-        )
-    except (OSError, UnicodeError, ValueError, KeyError):
-        # The recovered manifest still gives a useful count when the storyboard
-        # is absent or corrupt. Other status fields expose the project state.
-        pass
+    expected_panel_ids = _expected_panel_ids(project_dir, manifest)
 
     reviewed_panel_ids: set[str] = set()
     qa_dir = contained_project_path(project_dir, "qa/panels")
     if qa_dir.is_dir():
         for record_path in sorted(qa_dir.glob("*.json")):
+            if record_path.stem not in expected_panel_ids:
+                continue
             # An unreadable expected record is unreadable, not also pending.
             reviewed_panel_ids.add(record_path.stem)
             try:

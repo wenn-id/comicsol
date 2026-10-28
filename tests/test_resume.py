@@ -1787,6 +1787,43 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(0, summary["panels"]["accepted"])
         self.assertEqual(1, summary["panels"]["unreadable"])
 
+    def test_orphan_panel_record_does_not_stale_generation(self):
+        orphan_record = self._accepted_panel_record()
+        orphan_record.update(
+            {
+                "panel_id": "p01-99",
+                "source_prompt_path": "prompts/panels/p01-99.txt",
+                "raw_path": "panels/raw/p01-99.png",
+                "clean_path": "panels/clean/p01-99.png",
+            }
+        )
+        self._write_json("qa/panels/p01-99.json", orphan_record)
+
+        actions = build_resume_plan(self.project)
+        generation = next(
+            action
+            for action in actions
+            if action.artifact == "stage" and action.stage == "generation"
+        )
+        self.assertEqual("reuse", generation.action)
+        panel_action_ids = {
+            action.artifact
+            for action in actions
+            if action.stage == "generation" and action.artifact != "stage"
+        }
+        self.assertEqual({"p01-01"}, panel_action_ids)
+
+        summary = summarize_project_status(self.project)
+        self.assertEqual(
+            {"accepted": 1, "failed": 0, "pending": 0, "unreadable": 0},
+            summary["panels"],
+        )
+        generation_summary = next(
+            stage for stage in summary["stages"] if stage["stage"] == "generation"
+        )
+        self.assertEqual("complete", generation_summary["state"])
+        self.assertEqual({"done": "project is complete"}, summary["next_action"])
+
     def test_status_summary_reports_incomplete_when_panel_requires_regeneration(self):
         # A project with a valid panel QA record that has decision="regenerate"
         # must not report completion status even if all stages are cached.
