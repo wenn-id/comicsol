@@ -2449,7 +2449,14 @@ def _validate_handoff_binding(
             locked_scope,
             reference_paths=sorted(job_reference_paths),
         )
-    except (FileNotFoundError, StaleLockedScopeError):
+    except FileNotFoundError as error:
+        _add(
+            issues,
+            manifest_path,
+            "locked_scope_sha256",
+            f"cannot recompute current project scope: {error}",
+        )
+    except StaleLockedScopeError:
         scope_stale = True
         _add(
             issues,
