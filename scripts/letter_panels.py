@@ -33,6 +33,7 @@ from .project_io import (
     open_path_nofollow,
     read_contained_bytes,
 )
+from .schema import read_project_manifest
 from .raster_limits import MAX_DECODED_PIXELS
 from .sfx_verification import (
     is_deterministic_sfx,
@@ -1153,6 +1154,7 @@ def _letter_project_with_summaries(
 ) -> tuple[list[Path], list[dict]]:
     """Letter every accepted project panel and collect outputs plus summaries."""
     project_dir = Path(project_dir)
+    read_project_manifest(project_dir.resolve(strict=True) / "project.json")
     storyboard = read_json(
         contained_project_path(project_dir, "plan/storyboard.json", must_exist=True)
     )

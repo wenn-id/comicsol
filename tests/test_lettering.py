@@ -17,6 +17,8 @@ from scripts.letter_panels import (  # noqa: E402
     normalized_word_count,
     render_text_item,
 )
+from scripts.comic_sol import atomic_write_json, read_json  # noqa: E402
+from scripts.schema import UnsupportedSchemaVersionError  # noqa: E402
 
 FIXTURES = ROOT / "tests/fixtures"
 
@@ -1316,6 +1318,31 @@ class MultiSpeakerAttributionTests(unittest.TestCase):
 
 
 class LetteringFixtureIntegrationTests(unittest.TestCase):
+    def test_lettering_rejects_unsupported_schema_without_writes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            shutil.copytree(FIXTURES / "valid-one-page", project)
+            manifest = read_json(project / "project.json")
+            manifest["schema_version"] = "9.0"
+            atomic_write_json(project / "project.json", manifest)
+            before = {
+                path.relative_to(project).as_posix(): (
+                    path.read_bytes() if path.is_file() else None
+                )
+                for path in sorted(project.rglob("*"))
+            }
+
+            with self.assertRaisesRegex(UnsupportedSchemaVersionError, "schema 9.0 is unsupported"):
+                letter_project(project)
+
+            after = {
+                path.relative_to(project).as_posix(): (
+                    path.read_bytes() if path.is_file() else None
+                )
+                for path in sorted(project.rglob("*"))
+            }
+            self.assertEqual(before, after)
+
     def test_valid_fixture_letters_three_panels_from_semantic_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "project"

@@ -254,6 +254,7 @@ class RetryCounterProcessTests(unittest.TestCase):
         self.project_dir.mkdir()
         for path in ("panels/raw", "logs"):
             (self.project_dir / path).mkdir(parents=True, exist_ok=True)
+        atomic_write_json(self.project_dir / "project.json", {"schema_version": "1.0"})
         self._seed_project()
         self._barrier = self.project_dir / "budget-barrier"
 

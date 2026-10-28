@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -313,6 +314,46 @@ class McpServerUnitTests(unittest.TestCase):
             with self.subTest(tool=tool.__name__):
                 with self.assertRaisesRegex(ToolError, "relative project path"):
                     tool(*arguments)
+
+    def test_mutating_tools_reject_unsupported_schema_without_writes(self):
+        project = self.root / "project"
+        copy_sample(project)
+        manifest = read_json(project / "project.json")
+        manifest["schema_version"] = "9.0"
+        atomic_write_json(project / "project.json", manifest)
+        relative_attempt = "panels/raw/p99-99.schema-gate.png"
+        attempt = project / relative_attempt
+        attempt.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (512, 512), "green").save(attempt)
+        before = {
+            path.relative_to(project).as_posix(): (path.read_bytes() if path.is_file() else None)
+            for path in sorted(project.rglob("*"))
+        }
+        operations = (
+            (
+                "record-attempt",
+                lambda: mcp_server.comic_record_attempt(
+                    "project", "p99-99", "initial", relative_attempt
+                ),
+            ),
+            (
+                "promote-attempt",
+                lambda: mcp_server.comic_promote_attempt("project", "p99-99", relative_attempt),
+            ),
+            ("letter", lambda: mcp_server.comic_letter("project")),
+        )
+
+        for name, operation in operations:
+            with self.subTest(operation=name):
+                with self.assertRaises(ToolError):
+                    operation()
+                after = {
+                    path.relative_to(project).as_posix(): (
+                        path.read_bytes() if path.is_file() else None
+                    )
+                    for path in sorted(project.rglob("*"))
+                }
+                self.assertEqual(before, after)
 
     def test_relative_path_validation_rejects_repetition_without_backtracking(self):
         with self.assertRaisesRegex(ToolError, "relative project path"):
