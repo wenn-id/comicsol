@@ -4,6 +4,15 @@ Use the pinned release mode in [`docs/install.md`](install.md) for normal native
 CLI installation. This page covers bootstrap verification, explicit local
 archives, source/wheel installs, direct extraction, metadata, and OCI use.
 
+## Historical prerelease status
+
+The published `v2.0.0rc1`–`rc4` releases are unsigned and not marked immutable.
+Their `SHA256SUMS` files have no Sigstore bundle or build-provenance attestations;
+a matching digest does not establish publisher authenticity. The immutable-release
+setting was enabled later and does not apply retroactively. The current native
+installer refuses these releases because the signature bundle is absent. Do not
+bypass that check or execute their installers.
+
 ## Verify installer bytes before first execution
 
 `install.sh` and `install.ps1` are release payloads. The installer can verify the
@@ -125,10 +134,12 @@ verified.
 
 ## Verify release metadata
 
-Each native target publishes its ZIP, metadata JSON, CycloneDX SBOM,
-`SHA256SUMS`, and `SHA256SUMS.sigstore.json`. The metadata must identify
+Each native target in a release that passes the current signed pipeline publishes
+its ZIP, metadata JSON, CycloneDX SBOM, `SHA256SUMS`, and
+`SHA256SUMS.sigstore.json`. The metadata must identify
 `signature_status: sigstore`; the archive, installer, metadata, and SBOM must each
-have exactly one record in the signed manifest. The complete subject contract is
+have exactly one record in the signed manifest. Historical `rc1`–`rc4` releases
+do not meet this contract. The complete subject contract is
 [`docs/releases/release-trust-chain.md`](releases/release-trust-chain.md).
 
 ## OCI image

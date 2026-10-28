@@ -192,9 +192,17 @@ to run.
 - **Develop:** [contributing](CONTRIBUTING.md) · [agent rules](AGENTS.md) · [release criteria](docs/releases/v2.0-stable-criteria.md)
 
 Milestones v2.0, v2.1, and v2.2 are complete but unreleased; see the
-[delivery record](docs/releases/milestone-delivery.md). Published native artifacts
-use `SHA256SUMS` and Sigstore verification. Development and test commands—including
-the offline Python 3.11+ and Pillow 13.0.0 suite—live in
+[delivery record](docs/releases/milestone-delivery.md). The published prereleases
+`v2.0.0rc1`–`rc4` are **unsigned and not marked immutable**. Their `SHA256SUMS`
+files have no `SHA256SUMS.sigstore.json` bundle or build-provenance attestations;
+matching a checksum against the downloaded manifest does not establish publisher
+authenticity. GitHub's immutable-release setting was enabled later and does not
+apply retroactively. The current native installer refuses these releases because
+the signature bundle is absent. Do not bypass that check or treat the old releases
+as trusted. The [release trust chain](docs/releases/release-trust-chain.md)
+documents the requirements for future releases that pass qualification and
+promotion. Development and test commands—including the offline Python 3.11+ and
+Pillow 13.0.0 suite—live in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License

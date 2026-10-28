@@ -27,8 +27,17 @@ recommended command to that exact immutable tag. The tag and its assets are not
 published yet, so these commands become usable only when `v2.0.0rc6` appears on
 the [GitHub Releases page](https://github.com/wenn-id/comicsol/releases). Until
 then, do not substitute a branch download or an older installer that does not
-support `--release`/`-Release`; use the published release's documented manual
-path instead.
+support `--release`/`-Release`.
+
+The published prereleases `v2.0.0rc1`–`rc4` are unsigned and GitHub does not mark
+them immutable. Their `SHA256SUMS` files have no signature bundle or
+build-provenance attestations, so a checksum match does not establish publisher
+authenticity. The immutable-release setting was enabled later and does not apply
+to these existing releases. The current native installer refuses them because
+the signature bundle is absent. Do not bypass that check or execute those
+installers; wait for a release that passes the signed qualification and promotion
+process, or install from a trusted source checkout using the
+[manual source instructions](install-manual.md#source-and-wheel-installation).
 
 This is the recommended native CLI installation path. Native releases bundle
 Python, Pillow, MCP, fonts, templates, the Skill, and references; no system
@@ -192,10 +201,11 @@ or a named backup.
 
 ## OCI image
 
-OCI is an official distribution channel delivered as the attested release asset
+OCI is an official distribution channel delivered, for a release that passes
+the signed qualification and promotion process, as the attested release asset
 `comic-sol-<version>-linux-x86_64.container.tar` plus its CycloneDX SBOM
 `comic-sol-<version>-linux-x86_64.container.sbom.json` — not as a registry image.
-Every release builds the image once from locked source and the Dockerfile's single
+A qualifying release builds the image once from locked source and the Dockerfile's single
 digest-pinned base argument, audits the running container's hardening, scans the
 image dependency set with `pip-audit`, and publishes the tar and its SBOM inside
 the signed `SHA256SUMS` with build-provenance attestations; qualification loads
@@ -206,8 +216,9 @@ what a registry distribution would additionally require are in
 Manual and advanced OCI installation context is in
 [`docs/install-manual.md`](install-manual.md#oci-image).
 
-To run the official image, download the container tar and its SBOM from the
-release, verify both against the signed `SHA256SUMS`, and load the image:
+To run the official image from a release that passed the signed pipeline,
+download the container tar and its SBOM, verify both against the signed
+`SHA256SUMS`, and load the image:
 
 ```bash
 docker load --input comic-sol-2.0.0rc6-linux-x86_64.container.tar

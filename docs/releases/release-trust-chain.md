@@ -3,17 +3,27 @@
 Status: **authoritative provenance reference**
 
 This document defines the complete set of subjects published by a Comic Sol
-release and the chain of trust that binds them to one immutable tag, commit,
-workflow run, and set of bytes. It is the reference for
+release that passes the current qualification and promotion pipeline, and the
+chain of trust that binds them to one immutable tag, commit, workflow run, and
+set of bytes. It is the reference for
 [`v2.0-stable-criteria.md`](v2.0-stable-criteria.md) section 5; where the two
 disagree, the criteria win and this file must be fixed. The installer-facing
 verification commands live in [`docs/install-manual.md`](../install-manual.md#verify-installer-bytes-before-first-execution).
 
+The published historical prereleases `v2.0.0rc1`–`rc4` do **not** meet this
+contract. They are unsigned, GitHub does not mark them immutable, and they have
+no `SHA256SUMS.sigstore.json` bundle or build-provenance attestations. A checksum
+match against their unauthenticated manifest does not establish publisher
+authenticity. The immutable-release setting was enabled later and does not apply
+retroactively; the current native installer refuses these releases. Do not
+bypass that check or execute their installers.
+
 ## Release subject set
 
-Every published release asset is either a **payload** named by the signed
-checksum manifest or **supporting evidence** that stands outside it so its own
-digest cannot create a cycle. For version `X` and tag `vX`:
+For a release that passes the current pipeline, every asset is either a
+**payload** named by the signed checksum manifest or **supporting evidence** that
+stands outside it so its own digest cannot create a cycle. For version `X` and
+tag `vX`:
 
 | Subject | Role | Binding |
 | --- | --- | --- |

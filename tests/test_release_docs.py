@@ -78,7 +78,35 @@ class ReleaseDocumentationTests(unittest.TestCase):
         self.assertIn(f"v{__version__}", self.readme)
         self.assertIn("SHA256SUMS", self.readme)
         self.assertIn("sigstore", self.readme.lower())
+        readme = self._collapsed(self.readme)
+        self.assertIn("v2.0.0rc1`–`rc4` are **unsigned and not marked immutable**", readme)
+        self.assertIn("does not establish publisher authenticity", readme)
+        self.assertIn("current native installer refuses these releases", readme)
         self.assertIn("docker compose", self.install_manual)
+
+    def test_historical_prereleases_are_disclosed_as_unsigned_and_mutable(self):
+        for version in ("rc1", "rc2", "rc3", "rc4"):
+            with self.subTest(version=version):
+                note = (self.root / f"docs/releases/v2.0.0{version}.md").read_text(encoding="utf-8")
+                collapsed = self._collapsed(note)
+                for phrase in (
+                    "is unsigned and GitHub does not mark it immutable",
+                    "has no `SHA256SUMS.sigstore.json` bundle",
+                    "build-provenance attestations",
+                    "does not establish publisher authenticity",
+                    "current native installer refuses this release",
+                ):
+                    self.assertIn(phrase, collapsed)
+                self.assertNotIn("immutable asset", note.lower())
+                self.assertNotIn("against the signed manifest", note.lower())
+
+        changelog_rc4 = self.changelog.split("## 2.0.0rc4 —", 1)[1].split("## 2.0.0rc3 —", 1)[0]
+        changelog_rc4 = self._collapsed(changelog_rc4).lower()
+        self.assertIn("no sigstore bundle", changelog_rc4)
+        self.assertIn("build-provenance attestations", changelog_rc4)
+        self.assertIn("does not establish publisher authenticity", changelog_rc4)
+        self.assertIn("installer refuses the release", changelog_rc4)
+        self.assertNotIn("keyless sigstore verification", changelog_rc4)
 
     def test_v2_stable_criteria_is_authoritative_and_complete(self):
         criteria = self.stable_criteria
@@ -346,7 +374,7 @@ class ReleaseDocumentationTests(unittest.TestCase):
         self.assertIn("2.0.0rc1", self.changelog)
 
     def test_historical_macos_architecture_mislabel_is_disclosed_per_release(self):
-        """Keep the immutable rc1-rc4 correction visible in every release note."""
+        """Keep the rc1-rc4 architecture correction visible in every release note."""
         for version in ("rc1", "rc2", "rc3", "rc4"):
             with self.subTest(version=version):
                 document = (self.root / f"docs/releases/v2.0.0{version}.md").read_text(
@@ -356,7 +384,7 @@ class ReleaseDocumentationTests(unittest.TestCase):
                 self.assertIn("contains **arm64** binaries, not x86_64 binaries", document)
                 # The sentence is hard-wrapped in Markdown, so match across the wrap.
                 self.assertRegex(document, r"Intel Macs cannot run this\s+archive natively")
-                self.assertIn("immutable asset has not been replaced", document)
+                self.assertIn("published asset has not been replaced", document)
                 self.assertIn("macos-arm64", document)
                 self.assertNotIn("This RC publishes x86_64 archives only", document)
                 self.assertNotIn("Linux, macOS, and Windows x86_64 portable archives", document)
