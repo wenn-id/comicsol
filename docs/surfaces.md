@@ -110,7 +110,7 @@ system Python.
 
 ## MCP server
 
-The optional `stdio` MCP server exposes the deterministic lifecycle as 17
+The optional `stdio` MCP server exposes the deterministic lifecycle as 18
 `comic_*` tools. It has **no default output root**: `--root` is an explicit,
 absolute, dedicated directory containing only Comic Sol projects, and every tool
 invocation stays inside it. MCP uses no authentication — any process that can
@@ -142,7 +142,7 @@ The Web distribution is a separately installed FastAPI application that
 exposes the same deterministic lifecycle through a browser and a WebMCP client.
 It lives in [`wenn-id/comic-sol-studio`](https://github.com/wenn-id/comic-sol-studio) and installs this engine as the
 `comic-sol` wheel, pinned to an exact engine commit. The local `stdio` MCP
-server remains exactly `17` tools. The Web surface is **not** a replacement for
+server remains exactly `18` tools. The Web surface is **not** a replacement for
 the core CLI: the engine, the local MCP server, the wheel, and the native
 archive are unchanged.
 

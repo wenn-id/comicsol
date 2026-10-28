@@ -19,6 +19,7 @@ from tests.support import bounded_tail_regions, make_symlink  # noqa: E402
 from scripts.materialize_sample import materialize_sample  # noqa: E402
 from scripts.comic_sol import atomic_write_json, block_project, read_json, record_stage  # noqa: E402
 from scripts.page_quality import build_page_quality_record, write_page_quality_record  # noqa: E402
+from scripts.installed_mcp_smoke import EXPECTED_TOOLS  # noqa: E402
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
 
@@ -36,6 +37,7 @@ if MCP_AVAILABLE:
 TOOL_NAMES = {
     "comic_doctor",
     "comic_init",
+    "comic_bind_plan",
     "comic_status",
     "comic_transition",
     "comic_validate",
@@ -52,6 +54,11 @@ TOOL_NAMES = {
     "comic_export",
     "comic_finalize",
 }
+
+
+class InstalledMcpSmokeContractTests(unittest.TestCase):
+    def test_expected_tools_match_the_mcp_protocol_contract(self):
+        self.assertEqual(TOOL_NAMES, EXPECTED_TOOLS)
 
 
 def copy_sample(destination: Path) -> None:
@@ -308,6 +315,29 @@ class McpServerUnitTests(unittest.TestCase):
         manifest = read_json(self.root / project_id / "project.json")
         self.assertEqual(3, manifest["settings"]["page_count"])
 
+    def test_bind_plan_registers_valid_files_for_a_blank_project(self):
+        project_id = mcp_server.comic_init(
+            "Bound Story",
+            "A courier carries a small sun through the night city.",
+            {"language": "en", "mode": "short_prompt"},
+            page_count=1,
+        )
+        project = self.root / project_id
+        fixture = ROOT / "tests/fixtures/valid-one-page"
+        for relative in (
+            "plan/story-plan.json",
+            "plan/character-bible.json",
+            "plan/storyboard.json",
+        ):
+            shutil.copyfile(fixture / relative, project / relative)
+
+        result = mcp_server.comic_bind_plan(project_id)
+
+        self.assertTrue(result["changed"])
+        self.assertEqual(1, result["page_count"])
+        self.assertEqual(3, result["panel_count"])
+        self.assertEqual([], mcp_server.comic_validate(project_id, "storyboard"))
+
     def test_init_accepts_each_starter_without_changing_tool_surface(self):
         for starter, page_count in (
             ("minimal-one-page", 1),
@@ -389,6 +419,7 @@ class McpServerUnitTests(unittest.TestCase):
                 "promote-attempt",
                 lambda: mcp_server.comic_promote_attempt("project", "p99-99", relative_attempt),
             ),
+            ("bind-plan", lambda: mcp_server.comic_bind_plan("project")),
             ("letter", lambda: mcp_server.comic_letter("project")),
         )
 

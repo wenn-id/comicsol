@@ -140,6 +140,12 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("project_dir", type=Path)
     validate.add_argument("--stage", default="all")
 
+    bind_plan = subparsers.add_parser(
+        "bind-plan",
+        description="Bind validated plan files to manifest descriptors and panel counts.",
+    )
+    bind_plan.add_argument("project_dir", type=Path)
+
     resume = subparsers.add_parser("resume")
     resume.add_argument("project_dir", type=Path)
 
@@ -761,6 +767,8 @@ def _run(
             "validate", project_dir=arguments.project_dir, stage=arguments.stage
         )
         return [asdict(issue) for issue in issues]
+    if arguments.command == "bind-plan":
+        return service.execute("bind-plan", project_dir=arguments.project_dir)
     if arguments.command == "resume":
         return service.execute("resume", project_dir=arguments.project_dir, progress=progress)
     if arguments.command == "finalize":

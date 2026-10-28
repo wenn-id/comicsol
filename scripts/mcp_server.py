@@ -39,6 +39,7 @@ from .input_limits import (
 from .comic_sol import (
     ALL_STATUSES,
     RESUME_STAGES,
+    bind_plan_artifacts,
     doctor_report,
     init_project,
     transition,
@@ -453,6 +454,7 @@ def _command_service() -> CommandService:
         engine=types.SimpleNamespace(
             doctor_report=doctor_report,
             init_project=init_project,
+            bind_plan_artifacts=bind_plan_artifacts,
             validate_source_bytes=validate_source_bytes,
             read_project_status=read_project_status,
             read_project_manifest=read_project_manifest,
@@ -543,6 +545,17 @@ def comic_init(
         return str(project_dir.name)
     except Exception as e:
         raise _request_error(e) from None
+
+
+@mcp.tool()
+def comic_bind_plan(project_id: str) -> dict[str, object]:
+    """Bind validated plan files to manifest descriptors and panel counts."""
+    _validate_project_id(project_id)
+    project_dir = _resolve_project(project_id)
+    try:
+        return _command_service().execute("bind-plan", project_dir=project_dir)
+    except Exception as e:
+        raise _tool_error(e) from None
 
 
 @mcp.tool()

@@ -112,14 +112,14 @@ Notes on each mode:
   as the `comic-sol` wheel. It lives in
   [`wenn-id/comic-sol-studio`](https://github.com/wenn-id/comic-sol-studio), which owns its support, provider, and
   deployment documentation. The local `stdio` MCP server in this repository is
-  unchanged at exactly `17` tools.
+  unchanged at exactly `18` tools.
 
 ## Runtime extras
 
 | Extra | Needed for | Dependency |
 |---|---|---|
 | none | full deterministic CLI lifecycle | `Pillow==13.0.0` |
-| `mcp` | `comic-sol mcp` stdio server, 17 `comic_*` tools | `mcp==2.3.0` |
+| `mcp` | `comic-sol mcp` stdio server, 18 `comic_*` tools | `mcp==2.3.0` |
 
 The MCP extra changes no deterministic behavior; without it, MCP tests skip
 gracefully and every other command works unchanged.

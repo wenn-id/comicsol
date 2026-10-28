@@ -719,6 +719,33 @@ def validate_story_plan(data: dict[str, object]) -> list[ValidationIssue]:
     return _sorted(issues)
 
 
+def validate_story_character_references(
+    story: dict[str, object], characters: dict[str, object]
+) -> list[ValidationIssue]:
+    """Validate that every story-scene character is defined in the character bible."""
+    issues: list[ValidationIssue] = []
+    known = {
+        character.get("id")
+        for character in characters.get("characters", [])
+        if isinstance(character, dict)
+    }
+    for scene_index, scene in enumerate(story.get("scenes", [])):
+        if not isinstance(scene, dict):
+            continue
+        scene_characters = scene.get("characters", [])
+        if not isinstance(scene_characters, list):
+            continue
+        for character_index, character_id in enumerate(scene_characters):
+            if character_id not in known:
+                _add(
+                    issues,
+                    "plan/story-plan.json",
+                    f"scenes[{scene_index}].characters[{character_index}]",
+                    "must reference the character bible",
+                )
+    return _sorted(issues)
+
+
 def _validate_text_item(
     value: object,
     panel_characters: set[str],
@@ -2944,22 +2971,7 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
             project_dir, "plan/character-bible.json", validate_character_bible, issues
         )
         if story is not None and characters is not None:
-            known = {
-                character.get("id")
-                for character in characters.get("characters", [])
-                if isinstance(character, dict)
-            }
-            for scene_index, scene in enumerate(story.get("scenes", [])):
-                if not isinstance(scene, dict):
-                    continue
-                for character_index, character_id in enumerate(scene.get("characters", [])):
-                    if character_id not in known:
-                        _add(
-                            issues,
-                            "plan/story-plan.json",
-                            f"scenes[{scene_index}].characters[{character_index}]",
-                            "must reference the character bible",
-                        )
+            issues.extend(validate_story_character_references(story, characters))
     if needs_storyboard:
         storyboard = _read_canonical_json(project_dir, "plan/storyboard.json", issues)
         if storyboard is not None and story is not None and characters is not None:

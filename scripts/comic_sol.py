@@ -413,26 +413,125 @@ def _write_starter_artifacts(staging: Path, starter: StarterProject) -> None:
     atomic_write_json(staging / "plan/storyboard.json", starter.storyboard)
 
 
+_PLAN_ARTIFACT_PATHS = (
+    ("story_plan", "plan/story-plan.json"),
+    ("character_bible", "plan/character-bible.json"),
+    ("storyboard", "plan/storyboard.json"),
+)
+
+
+def _derive_plan_bindings(
+    project_dir: Path,
+) -> tuple[int, list[str], dict[str, dict[str, object]]]:
+    from .validate_project import (
+        validate_character_bible,
+        validate_story_character_references,
+        validate_story_plan,
+        validate_storyboard,
+    )
+
+    artifacts: dict[str, dict[str, object]] = {}
+    values: dict[str, dict[str, object]] = {}
+    for name, relative in _PLAN_ARTIFACT_PATHS:
+        raw = read_contained_bytes(project_dir, relative, max_bytes=MAX_JSON_BYTES)
+        value = loads_bounded_json(raw, source=relative)
+        if not isinstance(value, dict):
+            raise ValueError(f"{relative} must contain a JSON object")
+        values[name] = value
+        artifacts[name] = {"path": relative, "sha256": hashlib.sha256(raw).hexdigest()}
+
+    story = values["story_plan"]
+    characters = values["character_bible"]
+    storyboard = values["storyboard"]
+    issues = validate_story_plan(story)
+    issues.extend(validate_character_bible(characters))
+    if not issues:
+        issues.extend(validate_story_character_references(story, characters))
+    if not issues:
+        issues = validate_storyboard(storyboard, story, characters)
+    if issues:
+        issue = issues[0]
+        raise ValueError(f"{issue.path}: {issue.field}: {issue.message}")
+
+    pages = storyboard.get("pages")
+    if not isinstance(pages, list):
+        raise ValueError("plan/storyboard.json pages must be an array")
+    panel_ids: list[str] = []
+    for page in pages:
+        if not isinstance(page, dict) or not isinstance(page.get("panels"), list):
+            raise ValueError("plan/storyboard.json contains an invalid page")
+        for panel in page["panels"]:
+            if not isinstance(panel, dict) or not isinstance(panel.get("id"), str):
+                raise ValueError("plan/storyboard.json contains an invalid panel")
+            panel_ids.append(panel["id"])
+    return len(pages), panel_ids, artifacts
+
+
+def _apply_plan_manifest(manifest: dict[str, object], project_dir: Path) -> tuple[int, list[str]]:
+    from .validate_project import validate_manifest
+
+    page_count, panel_ids, artifacts = _derive_plan_bindings(project_dir)
+    settings = manifest.get("settings")
+    existing_artifacts = manifest.get("artifacts")
+    if not isinstance(settings, dict) or not isinstance(existing_artifacts, dict):
+        raise ValueError("manifest settings and artifacts must be objects")
+    settings["page_count"] = page_count
+    settings["panel_count"] = len(panel_ids)
+    manifest["panels"] = list(panel_ids)
+    manifest["artifacts"] = {**existing_artifacts, **artifacts}
+    issues = validate_manifest(manifest)
+    if issues:
+        issue = issues[0]
+        raise ValueError(f"{issue.path}: {issue.field}: {issue.message}")
+    return page_count, panel_ids
+
+
 def _apply_starter_manifest(
     manifest: dict[str, object],
     staging: Path,
     starter: StarterProject,
 ) -> None:
-    """Record normal plan/storyboard descriptors without changing project schema."""
-    settings = manifest.get("settings")
-    if not isinstance(settings, dict):
-        raise ValueError("manifest template settings must be an object")
-    settings["page_count"] = starter.page_count
-    settings["panel_count"] = len(starter.panel_ids)
-    manifest["panels"] = list(starter.panel_ids)
-    manifest["artifacts"] = {
-        name: {"path": relative, "sha256": sha256_file(staging / relative)}
-        for name, relative in (
-            ("story_plan", "plan/story-plan.json"),
-            ("character_bible", "plan/character-bible.json"),
-            ("storyboard", "plan/storyboard.json"),
-        )
-    }
+    page_count, panel_ids = _apply_plan_manifest(manifest, staging)
+    if page_count != starter.page_count or tuple(panel_ids) != starter.panel_ids:
+        raise ValueError("starter manifest does not match its validated plan artifacts")
+
+
+def bind_plan_artifacts(project_dir: Path) -> dict[str, object]:
+    """Bind validated plan files to manifest descriptors and storyboard counts."""
+    project_dir = Path(project_dir).resolve(strict=True)
+    manifest_path = project_dir / "project.json"
+    read_project_manifest(manifest_path, normalize_legacy=False)
+    with ProjectTransaction(project_dir, "plan-bind") as tx:
+        manifest = read_project_manifest(manifest_path, normalize_legacy=False)
+        candidate = deepcopy(manifest)
+        page_count, panel_ids = _apply_plan_manifest(candidate, project_dir)
+        changed = candidate != manifest
+        status = manifest.get("status")
+        if changed and status not in {"INIT", "PLANNED", "SCRIPTED"}:
+            raise ValueError(f"plan bindings cannot change while project is {status}")
+        if changed:
+            candidate["updated_at"] = _utc_now()
+            tx.append_bytes(
+                "logs/events.jsonl",
+                canonical_event_record(
+                    "plan.bound",
+                    {
+                        "action": "bind-plan",
+                        "page_count": page_count,
+                        "panel_count": len(panel_ids),
+                    },
+                ),
+                repair_torn_jsonl=True,
+            )
+            tx.stage_bytes("project.json", canonical_artifact_bytes(candidate))
+        result = {
+            "project_id": candidate.get("project_id"),
+            "artifacts": len(_PLAN_ARTIFACT_PATHS),
+            "page_count": page_count,
+            "panel_count": len(panel_ids),
+            "changed": changed,
+        }
+    return result
 
 
 def init_project(
@@ -4811,6 +4910,9 @@ def _build_parser() -> argparse.ArgumentParser:
     record_stage_parser.add_argument("project_dir", type=Path)
     record_stage_parser.add_argument("stage", choices=RESUME_STAGES)
 
+    bind_plan_parser = subparsers.add_parser("bind-plan")
+    bind_plan_parser.add_argument("project_dir", type=Path)
+
     attempt_parser = subparsers.add_parser("record-attempt")
     attempt_parser.add_argument("project_dir", type=Path)
     attempt_parser.add_argument("panel_id")
@@ -5101,6 +5203,13 @@ def main(argv: list[str] | None = None) -> int:
                 "record-stage", project_dir=arguments.project_dir, stage=arguments.stage
             )
             print(f"{recorded['stage']}: recorded {recorded['artifacts']} artifact(s)")
+        elif arguments.command == "bind-plan":
+            binding = service.execute("bind-plan", project_dir=arguments.project_dir)
+            action = "updated" if binding["changed"] else "already current"
+            print(
+                f"{binding['project_id']}: plan bindings {action}; "
+                f"{binding['page_count']} page(s), {binding['panel_count']} panel(s)"
+            )
         elif arguments.command == "record-attempt":
             counts = service.execute(
                 "record-attempt",

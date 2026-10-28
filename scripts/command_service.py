@@ -97,6 +97,8 @@ class CommandService:
                 image_capability=image_capability,
                 page_count=page_count,
             )
+        if command == "bind-plan":
+            return engine.bind_plan_artifacts(self._required(kwargs, "project_dir"))
         if command == "dogfood.validate":
             return self.dogfood.validate_report_file(
                 self._required(kwargs, "report_path"), require_consent=True

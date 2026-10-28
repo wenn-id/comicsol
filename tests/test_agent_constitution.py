@@ -113,12 +113,12 @@ class AgentConstitutionTests(unittest.TestCase):
             "stderr",
             "comic_sol_product/errors.py",
             "CS-<NAMESPACE>-<NNN>",
-            "exactly 17",
+            "exactly 18",
         ):
             self.assertIn(phrase, self.collapsed)
-        self.assertIn("exactly 17", " ".join(self.readme.split()))
+        self.assertIn("exactly 18", " ".join(self.readme.split()))
 
-    def test_mcp_surface_still_registers_exactly_seventeen_tools(self):
+    def test_mcp_surface_still_registers_exactly_eighteen_tools(self):
         source = (self.root / "scripts/mcp_server.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
         tool_names = {
@@ -135,7 +135,7 @@ class AgentConstitutionTests(unittest.TestCase):
             )
         }
 
-        self.assertEqual(17, len(tool_names), sorted(tool_names))
+        self.assertEqual(18, len(tool_names), sorted(tool_names))
         self.assertTrue(all(name.startswith("comic_") for name in tool_names))
 
     def test_verification_gates_match_contributing(self):

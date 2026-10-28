@@ -8,6 +8,7 @@ import json
 
 EXPECTED_TOOLS = {
     "comic_init",
+    "comic_bind_plan",
     "comic_status",
     "comic_validate",
     "comic_resume_plan",
