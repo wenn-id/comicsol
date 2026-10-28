@@ -1713,7 +1713,10 @@ def _resume_project_locked(project_dir: Path, manifest_path: Path) -> dict[str, 
                     project_dir, stale_stage, str(blocked_from)
                 )
             else:
-                recovery_status = STAGE_COMPLETION_STATUS[preserved[-1]] if preserved else "INIT"
+                recovery_status = _earlier_status(
+                    STAGE_COMPLETION_STATUS[preserved[-1]] if preserved else "INIT",
+                    str(blocked_from),
+                )
 
             # The cache is one publication target even when it is both refreshed
             # upstream and invalidated downstream. Keep it before events and the
@@ -4357,6 +4360,7 @@ def finalize_project(
     project_dir = caller_project_dir.resolve(strict=True)
     with ProjectLock(project_dir, timeout=PROJECT_OPERATION_LOCK_TIMEOUT):
         ProjectTransaction.recover(project_dir)
+        plan = _finalization_preflight(caller_project_dir)
         if progress is not None:
             progress(
                 {
@@ -4366,7 +4370,7 @@ def finalize_project(
                     "remaining": ["composition", "export"],
                 }
             )
-        result = _finalize_project_locked(project_dir, caller_project_dir, progress)
+        result = _finalize_project_locked(project_dir, caller_project_dir, progress, plan)
         if progress is not None:
             progress(
                 {
@@ -4379,12 +4383,41 @@ def finalize_project(
         return result
 
 
+def _finalization_preflight(project_dir: Path) -> list[ResumeAction]:
+    """Check lifecycle state and upstream freshness before deterministic finalization."""
+    resolved_project_dir = Path(project_dir).resolve(strict=True)
+    manifest_path = contained_project_path(resolved_project_dir, "project.json", must_exist=True)
+    manifest = read_project_manifest(manifest_path, normalize_legacy=False)
+    status = str(manifest.get("status", ""))
+    if status == "BLOCKED":
+        raise ValueError("cannot finalize a BLOCKED project; resume it first")
+    if status in TERMINAL_STATUSES:
+        raise ValueError(f"cannot finalize a terminal project in {status} status")
+
+    generation_index = RESUME_STAGES.index("generation")
+    finalizable_statuses = {
+        STAGE_COMPLETION_STATUS[stage] for stage in RESUME_STAGES[generation_index:]
+    }
+    if status not in finalizable_statuses:
+        raise ValueError(
+            f"cannot finalize from {status or 'unknown'} status; finalization requires QA_READY or later"
+        )
+
+    plan = build_resume_plan(project_dir)
+    _, stale_stage, _ = _stage_progress_from_plan(plan)
+    lettering_index = RESUME_STAGES.index("lettering")
+    if stale_stage is not None and RESUME_STAGES.index(stale_stage) < lettering_index:
+        raise ValueError(f"cannot finalize while the {stale_stage} stage is stale; resume first")
+    return plan
+
+
 def _finalize_project_locked(
     project_dir: Path,
     caller_project_dir: Path | None = None,
     progress: ProgressCallback | None = None,
+    plan: list[ResumeAction] | None = None,
 ) -> dict[str, object]:
-    """Run all deterministic finalization steps and transition to terminal status.
+    """Run deterministic finalization with a preflighted plan and transition to terminal.
 
     Order: lettering → composition → page-QA gate → guarded export →
     report → descriptor recording → export stage → terminal transition.
@@ -4397,8 +4430,8 @@ def _finalize_project_locked(
     project_dir = Path(project_dir).resolve(strict=True)
     manifest_path = project_dir / "project.json"
 
-    # 1. Determine stale stages from the resume plan.
-    plan = build_resume_plan(caller_project_dir)
+    if plan is None:
+        plan = _finalization_preflight(caller_project_dir)
     stale = {a.stage for a in plan if a.artifact == "stage" and a.action in {"regenerate", "rerun"}}
 
     # 2. Lettering (if stale), advance status.

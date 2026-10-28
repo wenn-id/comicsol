@@ -13,6 +13,7 @@ from scripts.comic_sol import (
     finalize_project,
     init_project,
     read_json,
+    record_stage,
     sha256_file,
 )
 from scripts.normalize_panels import normalize_panel
@@ -163,6 +164,8 @@ def build_lifecycle_project(root: Path) -> Path:
         },
     }
     atomic_write_json(project / "project.json", manifest)
+    for stage in ("planning", "storyboard", "generation"):
+        record_stage(project, stage)
     return project
 
 

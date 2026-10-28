@@ -11,10 +11,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from scripts.comic_sol import (  # noqa: E402
     atomic_write_json,
+    block_project,
+    finalize_project,
     init_project,
     read_json,
+    ResumeAction,
     sha256_file,
 )
+from scripts.stage_registry import RESUME_STAGES  # noqa: E402
 from scripts.validate_project import (  # noqa: E402
     ProjectValidationError,
     require_valid_project,
@@ -296,6 +300,95 @@ class GuardedOperationTests(unittest.TestCase):
             },
         }
         atomic_write_json(self.project / "project.json", manifest)
+
+    def _finalization_snapshot(self):
+        relatives = (
+            "project.json",
+            "logs/stage-cache.json",
+            "logs/events.jsonl",
+            "cache/composition.json",
+            "qa/panels/p01-01.json",
+            "qa/pages/page-001.json",
+            "panels/p01-01/lettered.png",
+            "pages/page-001.png",
+            "exports/sunlight-courier.pdf",
+            "exports/pdf-verification.json",
+            "qa/report.md",
+        )
+        return {
+            relative: (self.project / relative).read_bytes()
+            if (self.project / relative).is_file()
+            else None
+            for relative in relatives
+        }
+
+    def test_finalize_rejects_blocked_project_before_writing(self):
+        self._make_export_ready()
+        manifest = read_json(self.project / "project.json")
+        manifest["status"] = "COMPOSED"
+        atomic_write_json(self.project / "project.json", manifest)
+        block_project(self.project, "test-block", "test-block")
+        before = self._finalization_snapshot()
+        progress_events = []
+        from scripts.export_pdf import guarded_export
+        from scripts.render_report import render_report
+
+        with (
+            mock.patch("scripts.comic_sol.build_resume_plan", return_value=[]),
+            mock.patch("scripts.export_pdf.guarded_export", wraps=guarded_export) as export,
+            mock.patch("scripts.render_report.render_report", wraps=render_report) as report,
+        ):
+            with self.assertRaisesRegex(ValueError, "BLOCKED"):
+                finalize_project(self.project, progress=progress_events.append)
+
+        export.assert_not_called()
+        report.assert_not_called()
+        self.assertEqual([], progress_events)
+        self.assertEqual(before, self._finalization_snapshot())
+
+    def test_finalize_rejects_terminal_project_before_writing(self):
+        self._make_export_ready()
+        manifest = read_json(self.project / "project.json")
+        manifest["status"] = "COMPLETE"
+        atomic_write_json(self.project / "project.json", manifest)
+        before = self._finalization_snapshot()
+        from scripts.export_pdf import guarded_export
+        from scripts.render_report import render_report
+
+        with (
+            mock.patch("scripts.comic_sol.build_resume_plan", return_value=[]),
+            mock.patch("scripts.export_pdf.guarded_export", wraps=guarded_export) as export,
+            mock.patch("scripts.render_report.render_report", wraps=render_report) as report,
+        ):
+            with self.assertRaisesRegex(ValueError, "terminal"):
+                finalize_project(self.project)
+
+        export.assert_not_called()
+        report.assert_not_called()
+        self.assertEqual(before, self._finalization_snapshot())
+
+    def test_finalize_rejects_stale_upstream_stage_before_writing(self):
+        self._make_export_ready()
+        manifest = read_json(self.project / "project.json")
+        manifest["status"] = "COMPOSED"
+        atomic_write_json(self.project / "project.json", manifest)
+        generation_index = RESUME_STAGES.index("generation")
+        plan = [
+            ResumeAction(
+                stage,
+                "rerun" if index >= generation_index else "reuse",
+                "stage",
+                "stale" if index >= generation_index else "current",
+            )
+            for index, stage in enumerate(RESUME_STAGES)
+        ]
+        before = self._finalization_snapshot()
+
+        with mock.patch("scripts.comic_sol.build_resume_plan", return_value=plan):
+            with self.assertRaisesRegex(ValueError, "generation stage is stale"):
+                finalize_project(self.project)
+
+        self.assertEqual(before, self._finalization_snapshot())
 
     def test_require_valid_project_raises_on_invalid(self):
         with self.assertRaises(ProjectValidationError):

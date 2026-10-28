@@ -1040,10 +1040,18 @@ class FinalizeLockRaceTests(unittest.TestCase):
 
                 self.assertFalse(owner_thread.is_alive())
                 self.assertFalse(contender_thread.is_alive())
-                self.assertEqual([], errors)
                 self.assertEqual("BLOCKED", owner_results[0]["status"])
-                self.assertEqual("BLOCKED", contender_results[0]["status"])
-                self.assertEqual([self.expected_generation], observed_generations)
+                if operation == "finalize_project":
+                    self.assertEqual(1, len(errors))
+                    self.assertEqual("contender", errors[0][0])
+                    self.assertIsInstance(errors[0][1], ValueError)
+                    self.assertIn("BLOCKED", str(errors[0][1]))
+                    self.assertEqual([], contender_results)
+                    self.assertEqual([], observed_generations)
+                else:
+                    self.assertEqual([], errors)
+                    self.assertEqual("BLOCKED", contender_results[0]["status"])
+                    self.assertEqual([self.expected_generation], observed_generations)
                 self._assert_expected_generation(self.project)
                 self.assertEqual([], list((self.project / "logs/transactions").iterdir()))
 
@@ -1098,22 +1106,16 @@ class FinalizeLockRaceTests(unittest.TestCase):
         self.assertEqual([], list((self.project / "logs/transactions").iterdir()))
 
     def test_finalize_recovers_interrupted_publication_before_workflow(self):
-        original = self._leave_interrupted_manifest_publication()
-        observed = []
+        self._leave_interrupted_manifest_publication()
+        progress_events = []
 
-        def inspect_recovered_state(project_dir, caller_project_dir, progress):
-            observed.append((project_dir / "project.json").read_bytes())
-            self.assertEqual([], list((project_dir / "logs/transactions").iterdir()))
-            return {"status": "stub"}
+        with mock.patch("scripts.comic_sol._finalize_project_locked") as finalizer:
+            with self.assertRaisesRegex(ValueError, "BLOCKED"):
+                finalize_project(self.project, progress=progress_events.append)
 
-        with mock.patch(
-            "scripts.comic_sol._finalize_project_locked",
-            side_effect=inspect_recovered_state,
-        ):
-            self.assertEqual({"status": "stub"}, finalize_project(self.project))
-
-        self.assertEqual([original], observed)
-        self.assertEqual(original, (self.project / "project.json").read_bytes())
+        finalizer.assert_not_called()
+        self.assertEqual([], progress_events)
+        self._assert_expected_generation(self.project)
 
     def test_finalize_waits_for_existing_project_lock(self):
         lock = project_io.ProjectLock(self.project, timeout=1.0)
@@ -1130,9 +1132,12 @@ class FinalizeLockRaceTests(unittest.TestCase):
                 finished.set()
 
         try:
-            with mock.patch(
-                "scripts.comic_sol._finalize_project_locked",
-                return_value={"status": "stub"},
+            with (
+                mock.patch("scripts.comic_sol._finalization_preflight", return_value=[]),
+                mock.patch(
+                    "scripts.comic_sol._finalize_project_locked",
+                    return_value={"status": "stub"},
+                ),
             ):
                 worker = threading.Thread(target=run_finalize)
                 worker.start()
@@ -1220,9 +1225,12 @@ class FinalizeLockRaceTests(unittest.TestCase):
             except BaseException as error:
                 errors.append(error)
 
-        with mock.patch(
-            "scripts.comic_sol._finalize_project_locked",
-            side_effect=blocked_finalize,
+        with (
+            mock.patch("scripts.comic_sol._finalization_preflight", return_value=[]),
+            mock.patch(
+                "scripts.comic_sol._finalize_project_locked",
+                side_effect=blocked_finalize,
+            ),
         ):
             worker = threading.Thread(target=run_finalize)
             worker.start()
