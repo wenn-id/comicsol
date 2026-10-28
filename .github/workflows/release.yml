@@ -12,8 +12,46 @@ permissions:
   contents: read
 
 jobs:
+  ruleset-snapshot:
+    name: Capture release-tag rulesets
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Create repository-scoped ruleset inspection token
+        id: ruleset-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          app-id: ${{ secrets.RELEASE_RULESETS_APP_ID }}
+          private-key: ${{ secrets.RELEASE_RULESETS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-administration: write
+          skip-token-revoke: false
+      - name: Capture active tag rulesets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.ruleset-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          mkdir tag-rulesets
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/rulesets?includes_parents=true&per_page=100" > rulesets.json
+          jq -er '.[][] | select(.target == "tag" and .enforcement == "active") | .id' rulesets.json \
+            | while read -r ruleset_id; do
+                [[ "$ruleset_id" =~ ^[1-9][0-9]*$ ]]
+                gh api "repos/${GITHUB_REPOSITORY}/rulesets/${ruleset_id}" \
+                  > "tag-rulesets/${ruleset_id}.json"
+              done
+      - name: Preserve ruleset data without credentials
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-tag-rulesets
+          path: tag-rulesets/*.json
+          if-no-files-found: error
+          retention-days: 1
+
   prepare:
     name: Prepare release
+    needs: ruleset-snapshot
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.identity.outputs.tag }}
@@ -41,21 +79,18 @@ jobs:
           set -eu
           test -f docs/releases/v2.0-stable-criteria.md
           grep -Fq "authoritative release gate" docs/releases/v2.0-stable-criteria.md
+      - name: Download current-run ruleset snapshot
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: release-tag-rulesets
+          path: tag-rulesets
       - name: Verify active release-tag immutability rules
         id: rulesets
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          mkdir tag-rulesets
-          gh api "repos/${GITHUB_REPOSITORY}/rulesets?includes_parents=true&per_page=100" > rulesets.json
-          jq -r '.[] | select(.target == "tag" and .enforcement == "active") | .id' rulesets.json \
-            | while read -r ruleset_id; do
-                gh api "repos/${GITHUB_REPOSITORY}/rulesets/${ruleset_id}" \
-                  > "tag-rulesets/${ruleset_id}.json"
-              done
           policy_json="$(python3 scripts/release_identity.py rulesets \
             --rulesets-dir tag-rulesets \
             --release-ref "refs/tags/${RELEASE_TAG}")"
