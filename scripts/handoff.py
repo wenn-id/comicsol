@@ -674,6 +674,14 @@ def reconcile_job_receipts(
                     f"at attempt {successful_ordinal}"
                 ]
             )
+    safety_refusal_ordinals = [
+        ordinal
+        for ordinal in ordinals
+        if by_ordinal[ordinal].get("outcome") == "failure"
+        and by_ordinal[ordinal].get("category") == "safety_refusal"
+    ]
+    if safety_refusal_ordinals and len(ordinals) > safety_refusal_ordinals[0]:
+        raise HandoffContractError(["receipt attempts: no receipt may follow a safety refusal"])
     attempts_used = len(ordered_receipts)
     attempts_remaining = budget - attempts_used
     if stale:
@@ -681,6 +689,9 @@ def reconcile_job_receipts(
         next_attempt: int | None = None
     elif any(receipt.get("outcome") == "success" for receipt in ordered_receipts):
         status = "completed"
+        next_attempt = None
+    elif safety_refusal_ordinals:
+        status = "failed"
         next_attempt = None
     elif attempts_remaining == 0:
         status = "failed"

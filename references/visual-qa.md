@@ -50,7 +50,10 @@ eight storyboard anchor `area` values, with specific evidence and repair guidanc
 ## Selective repair budgets
 
 - Initial generation permits at most 2 regenerations per panel.
-- Visual retries and transient repeats share 8 extra calls project-wide.
+- Visual retries and transient repeats share 8 extra panel calls project-wide. Handoff
+  retry limits are allocated across panel jobs from that same allowance, and failed extra
+  attempts consume slots; without earlier extra calls, 12 initial panels can make at most
+  20 panel calls.
 - Plan every repair with `repair_strategy.py PROJECT_DIR --panel PANEL_ID
   [--localized-edit]`, then record the project-wide decision with `--plan`.
 - A `selective-repair` edits only the listed subjects and areas, carries one correction
@@ -85,6 +88,7 @@ eight storyboard anchor `area` values, with specific evidence and repair guidanc
   `clipped-text`, `text-overlap`, and `reading-order` still judge it.
 - Permit one immediate transient repeat; it consumes the global budget but not the
   per-panel visual retry budget.
+- A `safety_refusal` is terminal for its handoff job. Record it and do not retry.
 - After exhaustion, an error-level panel is `BLOCKED` and cannot reach lettering/export.
 
 An explicit user may override a schema-2.0 panel only from `regenerate` with an

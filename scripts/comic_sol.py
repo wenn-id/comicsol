@@ -2501,7 +2501,6 @@ _JOB_BRIEF_FIELDS = (
     "references",
     "requested_aspect_ratio",
     "requested_dimensions",
-    "retry_limit",
     "subject_id",
     "subject_kind",
 )
@@ -2511,16 +2510,47 @@ def _prepared_job_for_brief(
     existing_jobs: Mapping[str, Mapping[str, object]],
     candidate: Mapping[str, object],
 ) -> dict[str, object] | None:
-    """Return the already prepared job that renders this exact brief, when one exists.
+    """Reuse the already published job when it still covers this requested brief.
 
-    A prepared job keeps the retained target it was published with, so repreparing
-    an unchanged brief stays byte-identical even after its attempt was accepted and
-    the counters moved on.
+    A job's allocated retry limit may be lower than the requested ceiling. Its
+    retained target and job ID remain fixed so a no-op prepare stays byte-identical.
     """
+    requested_retry_limit = candidate.get("retry_limit")
+    if (
+        isinstance(requested_retry_limit, bool)
+        or not isinstance(requested_retry_limit, int)
+        or requested_retry_limit < 0
+    ):
+        return None
     for job in existing_jobs.values():
-        if all(job.get(field) == candidate.get(field) for field in _JOB_BRIEF_FIELDS):
+        retry_limit = job.get("retry_limit")
+        if (
+            all(job.get(field) == candidate.get(field) for field in _JOB_BRIEF_FIELDS)
+            and not isinstance(retry_limit, bool)
+            and isinstance(retry_limit, int)
+            and 0 <= retry_limit <= requested_retry_limit
+        ):
             return dict(job)
     return None
+
+
+def _panel_retry_reservation(job: Mapping[str, object], effective: Mapping[str, object]) -> int:
+    """Count future panel calls beyond an initial call against the shared budget."""
+    if job.get("subject_kind") != "panel" or effective.get("status") != "ready":
+        return 0
+    attempts_remaining = effective.get("attempts_remaining")
+    attempts_used = effective.get("attempts_used")
+    if (
+        isinstance(attempts_remaining, bool)
+        or not isinstance(attempts_remaining, int)
+        or attempts_remaining < 0
+        or isinstance(attempts_used, bool)
+        or not isinstance(attempts_used, int)
+        or attempts_used < 0
+    ):
+        raise HandoffContractError(["handoff retry state is invalid"])
+    initial_call_unused = job.get("attempt_kind") == "initial" and attempts_used == 0
+    return max(0, attempts_remaining - int(initial_call_unused))
 
 
 def _build_handoff_content(
@@ -2746,16 +2776,21 @@ def _build_handoff_content(
             or global_extra_calls < 0
         ):
             raise HandoffContractError(["global generation counter must be a non-negative integer"])
+        if global_extra_calls > GLOBAL_EXTRA_CALL_LIMIT:
+            raise HandoffContractError(["global generation counter exceeds project retry budget"])
         remaining_global_extras = GLOBAL_EXTRA_CALL_LIMIT - global_extra_calls
         plan_by_panel = {
             cast(str, panel["panel_id"]): panel
             for panel in cast(list[dict[str, object]], reference_plan["panels"])
         }
+        panel_specs_by_page: list[tuple[str, list[dict[str, object]]]] = []
+        new_panel_specs: list[dict[str, object]] = []
+        reused_panel_jobs: list[dict[str, object]] = []
         for page_index, page in enumerate(pages, 1):
             if not isinstance(page, dict) or not isinstance(page.get("panels"), list):
                 continue
             batch_id = f"panels-{page_index:03d}"
-            page_jobs: list[dict[str, object]] = []
+            page_specs: list[dict[str, object]] = []
             for panel in page["panels"]:
                 if not isinstance(panel, dict) or not isinstance(panel.get("id"), str):
                     continue
@@ -2822,31 +2857,71 @@ def _build_handoff_content(
                 prepared = _prepared_job_for_brief(existing_jobs, brief)
                 if prepared is None:
                     attempt_kind, sequence = _next_panel_attempt_identity(project_dir, panel_id)
+                    spec = {
+                        "attempt_kind": attempt_kind,
+                        "brief": brief,
+                        "prepared": None,
+                        "sequence": sequence,
+                    }
+                    new_panel_specs.append(spec)
+                else:
+                    spec = {"brief": brief, "prepared": prepared}
+                    reused_panel_jobs.append(prepared)
+                page_specs.append(spec)
+            panel_specs_by_page.append((batch_id, page_specs))
+
+        for job in reused_panel_jobs:
+            effective = existing_effective.get(cast(str, job["job_id"]))
+            if effective is not None:
+                remaining_global_extras -= _panel_retry_reservation(job, effective)
+        if remaining_global_extras < 0:
+            raise HandoffContractError(["at most eight extra calls are allowed per project"])
+
+        new_noninitial_jobs = [
+            spec for spec in new_panel_specs if spec["attempt_kind"] != "initial"
+        ]
+        if remaining_global_extras < len(new_noninitial_jobs):
+            raise HandoffContractError(["at most eight extra calls are allowed per project"])
+        remaining_global_extras -= len(new_noninitial_jobs)
+        for spec in new_panel_specs:
+            spec["allocated_retry_limit"] = 0
+        for _attempt in range(retry_limit):
+            for spec in new_panel_specs:
+                if remaining_global_extras <= 0:
+                    break
+                spec["allocated_retry_limit"] = cast(int, spec["allocated_retry_limit"]) + 1
+                remaining_global_extras -= 1
+            if remaining_global_extras <= 0:
+                break
+
+        for batch_id, page_specs in panel_specs_by_page:
+            page_jobs: list[dict[str, object]] = []
+            for spec in page_specs:
+                prepared = spec.get("prepared")
+                if isinstance(prepared, dict):
+                    job = prepared
+                else:
+                    brief = cast(dict[str, object], spec["brief"])
+                    attempt_kind = cast(str, spec["attempt_kind"])
+                    sequence = cast(int, spec["sequence"])
+                    panel_id = cast(str, brief["subject_id"])
                     job = build_generation_job(
                         subject_kind="panel",
                         subject_id=panel_id,
-                        prompt_path=prompt_path,
+                        prompt_path=cast(str, brief["prompt_path"]),
                         prompt_sha256=cast(str, brief["prompt_sha256"]),
-                        references=references,
-                        requested_dimensions={"width": width, "height": height},
+                        references=cast(list[dict[str, object]], brief["references"]),
+                        requested_dimensions=cast(
+                            dict[str, object] | None, brief["requested_dimensions"]
+                        ),
                         requested_aspect_ratio=cast(str, brief["requested_aspect_ratio"]),
                         attempt_kind=attempt_kind,
-                        retry_limit=retry_limit,
+                        retry_limit=cast(int, spec["allocated_retry_limit"]),
                         batch_id=batch_id,
                         target_path=(
                             f"panels/attempts/{panel_id}/{attempt_kind}-{sequence:03d}.png"
                         ),
                     )
-                else:
-                    job = prepared
-                job_id = cast(str, job["job_id"])
-                prior_status = existing_effective.get(job_id, {}).get("status", "ready")
-                if job.get("attempt_kind") != "initial" and prior_status == "ready":
-                    if remaining_global_extras <= 0:
-                        raise HandoffContractError(
-                            ["at most eight extra calls are allowed per project"]
-                        )
-                    remaining_global_extras -= 1
                 jobs.append(job)
                 page_jobs.append(job)
             batches.append(
@@ -3354,7 +3429,12 @@ def accept_handoff_result(
                 )
                 counter_name = _generation_counter_name(panel_id, attempt_kind)
                 counter_document, counters, sequence = _advance_generation_counters(
-                    project_dir, panel_id, attempt_kind, counter_name
+                    project_dir,
+                    panel_id,
+                    attempt_kind,
+                    counter_name,
+                    extra_call=attempt > 1,
+                    record_panel_attempt=state["attempts_used"] == 0,
                 )
                 expected_target = f"panels/attempts/{panel_id}/{attempt_kind}-{sequence:03d}.png"
                 if target_path != expected_target:
@@ -3486,6 +3566,21 @@ def record_handoff_failure(
                 raise HandoffResultError(
                     [f"attempt ordinal must equal next attempt {state.get('next_attempt')}"]
                 )
+            counter_document = None
+            if job.get("subject_kind") == "panel":
+                panel_id = cast(str, job["subject_id"])
+                attempt_kind = cast(
+                    Literal["initial", "visual_retry", "transient_repeat"],
+                    job["attempt_kind"],
+                )
+                counter_document, _counts, _sequence = _advance_generation_counters(
+                    project_dir,
+                    panel_id,
+                    attempt_kind,
+                    _generation_counter_name(panel_id, attempt_kind),
+                    extra_call=attempt > 1,
+                    record_panel_attempt=state["attempts_used"] == 0,
+                )
             prior_receipts = [
                 receipt_item
                 for receipt_item in cast(list[dict[str, object]], snapshot["receipts"])
@@ -3503,6 +3598,11 @@ def record_handoff_failure(
             )
             receipt_relative = f"generation/receipts/{identifier}.json"
             transaction.stage_bytes(receipt_relative, canonical_artifact_bytes(receipt))
+            if counter_document is not None:
+                transaction.stage_bytes(
+                    GENERATION_COUNTERS_PATH.as_posix(),
+                    canonical_artifact_bytes(counter_document),
+                )
             transaction.stage_bytes(
                 HANDOFF_MANIFEST_PATH, canonical_artifact_bytes(handoff_manifest)
             )
@@ -3540,6 +3640,17 @@ def _read_generation_counters(project_dir: Path) -> dict[str, object]:
     return {"global_extra_calls": 0, "panels": {}, "schema_version": "1.0"}
 
 
+def _increment_global_extra_call(counters: dict[str, object]) -> int:
+    global_extras = counters.get("global_extra_calls", 0)
+    if isinstance(global_extras, bool) or not isinstance(global_extras, int) or global_extras < 0:
+        raise ValueError("global generation counter must be a non-negative integer")
+    if global_extras >= GLOBAL_EXTRA_CALL_LIMIT:
+        raise ValueError("at most eight extra calls are allowed per project")
+    global_extras += 1
+    counters["global_extra_calls"] = global_extras
+    return global_extras
+
+
 def _generation_counter_name(panel_id: str, kind: str) -> str:
     if PANEL_ID_PATTERN.fullmatch(panel_id) is None:
         raise ValueError("invalid panel ID")
@@ -3554,6 +3665,9 @@ def _advance_generation_counters(
     panel_id: str,
     kind: Literal["initial", "visual_retry", "transient_repeat"],
     counter_name: str,
+    *,
+    extra_call: bool = False,
+    record_panel_attempt: bool = True,
 ) -> tuple[dict[str, object], dict[str, int], int]:
     counters = _read_generation_counters(project_dir)
     panels = counters.get("panels")
@@ -3573,15 +3687,16 @@ def _advance_generation_counters(
     global_extras = counters.get("global_extra_calls", 0)
     if isinstance(global_extras, bool) or not isinstance(global_extras, int) or global_extras < 0:
         raise ValueError("global generation counter must be a non-negative integer")
-    if panel[counter_name] >= GENERATION_LIMITS[kind]:
+    if record_panel_attempt and panel[counter_name] >= GENERATION_LIMITS[kind]:
         raise ValueError(GENERATION_LIMIT_MESSAGES[kind])
-    if kind != "initial" and global_extras >= GLOBAL_EXTRA_CALL_LIMIT:
+    is_extra_call = kind != "initial" or extra_call
+    if is_extra_call and global_extras >= GLOBAL_EXTRA_CALL_LIMIT:
         raise ValueError("at most eight extra calls are allowed per project")
 
-    panel[counter_name] += 1
-    if kind != "initial":
-        global_extras += 1
-        counters["global_extra_calls"] = global_extras
+    if record_panel_attempt:
+        panel[counter_name] += 1
+    if is_extra_call:
+        global_extras = _increment_global_extra_call(counters)
     counts = {
         "global_extra_calls": global_extras,
         "initial": panel["initial"],

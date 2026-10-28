@@ -250,6 +250,13 @@ characters of SHA-256 over compact canonical JSON containing exactly `attempt` a
 under the common canonical JSON rules. A job has exactly `1 + retry_limit` available
 attempts, including its initial attempt.
 
+Panel-job retry limits are allocated in storyboard order against the remaining eight
+extra panel calls for the project, one retry pass at a time. The first call of an
+`initial` panel job is not extra; later calls to it and every call to a non-initial
+panel job are extra. Failed extra calls consume the same allowance. With no prior extra
+calls, 12 initial panel jobs can therefore make at most 20 panel calls. Reference jobs
+do not use this panel-call allowance.
+
 Receipts are authoritative for attempt use and effective job state. Each receipt must bind
 the current job ID and canonical job-artifact SHA-256, and its `attempt_id` must equal the
 deterministic ID for one ordinal within that job's budget. Persisted receipt ordinals must
@@ -262,10 +269,12 @@ field is a conflicting duplicate and is rejected.
 The five effective states are derived rather than trusted from a caller declaration. An
 absent job is `missing` only when it has no artifact digest or receipts. For an existing
 job, stale locked scope or bindings produce `stale`; otherwise any successful receipt
-produces `completed`; otherwise consuming all `1 + retry_limit` attempts produces
-`failed`; and every remaining executable or retryable job is `ready`. `attempts_used` is
-the contiguous receipt count, `attempts_remaining` is the budget minus that count, and
-only `ready` has a next ordinal, `attempts_used + 1`.
+produces `completed`; otherwise a failure receipt with category `safety_refusal`
+produces `failed` immediately and permits no later receipt; otherwise consuming all
+`1 + retry_limit` attempts produces `failed`; and every remaining executable or retryable
+job is `ready`. `attempts_used` is the contiguous receipt count,
+`attempts_remaining` is the budget minus that count, and only `ready` has a next ordinal,
+`attempts_used + 1`.
 
 ### Two-phase preparation and result activation
 
