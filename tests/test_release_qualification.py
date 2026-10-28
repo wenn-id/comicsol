@@ -1212,6 +1212,44 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "deployment evidence"):
             build_evidence(**arguments)
 
+    def test_ruleset_app_token_is_confined_to_an_api_only_snapshot_job(self):
+        release = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        self.assertTrue("\n  ruleset-snapshot:\n" in release, "missing isolated ruleset job")
+        snapshot = release.split("\n  ruleset-snapshot:\n", 1)[1].split("\n  prepare:\n", 1)[0]
+        prepare = release.split("\n  prepare:\n", 1)[1].split("\n  full-tests:\n", 1)[0]
+        self.assertIn("permissions: {}", snapshot)
+        self.assertIn(
+            "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510",
+            snapshot,
+        )
+        for setting in (
+            "app-id: ${{ secrets.RELEASE_RULESETS_APP_ID }}",
+            "private-key: ${{ secrets.RELEASE_RULESETS_APP_PRIVATE_KEY }}",
+            "owner: ${{ github.repository_owner }}",
+            "repositories: ${{ github.event.repository.name }}",
+            "permission-administration: write",
+            "skip-token-revoke: false",
+            "GH_TOKEN: ${{ steps.ruleset-token.outputs.token }}",
+            "gh api --paginate --slurp",
+            "if-no-files-found: error",
+        ):
+            self.assertIn(setting, snapshot)
+        for forbidden in ("actions/checkout@", "scripts/", "python", "$GITHUB_OUTPUT"):
+            self.assertNotIn(forbidden, snapshot)
+        self.assertNotIn("\n    outputs:", snapshot)
+        self.assertEqual(1, release.count("secrets.RELEASE_RULESETS_APP_PRIVATE_KEY"))
+        self.assertEqual(1, release.count("permission-administration: write"))
+        self.assertIn("needs: ruleset-snapshot", prepare)
+        self.assertIn("actions/download-artifact@", prepare)
+        self.assertIn("name: release-tag-rulesets", snapshot)
+        self.assertIn("name: release-tag-rulesets", prepare)
+        self.assertLess(
+            prepare.index("actions/download-artifact@"),
+            prepare.index("scripts/release_identity.py rulesets"),
+        )
+        self.assertNotIn("/rulesets?", prepare)
+        self.assertNotIn("ruleset-token.outputs.token", prepare)
+
     def test_release_trigger_and_codeql_are_bound_to_exact_github_identity(self):
         release = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         codeql = (ROOT / ".github/workflows/codeql.yml").read_text(encoding="utf-8")
@@ -1332,6 +1370,7 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
     def test_only_candidate_and_promote_receive_release_mutation_privileges(self):
         release = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         job_names = (
+            "ruleset-snapshot",
             "prepare",
             "full-tests",
             "codeql",
