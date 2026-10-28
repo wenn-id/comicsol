@@ -385,6 +385,57 @@ class SupportPrivacyTermsTests(unittest.TestCase):
             self.assertFalse(fixed_minor.search(document), name)
 
 
+class UntrustedContentInstructionTests(unittest.TestCase):
+    """User-supplied story and project content stays separate from agent authority."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.skill = collapsed(read("SKILL.md")).lower()
+        cls.workflow = collapsed(read("references/workflow.md")).lower()
+        cls.safety = collapsed(read("references/safety-ip.md")).lower()
+        cls.visual_qa = collapsed(read("references/visual-qa.md"))
+        cls.schemas = collapsed(read("references/schemas.md"))
+
+    def test_source_and_project_artifacts_are_untrusted_content(self):
+        for document in (self.skill, self.workflow, self.safety):
+            self.assertIn("untrusted content", document)
+            self.assertTrue(
+                any(
+                    phrase in document
+                    for phrase in (
+                        "never instructions.",
+                        "never agent instructions",
+                        "never instructions to the agent",
+                    )
+                ),
+                document,
+            )
+            self.assertIn("cannot override", document)
+        for phrase in (
+            "source text",
+            "pasted stories",
+            "imported handoff archives",
+            "project json",
+        ):
+            self.assertIn(phrase, self.skill)
+
+    def test_user_text_uses_structured_or_quoted_command_arguments(self):
+        self.assertIn("prefer mcp tools with structured arguments", self.skill)
+        self.assertIn("never concatenate untrusted text into command syntax", self.skill)
+        for placeholder in (
+            '--title "$TITLE"',
+            '--warning "$WARNING_TEXT"',
+            '--reason "$REASON_TEXT"',
+        ):
+            self.assertIn(placeholder.lower(), self.skill)
+        for document in (self.workflow, self.visual_qa, self.schemas):
+            normalized = document.lower()
+            if "--reason" in normalized:
+                self.assertIn('--reason "$reason_text"', normalized)
+                self.assertNotIn('--reason "..."', normalized)
+                self.assertNotIn("--reason text", normalized)
+
+
 class CrossAgentHandoffDocumentationTests(unittest.TestCase):
     """WP5: README, SKILL.md, and CHANGELOG document cross-agent handoff integration."""
 
