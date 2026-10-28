@@ -131,6 +131,8 @@ class ResumeTests(unittest.TestCase):
         self._write_json("qa/panels/p01-01.json", self._accepted_panel_record())
         (self.project / "qa/report.md").write_text("# QA\n", "utf-8")
         (self.project / "exports/sunlight-courier.pdf").write_bytes(b"%PDF-1.4\nfixture\n")
+        self._write_json("qa/pages/page-001.json", {})
+        self._write_json("exports/pdf-verification.json", {"fixture": "resume-cache"})
 
         manifest = read_json(self.project / "project.json")
         manifest["status"] = "COMPLETE"
@@ -142,6 +144,7 @@ class ResumeTests(unittest.TestCase):
             "storyboard": self._descriptor("plan/storyboard.json"),
             "qa_report": self._descriptor("qa/report.md"),
             "pdf": self._descriptor("exports/sunlight-courier.pdf"),
+            "pdf_verification": self._descriptor("exports/pdf-verification.json"),
         }
         atomic_write_json(self.project / "project.json", manifest)
         self._write_cache_snapshot()
@@ -246,6 +249,7 @@ class ResumeTests(unittest.TestCase):
             return [geometry], [self.project / "panels/p01-01/lettered.png"]
         return [{"project_id": manifest["project_id"], "settings": manifest["settings"]}], [
             self.project / "pages/page-001.png",
+            self.project / "qa/pages/page-001.json",
             self.project / "qa/report.md",
         ]
 
@@ -263,7 +267,11 @@ class ResumeTests(unittest.TestCase):
             "generation": ["panels/raw/p01-01.png", clean_relative],
             "lettering": ["panels/p01-01/lettered.png"],
             "composition": ["pages/page-001.png"],
-            "export": ["qa/report.md", "exports/sunlight-courier.pdf"],
+            "export": [
+                "qa/report.md",
+                "exports/sunlight-courier.pdf",
+                "exports/pdf-verification.json",
+            ],
         }
         stages = {}
         for stage in STAGES:
@@ -676,7 +684,7 @@ class ResumeTests(unittest.TestCase):
         storyboard_path = self.project / "plan/storyboard.json"
         before = storyboard_path.read_bytes()
         removed = invalidate_from(self.project, "storyboard")
-        self.assertEqual(["storyboard", "qa_report", "pdf"], removed)
+        self.assertEqual(["storyboard", "qa_report", "pdf", "pdf_verification"], removed)
         self.assertEqual(before, storyboard_path.read_bytes())
         self.assertNotIn("storyboard", read_json(self.project / "project.json")["artifacts"])
         self.assertEqual(
@@ -1446,6 +1454,45 @@ class ResumeTests(unittest.TestCase):
         manifest["artifacts"]["pdf"] = self._descriptor("exports/sunlight-courier.pdf")
         atomic_write_json(self.project / "project.json", manifest)
 
+        export = next(
+            action
+            for action in build_resume_plan(self.project)
+            if action.artifact == "stage" and action.stage == "export"
+        )
+        self.assertEqual("rerun", export.action)
+        self.assertIn("artifact hash mismatch", export.reason)
+
+    def test_changed_page_qa_invalidates_export_cache(self):
+        export = next(
+            action
+            for action in build_resume_plan(self.project)
+            if action.artifact == "stage" and action.stage == "export"
+        )
+        self.assertEqual("reuse", export.action)
+
+        self._write_json("qa/pages/page-001.json", {"status": "changed"})
+        export = next(
+            action
+            for action in build_resume_plan(self.project)
+            if action.artifact == "stage" and action.stage == "export"
+        )
+        self.assertEqual("rerun", export.action)
+        self.assertIn("stage cache key changed", export.reason)
+
+    def test_changed_pdf_verification_invalidates_export_cache(self):
+        export = next(
+            action
+            for action in build_resume_plan(self.project)
+            if action.artifact == "stage" and action.stage == "export"
+        )
+        self.assertEqual("reuse", export.action)
+
+        self._write_json("exports/pdf-verification.json", {"fixture": "changed"})
+        manifest = read_json(self.project / "project.json")
+        manifest["artifacts"]["pdf_verification"] = self._descriptor(
+            "exports/pdf-verification.json"
+        )
+        atomic_write_json(self.project / "project.json", manifest)
         export = next(
             action
             for action in build_resume_plan(self.project)
