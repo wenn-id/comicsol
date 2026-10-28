@@ -437,7 +437,7 @@ class ManifestTests(unittest.TestCase):
                     init_project(self.root, "Rejected Request", b"Story", request)
                 self.assertEqual([], list(self.root.iterdir()))
 
-    def test_transition_rejects_skips_and_allows_blocked_and_warning_terminal(self):
+    def test_transition_rejects_skips_and_allows_blocked_and_recorded_warnings(self):
         project = init_project(
             self.root,
             "Story",
@@ -468,13 +468,15 @@ class ManifestTests(unittest.TestCase):
             "QA_READY",
             "LETTERED",
             "COMPOSED",
-            "EXPORTED",
         ):
             transition(export_project, state)
+        exported = transition(export_project, "EXPORTED", "minor prop drift")
+        self.assertEqual("EXPORTED", exported["status"])
+        self.assertIn("minor prop drift", exported["warnings"])
         # This test isolates transition-graph behavior; final artifact gating is
         # covered by GuardedOperationTests.
         with mock.patch("scripts.validate_project.require_valid_project"):
-            terminal = transition(export_project, "COMPLETE_WITH_WARNINGS", "minor prop drift")
+            terminal = transition(export_project, "COMPLETE")
         self.assertEqual("COMPLETE_WITH_WARNINGS", terminal["status"])
         self.assertIn("minor prop drift", terminal["warnings"])
 
