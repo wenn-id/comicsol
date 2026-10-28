@@ -930,9 +930,14 @@ def _resume_stage_material(
         if isinstance(page_count, int)
         else []
     )
+    page_qa_paths = (
+        [f"qa/pages/page-{number:03d}.json" for number in range(1, page_count + 1)]
+        if isinstance(page_count, int)
+        else []
+    )
     return (
         [{"project_id": project_id, "settings": settings}],
-        _project_files(project_dir, page_paths + ["qa/report.md"]),
+        _project_files(project_dir, page_paths + page_qa_paths + ["qa/report.md"]),
     )
 
 
@@ -998,7 +1003,7 @@ def _stage_output_files(
             project_dir, [f"pages/page-{number:03d}.png" for number in page_numbers]
         )
     project_id = manifest.get("project_id")
-    relatives = ["qa/report.md"]
+    relatives = ["qa/report.md", "exports/pdf-verification.json"]
     if isinstance(project_id, str) and project_id:
         relatives.append(f"exports/{project_id}.pdf")
     return _project_files(project_dir, relatives)
