@@ -3558,6 +3558,7 @@ def record_generation_attempt(
     """Account for a retained image call while enforcing both retry budgets."""
     counter_name = _generation_counter_name(panel_id, kind)
     project_dir = Path(project_dir).resolve(strict=True)
+    read_project_manifest(project_dir / "project.json")
     attempt = _contained_project_path(project_dir, Path(attempt_path))
     attempt_relative = attempt.relative_to(project_dir)
     with ProjectTransaction(project_dir, "record-generation-attempt") as transaction:
@@ -3585,8 +3586,9 @@ def retain_generation_attempt(
 ) -> dict[str, int]:
     """Validate and atomically retain one provider-generated raster attempt."""
     counter_name = _generation_counter_name(panel_id, kind)
-    extension = _verify_raster_payload(payload, media_type, width, height)
     project_dir = Path(project_dir).resolve(strict=True)
+    read_project_manifest(project_dir / "project.json")
+    extension = _verify_raster_payload(payload, media_type, width, height)
     with ProjectTransaction(project_dir, "retain-generation-attempt") as transaction:
         counters, counts, sequence = _advance_generation_counters(
             project_dir, panel_id, kind, counter_name
@@ -3735,6 +3737,7 @@ def promote_attempt(project_dir: Path, panel_id: str, attempt_path: Path) -> Pat
     if PANEL_ID_PATTERN.fullmatch(panel_id) is None:
         raise ValueError("invalid panel ID")
     project_dir = Path(project_dir)
+    read_project_manifest(project_dir.resolve(strict=True) / "project.json")
     attempt_relative = Path(attempt_path)
     attempt = _contained_project_path(project_dir, attempt_relative)
     if not attempt.is_file():

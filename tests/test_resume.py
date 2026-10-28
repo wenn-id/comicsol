@@ -31,6 +31,7 @@ from scripts.comic_sol import (  # noqa: E402
     record_generation_attempt,
     record_override,
     record_stage,
+    retain_generation_attempt,
     resume_project,
     sha256_file,
     stage_cache_key,
@@ -44,6 +45,7 @@ from scripts.handoff import (  # noqa: E402
 )
 from scripts.input_limits import InputResourceLimitError  # noqa: E402
 from scripts.normalize_panels import normalize_panel  # noqa: E402
+from scripts.schema import UnsupportedSchemaVersionError  # noqa: E402
 from scripts.validate_project import validate_panel_record  # noqa: E402
 
 
@@ -71,6 +73,13 @@ class ResumeTests(unittest.TestCase):
         path = self.project / relative
         atomic_write_json(path, data)
         return path
+
+    def _snapshot_files(self, project=None):
+        project = project or self.project
+        return {
+            path.relative_to(project).as_posix(): (path.read_bytes() if path.is_file() else None)
+            for path in sorted(project.rglob("*"))
+        }
 
     def _complete_project(self):
         story = {
@@ -706,6 +715,49 @@ class ResumeTests(unittest.TestCase):
 
         self.assertFalse(destination.exists())
         self.assertEqual(events_before, (self.project / "logs/events.jsonl").read_bytes())
+
+    def test_attempt_mutators_reject_unsupported_schema_without_writes(self):
+        attempt = self._attempt("p99-99.schema-gate")
+        manifest = read_json(self.project / "project.json")
+        manifest["schema_version"] = "9.0"
+        self._write_json("project.json", manifest)
+        before = self._snapshot_files()
+        payload = attempt.read_bytes()
+
+        with self.assertRaisesRegex(UnsupportedSchemaVersionError, "schema 9.0 is unsupported"):
+            record_generation_attempt(self.project, "p99-99", "initial", attempt)
+        self.assertEqual(before, self._snapshot_files())
+
+        with self.assertRaisesRegex(UnsupportedSchemaVersionError, "schema 9.0 is unsupported"):
+            retain_generation_attempt(
+                self.project, "p99-99", "initial", payload, "image/png", 512, 512
+            )
+        self.assertEqual(before, self._snapshot_files())
+
+        with self.assertRaisesRegex(UnsupportedSchemaVersionError, "schema 9.0 is unsupported"):
+            promote_attempt(self.project, "p99-99", attempt)
+        self.assertEqual(before, self._snapshot_files())
+
+    def test_cli_attempt_commands_reject_unsupported_schema_before_mutation(self):
+        attempt = self._attempt("p99-99.cli-schema-gate")
+        relative_attempt = attempt.relative_to(self.project).as_posix()
+        manifest = read_json(self.project / "project.json")
+        manifest["schema_version"] = "9.0"
+        self._write_json("project.json", manifest)
+        before = self._snapshot_files()
+        commands = (
+            ["record-attempt", os.fspath(self.project), "p99-99", "initial", relative_attempt],
+            ["promote-attempt", os.fspath(self.project), "p99-99", relative_attempt],
+        )
+
+        for arguments in commands:
+            with self.subTest(command=arguments[0]):
+                with (
+                    contextlib.redirect_stdout(io.StringIO()),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
+                    self.assertEqual(1, main(arguments))
+                self.assertEqual(before, self._snapshot_files())
 
     def test_attempt_is_retained_until_verified_promotion(self):
         attempt = self.project / "panels/raw/p01-01.attempt-2.png"
