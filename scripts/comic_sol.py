@@ -685,7 +685,7 @@ def transition(
         )
     if target == "BLOCKED":
         block_warning = warning or "project blocked"
-        reason = re.sub(r"[^a-z0-9]+", "-", block_warning.lower()).strip("-")
+        reason = _warning_reason(block_warning)
         return block_project(project_dir, reason or "project-blocked", block_warning)
     project_dir = Path(project_dir)
     manifest_path = project_dir / "project.json"
@@ -1386,9 +1386,31 @@ def build_resume_plan(project_dir: Path) -> list[ResumeAction]:
 
 
 def _warning_reason(warning: object) -> str | None:
+    """Return a bounded identity for a free-form blocked warning."""
+    if not isinstance(warning, str):
+        return None
+    normalized = warning.strip()
+    if not normalized:
+        return None
+    legacy_reason = _legacy_warning_reason(normalized)
+    if legacy_reason in PUBLIC_BLOCKED_REASON_CATEGORIES:
+        return legacy_reason
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:32]
+    return f"warning-{digest}"
+
+
+def _legacy_warning_reason(warning: object) -> str | None:
+    """Return the pre-hash slug used by existing blocked manifests."""
     if not isinstance(warning, str):
         return None
     return re.sub(r"[^a-z0-9]+", "-", warning.lower()).strip("-")
+
+
+def _warning_matches_reason(warning: object, reason: str) -> bool:
+    """Match a digest reason or legacy slug to its warning."""
+    if re.fullmatch(r"warning-[0-9a-f]{32}", reason):
+        return _warning_reason(warning) == reason
+    return _legacy_warning_reason(warning) == reason
 
 
 def block_project(project_dir: Path, reason: str, warning: str) -> dict[str, object]:
@@ -1752,7 +1774,22 @@ def _resume_project_locked(project_dir: Path, manifest_path: Path) -> dict[str, 
             warnings = manifest.get("warnings")
             if not isinstance(warnings, list):
                 warnings = []
-            manifest["warnings"] = [item for item in warnings if _warning_reason(item) != reason]
+            warning_indexes = {
+                index
+                for index, item in enumerate(warnings)
+                if _warning_matches_reason(item, reason)
+            }
+            if reason == "project-blocked" and not warning_indexes:
+                legacy_unidentified = [
+                    index
+                    for index, item in enumerate(warnings)
+                    if isinstance(item, str) and item.strip() and _legacy_warning_reason(item) == ""
+                ]
+                if len(legacy_unidentified) == 1:
+                    warning_indexes.update(legacy_unidentified)
+            manifest["warnings"] = [
+                item for index, item in enumerate(warnings) if index not in warning_indexes
+            ]
             manifest["status"] = recovery_status
             manifest["blocked_from"] = None
             manifest["blocked_reason"] = None
