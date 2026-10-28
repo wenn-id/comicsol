@@ -17,6 +17,7 @@ class CommandServiceContractTests(unittest.TestCase):
             resume_project=Mock(return_value={"status": "INIT"}),
             invalidate_from=Mock(return_value=["pdf"]),
             record_stage=Mock(return_value={"stage": "planning"}),
+            bind_plan_artifacts=Mock(return_value={"changed": True}),
             record_generation_attempt=Mock(return_value={"initial": 1}),
             promote_attempt=Mock(return_value=Path("panels/raw/p01-01.png")),
             record_override=Mock(return_value=None),
@@ -108,6 +109,8 @@ class CommandServiceContractTests(unittest.TestCase):
             {"stage": "planning"},
             self.service.execute("record-stage", project_dir=project, stage="planning"),
         )
+        self.assertEqual({"changed": True}, self.service.execute("bind-plan", project_dir=project))
+        self.engine.bind_plan_artifacts.assert_called_once_with(project)
         self.assertEqual(
             {"initial": 1},
             self.service.execute(

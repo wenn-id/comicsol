@@ -147,7 +147,7 @@ host. Provider support and host support are separate claims.
 - Target `main`.
 - Explain user-visible behavior and migration impact.
 - Add or update deterministic tests for behavior changes.
-- Preserve the exact 17-tool MCP surface unless a separately reviewed contract change explicitly updates it.
+- Preserve the exact MCP surface documented in `AGENTS.md` unless a separately reviewed contract change explicitly updates it.
 - Do not commit credentials, provider payloads, generated projects, build outputs, or private source material.
 - Do not weaken validation thresholds merely to make a fixture pass.
 

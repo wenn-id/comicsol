@@ -111,6 +111,10 @@ are always deterministic lettering content. SFX chooses its producer with `rende
 especially — and `generated-visual` when integration with the artwork matters more than
 exactness. Transition through `SCRIPTED`, validate with
 `validate_project.py PROJECT_DIR --stage storyboard`, then transition to `STORYBOARDED`.
+Before storyboard validation, run `comic_sol.py bind-plan PROJECT_DIR` (or
+`comic-sol bind-plan PROJECT_DIR`). It validates the three plan artifacts and records their
+hashes, page and panel counts, and ordered panel IDs in the manifest. Keep `project.json`
+engine-owned; do not edit it by hand.
 
 ### 4. Confirm and record image capability
 

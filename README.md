@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/wenn-id/comicsol?include_prereleases&label=release)](https://github.com/wenn-id/comicsol/releases)
 [![License](https://img.shields.io/github/license/wenn-id/comicsol)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![MCP tools](https://img.shields.io/badge/MCP_tools-17-brightgreen)](docs/surfaces.md)
+[![MCP tools](https://img.shields.io/badge/MCP_tools-18-brightgreen)](docs/surfaces.md)
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-blue)](docs/install.md)
 
 **Plan anywhere. Render anywhere. Resume everywhere.**
@@ -176,7 +176,7 @@ Read [privacy](PRIVACY.md), [terms](TERMS.md), [support](SUPPORT.md), and
 - **Trust:** [MCP trust boundary](docs/surfaces.md#mcp-server) · [security](SECURITY.md) · [release chain](docs/releases/release-trust-chain.md) · [rollback](docs/releases/rollback-runbook.md)
 
 The local MCP adapter uses trusted `stdio`, stays inside one explicit output root,
-and exposes exactly 17 `comic_*` tools. The
+and exposes exactly 18 `comic_*` tools. The
 [Codex Plugin](docs/surfaces.md#codex-plugin-bundle) is available from
 this same repository.
 

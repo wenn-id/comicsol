@@ -127,4 +127,10 @@ creates a prewritten storyboard and stops at `STORYBOARDED`. Use the Skill or an
 agent workflow with a drawing tool to continue it. Do not treat a starter as an
 art style or a completed sample.
 
+For a blank project whose plan files are authored directly, run
+`comic-sol bind-plan "/path/to/project"` after writing `plan/story-plan.json`,
+`plan/character-bible.json`, and `plan/storyboard.json`, before storyboard validation.
+This records their descriptors and panel metadata from the validated files. Keep
+`project.json` engine-owned; do not edit it by hand.
+
 Next: [resume, repair, and export](resume-repair-export.md).

@@ -847,9 +847,8 @@ class SfxRepairTests(unittest.TestCase):
     def test_cli_prints_the_result_as_json_and_reports_success(self):
         """The CLI is the surface operators and agents actually reach.
 
-        There is no MCP tool for this operation — `AGENTS.md` pins the surface at
-        exactly 17 `comic_*` tools — so the command line is the only wrapper needing
-        parity coverage.
+        There is no MCP tool for this operation, so the command line is the only
+        wrapper needing parity coverage.
         """
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):

@@ -2686,7 +2686,7 @@ class PackagingTests(unittest.TestCase):
             ),
             (
                 "MCP tools",
-                "https://img.shields.io/badge/MCP_tools-17-brightgreen",
+                "https://img.shields.io/badge/MCP_tools-18-brightgreen",
                 "docs/surfaces.md",
             ),
             (
@@ -2774,7 +2774,7 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("docs/surfaces.md#mcp-server", readme)
         self.assertIn("CONTRIBUTING.md", readme)
         self.assertIn("resume", recovery)
-        self.assertIn("17 `comic_*` tools", readme)
+        self.assertIn("18 `comic_*` tools", readme)
         for platform in ("ubuntu-latest", "macos-26-intel", "windows-latest"):
             self.assertIn(platform, workflow)
         self.assertNotIn("/tmp", workflow)

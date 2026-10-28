@@ -13,6 +13,7 @@ from comic_sol_product import __version__
 
 from comic_sol_product import cli
 from comic_sol_product.config import default_output_root
+from scripts.comic_sol import init_project
 from scripts.handoff import HandoffContractError, HandoffResultError, StaleLockedScopeError
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -247,6 +248,39 @@ class ProductCliTests(unittest.TestCase):
             check for check in payload["data"]["checks"] if check["id"] == "image-capability"
         )
         self.assertEqual("unknown", image_check["details"]["readiness"])
+
+    def test_bind_plan_registers_valid_plan_files_for_a_blank_project(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            project = init_project(
+                root / "projects",
+                "Blank Plan CLI",
+                b"A courier carries a small sun through the night city.",
+                {"language": "en", "mode": "short_prompt"},
+                page_count=1,
+            )
+            fixture = _FIXTURES / "valid-one-page"
+            for relative in (
+                "plan/story-plan.json",
+                "plan/character-bible.json",
+                "plan/storyboard.json",
+            ):
+                shutil.copyfile(fixture / relative, project / relative)
+
+            code, stdout, stderr = self.invoke(["--json", "bind-plan", str(project)])
+            payload = json.loads(stdout)
+            manifest = json.loads((project / "project.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(0, code)
+        self.assertEqual("", stderr)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("bind-plan", payload["command"])
+        self.assertTrue(payload["data"]["changed"])
+        self.assertEqual(["p01-01", "p01-02", "p01-03"], manifest["panels"])
+        self.assertEqual(3, manifest["settings"]["panel_count"])
+        self.assertEqual(
+            {"story_plan", "character_bible", "storyboard"}, set(manifest["artifacts"])
+        )
 
     def test_json_doctor_transports_supplied_image_capability(self):
         cases = (
@@ -1250,6 +1284,7 @@ class HandoffProductCliContractTests(unittest.TestCase):
         expected = {
             "comic_doctor",
             "comic_init",
+            "comic_bind_plan",
             "comic_status",
             "comic_transition",
             "comic_validate",
@@ -1266,7 +1301,7 @@ class HandoffProductCliContractTests(unittest.TestCase):
             "comic_export",
             "comic_finalize",
         }
-        self.assertEqual(17, len(registered))
+        self.assertEqual(18, len(registered))
         self.assertEqual(expected, registered)
         self.assertFalse(any("handoff" in name for name in registered))
 

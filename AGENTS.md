@@ -154,7 +154,7 @@ reimplement it.
 - Error codes in `comic_sol_product/errors.py` are append-only public API in the
   form `CS-<NAMESPACE>-<NNN>`. Never reuse a retired identifier; add a new code
   when semantics change.
-- The MCP surface is exactly 17 `comic_*` tools. Never add, rename, or remove a
+- The MCP surface is exactly 18 `comic_*` tools. Never add, rename, or remove a
   tool without a separately reviewed contract change.
 
 ## Article 8 — Full verification before claiming completion
