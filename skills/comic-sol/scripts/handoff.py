@@ -844,11 +844,14 @@ def locked_scope_sha256_from_content(content_by_path: Mapping[str, bytes]) -> st
 
 
 def _canonical_scope_bytes(project_dir: Path, relative: str) -> bytes:
-    payload = read_contained_bytes(
-        project_dir,
-        relative,
-        max_bytes=MAX_JSON_BYTES if relative.endswith(".json") else MAX_READ_BYTES,
-    )
+    try:
+        payload = read_contained_bytes(
+            project_dir,
+            relative,
+            max_bytes=MAX_JSON_BYTES if relative.endswith(".json") else MAX_READ_BYTES,
+        )
+    except FileNotFoundError as error:
+        raise FileNotFoundError(f"required locked-scope path is missing: {relative}") from error
     if relative.endswith(".json"):
         value = loads_bounded_json(payload, source=relative)
         return canonical_json_bytes(value)
@@ -857,27 +860,50 @@ def _canonical_scope_bytes(project_dir: Path, relative: str) -> bytes:
 
 def _authoritative_prompt_paths(project_dir: Path) -> set[str]:
     prompts: set[str] = set()
+    prompt_root = contained_project_path(project_dir, "prompts", must_exist=False)
+    if not prompt_root.exists():
+        raise FileNotFoundError("required prompt directory is missing: prompts")
+    if not prompt_root.is_dir():
+        raise HandoffContractError(["prompts: must be a prompt directory"])
     for relative_dir in ("prompts/references", "prompts/panels"):
-        directory = contained_project_path(project_dir, relative_dir, must_exist=True)
+        directory = contained_project_path(project_dir, relative_dir, must_exist=False)
+        if not directory.exists():
+            continue
         if not directory.is_dir():
             raise HandoffContractError([f"{relative_dir}: must be a prompt directory"])
-        for entry in sorted(directory.iterdir(), key=lambda path: path.name):
+        try:
+            entries = sorted(directory.iterdir(), key=lambda path: path.name)
+        except FileNotFoundError as error:
+            raise FileNotFoundError(
+                f"required prompt directory is missing: {relative_dir}"
+            ) from error
+        for entry in entries:
             relative = f"{relative_dir}/{entry.name}"
             if entry.is_symlink() or not entry.is_file() or entry.suffix != ".txt":
                 raise HandoffContractError(
                     [f"{relative}: generation prompts must be regular .txt files"]
                 )
-            contained_project_path(project_dir, relative, must_exist=True)
+            try:
+                contained_project_path(project_dir, relative, must_exist=True)
+            except FileNotFoundError as error:
+                raise FileNotFoundError(
+                    f"required locked-scope path is missing: {relative}"
+                ) from error
             prompts.add(relative)
     return prompts
 
 
 def _authoritative_reference_paths(project_dir: Path) -> set[str]:
-    payload = read_contained_bytes(
-        project_dir,
-        "logs/reference-selection.json",
-        max_bytes=MAX_JSON_BYTES,
-    )
+    try:
+        payload = read_contained_bytes(
+            project_dir,
+            "logs/reference-selection.json",
+            max_bytes=MAX_JSON_BYTES,
+        )
+    except FileNotFoundError as error:
+        raise FileNotFoundError(
+            "required locked-scope path is missing: logs/reference-selection.json"
+        ) from error
     value = loads_bounded_json(payload, source="logs/reference-selection.json")
     if not isinstance(value, Mapping) or not isinstance(value.get("panels"), list):
         raise HandoffContractError(["logs/reference-selection.json: panels must be an array"])
@@ -903,7 +929,10 @@ def _authoritative_reference_paths(project_dir: Path) -> set[str]:
             references.add(path)
     _require_valid(issues)
     for relative in sorted(references):
-        contained_project_path(project_dir, relative, must_exist=True)
+        try:
+            contained_project_path(project_dir, relative, must_exist=True)
+        except FileNotFoundError as error:
+            raise FileNotFoundError(f"required locked-scope path is missing: {relative}") from error
     return references
 
 

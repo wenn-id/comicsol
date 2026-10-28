@@ -99,6 +99,22 @@ def _prepared_project(testcase: unittest.TestCase) -> Path:
     return project
 
 
+def _prepared_project_with_user_reference(testcase: unittest.TestCase) -> Path:
+    from tests.test_handoff_lifecycle import (
+        HandoffLifecycleGoldenTests,
+        HandoffPrepareInspectTests,
+    )
+
+    _root, project = HandoffLifecycleGoldenTests._planner_project(testcase)
+    (project / "prompts/references/mira.txt").unlink()
+    HandoffPrepareInspectTests._write_png(
+        project / "references/characters/mira.png",
+        (220, 180, 80),
+    )
+    comic_sol.prepare_handoff(project)
+    return project
+
+
 def _artifact_snapshot(project: Path) -> dict[str, bytes]:
     snapshot = {}
     for path in sorted(project.rglob("*"), key=lambda item: item.relative_to(project).as_posix()):
@@ -397,6 +413,63 @@ class HandoffArchiveContractTests(unittest.TestCase):
         inspection = comic_sol.inspect_handoff(imported)
         self.assertTrue(inspection["prepared"])
         self.assertEqual("current", inspection["scope_state"])
+
+    def test_archive_round_trip_accepts_missing_empty_reference_prompt_directory(self):
+        module = _archive_api(self)
+        project = _prepared_project_with_user_reference(self)
+        prompt_directory = project / "prompts/references"
+        self.assertTrue(prompt_directory.is_dir())
+        self.assertEqual([], list(prompt_directory.iterdir()))
+        archive_root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(archive_root, ignore_errors=True))
+        archive = archive_root / f"{project.name}.comic-sol-handoff"
+
+        module.export_handoff_archive(project, archive)
+        self.assertTrue(module.inspect_handoff_archive(archive)["valid"])
+        output_root = archive_root / "imports"
+        output_root.mkdir()
+        module.import_handoff_archive(archive, output_root)
+        imported = output_root / project.name
+
+        self.assertFalse((imported / "prompts/references").exists())
+        inspection = comic_sol.inspect_handoff(imported)
+        self.assertTrue(inspection["prepared"])
+        self.assertEqual("current", inspection["scope_state"])
+        round_trip = archive_root / "round-trip.comic-sol-handoff"
+        module.export_handoff_archive(imported, round_trip)
+        self.assertEqual(archive.read_bytes(), round_trip.read_bytes())
+
+    def test_missing_locked_scope_path_is_reported_separately_from_staleness(self):
+        module = _archive_api(self)
+        project = _prepared_project_with_user_reference(self)
+        (project / "references/characters/mira.png").unlink()
+        from scripts.validate_project import validate_project
+
+        scope_issues = [
+            issue
+            for issue in validate_project(project, "storyboard")
+            if issue.path == "handoff/manifest.json" and issue.field == "locked_scope_sha256"
+        ]
+
+        self.assertTrue(
+            any(
+                "required locked-scope path is missing: references/characters/mira.png"
+                in issue.message
+                for issue in scope_issues
+            ),
+            scope_issues,
+        )
+        self.assertFalse(
+            any("does not match current project scope" in issue.message for issue in scope_issues),
+            scope_issues,
+        )
+
+        archive_root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(archive_root, ignore_errors=True))
+        archive = archive_root / f"{project.name}.comic-sol-handoff"
+        with self.assertRaisesRegex(module.HandoffArchiveError, "handoff project is not valid"):
+            module.export_handoff_archive(project, archive)
+        self.assertFalse(archive.exists())
 
     def test_export_accepts_lexically_aliased_output_parent(self):
         module = _archive_api(self)
