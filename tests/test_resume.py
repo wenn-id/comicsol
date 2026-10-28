@@ -2312,6 +2312,67 @@ class BlockedRecoveryTests(unittest.TestCase):
         for relative, payload in before.items():
             self.assertEqual(payload, (self.project / relative).read_bytes())
 
+    def test_long_block_warning_uses_bounded_reason_and_clears_on_resume(self):
+        warning = "Needs review: " + "visual constraint " * 20
+        self.assertGreater(len(warning), 64)
+        self.assertLessEqual(len(warning), 500)
+
+        blocked = transition(self.project, "BLOCKED", warning)
+        self.assertEqual("BLOCKED", blocked["status"])
+        self.assertRegex(blocked["blocked_reason"], r"^warning-[0-9a-f]{32}$")
+
+        result = resume_project(self.project)
+        resumed = read_json(self.project / "project.json")
+        self.assertEqual("STORYBOARDED", result["status"])
+        self.assertEqual(["unrelated continuity warning"], resumed["warnings"])
+
+    def test_non_latin_block_warning_uses_stable_reason_and_clears_on_resume(self):
+        warning = "需要进行图像审查"
+
+        blocked = transition(self.project, "BLOCKED", warning)
+        self.assertEqual("BLOCKED", blocked["status"])
+        self.assertRegex(blocked["blocked_reason"], r"^warning-[0-9a-f]{32}$")
+
+        result = resume_project(self.project)
+        resumed = read_json(self.project / "project.json")
+        self.assertEqual("STORYBOARDED", result["status"])
+        self.assertEqual(["unrelated continuity warning"], resumed["warnings"])
+
+    def test_image_capability_warning_stays_blocked_until_capability_is_available(self):
+        warning = "image capability unavailable"
+        blocked = transition(self.project, "BLOCKED", warning)
+        self.assertEqual("image-capability-unavailable", blocked["blocked_reason"])
+
+        result = resume_project(self.project)
+        self.assertEqual("BLOCKED", result["status"])
+        self.assertIn(warning, read_json(self.project / "project.json")["warnings"])
+
+        manifest = read_json(self.project / "project.json")
+        manifest["capability"].update(
+            {
+                "detected_at": "2026-07-23T00:01:00Z",
+                "name": "restored-image-tool",
+                "status": "available",
+            }
+        )
+        atomic_write_json(self.project / "project.json", manifest)
+        resumed = resume_project(self.project)
+
+        self.assertEqual("STORYBOARDED", resumed["status"])
+        self.assertEqual(
+            ["unrelated continuity warning"],
+            read_json(self.project / "project.json")["warnings"],
+        )
+
+    def test_legacy_project_blocked_reason_clears_unique_non_latin_warning(self):
+        warning = "需要进行图像审查"
+        block_project(self.project, "project-blocked", warning)
+
+        result = resume_project(self.project)
+        resumed = read_json(self.project / "project.json")
+        self.assertEqual("STORYBOARDED", result["status"])
+        self.assertEqual(["unrelated continuity warning"], resumed["warnings"])
+
     def test_resume_is_idempotent_after_first_recovery(self):
         block_project(
             self.project,
