@@ -273,8 +273,22 @@ class ResumeTests(unittest.TestCase):
             }
         self._write_json("logs/stage-cache.json", {"schema_version": "1.0", "stages": stages})
 
+    def _resume_plan(self, stale_stage=None, action="reuse"):
+        return [
+            ResumeAction(
+                stage,
+                action if stage == stale_stage else "reuse",
+                "stage",
+                "stale" if stage == stale_stage else "current",
+            )
+            for stage in STAGES
+        ]
+
     def _run_finalize(self, project_dir=None):
         """Run finalization while isolating stages outside the lettering decision."""
+        manifest = read_json(self.project / "project.json")
+        manifest["status"] = "QA_READY"
+        atomic_write_json(self.project / "project.json", manifest)
         (self.project / "qa/pages").mkdir(parents=True, exist_ok=True)
         (self.project / "qa/pages/page-001.json").write_text("{}\n", "utf-8")
         with (
@@ -308,7 +322,7 @@ class ResumeTests(unittest.TestCase):
     def test_finalize_treats_regenerate_and_rerun_as_stale(self):
         for action in ("regenerate", "rerun"):
             with self.subTest(action=action):
-                plan = [ResumeAction("lettering", action, "stage", "stale")]
+                plan = self._resume_plan("lettering", action)
                 with (
                     patch("scripts.comic_sol.build_resume_plan", return_value=plan),
                     patch("scripts.letter_panels.letter_project") as letter,
@@ -319,7 +333,7 @@ class ResumeTests(unittest.TestCase):
     def test_finalize_preserves_lexical_path_for_stale_stage_callback(self):
         """Finalization must not leak a platform-specific resolved path to callbacks."""
         lexical_project = self.project / ".." / self.project.name
-        plan = [ResumeAction("lettering", "rerun", "stage", "stale")]
+        plan = self._resume_plan("lettering", "rerun")
         with (
             patch("scripts.comic_sol.build_resume_plan", return_value=plan),
             patch("scripts.letter_panels.letter_project") as letter,
@@ -333,7 +347,7 @@ class ResumeTests(unittest.TestCase):
         atomic_write_json(self.project / "project.json", manifest)
         (self.project / "panels/p01-01/lettered.png").unlink(missing_ok=True)
         with (
-            patch("scripts.comic_sol.build_resume_plan", return_value=[]),
+            patch("scripts.comic_sol.build_resume_plan", return_value=self._resume_plan()),
             patch("scripts.letter_panels.letter_project") as letter,
         ):
             self._run_finalize()
@@ -347,7 +361,7 @@ class ResumeTests(unittest.TestCase):
         (self.project / "panels/p01-01/lettered.png").unlink(missing_ok=True)
         lexical_project = self.project / ".." / self.project.name
         with (
-            patch("scripts.comic_sol.build_resume_plan", return_value=[]),
+            patch("scripts.comic_sol.build_resume_plan", return_value=self._resume_plan()),
             patch("scripts.letter_panels.letter_project") as letter,
         ):
             self._run_finalize(lexical_project)
@@ -1591,6 +1605,62 @@ class ResumeTests(unittest.TestCase):
             self.assertEqual(0, main(["invalidate", os.fspath(self.project), "export"]))
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(0, main(["record-stage", os.fspath(self.project), "export"]))
+
+    def test_finalize_cli_rejects_blocked_project(self):
+        manifest = read_json(self.project / "project.json")
+        manifest["status"] = "STORYBOARDED"
+        atomic_write_json(self.project / "project.json", manifest)
+        block_project(self.project, "test-block", "test-block")
+        before = self._snapshot_files()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            result = main(["finalize", os.fspath(self.project)])
+
+        self.assertEqual(1, result)
+        self.assertEqual("", stdout.getvalue())
+        self.assertIn("BLOCKED", stderr.getvalue())
+        self.assertEqual(before, self._snapshot_files())
+
+    def test_blocked_resume_caps_fresh_cache_status_at_blocked_from(self):
+        manifest = read_json(self.project / "project.json")
+        manifest["status"] = "STORYBOARDED"
+        atomic_write_json(self.project / "project.json", manifest)
+        blocked = block_project(self.project, "test-block", "test-block")
+        self.assertEqual("STORYBOARDED", blocked["blocked_from"])
+        self.assertTrue(
+            all(
+                action.action == "reuse"
+                for action in build_resume_plan(self.project)
+                if action.artifact == "stage"
+            )
+        )
+        artifact_paths = (
+            "plan/story-plan.json",
+            "plan/character-bible.json",
+            "plan/storyboard.json",
+            "panels/raw/p01-01.png",
+            "panels/clean/p01-01.png",
+            "panels/p01-01/lettered.png",
+            "pages/page-001.png",
+            "qa/report.md",
+            "exports/sunlight-courier.pdf",
+        )
+        before = {relative: (self.project / relative).read_bytes() for relative in artifact_paths}
+
+        result = resume_project(self.project)
+
+        self.assertEqual("STORYBOARDED", result["status"])
+        self.assertEqual(list(STAGES), result["preserved"])
+        self.assertEqual([], result["invalidated"])
+        resumed = read_json(self.project / "project.json")
+        self.assertEqual("STORYBOARDED", resumed["status"])
+        self.assertIsNone(resumed["blocked_from"])
+        self.assertIsNone(resumed["blocked_reason"])
+        self.assertNotIn("test-block", resumed["warnings"])
+        for relative, payload in before.items():
+            self.assertEqual(payload, (self.project / relative).read_bytes())
 
     def test_status_summary_reports_complete_project_with_no_next_action(self):
         summary = summarize_project_status(self.project)

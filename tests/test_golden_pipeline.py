@@ -14,6 +14,7 @@ from scripts.comic_sol import (
     finalize_project,
     init_project,
     read_json,
+    record_stage,
     sha256_file,
     transition,
 )
@@ -88,6 +89,8 @@ class GoldenPipelineTests(unittest.TestCase):
         transition(self.project, "SCRIPTED")
         transition(self.project, "STORYBOARDED")
         transition(self.project, "REFERENCES_READY")
+        record_stage(self.project, "planning")
+        record_stage(self.project, "storyboard")
 
     def _prepare_panel_artifacts(self):
         raw = self.project / "panels/raw/p01-01.png"
@@ -132,13 +135,16 @@ class GoldenPipelineTests(unittest.TestCase):
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
         transition(self.project, "PANELS_READY")
         transition(self.project, "QA_READY")
+        record_stage(self.project, "generation")
 
     def _prepare_ready_artifacts(self):
         self._prepare_panel_artifacts()
         letter_project(self.project)
         transition(self.project, "LETTERED")
+        record_stage(self.project, "lettering")
         compose_project(self.project)
         transition(self.project, "COMPOSED")
+        record_stage(self.project, "composition")
         self._prepare_page_quality()
 
     def _prepare_page_quality(self):

@@ -43,6 +43,7 @@ from .comic_sol import (
     finalize_project,
     init_project,
     read_json,
+    record_stage,
     sha256_file,
     transition,
 )
@@ -319,6 +320,8 @@ def _prepare_manifest(project: Path, contract: dict[str, object], panel_ids: Seq
     atomic_write_json(project / "project.json", manifest)
     for status in ("PLANNED", "SCRIPTED", "STORYBOARDED", "REFERENCES_READY"):
         transition(project, status)
+    record_stage(project, "planning")
+    record_stage(project, "storyboard")
 
 
 def _record_manifest_warnings(project: Path, warnings: Iterable[str]) -> None:
@@ -418,6 +421,7 @@ def _build_panels(
     _record_manifest_warnings(project, UNREVIEWED_PANEL_EVIDENCE.values())
     transition(project, "PANELS_READY")
     transition(project, "QA_READY")
+    record_stage(project, "generation")
 
 
 def _tail_regions(project: Path, page_number: int) -> list[dict[str, object]]:

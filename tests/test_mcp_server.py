@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from tests.support import bounded_tail_regions, make_symlink  # noqa: E402
 from scripts.materialize_sample import materialize_sample  # noqa: E402
-from scripts.comic_sol import atomic_write_json, read_json  # noqa: E402
+from scripts.comic_sol import atomic_write_json, block_project, read_json, record_stage  # noqa: E402
 from scripts.page_quality import build_page_quality_record, write_page_quality_record  # noqa: E402
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
@@ -173,6 +173,55 @@ class McpServerUnitTests(unittest.TestCase):
         (self.root / "empty-project").mkdir()
         with self.assertRaisesRegex(ToolError, "project directory is not an initialized"):
             mcp_server._resolve_project("empty-project")
+
+    def test_finalize_rejects_blocked_project_without_writes(self):
+        project = self.root / "sunlight-courier"
+        copy_sample(project)
+        manifest = read_json(project / "project.json")
+        manifest["status"] = "STORYBOARDED"
+        atomic_write_json(project / "project.json", manifest)
+        from scripts.compose_pages import compose_project
+        from scripts.letter_panels import letter_project
+
+        letter_project(project)
+        compose_project(project)
+        write_current_page_qa_records(project, (1, 2))
+        manifest = read_json(project / "project.json")
+        manifest["status"] = "COMPOSED"
+        atomic_write_json(project / "project.json", manifest)
+        block_project(project, "test-block", "test-block")
+        relatives = (
+            "project.json",
+            "logs/stage-cache.json",
+            "logs/events.jsonl",
+            "cache/composition.json",
+            "panels/p01-01/lettered.png",
+            "pages/page-001.png",
+            "qa/pages/page-001.json",
+            "qa/pages/page-002.json",
+            "exports/sunlight-courier.pdf",
+            "exports/pdf-verification.json",
+            "qa/report.md",
+        )
+        before = {
+            relative: (project / relative).read_bytes() if (project / relative).is_file() else None
+            for relative in relatives
+        }
+        from scripts.export_pdf import guarded_export
+
+        with (
+            mock.patch("scripts.comic_sol.build_resume_plan", return_value=[]),
+            mock.patch("scripts.export_pdf.guarded_export", wraps=guarded_export) as export,
+            self.assertRaises(ToolError),
+        ):
+            mcp_server.comic_finalize("sunlight-courier")
+
+        export.assert_not_called()
+        after = {
+            relative: (project / relative).read_bytes() if (project / relative).is_file() else None
+            for relative in relatives
+        }
+        self.assertEqual(before, after)
 
     def test_project_symlink_cannot_escape_root(self):
         outside = Path(self.temporary_directory.name) / "outside"
@@ -1026,6 +1075,8 @@ class McpProtocolTests(unittest.IsolatedAsyncioTestCase):
                 p = project / rel
                 if p.is_file():
                     p.unlink()
+            for stage in ("planning", "storyboard", "generation"):
+                record_stage(project, stage)
 
             def write_page_qa_records():
                 """Record review of the pages as they currently exist on disk."""
