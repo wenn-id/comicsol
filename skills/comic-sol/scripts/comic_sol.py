@@ -679,6 +679,10 @@ def transition(
     """Move a project by one legal state, publishing the manifest last."""
     if warning is not None:
         validate_narrative(warning, message=WARNING_LIMIT_MESSAGE, max_chars=MAX_WARNING_CHARS)
+    if warning is not None and target in TERMINAL_STATUSES:
+        raise ValueError(
+            "terminal transitions cannot add --warning; record warnings before rendering the QA report"
+        )
     if target == "BLOCKED":
         block_warning = warning or "project blocked"
         reason = re.sub(r"[^a-z0-9]+", "-", block_warning.lower()).strip("-")

@@ -282,6 +282,8 @@ If `finalize` is unavailable, run the stages individually in this order:
    must exist before the terminal transition because final validation requires it, and
    it projects the terminal status the project is about to reach. Do not re-render it
    afterwards; that would invalidate the recorded hash.
+   Record any warning that affects the terminal status before rendering the report;
+   terminal transitions cannot take a new `--warning` value.
 6. `validate_project.py PROJECT_DIR --stage final`, then transition to `COMPLETE`,
    `COMPLETE_WITH_WARNINGS`, or `BLOCKED`, and record the `export` cache with
    `comic_sol.py record-stage PROJECT_DIR export`.

@@ -17,6 +17,7 @@ from scripts.comic_sol import (  # noqa: E402
     read_json,
     ResumeAction,
     sha256_file,
+    transition,
 )
 from scripts.stage_registry import RESUME_STAGES  # noqa: E402
 from scripts.validate_project import (  # noqa: E402
@@ -642,6 +643,29 @@ class GuardedOperationTests(unittest.TestCase):
 
         result = transition(self.project, "COMPLETE_WITH_WARNINGS")
         self.assertEqual("COMPLETE_WITH_WARNINGS", result["status"])
+
+    def test_guarded_transition_rejects_late_warning_without_writing(self):
+        self._make_export_ready()
+        from scripts.export_pdf import guarded_export
+
+        guarded_export(self.project)
+        manifest = read_json(self.project / "project.json")
+        manifest["status"] = "EXPORTED"
+        atomic_write_json(self.project / "project.json", manifest)
+        from scripts.render_report import render_report
+
+        render_report(self.project)
+        before = self._finalization_snapshot()
+        report_text = (self.project / "qa/report.md").read_text("utf-8")
+        self.assertIn("- Final status: **COMPLETE**", report_text)
+
+        with self.assertRaisesRegex(ValueError, "terminal transitions cannot add --warning"):
+            transition(self.project, "COMPLETE", "late warning")
+
+        self.assertEqual(before, self._finalization_snapshot())
+        self.assertIn(
+            "- Final status: **COMPLETE**", (self.project / "qa/report.md").read_text("utf-8")
+        )
 
 
 if __name__ == "__main__":
