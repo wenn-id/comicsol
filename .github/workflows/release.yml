@@ -341,11 +341,28 @@ jobs:
           python -m venv "${RUNNER_TEMP}/comic-sol-audit"
           "${RUNNER_TEMP}/comic-sol-audit/bin/python" -m pip install --require-hashes -r requirements/locks/audit-python311.txt
           "${RUNNER_TEMP}/comic-sol-audit/bin/python" -m pip_audit -r requirements/locks/runtime-linux-x86_64.txt
+      - name: Generate Syft CycloneDX inventory for the built image
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c
+        with:
+          image: comic-sol:${{ needs.prepare.outputs.version }}
+          format: cyclonedx-json
+          output-file: ${{ runner.temp }}/comic-sol-container-syft.sbom.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Block on high-severity image vulnerabilities with fixes
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439
+        with:
+          image: comic-sol:${{ needs.prepare.outputs.version }}
+          fail-build: true
+          severity-cutoff: high
+          only-fixed: true
+          output-format: table
       - name: Generate the image CycloneDX SBOM from the built image
         run: >
           python scripts/container_sbom.py
           --image comic-sol:${{ needs.prepare.outputs.version }}
           --version ${{ needs.prepare.outputs.version }}
+          --syft-sbom "${RUNNER_TEMP}/comic-sol-container-syft.sbom.json"
           --output container-assets/comic-sol-${{ needs.prepare.outputs.version }}-linux-x86_64.container.sbom.json
       - name: Export exact candidate container image
         shell: bash

@@ -39,6 +39,7 @@ from comic_sol_product.distribution import (  # noqa: E402
 from scripts.build_portable import write_environment_sbom  # noqa: E402
 
 BASE_IMAGE_PATTERN = re.compile(r'^ARG PYTHON_BASE="(?P<reference>[^"]+@[^\s"]+)"$', re.MULTILINE)
+OS_PACKAGE_PURL_TYPES = frozenset({"apk", "deb", "rpm"})
 
 
 def container_sbom_name(version: str) -> str:
@@ -65,6 +66,80 @@ def parse_base_image(dockerfile: Path | None = None) -> str:
             f"found {len(matches)}"
         )
     return matches[0]
+
+
+def merge_syft_os_packages(environment_sbom: Path, syft_sbom: Path) -> int:
+    record = json.loads(environment_sbom.read_text(encoding="utf-8"))
+    syft_record = json.loads(syft_sbom.read_text(encoding="utf-8"))
+    if syft_record.get("bomFormat") != "CycloneDX":
+        raise RuntimeError("Syft SBOM must use CycloneDX format")
+    components = record.get("components")
+    syft_components = syft_record.get("components")
+    if not isinstance(components, list) or not isinstance(syft_components, list):
+        raise RuntimeError("CycloneDX SBOM is missing a component list")
+
+    reference_map: dict[str, str] = {}
+    for component in components:
+        if not isinstance(component, dict):
+            continue
+        canonical = str(component.get("purl") or component.get("bom-ref") or "")
+        if not canonical:
+            continue
+        for reference in (component.get("bom-ref"), component.get("purl")):
+            if reference:
+                reference_map[str(reference)] = canonical
+
+    added: list[dict[str, object]] = []
+    for component in syft_components:
+        if not isinstance(component, dict):
+            continue
+        purl = str(component.get("purl") or "")
+        purl_type = purl.partition(":")[2].partition("/")[0] if purl.startswith("pkg:") else ""
+        if component.get("type") != "operating-system" and purl_type not in OS_PACKAGE_PURL_TYPES:
+            continue
+        source_ref = str(component.get("bom-ref") or purl)
+        canonical = purl or source_ref
+        if not source_ref or source_ref in reference_map or canonical in reference_map:
+            continue
+        component["bom-ref"] = source_ref
+        components.append(component)
+        added.append(component)
+        reference_map[source_ref] = canonical
+        reference_map[canonical] = canonical
+
+    if not added:
+        raise RuntimeError("Syft SBOM contains no operating-system package components")
+
+    dependencies = record.get("dependencies")
+    if not isinstance(dependencies, list):
+        dependencies = []
+        record["dependencies"] = dependencies
+    added_refs = {
+        reference_map[str(component.get("bom-ref") or component.get("purl") or "")]
+        for component in added
+    }
+    dependency_refs = {
+        str(dependency.get("ref"))
+        for dependency in dependencies
+        if isinstance(dependency, dict) and dependency.get("ref")
+    }
+    for dependency in syft_record.get("dependencies", []):
+        if not isinstance(dependency, dict):
+            continue
+        source_ref = str(dependency.get("ref") or "")
+        canonical_ref = reference_map.get(source_ref)
+        if not canonical_ref or canonical_ref not in added_refs or canonical_ref in dependency_refs:
+            continue
+        depends_on = [
+            reference_map[reference]
+            for reference in dependency.get("dependsOn", [])
+            if isinstance(reference, str) and reference in reference_map
+        ]
+        dependencies.append({"ref": canonical_ref, "dependsOn": sorted(set(depends_on))})
+        dependency_refs.add(canonical_ref)
+
+    environment_sbom.write_text(json.dumps(record), encoding="utf-8")
+    return len(added)
 
 
 def _check(command: list[str], description: str) -> subprocess.CompletedProcess:
@@ -128,6 +203,7 @@ def main() -> int:
     parser.add_argument("--image", required=True, help="built image reference to inventory")
     parser.add_argument("--version", required=True, help="canonical release version")
     parser.add_argument("--output", required=True, type=Path, help="destination SBOM path")
+    parser.add_argument("--syft-sbom", required=True, type=Path, help="Syft CycloneDX image SBOM")
     parser.add_argument("--docker", default="docker", help="docker CLI to invoke")
     args = parser.parse_args()
 
@@ -140,10 +216,15 @@ def main() -> int:
         )
         environment_sbom = temporary / "image-environment.sbom.json"
         write_environment_sbom(mirror_python, environment_sbom, temporary, Path(sys.executable))
+        os_package_count = merge_syft_os_packages(environment_sbom, args.syft_sbom)
         record = json.loads(environment_sbom.read_text(encoding="utf-8"))
         metadata = record.setdefault("metadata", {})
         properties = metadata.setdefault("properties", [])
         properties.append({"name": "comic-sol:container:base-image", "value": base_image})
+        properties.append({"name": "comic-sol:container:os-package-source", "value": "Syft"})
+        properties.append(
+            {"name": "comic-sol:container:os-package-count", "value": str(os_package_count)}
+        )
         environment_sbom.write_text(json.dumps(record), encoding="utf-8")
 
         output = args.output.resolve()

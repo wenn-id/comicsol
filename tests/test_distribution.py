@@ -28,6 +28,7 @@ from comic_sol_product.portable import (
     REQUIRED_RUNTIME_SUFFIXES,
     validate_runtime_members,
 )
+from scripts.container_sbom import merge_syft_os_packages
 
 
 class NativeDistributionContractTests(unittest.TestCase):
@@ -239,6 +240,52 @@ class NativeDistributionContractTests(unittest.TestCase):
             except ImportError:
                 self.skipTest("CycloneDX JSON validation dependencies are not installed")
             validate_sbom_schema(container)
+
+    def test_syft_os_packages_survive_container_sbom_schema_validation(self):
+        try:
+            import cyclonedx  # noqa: F401
+            import jsonschema  # noqa: F401
+        except ImportError:
+            self.skipTest("CycloneDX JSON validation dependencies are not installed")
+
+        os_purl = "pkg:deb/debian/libc6@2.36?arch=amd64&distro=debian-12"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            release = Path(temporary_directory)
+            artifact = release / f"comic-sol-{RELEASE_VERSION}-linux-x86_64.container.tar"
+            artifact.write_bytes(b"container-image")
+            environment = self._write_environment_sbom(release)
+            syft_sbom = release / "syft.sbom.json"
+            syft_sbom.write_text(
+                json.dumps(
+                    {
+                        "bomFormat": "CycloneDX",
+                        "components": [
+                            {
+                                "type": "library",
+                                "name": "libc6",
+                                "version": "2.36",
+                                "purl": os_purl,
+                                "bom-ref": os_purl,
+                            }
+                        ],
+                        "dependencies": [{"ref": os_purl, "dependsOn": []}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            merge_syft_os_packages(environment, syft_sbom)
+            container = write_sbom(
+                release,
+                self.identity,
+                environment,
+                artifact.name,
+                destination_name=(f"comic-sol-{RELEASE_VERSION}-linux-x86_64.container.sbom.json"),
+            )
+
+            validate_sbom_schema(container)
+            record = json.loads(container.read_text(encoding="utf-8"))
+
+        self.assertIn(os_purl, {component.get("purl") for component in record["components"]})
 
     def test_noncanonical_output_filename_uses_exact_destination_name(self):
         try:

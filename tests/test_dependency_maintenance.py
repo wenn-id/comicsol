@@ -13,6 +13,11 @@ class DependencyMaintenanceTests(unittest.TestCase):
         self.assertNotIn("/requirements/locks", dependabot)
         self.assertIn("package-ecosystem: pip", dependabot)
         self.assertIn("package-ecosystem: docker", dependabot)
+        docker_updates = dependabot.split("package-ecosystem: docker", 1)[1].split(
+            "package-ecosystem: github-actions", 1
+        )[0]
+        self.assertIn("interval: weekly", docker_updates)
+        self.assertIn("docker-base-image:", docker_updates)
 
     def test_refresh_workflow_compiles_native_locks_and_runs_required_checks(self):
         workflow = (ROOT / ".github" / "workflows" / "refresh-dependency-locks.yml").read_text(
