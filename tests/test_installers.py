@@ -300,8 +300,7 @@ class PublicInstallerContractTests(unittest.TestCase):
         shutil.copyfile(archive, fixture_root / archive_name)
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         identity = (
-            r"^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@"
-            f"refs/tags/{re.escape(release)}$"
+            "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main"
         )
         _checksums, _signature, cosign = self.write_powershell_signature_fixture(
             fixture_root,
