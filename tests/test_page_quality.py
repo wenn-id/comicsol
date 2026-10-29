@@ -1259,6 +1259,68 @@ class MultiSpeakerAttributionQualityTests(unittest.TestCase):
                 self.assertEqual("pass", checks[check_id]["result"])
                 self.assertEqual([], checks[check_id]["regions"])
 
+    def test_text_overlap_detects_tails_crossing_other_balloon_ellipses(self):
+        def straight_tail(start_x, end_x, y, item):
+            delta = end_x - start_x
+            first_control_x = start_x + delta / 3
+            second_control_x = start_x + delta * 2 / 3
+            return {
+                "attachment": [start_x, y],
+                "base": [[start_x, y - 4], [start_x, y + 4]],
+                "control": [
+                    [[first_control_x, y - 4], [second_control_x, y - 4]],
+                    [[first_control_x, y + 4], [second_control_x, y + 4]],
+                ],
+                "length": abs(delta),
+                "policy_version": "organic-cubic-v1",
+                "source_gap": 10.0,
+                "speaker_anchor": item["attribution"]["speaker_anchor"],
+                "tip": [end_x, y],
+                "voice_source": item["tail"]["voice_source"],
+                "width": 8.0,
+            }
+
+        for collision_side in ("candidate", "prior"):
+            with self.subTest(collision_side=collision_side):
+                project = self._fresh_project()
+                path = self._geometry_path(project)
+                geometry = json.loads(path.read_text("utf-8"))
+                items = {item["id"]: item for item in geometry["items"]}
+                first, second = (items[text_id] for text_id in self.text_ids)
+                first_tip = 190 if collision_side == "prior" else 136
+                second_tip = 100 if collision_side == "candidate" else 156
+                first.update(
+                    {
+                        "box": {"x": 20, "y": 200, "width": 120, "height": 80},
+                        "tail": straight_tail(135, first_tip, 240, first),
+                    }
+                )
+                second.update(
+                    {
+                        "box": {"x": 150, "y": 200, "width": 120, "height": 80},
+                        "tail": straight_tail(155, second_tip, 240, second),
+                    }
+                )
+                path.write_text(
+                    json.dumps(geometry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                    "utf-8",
+                )
+
+                _, checks = self._checks(project)
+
+                self.assertEqual("fail", checks["text-overlap"]["result"])
+                self.assertEqual(
+                    [
+                        {
+                            "items": list(self.text_ids),
+                            "overlap_area": 0,
+                            "overlap_ratio": 0.0,
+                            "panel_id": "p01-02",
+                        }
+                    ],
+                    checks["text-overlap"]["regions"],
+                )
+
     def test_each_balloon_is_attributed_to_the_character_that_speaks_it(self):
         project = self._fresh_project()
         geometry = json.loads(self._geometry_path(project).read_text("utf-8"))

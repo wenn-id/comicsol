@@ -17,6 +17,7 @@ from scripts.core_primitives import (
     rectangles_overlap,
     subject_keepout_radius,
     tail_geometry_result,
+    _tail_intersects_ellipse,
 )
 
 
@@ -70,6 +71,23 @@ class BalloonGeometryPrimitiveTests(unittest.TestCase):
         )
         self.assertEqual(
             4, rectangle_overlap_area(first, {"x": 8, "y": 8, "width": 5, "height": 5})
+        )
+
+    def test_cubic_tail_hits_balloon_ellipse_without_bbox_false_positive(self):
+        tail = {
+            "base": [[0.0, 0.0], [1.0, -1.0]],
+            "control": [[[33.0, 33.0], [66.0, 66.0]], [[33.0, 32.0], [66.0, 65.0]]],
+            "tip": [100.0, 100.0],
+        }
+
+        self.assertTrue(
+            _tail_intersects_ellipse(tail, {"x": 90, "y": 90, "width": 20, "height": 20})
+        )
+        self.assertFalse(
+            _tail_intersects_ellipse(tail, {"x": 0, "y": 90, "width": 10, "height": 10})
+        )
+        self.assertFalse(
+            _tail_intersects_ellipse({"base": []}, {"x": 90, "y": 90, "width": 20, "height": 20})
         )
 
     def test_separation_is_zero_when_rectangles_touch_or_overlap(self):

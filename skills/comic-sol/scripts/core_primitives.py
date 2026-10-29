@@ -6,7 +6,7 @@ import json
 import math
 import re
 from collections.abc import Mapping, Sequence
-from typing import TypeAlias, TypeGuard
+from typing import TypeAlias, TypeGuard, cast
 
 
 PANEL_ID_PATTERN = re.compile(r"^p[0-9]{2}-[0-9]{2}$")
@@ -130,6 +130,140 @@ def rectangle_overlap_area(first: Rectangle, second: Rectangle) -> int:
     if width <= 0 or height <= 0:
         return 0
     return width * height
+
+
+def _cubic_bezier_points(
+    start: Point, first_control: Point, second_control: Point, end: Point
+) -> tuple[tuple[float, float], ...]:
+    points = (start, first_control, second_control, end)
+    if not all(is_geometry_point(point) for point in points):
+        raise ValueError("cubic curve points must contain finite coordinates")
+    start_x, start_y = float(start[0]), float(start[1])
+    first_x, first_y = float(first_control[0]), float(first_control[1])
+    second_x, second_y = float(second_control[0]), float(second_control[1])
+    end_x, end_y = float(end[0]), float(end[1])
+    result = []
+    for index in range(25):
+        t = index / 24
+        inverse = 1 - t
+        result.append(
+            (
+                inverse**3 * start_x
+                + 3 * inverse**2 * t * first_x
+                + 3 * inverse * t**2 * second_x
+                + t**3 * end_x,
+                inverse**3 * start_y
+                + 3 * inverse**2 * t * first_y
+                + 3 * inverse * t**2 * second_y
+                + t**3 * end_y,
+            )
+        )
+    return tuple(result)
+
+
+def _tail_polygon(tail: Mapping[str, object]) -> tuple[tuple[float, float], ...] | None:
+    base = tail.get("base")
+    control = tail.get("control")
+    tip = tail.get("tip")
+    if (
+        not isinstance(base, (list, tuple))
+        or len(base) != 2
+        or any(not is_geometry_point(point) for point in base)
+        or not isinstance(control, (list, tuple))
+        or len(control) != 2
+        or not is_geometry_point(tip)
+    ):
+        return None
+    control_points = []
+    for side in control:
+        if (
+            not isinstance(side, (list, tuple))
+            or len(side) != 2
+            or any(not is_geometry_point(point) for point in side)
+        ):
+            return None
+        control_points.append((cast(Point, side[0]), cast(Point, side[1])))
+    first_base, second_base = cast(Point, base[0]), cast(Point, base[1])
+    tip_point = cast(Point, tip)
+    first_side = _cubic_bezier_points(
+        first_base, control_points[0][0], control_points[0][1], tip_point
+    )
+    second_side = _cubic_bezier_points(
+        second_base, control_points[1][0], control_points[1][1], tip_point
+    )
+    return first_side + tuple(reversed(second_side))
+
+
+def _polygon_contains_origin(polygon: Sequence[Point]) -> bool:
+    inside = False
+    previous_x, previous_y = polygon[-1]
+    for current_x, current_y in polygon:
+        if (previous_y > 0) != (current_y > 0):
+            crossing_x = previous_x + (current_x - previous_x) * (
+                -previous_y / (current_y - previous_y)
+            )
+            if 0 < crossing_x:
+                inside = not inside
+        previous_x, previous_y = current_x, current_y
+    return inside
+
+
+def _segment_intersects_unit_circle(first: Point, second: Point) -> bool:
+    delta_x = second[0] - first[0]
+    delta_y = second[1] - first[1]
+    length_squared = delta_x**2 + delta_y**2
+    fraction = (
+        0.0
+        if length_squared == 0
+        else max(
+            0.0,
+            min(1.0, -(first[0] * delta_x + first[1] * delta_y) / length_squared),
+        )
+    )
+    nearest_x = first[0] + fraction * delta_x
+    nearest_y = first[1] + fraction * delta_y
+    return nearest_x**2 + nearest_y**2 <= 1.0
+
+
+def _polygon_intersects_ellipse(polygon: Sequence[Point], rectangle: Rectangle) -> bool:
+    if len(polygon) < 3 or any(not is_geometry_point(point) for point in polygon):
+        return False
+    try:
+        x, y, width, height = _rectangle_values(rectangle)
+    except ValueError:
+        return False
+    if width <= 0 or height <= 0:
+        return False
+    center_x, center_y = x + width / 2, y + height / 2
+    radius_x, radius_y = max(0.5, width / 2), max(0.5, height / 2)
+    normalized = tuple(
+        ((float(point[0]) - center_x) / radius_x, (float(point[1]) - center_y) / radius_y)
+        for point in polygon
+    )
+    if (
+        max(point[0] for point in normalized) < -1.0
+        or min(point[0] for point in normalized) > 1.0
+        or max(point[1] for point in normalized) < -1.0
+        or min(point[1] for point in normalized) > 1.0
+    ):
+        return False
+    if any(point[0] ** 2 + point[1] ** 2 <= 1.0 for point in normalized):
+        return True
+
+    if _polygon_contains_origin(normalized):
+        return True
+
+    return any(
+        _segment_intersects_unit_circle(first, second)
+        for first, second in zip(normalized, (*normalized[1:], normalized[0]), strict=True)
+    )
+
+
+def _tail_intersects_ellipse(tail: object, rectangle: Rectangle) -> bool:
+    if not isinstance(tail, Mapping):
+        return False
+    polygon = _tail_polygon(tail)
+    return polygon is not None and _polygon_intersects_ellipse(polygon, rectangle)
 
 
 def rectangle_separation(first: Rectangle, second: Rectangle) -> float:
