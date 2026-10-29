@@ -1,6 +1,6 @@
 # Canonical input for requirements/locks/quality-linux-x86_64.txt.
 # Regenerate with pip-tools==7.6.1 (see requirements/README.md):
 # python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/quality-linux-x86_64.txt --strip-extras requirements/quality.in
-coverage==7.16.2
+coverage==7.17.0
 mypy==2.4.0
-ruff==0.17.1
+ruff==0.17.2
