@@ -22,6 +22,7 @@ from scripts import clean_install_smoke
 class DistributionContractTests(unittest.TestCase):
     def test_required_wheel_members_cover_runtime_and_skill(self):
         self.assertIn("comic_sol_product/engine/comic_sol.py", REQUIRED_WHEEL_MEMBERS)
+        self.assertIn("comic_sol_product/engine_api.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/quality_records.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/normalize_panels.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/typography.py", REQUIRED_WHEEL_MEMBERS)
@@ -251,6 +252,17 @@ class CleanInstallSmokeTests(unittest.TestCase):
             ],
             run.call_args_list,
         )
+
+    def test_clean_install_smokes_the_public_engine_api(self):
+        python = self.root / "venv with spaces" / "bin" / "python"
+        with mock.patch.object(clean_install_smoke, "run") as run:
+            clean_install_smoke.smoke_engine_api(python, cwd=self.root)
+
+        command = run.call_args.args[0]
+        self.assertEqual([str(python), "-c"], command[:2])
+        self.assertIn("from comic_sol_product import engine_api", command[2])
+        self.assertIn("iter_project_entries", command[2])
+        self.assertEqual(self.root, run.call_args.kwargs["cwd"])
 
     def write_codex_entry(self, command: str, arguments: list[str]) -> None:
         self.config.write_text(
