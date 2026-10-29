@@ -1,4 +1,5 @@
 import ast
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -147,6 +148,27 @@ class AgentConstitutionTests(unittest.TestCase):
             "Never describe an unrun check as passing",
         ):
             self.assertIn(phrase, self.collapsed)
+
+    def test_reference_integrations_are_in_lint_and_coverage_gates(self):
+        project = tomllib.loads((self.root / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertIn("integrations", project["tool"]["coverage"]["run"]["source"])
+
+        workflow = (self.root / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        for command in (
+            "python -m ruff check scripts comic_sol_product tests integrations",
+            "python -m ruff format --check scripts comic_sol_product tests integrations",
+        ):
+            self.assertIn(command, workflow)
+
+        contributing = (self.root / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        self.assertIn(
+            ".venv/bin/python -m ruff check scripts comic_sol_product tests integrations",
+            contributing,
+        )
+        self.assertIn(
+            ".venv/bin/python -m ruff format --check scripts comic_sol_product tests integrations",
+            contributing,
+        )
 
     def test_constitution_defers_to_human_review_and_existing_policy(self):
         for phrase in (
