@@ -51,6 +51,19 @@ def install_locked_wheel(python: Path, lock: Path, wheel: Path, *, cwd: Path) ->
     )
 
 
+def smoke_engine_api(python: Path, *, cwd: Path) -> None:
+    program = (
+        "from comic_sol_product import engine_api\n"
+        "required = {'PreparedNormalization', 'init_project', 'invalidate_from_locked', "
+        "'iter_project_entries', 'prepare_normalization', 'validate_handoff_raster'}\n"
+        "assert required <= set(engine_api.__all__)\n"
+        "assert callable(engine_api.init_project)\n"
+        "assert callable(engine_api.prepare_normalization)\n"
+        "assert engine_api.PreparedNormalization is not None\n"
+    )
+    run([str(python), "-c", program], cwd=cwd)
+
+
 def read_codex_entry(config: Path, output_root: Path, executable: Path) -> dict[str, object]:
     """Read and validate the exact MCP entry produced for Codex."""
     record = tomllib.loads(config.read_text(encoding="utf-8"))
@@ -127,6 +140,7 @@ def main() -> int:
         venv.EnvBuilder(with_pip=True, clear=True).create(environment_root)
         python, executable = venv_paths(environment_root)
         install_locked_wheel(python, lock, wheel, cwd=root)
+        smoke_engine_api(python, cwd=root)
 
         output_root = root / "projects"
         doctor = json.loads(
