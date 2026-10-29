@@ -2597,11 +2597,13 @@ class SkillContractTests(unittest.TestCase):
     def test_all_deterministic_cli_commands_are_routed(self):
         text = self.skill_text()
         commands = (
-            "comic_sol.py init",
+            "comic-sol --json init",
             "comic_sol.py transition",
-            "comic_sol.py status",
-            "comic_sol.py doctor",
+            "comic-sol --json status",
+            "comic-sol --json doctor",
             "comic_sol.py resume-plan",
+            "comic-sol --json resume",
+            "comic-sol --json finalize",
             "comic_sol.py invalidate",
             "comic_sol.py record-stage",
             "comic_sol.py record-attempt",

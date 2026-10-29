@@ -12,18 +12,16 @@ from typing import Any, NoReturn, TextIO
 
 from . import __version__
 from .config import default_output_root
+from .cli_command_spec import (
+    STARTER_IDS,
+    add_shared_command_parsers,
+)
 from .errors import (
     CliUsageError,
     ValidationFailureError,
     error_payload,
     format_human_error,
     safe_error_detail,
-)
-
-STARTER_IDS = (
-    "minimal-one-page",
-    "dialogue-two-page",
-    "action-focused",
 )
 
 
@@ -63,162 +61,27 @@ def _load_engine() -> Any:
     return _load_engine_module("comic_sol")
 
 
-def _dogfood_minutes(value: str) -> int:
-    try:
-        minutes = int(value)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError("must be an integer from 0 through 10080") from error
-    if not 0 <= minutes <= 10_080:
-        raise argparse.ArgumentTypeError("must be an integer from 0 through 10080")
-    return minutes
-
-
-def _dogfood_failed_attempts(value: str) -> int:
-    try:
-        attempts = int(value)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError("must be an integer from 0 through 1000") from error
-    if not 0 <= attempts <= 1_000:
-        raise argparse.ArgumentTypeError("must be an integer from 0 through 1000")
-    return attempts
-
-
-def _dogfood_yes_no(value: str) -> bool:
-    if value == "yes":
-        return True
-    if value == "no":
-        return False
-    raise argparse.ArgumentTypeError("must be yes or no")
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = _ArgumentParser(prog="comic-sol")
     parser.add_argument("--version", action="version", version=f"comic-sol {__version__}")
     parser.add_argument("--json", action="store_true", dest="as_json")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    doctor = subparsers.add_parser("doctor")
-    doctor.add_argument("--output-root", type=Path, default=default_output_root())
-    doctor.add_argument("--image-capability-status", choices=("available", "unavailable"))
-    doctor.add_argument("--image-capability-name")
-    doctor.add_argument("--supports-reference-images", action="store_true")
-    doctor.add_argument("--supports-dimensions", action="store_true")
-
-    init = subparsers.add_parser(
-        "init",
-        description="Create a project from explicit flags or a guided terminal session.",
+    add_shared_command_parsers(
+        subparsers,
+        ("doctor", "init", "status"),
+        source_cli=False,
     )
-    init.add_argument(
-        "--interactive",
-        action="store_true",
-        help="prompt for project settings (human terminals only)",
-    )
-    init.add_argument("--output-root", type=Path, help="parent directory for the project")
-    init.add_argument("--title", help="project title")
-    init.add_argument("--source", type=Path, help="UTF-8 .txt or .md story source")
-    init.add_argument("--request-json", type=Path, help="optional request settings JSON")
-    init.add_argument(
-        "--starter",
-        choices=STARTER_IDS,
-        help="initialize from a bundled v1 storyboard starter",
-    )
-    init.add_argument(
-        "--page-count",
-        type=int,
-        choices=range(1, 5),
-        help="planned page count (default: 2)",
-    )
-    init.add_argument("--image-capability-status", choices=("available", "unavailable"))
-    init.add_argument("--image-capability-name")
-    init.add_argument("--supports-reference-images", action="store_true")
-    init.add_argument("--supports-dimensions", action="store_true")
-
-    status = subparsers.add_parser("status")
-    status.add_argument("project_dir", type=Path)
 
     validate = subparsers.add_parser("validate")
     validate.add_argument("project_dir", type=Path)
     validate.add_argument("--stage", default="all")
 
-    bind_plan = subparsers.add_parser(
-        "bind-plan",
-        description="Bind validated plan files to manifest descriptors and panel counts.",
+    add_shared_command_parsers(
+        subparsers,
+        ("bind-plan", "resume", "finalize", "dogfood", "handoff"),
+        source_cli=False,
     )
-    bind_plan.add_argument("project_dir", type=Path)
-
-    resume = subparsers.add_parser("resume")
-    resume.add_argument("project_dir", type=Path)
-
-    finalize = subparsers.add_parser("finalize")
-    finalize.add_argument("project_dir", type=Path)
-
-    dogfood = subparsers.add_parser("dogfood")
-    dogfood_commands = dogfood.add_subparsers(dest="dogfood_command", required=True)
-
-    def add_dogfood_creator_arguments(command: argparse.ArgumentParser) -> None:
-        command.add_argument("project_dir", type=Path)
-        command.add_argument("--setup-minutes", required=True, type=_dogfood_minutes)
-        command.add_argument("--first-project-minutes", required=True, type=_dogfood_minutes)
-        command.add_argument("--pdf-minutes", required=True, type=_dogfood_minutes)
-        command.add_argument("--manual-intervention", required=True, type=_dogfood_yes_no)
-        command.add_argument("--would-use-again", required=True, type=_dogfood_yes_no)
-        command.add_argument("--failed-resume-attempts", type=_dogfood_failed_attempts)
-        command.add_argument("--friction", action="append", default=[])
-        command.add_argument("--cohort-alias")
-
-    dogfood_report = dogfood_commands.add_parser("report")
-    add_dogfood_creator_arguments(dogfood_report)
-    dogfood_report.add_argument("--consent-to-share", required=True, action="store_true")
-    dogfood_report.add_argument("--output", required=True, type=Path, dest="output_path")
-
-    dogfood_preview = dogfood_commands.add_parser("preview")
-    add_dogfood_creator_arguments(dogfood_preview)
-    dogfood_preview.add_argument("--consent-to-share", action="store_true")
-
-    dogfood_validate = dogfood_commands.add_parser("validate")
-    dogfood_validate.add_argument("report_path", type=Path)
-
-    handoff = subparsers.add_parser("handoff")
-    handoff_commands = handoff.add_subparsers(dest="handoff_command", required=True)
-
-    prepare_handoff = handoff_commands.add_parser("prepare")
-    prepare_handoff.add_argument("project_dir", type=Path)
-
-    inspect_handoff = handoff_commands.add_parser("inspect")
-    inspect_handoff.add_argument("target", type=Path)
-
-    export_handoff = handoff_commands.add_parser("export")
-    export_handoff.add_argument("project_dir", type=Path)
-    export_handoff.add_argument("--output", required=True, type=Path, dest="output_path")
-
-    import_handoff = handoff_commands.add_parser("import")
-    import_handoff.add_argument("archive_path", type=Path)
-    import_handoff.add_argument("--output-root", required=True, type=Path)
-
-    def add_executor_arguments(handoff_command: argparse.ArgumentParser) -> None:
-        handoff_command.add_argument("project_dir", type=Path)
-        handoff_command.add_argument("--job", required=True, dest="job_id")
-        handoff_command.add_argument("--attempt", required=True, type=int)
-        handoff_command.add_argument(
-            "--executor-kind",
-            required=True,
-            choices=("native-tool", "external-tool"),
-        )
-        handoff_command.add_argument("--executor-id", required=True)
-        handoff_command.add_argument("--provider")
-        handoff_command.add_argument("--model")
-        handoff_command.add_argument("--used-reference-images", action="store_true")
-        handoff_command.add_argument("--used-dimensions", action="store_true")
-        handoff_command.add_argument("--used-localized-edit", action="store_true")
-
-    accept_result = handoff_commands.add_parser("accept-result")
-    add_executor_arguments(accept_result)
-    accept_result.add_argument("--path", required=True, type=Path, dest="raster_path")
-    accept_result.add_argument("--approve-reference", action="store_true")
-
-    record_failure = handoff_commands.add_parser("record-failure")
-    add_executor_arguments(record_failure)
-    record_failure.add_argument("--category", required=True)
 
     mcp = subparsers.add_parser("mcp")
     mcp.add_argument("--root", required=True, type=Path)

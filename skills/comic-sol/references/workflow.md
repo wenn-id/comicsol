@@ -365,7 +365,7 @@ for an installed package, `comic-sol handoff` is equivalent to
     `image-capability-unavailable`, the destination agent must first inspect its exposed
     tools, record its real provider-neutral capability observation as described in
     [Image capability detection](capability-detection.md), and run
-    `PYTHON scripts/comic_sol.py resume PROJECT --json`. Never claim availability merely
+    `comic-sol --json resume PROJECT`. Never claim availability merely
     because an archive was imported or fabricate capability metadata. Resume only after
     the project records an available capability; otherwise preserve `BLOCKED`.
 12. Continue normal visual QA, promotion, and deterministic export. For durable

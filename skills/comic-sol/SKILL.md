@@ -71,8 +71,8 @@ Resolve one Python 3.11+ launcher before deterministic commands. Store its comma
 Do not write `setup_batch_*.py`, `build_plans.py`, or equivalent helpers. The engine owns project structure. Create a project with one command:
 
 ```text
-PYTHON scripts/comic_sol.py init --output-root "$OUTPUT_ROOT" --title "$TITLE" --source "$SOURCE" --request-json "$REQUEST_JSON" --page-count "$PAGE_COUNT"
-PYTHON scripts/comic_sol.py init --output-root "$OUTPUT_ROOT" --title "$TITLE" --starter minimal-one-page
+comic-sol --json init --output-root "$OUTPUT_ROOT" --title "$TITLE" --source "$SOURCE" --request-json "$REQUEST_JSON" --page-count "$PAGE_COUNT"
+comic-sol --json init --output-root "$OUTPUT_ROOT" --title "$TITLE" --starter minimal-one-page
 ```
 
 Replace `minimal-one-page` with `dialogue-two-page` or `action-focused` to select another starter. AI agents and CI always use a fully specified non-interactive command; the installed CLI's optional `--interactive` wizard is for human terminal sessions. For provider-neutral storyboard starting points and their no-raster/no-QA boundary, see [starter templates](references/starter-templates.md). Prefer MCP tools with structured arguments. If a shell must carry user text, keep its command fixed and pass the value as a quoted argument from data held separately or through a file; never concatenate untrusted text into command syntax, leave its expansion unquoted, or use `eval`.
@@ -149,7 +149,7 @@ After the last panel passes QA and is promoted, run the full deterministic pipel
 with one combined command instead of per-stage turns:
 
 ```text
-PYTHON scripts/comic_sol.py finalize PROJECT_DIR
+comic-sol --json finalize PROJECT_DIR
 ```
 
 When `finalize` is available, prefer it over stacking the deterministic stages
@@ -182,28 +182,29 @@ subagent to audit results.
 
 ## Deterministic command route
 
-When installed as a package, use the stable `comic-sol` executable for `doctor`, `init`,
-`status`, `validate`, `resume`, `finalize`, and `mcp`. Source checkouts retain the
-script routes below for compatibility.
+Prefer installed `comic-sol --json` for shared commands; it emits the stable
+`{ok, command, data, error}` envelope. The source CLI keeps command-local raw `--json`
+for compatibility and engine-only routes such as `transition` and `resume-plan`.
 
 Use a resolved Python 3.11+ launcher for `PYTHON` below. Build `IMAGE_CAPABILITY_FLAGS`
 exactly as specified in the capability reference; leave it empty only if inspection is
 unavailable or fails.
 
 ```text
-PYTHON scripts/comic_sol.py doctor --output-root OUTPUT_ROOT [IMAGE_CAPABILITY_FLAGS]
-PYTHON scripts/comic_sol.py init --output-root "$OUTPUT_ROOT" --title "$TITLE" --source "$SOURCE" --request-json "$REQUEST_JSON" --page-count "$PAGE_COUNT" [IMAGE_CAPABILITY_FLAGS]
-PYTHON scripts/comic_sol.py status PROJECT_DIR --json
+comic-sol --json doctor --output-root OUTPUT_ROOT [IMAGE_CAPABILITY_FLAGS]
+comic-sol --json init --output-root "$OUTPUT_ROOT" --title "$TITLE" --source "$SOURCE" --request-json "$REQUEST_JSON" --page-count "$PAGE_COUNT" [IMAGE_CAPABILITY_FLAGS]
+comic-sol --json status PROJECT_DIR
 PYTHON scripts/comic_sol.py transition PROJECT_DIR TARGET [--warning "$WARNING_TEXT"]
 PYTHON scripts/validate_project.py PROJECT_DIR --stage plan|storyboard|panels|final [--json]
 
 PYTHON scripts/comic_sol.py resume-plan PROJECT_DIR --json
-PYTHON scripts/comic_sol.py resume PROJECT_DIR --json
+comic-sol --json resume PROJECT_DIR
 PYTHON scripts/comic_sol.py invalidate PROJECT_DIR STAGE
 PYTHON scripts/comic_sol.py record-stage PROJECT_DIR STAGE
 PYTHON scripts/comic_sol.py record-attempt PROJECT_DIR PANEL_ID initial|visual_retry|transient_repeat PATH
 PYTHON scripts/comic_sol.py promote-attempt PROJECT_DIR PANEL_ID PATH
 PYTHON scripts/comic_sol.py override-panel PROJECT_DIR PANEL_ID --reason "$REASON_TEXT"
+comic-sol --json finalize PROJECT_DIR
 
 PYTHON scripts/letter_panels.py PROJECT_DIR [--font PATH]
 PYTHON scripts/sfx_repair.py PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason "$REASON_TEXT"
