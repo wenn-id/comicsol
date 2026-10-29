@@ -381,6 +381,101 @@ class LetteringTests(unittest.TestCase):
             self.assertAlmostEqual(expected_center, ink_center, delta=6)
             line_top += line.height + 6
 
+    def test_styled_layout_wraps_overlong_words_at_grapheme_boundaries(self):
+        from scripts.letter_panels import _grapheme_token_clusters, _layout_styled_text
+
+        image = Image.new("RGB", (600, 300), "white")
+        draw = ImageDraw.Draw(image)
+        regular = ImageFont.truetype(str(FONT), 32)
+        maximum_width = draw.textlength("DONAUD", font=regular)
+        content = "DONAUDAMPFSCHIFF"
+        with mock.patch(
+            "scripts.letter_panels._styled_font_runs",
+            return_value=((content, regular),),
+        ):
+            layout = _layout_styled_text(draw, content, regular, maximum_width)
+
+        self.assertIsNotNone(layout)
+        lines = ["".join(text for text, _ in line.runs) for line in layout.lines]
+        self.assertGreater(len(lines), 1)
+        self.assertEqual(content, "".join(lines))
+        self.assertTrue(all(line.width <= maximum_width for line in layout.lines))
+
+        grapheme_sample = "e\u0301👩\u200d🚀🇨🇦\u1100\u1161\u11a8"
+        clusters = _grapheme_token_clusters([(character, regular) for character in grapheme_sample])
+        self.assertEqual(
+            ["e\u0301", "👩\u200d🚀", "🇨🇦", "\u1100\u1161\u11a8"],
+            ["".join(character for character, _ in cluster) for cluster in clusters],
+        )
+
+    def test_styled_layout_wraps_cjk_kana_and_keeps_punctuation_attached(self):
+        from scripts.letter_panels import _layout_styled_text
+
+        image = Image.new("RGB", (600, 300), "white")
+        draw = ImageDraw.Draw(image)
+        regular = ImageFont.truetype(str(FONT), 32)
+        content = "漢字かなカナ漢字"
+        maximum_width = max(24.0, draw.textlength("漢字", font=regular))
+        with mock.patch(
+            "scripts.letter_panels._styled_font_runs",
+            return_value=((content, regular),),
+        ):
+            layout = _layout_styled_text(draw, content, regular, maximum_width)
+
+        self.assertIsNotNone(layout)
+        lines = ["".join(text for text, _ in line.runs) for line in layout.lines]
+        self.assertGreater(len(lines), 1)
+        self.assertEqual(content, "".join(lines))
+        self.assertTrue(all(line.width <= maximum_width for line in layout.lines))
+
+        punctuated = "「漢字、かな。」"
+        punctuation_maximum = max(
+            draw.textlength(part, font=regular) for part in ("「漢", "字、", "な。」")
+        )
+        with mock.patch(
+            "scripts.letter_panels._styled_font_runs",
+            return_value=((punctuated, regular),),
+        ):
+            punctuation_layout = _layout_styled_text(
+                draw,
+                punctuated,
+                regular,
+                punctuation_maximum,
+            )
+        self.assertIsNotNone(punctuation_layout)
+        punctuation_lines = [
+            "".join(text for text, _ in line.runs) for line in punctuation_layout.lines
+        ]
+        self.assertGreater(len(punctuation_lines), 1)
+        self.assertEqual(punctuated, "".join(punctuation_lines))
+        self.assertTrue(
+            all(
+                not line.startswith("、") and not line.startswith("。」")
+                for line in punctuation_lines[1:]
+            )
+        )
+
+    def test_letter_panel_wraps_a_65_character_caption_on_720_by_1120_panel(self):
+        source = self.root / "source-720x1120.png"
+        Image.new("RGB", (720, 1120), "white").save(source)
+        output = self.root / "lettered-long-caption.png"
+        content = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" * 2 + "ABCDEFGHIJKLM"
+
+        summary = letter_panel(
+            str(output),
+            720,
+            1120,
+            [caption(content)],
+            [],
+            source_bytes=source.read_bytes(),
+        )
+
+        self.assertEqual(65, len(content))
+        self.assertEqual(1, summary["rendered_text_count"])
+        self.assertTrue(output.is_file())
+        with Image.open(output) as image:
+            self.assertEqual((720, 1120), image.size)
+
     def test_letter_panel_produces_valid_png_and_summary(self):
         result = letter_panel(
             str(self.panel),
