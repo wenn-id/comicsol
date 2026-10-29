@@ -20,6 +20,9 @@ TYPED_FILES = [
     "scripts/release_qualification.py",
     "scripts/release_evidence.py",
     "scripts/release_visual_gate.py",
+    "comic_sol_product/version.py",
+    "comic_sol_product/errors.py",
+    "comic_sol_product/config.py",
 ]
 
 

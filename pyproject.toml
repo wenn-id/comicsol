@@ -82,6 +82,9 @@ files = [
     "scripts/release_qualification.py",
     "scripts/release_evidence.py",
     "scripts/release_visual_gate.py",
+    "comic_sol_product/version.py",
+    "comic_sol_product/errors.py",
+    "comic_sol_product/config.py",
 ]
 python_version = "3.11"
 follow_imports = "skip"
