@@ -1,5 +1,5 @@
 # Canonical input for requirements/locks/audit-python311.txt.
 # Regenerate with pip-tools==7.6.1 (see requirements/README.md):
 # python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/audit-python311.txt --strip-extras requirements/audit.in
-certifi==2026.10.19
+certifi==2026.10.23
 pip-audit==2.10.1

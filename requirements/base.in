@@ -8,4 +8,4 @@
 # explicitly so the interpreter that later performs --require-hashes installs is
 # itself hash-verified.
 pillow==13.0.0
-pip==26.2.1
+pip==26.2.2
