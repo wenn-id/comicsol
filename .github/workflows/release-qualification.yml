@@ -448,6 +448,26 @@ jobs:
             Write-Output $reason
             exit 0
           }
+          $wslDistributions = & wsl.exe --list --verbose 2>&1
+          $distributionExitCode = $LASTEXITCODE
+          $distributionText = (($wslDistributions | Out-String) -replace "`0", "").Trim()
+          $hasWsl2Distribution = @(
+            $distributionText -split '\r?\n' |
+              Where-Object { $_ -match '^\s*\*?\s*\S+\s+\S+\s+2\s*$' }
+          ).Count -gt 0
+          if ($distributionExitCode -ne 0 -or -not $hasWsl2Distribution) {
+            $reason = "WSL2 has no installed WSL2 distribution on this runner: $distributionText"
+            $summary = [ordered]@{
+              architecture = $env:ARCH
+              platform = "wsl"
+              status = "exception"
+              checks = @()
+              exceptions = @($reason)
+            }
+            $summary | ConvertTo-Json -Depth 3 | Set-Content -Encoding utf8 qualification/summary-wsl.json
+            Write-Output $reason
+            exit 0
+          }
           $root = (Resolve-Path qualification).Path
           $wslRoot = (& wsl.exe wslpath -a $root).Trim()
           $version = $env:RELEASE_TAG.Substring(1)
