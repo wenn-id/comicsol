@@ -1,0 +1,13 @@
+name: Native Release Tag Signal
+on:
+  push:
+    tags: [ 'v*' ]
+permissions: {}
+jobs:
+  signal:
+    name: Signal a release tag
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Complete without checking out repository contents
+        run: 'true'

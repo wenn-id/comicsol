@@ -636,13 +636,15 @@ class NativeDistributionContractTests(unittest.TestCase):
 
         Covers the non-root container contract, the tag-to-version verification in
         prepare, hash-pinned dependency installs, Sigstore signing and provenance
-        attestation, and the rule that every `uses:` reference is pinned to a full
-        commit SHA rather than a floating tag.
+        attestation, and the rule that action references use full commit SHAs while
+        a default-branch workflow_run dispatcher calls the reusable release workflow.
         """
         root = Path(__file__).resolve().parents[1]
         dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
         compose = (root / "compose.yaml").read_text(encoding="utf-8")
         workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        tag_trigger = (root / ".github/workflows/release-tag.yml").read_text(encoding="utf-8")
+        dispatcher = (root / ".github/workflows/release-run.yml").read_text(encoding="utf-8")
 
         self.assertIn("USER 10001:10001", dockerfile)
         self.assertNotIn("USER comic-sol", dockerfile)
@@ -670,13 +672,63 @@ class NativeDistributionContractTests(unittest.TestCase):
 
         self.assertNotIn("workflow_dispatch:", workflow)
         self.assertNotIn("inputs.tag", workflow)
-        self.assertIn("tags: [ 'v*' ]", workflow)
+        self.assertIn("workflow_call:", workflow)
+        self.assertNotIn("tags: [ 'v*' ]", workflow)
+        self.assertIn("tags: [ 'v*' ]", tag_trigger)
+        self.assertIn("workflow_run:", dispatcher)
+        self.assertIn("workflows: [Native Release Tag Signal]", dispatcher)
+        self.assertIn("types: [completed]", dispatcher)
+        for check in (
+            "if: ${{ github.event.workflow_run.conclusion == 'success' }}",
+            '[[ "$SIGNAL_RUN_ID" =~ ^[1-9][0-9]*$ ]]',
+            'test "$SIGNAL_EVENT" = push',
+            'test "$SIGNAL_CONCLUSION" = success',
+            'test "$SIGNAL_REPOSITORY" = "$GITHUB_REPOSITORY"',
+            r'[[ "$SIGNAL_HEAD_BRANCH" =~ ^v[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]',
+            '[[ "$SIGNAL_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]',
+            'signal_run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SIGNAL_RUN_ID}")"',
+            'test "$(jq -r .path <<<"$signal_run")" = ".github/workflows/release-tag.yml"',
+            'test "$(jq -r .event <<<"$signal_run")" = push',
+            'test "$(jq -r .status <<<"$signal_run")" = completed',
+            'test "$(jq -r .conclusion <<<"$signal_run")" = success',
+            'test "$(jq -r .head_branch <<<"$signal_run")" = "$SIGNAL_HEAD_BRANCH"',
+            'test "$(jq -r .head_sha <<<"$signal_run")" = "$SIGNAL_HEAD_SHA"',
+            'test "$(jq -r .repository.full_name <<<"$signal_run")" = "$GITHUB_REPOSITORY"',
+            'test "$(jq -r .head_repository.full_name <<<"$signal_run")" = "$GITHUB_REPOSITORY"',
+            'tag_ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${SIGNAL_HEAD_BRANCH}")"',
+            'test "$(jq -r .ref <<<"$tag_ref")" = "refs/tags/${SIGNAL_HEAD_BRANCH}"',
+            'test "$(jq -r .object.type <<<"$tag_ref")" = tag',
+            '[[ "$tag_object_sha" =~ ^[0-9a-f]{40}$ ]]',
+            'test "$(jq -r .tag <<<"$tag_metadata")" = "$SIGNAL_HEAD_BRANCH"',
+            'test "$(jq -r .object.type <<<"$tag_metadata")" = commit',
+            'test "$(jq -r .object.sha <<<"$tag_metadata")" = "$SIGNAL_HEAD_SHA"',
+            'test "$(jq -r .verification.verified <<<"$tag_metadata")" = true',
+            'test -n "$signature"',
+            'test "$signature" != null',
+        ):
+            self.assertIn(check, dispatcher)
+        self.assertIn(
+            "uses: wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main", dispatcher
+        )
+        self.assertIn("release_tag: ${{ needs.verify-tag-signal.outputs.release_tag }}", dispatcher)
+        self.assertIn(
+            "candidate_sha: ${{ needs.verify-tag-signal.outputs.candidate_sha }}", dispatcher
+        )
+        self.assertIn("permissions: {}", tag_trigger)
+        self.assertNotIn("secrets.", tag_trigger)
+        self.assertNotIn("actions/checkout@", tag_trigger)
+        self.assertNotIn("uses:", tag_trigger)
         self.assertIn("name: Prepare release", workflow)
+        self.assertIn(
+            'git merge-base --is-ancestor "$candidate_commit" refs/remotes/origin/main', workflow
+        )
+        self.assertIn('test "$candidate_commit" = "$CANDIDATE_SHA"', workflow)
+        self.assertIn('git checkout --detach "$CANDIDATE_SHA"', workflow)
+        self.assertIn("ref: ${{ github.sha }}", workflow)
         self.assertIn("scripts/release_identity.py prepare", workflow)
         self.assertIn('--event-ref "$TRIGGER_REF"', workflow)
         self.assertIn('--event-sha "$TRIGGER_SHA"', workflow)
         self.assertIn("--main-ref refs/remotes/origin/main", workflow)
-        self.assertIn("ref: ${{ github.ref }}", workflow)
         self.assertIn("ref: ${{ needs.prepare.outputs.sha }}", workflow)
         self.assertGreaterEqual(workflow.count("ref: ${{ needs.prepare.outputs.sha }}"), 5)
         self.assertIn(
@@ -732,8 +784,8 @@ class NativeDistributionContractTests(unittest.TestCase):
         self.assertIn("installers/install.ps1", workflow)
         self.assertIn("prerelease", workflow.lower())
         self.assertIn("--package-version", workflow)
-        self.assertIn("github.ref_name", workflow)
-        self.assertNotIn("inputs.tag || github.ref_name", workflow)
+        self.assertIn("inputs.release_tag", workflow)
+        self.assertNotIn("github.ref_name", workflow)
         self.assertIn("Capture and verify signed release identity", workflow)
         self.assertIn("comic-sol:${{ needs.prepare.outputs.version }}", workflow)
         self.assertIn("actions/attest-build-provenance@", workflow)

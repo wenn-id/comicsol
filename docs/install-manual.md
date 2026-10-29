@@ -20,13 +20,14 @@ archive only after it starts, so close that bootstrap gap first:
 
 1. Download the installer, `SHA256SUMS`, and
    `SHA256SUMS.sigstore.json` from the release page for the exact tag.
-2. Set the exact tag, then verify the signed manifest against that tag:
+2. Set the exact tag, then verify the signed manifest with the exact certificate
+   identity of the protected reusable release workflow:
 
    ```bash
    RELEASE=v2.0.0rc6
    cosign verify-blob \
      --bundle SHA256SUMS.sigstore.json \
-     --certificate-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/tags/${RELEASE}" \
+     --certificate-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main" \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
      SHA256SUMS
    ```
@@ -50,7 +51,9 @@ archive only after it starts, so close that bootstrap gap first:
    ```bash
    gh attestation verify ./install.sh \
      --repo wenn-id/comicsol \
-     --signer-workflow wenn-id/comicsol/.github/workflows/release.yml
+     --cert-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main" \
+     --cert-oidc-issuer https://token.actions.githubusercontent.com \
+     --source-ref "refs/tags/${RELEASE}"
    ```
 
    Use `.\install.ps1` for the Windows installer.
@@ -97,11 +100,12 @@ Windows PowerShell:
 
 Manual mode applies the same checksum, safe-archive, staged version,
 staged `doctor`, transaction, rollback, locking, and uninstall rules as pinned
-release mode. It also verifies `SHA256SUMS` with a release-tag identity from the
-Comic Sol release workflow, but without `-Release`/`--release` it cannot bind that
-identity to one caller-selected exact tag. The pre-execution verification above
-provides that exact-tag binding. Manual mode accepts neither unsigned archives
-nor a missing caller-supplied digest.
+release mode. It verifies `SHA256SUMS` with the exact certificate identity of the
+protected reusable release workflow, `release.yml@refs/heads/main`; that identifies
+the trusted workflow, not one specific tag. Manual mode cannot bind that identity
+to a caller-selected tag by itself. The optional provenance check in step 4 ties
+the downloaded installer bytes to the selected `refs/tags/<tag>`. Manual mode
+accepts neither unsigned archives nor a missing caller-supplied digest.
 
 ## Direct archive extraction
 

@@ -338,12 +338,13 @@ class ReleaseDocumentationTests(unittest.TestCase):
         self.assertEqual(3, self.install.count("sh ./install.sh --release v2.0.0rc6"))
         self.assertEqual(1, self.install.count(".\\install.ps1 -Release v2.0.0rc6"))
         self.assertIn(
-            '--certificate-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/tags/${RELEASE}"',
+            '--certificate-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main"',
             self.install_manual,
         )
+        self.assertIn('--source-ref "refs/tags/${RELEASE}"', self.install_manual)
         self.assertIn("not published yet", self._collapsed(self.install))
         self.assertIn(
-            "cannot bind that identity to one caller-selected exact tag",
+            "exact certificate identity",
             self._collapsed(self.install_manual),
         )
         self.assertIn("$HOME/.local/share/comic-sol", self.install)
@@ -459,6 +460,10 @@ class SupplyChainProvenanceContractTests(unittest.TestCase):
             "token.actions.githubusercontent.com",
             "self-hosted runners denied",
             "signed annotated tag",
+            "default-branch `.github/workflows/release-run.yml`",
+            "workflow_run",
+            "minimal `.github/workflows/release-tag.yml` signal",
+            "before checking out or running code from the tagged commit",
             "tag-object SHA",
             "protected `main`",
             "required_signatures",

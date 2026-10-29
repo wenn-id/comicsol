@@ -116,7 +116,7 @@ previous qualified release.
    cd /tmp/check && sha256sum -c SHA256SUMS   # spot-check at least the target platform archive
    cosign verify-blob --bundle SHA256SUMS.sigstore.json \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-     --certificate-identity-regexp '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v' \
+     --certificate-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main" \
      SHA256SUMS
    ```
 5. Direct users to reinstall the previous verified archive with the documented

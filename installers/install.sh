@@ -14,7 +14,7 @@ RELEASE_MODE=0
 UNINSTALL=0
 COSIGN_BIN="${COMIC_SOL_COSIGN:-cosign}"
 COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
-COSIGN_IDENTITY_REGEXP='^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$'
+COSIGN_IDENTITY="https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main"
 INSTALL_LOCK_DIR=""
 LOCK_HELD=0
 SECURE_HANDOFF=0
@@ -491,8 +491,6 @@ if [ "$RELEASE_MODE" -eq 1 ]; then
   download_https "$RELEASE_BASE/SHA256SUMS" "$CHECKSUMS"
   download_https "$RELEASE_BASE/SHA256SUMS.sigstore.json" "$SIGNATURE"
   download_https "$RELEASE_BASE/$ARCHIVE_NAME" "$ARCHIVE"
-  RELEASE_IDENTITY=$(printf '%s\n' "$RELEASE" | sed 's/[.]/\\./g')
-  COSIGN_IDENTITY_REGEXP="^https://github\\.com/wenn-id/comicsol/\\.github/workflows/release\\.yml@refs/tags/$RELEASE_IDENTITY\$"
 elif [ -n "$URL" ]; then
   URL_PATH=${URL%%\?*}
   URL_PATH=${URL_PATH%%\#*}
@@ -516,7 +514,7 @@ if [ ! -f "$CHECKSUMS" ] || [ ! -f "$SIGNATURE" ]; then
 fi
 if ! "$COSIGN_BIN" verify-blob \
   --bundle "$SIGNATURE" \
-  --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
+  --certificate-identity "$COSIGN_IDENTITY" \
   --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
   "$CHECKSUMS" >/dev/null; then
   echo "signature verification failed" >&2

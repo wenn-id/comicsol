@@ -671,7 +671,8 @@ class ReleaseQualificationContractTests(unittest.TestCase):
                 "#!/bin/sh\n"
                 "set -eu\n"
                 'if [ "${1-}" != verify-blob ] || [ "${2-}" != --bundle ] || '
-                '[ "${4-}" != --certificate-identity-regexp ] || '
+                '[ "${4-}" != --certificate-identity ] || '
+                '[ "${5-}" != https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main ] || '
                 '[ "${6-}" != --certificate-oidc-issuer ]; then exit 90; fi\n'
                 "exit 0\n",
                 encoding="utf-8",
@@ -1252,14 +1253,78 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
 
     def test_release_trigger_and_codeql_are_bound_to_exact_github_identity(self):
         release = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        tag_trigger = (ROOT / ".github/workflows/release-tag.yml").read_text(encoding="utf-8")
+        dispatcher = (ROOT / ".github/workflows/release-run.yml").read_text(encoding="utf-8")
         codeql = (ROOT / ".github/workflows/codeql.yml").read_text(encoding="utf-8")
         trigger = release.split("permissions:", 1)[0]
         prepare = release.split("\n  prepare:\n", 1)[1].split("\n  full-tests:\n", 1)[0]
         self.assertNotIn("workflow_dispatch", trigger)
         self.assertNotIn("inputs.tag", release)
-        self.assertIn("tags: [ 'v*' ]", trigger)
-        self.assertIn("group: release-${{ github.ref }}", trigger)
+        self.assertIn("workflow_call:", trigger)
+        self.assertIn("release_tag:", trigger)
+        self.assertIn("candidate_sha:", trigger)
+        self.assertNotIn("push:", trigger)
+        self.assertIn("tags: [ 'v*' ]", tag_trigger)
+        self.assertIn("permissions: {}", tag_trigger)
+        self.assertNotIn("secrets.", tag_trigger)
+        self.assertNotIn("actions/checkout@", tag_trigger)
+        self.assertNotIn("uses:", tag_trigger)
+        self.assertIn("workflow_run:", dispatcher)
+        self.assertIn("workflows: [Native Release Tag Signal]", dispatcher)
+        self.assertIn("types: [completed]", dispatcher)
+        for check in (
+            "if: ${{ github.event.workflow_run.conclusion == 'success' }}",
+            '[[ "$SIGNAL_RUN_ID" =~ ^[1-9][0-9]*$ ]]',
+            'test "$SIGNAL_EVENT" = push',
+            'test "$SIGNAL_CONCLUSION" = success',
+            'test "$SIGNAL_REPOSITORY" = "$GITHUB_REPOSITORY"',
+            r'[[ "$SIGNAL_HEAD_BRANCH" =~ ^v[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]',
+            '[[ "$SIGNAL_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]',
+            'signal_run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SIGNAL_RUN_ID}")"',
+            'test "$(jq -r .path <<<"$signal_run")" = ".github/workflows/release-tag.yml"',
+            'test "$(jq -r .event <<<"$signal_run")" = push',
+            'test "$(jq -r .status <<<"$signal_run")" = completed',
+            'test "$(jq -r .conclusion <<<"$signal_run")" = success',
+            'test "$(jq -r .head_branch <<<"$signal_run")" = "$SIGNAL_HEAD_BRANCH"',
+            'test "$(jq -r .head_sha <<<"$signal_run")" = "$SIGNAL_HEAD_SHA"',
+            'test "$(jq -r .repository.full_name <<<"$signal_run")" = "$GITHUB_REPOSITORY"',
+            'test "$(jq -r .head_repository.full_name <<<"$signal_run")" = "$GITHUB_REPOSITORY"',
+            'tag_ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${SIGNAL_HEAD_BRANCH}")"',
+            'test "$(jq -r .ref <<<"$tag_ref")" = "refs/tags/${SIGNAL_HEAD_BRANCH}"',
+            'test "$(jq -r .object.type <<<"$tag_ref")" = tag',
+            '[[ "$tag_object_sha" =~ ^[0-9a-f]{40}$ ]]',
+            'test "$(jq -r .tag <<<"$tag_metadata")" = "$SIGNAL_HEAD_BRANCH"',
+            'test "$(jq -r .object.type <<<"$tag_metadata")" = commit',
+            'test "$(jq -r .object.sha <<<"$tag_metadata")" = "$SIGNAL_HEAD_SHA"',
+            'test "$(jq -r .verification.verified <<<"$tag_metadata")" = true',
+            'test -n "$signature"',
+            'test "$signature" != null',
+        ):
+            self.assertIn(check, dispatcher)
+        self.assertIn(
+            "uses: wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main", dispatcher
+        )
+        self.assertIn(
+            "RELEASE_RULESETS_APP_PRIVATE_KEY: ${{ secrets.RELEASE_RULESETS_APP_PRIVATE_KEY }}",
+            dispatcher,
+        )
+        self.assertIn("release_tag: ${{ needs.verify-tag-signal.outputs.release_tag }}", dispatcher)
+        self.assertIn(
+            "candidate_sha: ${{ needs.verify-tag-signal.outputs.candidate_sha }}", dispatcher
+        )
+        self.assertIn("group: release-${{ inputs.release_tag }}", trigger)
         self.assertIn("cancel-in-progress: false", trigger)
+        self.assertIn("Verify tag candidate is on protected main", prepare)
+        self.assertLess(
+            prepare.index('git merge-base --is-ancestor "$candidate_commit"'),
+            prepare.index('git checkout --detach "$CANDIDATE_SHA"'),
+        )
+        self.assertLess(
+            prepare.index('git checkout --detach "$CANDIDATE_SHA"'),
+            prepare.index("scripts/release_identity.py rulesets"),
+        )
+        self.assertIn('test "$candidate_commit" = "$CANDIDATE_SHA"', prepare)
+        self.assertIn('git cat-file -t "refs/tags/${RELEASE_TAG}"', prepare)
         self.assertIn("Verify active release-tag immutability rules", prepare)
         self.assertIn("scripts/release_identity.py rulesets", prepare)
         self.assertIn('--release-ref "refs/tags/${RELEASE_TAG}"', prepare)
@@ -1271,8 +1336,15 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
             "approved_bypass_actors: ${{ steps.rulesets.outputs.approved_bypass_actors }}",
             prepare,
         )
+        self.assertIn(
+            "environment:\n      name: release-production",
+            release.split("\n  candidate:\n", 1)[1].split("\n  qualification:\n", 1)[0],
+        )
+        self.assertIn("ref: ${{ github.sha }}", prepare)
         self.assertIn("+refs/heads/main:refs/remotes/origin/main", prepare)
         self.assertIn("scripts/release_identity.py prepare", prepare)
+        self.assertIn("TRIGGER_REF: ${{ format('refs/tags/{0}', inputs.release_tag) }}", prepare)
+        self.assertIn("TRIGGER_SHA: ${{ inputs.candidate_sha }}", prepare)
         self.assertIn('--event-ref "$TRIGGER_REF"', prepare)
         self.assertIn('--event-sha "$TRIGGER_SHA"', prepare)
         self.assertIn("--main-ref refs/remotes/origin/main", prepare)
@@ -1335,7 +1407,8 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
                 "gh attestation verify qualification-identity/candidate-identity.json", section
             )
             self.assertIn(
-                "--signer-workflow wenn-id/comicsol/.github/workflows/release.yml", section
+                '--cert-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main"',
+                section,
             )
         for state_check in (
             'test "$(jq -r .draft release.json)" = false',
@@ -1447,13 +1520,24 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
         qualification = WORKFLOW.read_text(encoding="utf-8")
         benchmark = (ROOT / ".github/workflows/benchmark.yml").read_text(encoding="utf-8")
         strict_flags = (
-            "--signer-workflow wenn-id/comicsol/.github/workflows/release.yml",
+            '--cert-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main"',
+            "--cert-oidc-issuer https://token.actions.githubusercontent.com",
             '--source-digest "$CANDIDATE_SHA"',
             '--source-ref "refs/tags/$RELEASE_TAG"',
             "--deny-self-hosted-runners",
         )
         for flag in strict_flags:
             self.assertGreaterEqual(qualification.count(flag), 2)
+        attestation_count = qualification.count("gh attestation verify")
+        for flag in (
+            "--cert-identity",
+            "--cert-oidc-issuer",
+            "--source-digest",
+            "--source-ref",
+            "--deny-self-hosted-runners",
+        ):
+            self.assertEqual(attestation_count, qualification.count(flag), flag)
+        self.assertNotIn("--signer-workflow", qualification)
         for workflow in (qualification, benchmark):
             self.assertIn("decision:", workflow)
             self.assertIn("summary_sha256:", workflow)

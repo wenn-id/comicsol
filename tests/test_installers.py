@@ -213,18 +213,14 @@ class PublicInstallerContractTests(unittest.TestCase):
         digest,
         *,
         bundle_payload=_TEST_SIGSTORE_BUNDLE,
-        expected_identity=(
-            r"^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@"
-            r"refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$"
-        ),
+        expected_identity="https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main",
         expected_issuer="https://token.actions.githubusercontent.com",
     ):
         """Write SHA256SUMS plus a cosign.ps1 stub using only PowerShell builtins.
 
         The stub is a PowerShell script, not a batch file, so cmd.exe never
-        re-parses the certificate identity regexp (its pipe and caret
-        characters are just data). It compares every supplied argument and
-        both payload digests, needing no external host tools at all.
+        re-parses the certificate identity string. It compares every supplied
+        argument and both payload digests without external host tools.
         """
         checksums = root / "SHA256SUMS"
         signature = root / "SHA256SUMS.sigstore.json"
@@ -240,7 +236,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             "if ($args.Count -ne 8) { exit 90 }\n"
             "if ($args[0] -ne 'verify-blob') { exit 90 }\n"
             "if ($args[1] -ne '--bundle') { exit 90 }\n"
-            "if ($args[3] -ne '--certificate-identity-regexp') { exit 90 }\n"
+            "if ($args[3] -ne '--certificate-identity') { exit 90 }\n"
             "if ($args[5] -ne '--certificate-oidc-issuer') { exit 90 }\n"
             f"if ($args[4] -cne '{expected_identity}') {{ exit 90 }}\n"
             f"if ($args[6] -cne '{expected_issuer}') {{ exit 90 }}\n"
@@ -304,8 +300,7 @@ class PublicInstallerContractTests(unittest.TestCase):
         shutil.copyfile(archive, fixture_root / archive_name)
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         identity = (
-            r"^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@"
-            f"refs/tags/{re.escape(release)}$"
+            "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main"
         )
         _checksums, _signature, cosign = self.write_powershell_signature_fixture(
             fixture_root,
@@ -382,10 +377,7 @@ class PublicInstallerContractTests(unittest.TestCase):
         digest,
         *,
         bundle_payload=_TEST_SIGSTORE_BUNDLE,
-        expected_identity=(
-            r"^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@"
-            r"refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$"
-        ),
+        expected_identity="https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main",
         expected_issuer="https://token.actions.githubusercontent.com",
         expected_bundle_payload=None,
     ):
@@ -412,7 +404,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             'if [ "${1-}" != verify-blob ] ||\n'
             '   [ "${2-}" != --bundle ] ||\n'
             f'   ! same_path "${{3-}}" {shlex.quote(str(signature))} ||\n'
-            '   [ "${4-}" != --certificate-identity-regexp ] ||\n'
+            '   [ "${4-}" != --certificate-identity ] ||\n'
             f'   [ "${{5-}}" != {shlex.quote(expected_identity)} ] ||\n'
             '   [ "${6-}" != --certificate-oidc-issuer ] ||\n'
             f'   [ "${{7-}}" != {shlex.quote(expected_issuer)} ] ||\n'
@@ -552,8 +544,7 @@ class PublicInstallerContractTests(unittest.TestCase):
         )
         uname.chmod(0o755)
         identity = (
-            r"^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@"
-            f"refs/tags/{re.escape(release)}$"
+            "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main"
         )
         cosign = shim / "cosign"
         cosign.write_text(
@@ -561,7 +552,7 @@ class PublicInstallerContractTests(unittest.TestCase):
             "set -eu\n"
             'if [ "${1-}" != verify-blob ] || [ "${2-}" != --bundle ] ||\n'
             '   [ "$(basename -- "${3-}")" != SHA256SUMS.sigstore.json ] ||\n'
-            '   [ "${4-}" != --certificate-identity-regexp ] ||\n'
+            '   [ "${4-}" != --certificate-identity ] ||\n'
             f'   [ "${{5-}}" != {shlex.quote(identity)} ] ||\n'
             '   [ "${6-}" != --certificate-oidc-issuer ] ||\n'
             '   [ "${7-}" != https://token.actions.githubusercontent.com ] ||\n'
@@ -761,14 +752,18 @@ class PublicInstallerContractTests(unittest.TestCase):
         self.assertIn('Scheme -ne "https"', self.powershell)
         self.assertIn("download redirect must remain HTTPS", self.powershell)
 
-    def test_installers_accept_only_release_tag_sigstore_identities_in_manual_mode(self):
-        expected = "refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(rc[0-9]+)?"
+    def test_installers_pin_sigstore_to_exact_main_reusable_workflow_identity(self):
+        expected = (
+            "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main"
+        )
         self.assertIn(expected, self.posix)
         self.assertIn(expected, self.powershell)
-        self.assertNotIn("heads/main", self.posix)
-        self.assertNotIn("heads/main", self.powershell)
+        self.assertIn("--certificate-identity", self.posix)
+        self.assertIn("--certificate-identity", self.powershell)
+        self.assertNotIn("--certificate-identity-regexp", self.posix)
+        self.assertNotIn("--certificate-identity-regexp", self.powershell)
 
-    def test_release_mode_has_strict_targets_urls_redirects_and_tag_identity(self):
+    def test_release_mode_has_strict_targets_urls_redirects_and_main_identity(self):
         self.assertIn("--release", self.posix)
         self.assertIn("-Release", self.powershell)
         self.assertIn("^v[0-9]+\\.[0-9]+\\.[0-9]+", self.posix)
@@ -782,8 +777,8 @@ class PublicInstallerContractTests(unittest.TestCase):
         self.assertIn("--max-redirs 5", self.posix)
         self.assertIn("AllowAutoRedirect = $false", self.powershell)
         self.assertIn("download redirect must remain HTTPS", self.powershell)
-        self.assertIn("refs/tags/$RELEASE_IDENTITY", self.posix)
-        self.assertIn("refs/tags/$EscapedRelease", self.powershell)
+        self.assertIn("@refs/heads/main", self.posix)
+        self.assertIn("@refs/heads/main", self.powershell)
 
     @posix_installer_test
     def test_posix_release_rejects_invalid_tags_before_download(self):
