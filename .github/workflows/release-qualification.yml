@@ -344,7 +344,7 @@ jobs:
         with:
           ref: ${{ inputs.candidate_sha }}
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.11.9'
       - name: Download published Linux release asset
@@ -530,7 +530,7 @@ jobs:
           ref: ${{ inputs.candidate_sha }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.11.15'
       - name: Download published source, installer, and container bytes
