@@ -1,11 +1,21 @@
 name: Native Release
-
 on:
-  push:
-    tags: [ 'v*' ]
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+      candidate_sha:
+        required: true
+        type: string
+    secrets:
+      RELEASE_RULESETS_APP_ID:
+        required: true
+      RELEASE_RULESETS_APP_PRIVATE_KEY:
+        required: true
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.release_tag }}
   cancel-in-progress: false
 
 permissions:
@@ -64,15 +74,37 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Fetch protected main for ancestry verification
+      - name: Fetch protected main and candidate tag
         shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]
           git fetch --no-tags origin \
             +refs/heads/main:refs/remotes/origin/main
+          git fetch --no-tags origin \
+            "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+      - name: Verify tag candidate is on protected main
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git cat-file -t "refs/tags/${RELEASE_TAG}")" = tag
+          candidate_commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          test "$candidate_commit" = "$CANDIDATE_SHA"
+          git merge-base --is-ancestor "$candidate_commit" refs/remotes/origin/main
+      - name: Check out validated candidate
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: git checkout --detach "$CANDIDATE_SHA"
       - name: Verify v2.0 stable release gate is present
         shell: bash
         run: |
@@ -88,7 +120,7 @@ jobs:
         id: rulesets
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           policy_json="$(python3 scripts/release_identity.py rulesets \
@@ -106,9 +138,9 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
-          TRIGGER_REF: ${{ github.ref }}
-          TRIGGER_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          TRIGGER_REF: ${{ format('refs/tags/{0}', inputs.release_tag) }}
+          TRIGGER_SHA: ${{ inputs.candidate_sha }}
         run: |
           set -euo pipefail
           tag_object_sha="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}")"
@@ -133,7 +165,7 @@ jobs:
       - name: Verify release notes exist
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -eu
           NOTES="docs/releases/${RELEASE_TAG}.md"
@@ -359,6 +391,8 @@ jobs:
     name: Publish immutable prerelease candidate
     needs: [prepare, full-tests, codeql, benchmark, live-visual, native, container, source]
     runs-on: ubuntu-latest
+    environment:
+      name: release-production
     permissions:
       actions: read
       contents: write
@@ -936,7 +970,7 @@ jobs:
           cosign verify-blob \
             --bundle published/SHA256SUMS.sigstore.json \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$' \
+            --certificate-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main" \
             published/SHA256SUMS
           git ls-remote --tags origin \
             "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}" \

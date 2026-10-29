@@ -1,0 +1,88 @@
+name: Native Release Dispatcher
+on:
+  workflow_run:
+    workflows: [Native Release Tag Signal]
+    types: [completed]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  verify-tag-signal:
+    name: Verify tag signal metadata
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      release_tag: ${{ steps.verify.outputs.release_tag }}
+      candidate_sha: ${{ steps.verify.outputs.candidate_sha }}
+    steps:
+      - name: Validate tag signal and signed tag target
+        id: verify
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNAL_RUN_ID: ${{ github.event.workflow_run.id }}
+          SIGNAL_EVENT: ${{ github.event.workflow_run.event }}
+          SIGNAL_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          SIGNAL_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SIGNAL_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          SIGNAL_REPOSITORY: ${{ github.event.workflow_run.repository.full_name }}
+        run: |
+          set -euo pipefail
+          [[ "$SIGNAL_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          test "$SIGNAL_EVENT" = push
+          test "$SIGNAL_CONCLUSION" = success
+          test "$SIGNAL_REPOSITORY" = "$GITHUB_REPOSITORY"
+          [[ "$SIGNAL_HEAD_BRANCH" =~ ^v[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]
+          [[ "$SIGNAL_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          signal_run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SIGNAL_RUN_ID}")"
+          test "$(jq -r .path <<<"$signal_run")" = ".github/workflows/release-tag.yml"
+          test "$(jq -r .event <<<"$signal_run")" = push
+          test "$(jq -r .status <<<"$signal_run")" = completed
+          test "$(jq -r .conclusion <<<"$signal_run")" = success
+          test "$(jq -r .head_branch <<<"$signal_run")" = "$SIGNAL_HEAD_BRANCH"
+          test "$(jq -r .head_sha <<<"$signal_run")" = "$SIGNAL_HEAD_SHA"
+          test "$(jq -r .repository.full_name <<<"$signal_run")" = "$GITHUB_REPOSITORY"
+          test "$(jq -r .head_repository.full_name <<<"$signal_run")" = "$GITHUB_REPOSITORY"
+
+          tag_ref="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${SIGNAL_HEAD_BRANCH}")"
+          test "$(jq -r .ref <<<"$tag_ref")" = "refs/tags/${SIGNAL_HEAD_BRANCH}"
+          test "$(jq -r .object.type <<<"$tag_ref")" = tag
+          tag_object_sha="$(jq -r .object.sha <<<"$tag_ref")"
+          [[ "$tag_object_sha" =~ ^[0-9a-f]{40}$ ]]
+
+          tag_metadata="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object_sha}")"
+          test "$(jq -r .tag <<<"$tag_metadata")" = "$SIGNAL_HEAD_BRANCH"
+          test "$(jq -r .object.type <<<"$tag_metadata")" = commit
+          test "$(jq -r .object.sha <<<"$tag_metadata")" = "$SIGNAL_HEAD_SHA"
+          test "$(jq -r .verification.verified <<<"$tag_metadata")" = true
+          signature="$(jq -r .verification.signature <<<"$tag_metadata")"
+          test -n "$signature"
+          test "$signature" != null
+
+          {
+            echo "release_tag=$SIGNAL_HEAD_BRANCH"
+            echo "candidate_sha=$SIGNAL_HEAD_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Run protected-main release workflow
+    needs: verify-tag-signal
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      deployments: read
+      id-token: write
+      packages: read
+      security-events: write
+    uses: wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main
+    with:
+      release_tag: ${{ needs.verify-tag-signal.outputs.release_tag }}
+      candidate_sha: ${{ needs.verify-tag-signal.outputs.candidate_sha }}
+    secrets:
+      RELEASE_RULESETS_APP_ID: ${{ secrets.RELEASE_RULESETS_APP_ID }}
+      RELEASE_RULESETS_APP_PRIVATE_KEY: ${{ secrets.RELEASE_RULESETS_APP_PRIVATE_KEY }}

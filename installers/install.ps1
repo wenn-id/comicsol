@@ -17,7 +17,7 @@ $InstallMarkerName = ".comic-sol-install"
 $InstallMarkerMagic = "comic-sol-install-v1"
 $CosignCommand = if ($env:COMIC_SOL_COSIGN) { $env:COMIC_SOL_COSIGN } else { "cosign" }
 $CosignOidcIssuer = "https://token.actions.githubusercontent.com"
-$CosignIdentityRegexp = '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$'
+$CosignIdentity = "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main"
 function Encode-MarkerRoot {
     param([string]$Path)
     $normalized = $Path.Replace('\', '/')
@@ -272,8 +272,6 @@ try {
         Invoke-BoundedHttpsDownload -Uri "$ReleaseBase/SHA256SUMS" -Destination $Checksums
         Invoke-BoundedHttpsDownload -Uri "$ReleaseBase/SHA256SUMS.sigstore.json" -Destination $Signature
         Invoke-BoundedHttpsDownload -Uri "$ReleaseBase/$ArchiveName" -Destination $Archive
-        $EscapedRelease = [System.Text.RegularExpressions.Regex]::Escape($Release)
-        $CosignIdentityRegexp = "^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/$EscapedRelease`$"
     } elseif ($Url) {
         $parsedUrl = [System.Uri]$Url
         if (-not $parsedUrl.IsAbsoluteUri -or $parsedUrl.Scheme -ne "https") {
@@ -293,7 +291,7 @@ try {
     if (-not (Test-Path -LiteralPath $Checksums -PathType Leaf) -or -not (Test-Path -LiteralPath $Signature -PathType Leaf)) {
         throw "checksum manifest and Sigstore bundle are required for signature verification"
     }
-    & $CosignCommand verify-blob --bundle $Signature --certificate-identity-regexp $CosignIdentityRegexp --certificate-oidc-issuer $CosignOidcIssuer $Checksums | Out-Null
+    & $CosignCommand verify-blob --bundle $Signature --certificate-identity $CosignIdentity --certificate-oidc-issuer $CosignOidcIssuer $Checksums | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "signature verification failed" }
 
     $ArchiveName = [System.IO.Path]::GetFileName($Archive)

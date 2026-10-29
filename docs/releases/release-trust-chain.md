@@ -57,8 +57,13 @@ table fails qualification and promotion, which compare the published set against
 ## Trust chain
 
 Trust roots are public and pinned: the GitHub repository (`wenn-id/comicsol`),
-the `release.yml` workflow OIDC identity, protected `main`, the signed annotated
-tag object, and every active ruleset matching the exact release tag. The
+the exact `release.yml@refs/heads/main` reusable-workflow certificate identity,
+protected `main`, the signed annotated tag object, and every active ruleset
+matching the exact release tag. The tag-event caller is deliberately thin and
+does not check out or run repository code. The default-branch
+`.github/workflows/release-run.yml` `workflow_run` dispatcher listens for its completed run,
+validates the run and signed tag through the GitHub API, then calls the reusable
+workflow at the fixed main ref. The
 workflow applies GitHub-compatible pathname matching (`*` does not cross `/`;
 `**` may), applies exclusions first, and aggregates required rule types across
 all matches. The effective policy must restrict creation, updates, and
@@ -70,8 +75,14 @@ actors, malformed patterns, and unsupported patterns all fail closed. Every
 matching ruleset containing `creation` must name exactly that approved authority.
 Verification walks the chain in this order, and every step is fail-closed:
 
-1. **Tag, commit, and protected main.** The release run proves `github.ref` is exactly
-   `refs/tags/vX`, requires a signed annotated tag, and obtains that exact tag
+1. **Tag, commit, and protected main.** A `push` to a `v*` tag starts the
+   minimal `.github/workflows/release-tag.yml` signal. The default-branch
+   `.github/workflows/release-run.yml` dispatcher validates its run path, event,
+   tag name, candidate SHA, and signed annotated-tag API object before calling
+   `.github/workflows/release.yml@refs/heads/main`. That trusted reusable
+   workflow checks the tag ref and candidate ancestry in inline shell before
+   checking out or running code from the tagged commit. It then requires the
+   canonical `refs/tags/vX` ref, obtains that exact tag
    object from the GitHub API. The API object SHA and target commit must equal
    the locally captured direct tag-object SHA and peeled commit, and its
    signature metadata must be present and verified. The triggering SHA and
@@ -90,9 +101,10 @@ Verification walks the chain in this order, and every step is fail-closed:
    `target_commitish=main` for a Release whose tag already exists; that raw field
    is non-authoritative and is never used as target evidence.
 2. **Workflow identity.** The run holds `id-token: write` only in the jobs that
-   attest or sign, and both verifiers pin the certificate identity regexp
-   `^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v…$`
-   plus the issuer `https://token.actions.githubusercontent.com`.
+   attest or sign. Every verifier requires the exact certificate identity
+   `https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main`
+   and the issuer `https://token.actions.githubusercontent.com`; no tag ref or
+   caller-selected workflow path is accepted as the signer identity.
 3. **Payload attestations.** `actions/attest-build-provenance` attests every
    subject named by `SHA256SUMS` — each native archive, its metadata and SBOM,
    the wheel, the sdist, the container tar, both installers, and the candidate-bound
@@ -100,9 +112,10 @@ Verification walks the chain in this order, and every step is fail-closed:
    subject digest taken from the manifest itself, so an attestation can never
    cover bytes the manifest does not name.
 4. **Signed manifest.** `cosign sign-blob` keyless-signs `SHA256SUMS` under the
-   same workflow identity. Verifiers check the bundle, the issuer, the identity
-   regexp, and the tag-shaped ref together; the installers refuse to proceed
-   until this passes.
+   same exact main-workflow identity. Verifiers check the bundle, issuer, and
+   exact certificate identity; the candidate record and provenance attestations
+   separately bind the bytes to the release tag and commit. Installers refuse to
+   proceed unless the signature passes.
 5. **Identity record.** `candidate-identity.json` binds the signed annotated
    tag-object SHA, tag, version, candidate commit, captured protected-main SHA,
    workflow run URL, canonical matching ruleset IDs, the approved
@@ -130,9 +143,10 @@ Verification walks the chain in this order, and every step is fail-closed:
    SBOM identity contracts; the candidate-bound visual summary's approval,
    reviewer-attestation digest, score coverage, thresholds, material-change
    coverage, and quality-review coverage; and the container bytes by loading and running them.
-7. **Promotion evidence.** After approval by a configured reviewer other than
-   the triggering actor through the protected `release-production` Environment,
-   promotion re-downloads every byte, compares them to the candidate identity,
+7. **Promotion evidence.** The protected `release-production` Environment gates
+   candidate publication and, after qualification, requires a separate approval
+   by a configured reviewer other than the triggering actor before promotion.
+   Promotion re-downloads every byte, compares them to the candidate identity,
    freshly revalidates the exact Release `tag_name`, remote tag-object SHA, and
    peeled candidate commit at each promotion boundary, binds the
    benchmark, candidate-bound live visual approval, and qualification summaries
@@ -142,7 +156,10 @@ Verification walks the chain in this order, and every step is fail-closed:
 An external verifier can reproduce steps 4–6 with public data alone: the
 `cosign verify-blob` command in [`docs/install-manual.md`](../install-manual.md#verify-installer-bytes-before-first-execution), the
 `SHA256SUMS` digest lines, and `gh attestation verify <asset> --repo
-wenn-id/comicsol --signer-workflow wenn-id/comicsol/.github/workflows/release.yml`.
+wenn-id/comicsol --cert-identity
+"https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main"
+--cert-oidc-issuer https://token.actions.githubusercontent.com --source-ref
+refs/tags/vX`.
 
 ## OCI distribution decision
 

@@ -95,7 +95,8 @@ jobs:
           (cd qualification-identity && sha256sum -c candidate-identity.json.sha256)
           gh attestation verify qualification-identity/candidate-identity.json \
             --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow wenn-id/comicsol/.github/workflows/release.yml \
+            --cert-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main" \
+            --cert-oidc-issuer https://token.actions.githubusercontent.com \
             --source-digest "$CANDIDATE_SHA" \
             --source-ref "refs/tags/$RELEASE_TAG" \
             --deny-self-hosted-runners
@@ -291,7 +292,8 @@ jobs:
             "qualification/${INSTALLER}"; do
             gh attestation verify "$subject" \
               --repo "$GITHUB_REPOSITORY" \
-              --signer-workflow wenn-id/comicsol/.github/workflows/release.yml \
+              --cert-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main" \
+              --cert-oidc-issuer https://token.actions.githubusercontent.com \
               --source-digest "$CANDIDATE_SHA" \
               --source-ref "refs/tags/$RELEASE_TAG" \
               --deny-self-hosted-runners
@@ -599,7 +601,7 @@ jobs:
           cosign verify-blob \
             --bundle qualification/SHA256SUMS.sigstore.json \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            --certificate-identity-regexp '^https://github\.com/wenn-id/comicsol/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$' \
+            --certificate-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main" \
             qualification/SHA256SUMS
           python - <<'PY'
           from pathlib import Path
@@ -625,7 +627,8 @@ jobs:
           for subject in qualification/*.whl qualification/*.tar.gz qualification/*.container.tar qualification/*.container.sbom.json qualification/install.sh qualification/install.ps1; do
             gh attestation verify "$subject" \
               --repo "$GITHUB_REPOSITORY" \
-              --signer-workflow wenn-id/comicsol/.github/workflows/release.yml \
+              --cert-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main" \
+              --cert-oidc-issuer https://token.actions.githubusercontent.com \
               --source-digest "$CANDIDATE_SHA" \
               --source-ref "refs/tags/$RELEASE_TAG" \
               --deny-self-hosted-runners
@@ -731,7 +734,8 @@ jobs:
           (cd qualification-identity && sha256sum -c candidate-identity.json.sha256)
           gh attestation verify qualification-identity/candidate-identity.json \
             --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow wenn-id/comicsol/.github/workflows/release.yml \
+            --cert-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main" \
+            --cert-oidc-issuer https://token.actions.githubusercontent.com \
             --source-digest "$CANDIDATE_SHA" \
             --source-ref "refs/tags/$RELEASE_TAG" \
             --deny-self-hosted-runners
@@ -741,7 +745,8 @@ jobs:
             qualification-identity/v2.2-live-visual-evidence.tar.gz; do
             gh attestation verify "$subject" \
               --repo "$GITHUB_REPOSITORY" \
-              --signer-workflow wenn-id/comicsol/.github/workflows/release.yml \
+              --cert-identity "https://github.com/wenn-id/comicsol/.github/workflows/release.yml@refs/heads/main" \
+              --cert-oidc-issuer https://token.actions.githubusercontent.com \
               --source-digest "$CANDIDATE_SHA" \
               --source-ref "refs/tags/$RELEASE_TAG" \
               --deny-self-hosted-runners
