@@ -78,7 +78,7 @@ class PublicInstallerContractTests(unittest.TestCase):
         cls.posix = (cls.root / "installers/install.sh").read_text(encoding="utf-8")
         cls.powershell = (cls.root / "installers/install.ps1").read_text(encoding="utf-8")
 
-    def run_uninstall(self, install_root):
+    def run_uninstall(self, install_root, *, env=None):
         if os.name == "nt":
             shell = shutil.which("pwsh") or shutil.which("powershell")
             self.assertIsNotNone(shell, "PowerShell is required for the Windows installer test")
@@ -99,7 +99,10 @@ class PublicInstallerContractTests(unittest.TestCase):
                 str(install_root),
                 "--uninstall",
             ]
-        return subprocess.run(command, capture_output=True, text=True, check=False)
+        environment = os.environ.copy()
+        if env is not None:
+            environment.update(env)
+        return subprocess.run(command, capture_output=True, text=True, check=False, env=environment)
 
     @staticmethod
     def write_marker(install_root, marker_root=None):
@@ -1402,6 +1405,26 @@ class PublicInstallerContractTests(unittest.TestCase):
             project.mkdir()
             project_sentinel = project / "do-not-delete.txt"
             project_sentinel.write_text("user project", encoding="utf-8")
+            generated = project / "runs" / "demo" / "exports" / "page-01.png"
+            generated.parent.mkdir(parents=True)
+            generated.write_bytes(
+                (self.root / "tests/fixtures/valid-one-page/panels/clean/p01-01.png").read_bytes()
+            )
+            checkpoint = project / "runs" / "demo" / "state" / "checkpoint.bin"
+            checkpoint.parent.mkdir(parents=True)
+            checkpoint.write_bytes(bytes(range(256)) + b"\x00\xff")
+            unrelated = project / "notes" / "unrelated.txt"
+            unrelated.parent.mkdir(parents=True)
+            unrelated.write_bytes(b"keep this output-root content\n")
+
+            def snapshot_user_project():
+                return {
+                    path.relative_to(project).as_posix(): path.read_bytes()
+                    for path in sorted(project.rglob("*"))
+                    if path.is_file()
+                }
+
+            project_snapshot = snapshot_user_project()
             config = root / "home" / ".codex" / "config.toml"
             config.parent.mkdir(parents=True)
             config.write_text("[mcp_servers.other]\ncommand = 'keep'\n", encoding="utf-8")
@@ -1413,6 +1436,7 @@ class PublicInstallerContractTests(unittest.TestCase):
 
             first = self.run_posix_archive_install(archive, install_root, env=environment)
             self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+            self.assertEqual(project_snapshot, snapshot_user_project())
             runtime_snapshot = {
                 "marker": (install_root / ".comic-sol-install").read_bytes(),
                 "active_version": (install_root / "active-version").read_bytes(),
@@ -1432,19 +1456,23 @@ class PublicInstallerContractTests(unittest.TestCase):
                     ).read_bytes(),
                 },
             )
+            self.assertEqual(project_snapshot, snapshot_user_project())
 
-            uninstall = self.run_uninstall(install_root)
+            uninstall = self.run_uninstall(install_root, env=environment)
             self.assertEqual(0, uninstall.returncode, uninstall.stdout + uninstall.stderr)
             self.assertFalse(install_root.exists())
-            repeated_uninstall = self.run_uninstall(install_root)
+            self.assertEqual(project_snapshot, snapshot_user_project())
+            repeated_uninstall = self.run_uninstall(install_root, env=environment)
             self.assertEqual(
                 0,
                 repeated_uninstall.returncode,
                 repeated_uninstall.stdout + repeated_uninstall.stderr,
             )
-            reinstall = self.run_posix_archive_install(archive, install_root)
+            self.assertEqual(project_snapshot, snapshot_user_project())
+            reinstall = self.run_posix_archive_install(archive, install_root, env=environment)
             self.assertEqual(0, reinstall.returncode, reinstall.stdout + reinstall.stderr)
             self.assertEqual("2.0.0rc4", (install_root / "active-version").read_text().strip())
+            self.assertEqual(project_snapshot, snapshot_user_project())
             self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
             self.assertEqual("[mcp_servers.other]\ncommand = 'keep'\n", config.read_text())
 
