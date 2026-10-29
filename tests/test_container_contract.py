@@ -27,6 +27,7 @@ from scripts.container_runtime_audit import (  # noqa: E402
 from scripts.container_sbom import (  # noqa: E402
     container_sbom_name,
     container_tar_name,
+    merge_syft_os_packages,
     parse_base_image,
 )
 
@@ -106,6 +107,11 @@ class WorkflowContractTests(unittest.TestCase):
             "--output container-assets/comic-sol-${{ needs.prepare.outputs.version }}"
             "-linux-x86_64.container.sbom.json",
             "pip_audit -r requirements/locks/runtime-linux-x86_64.txt",
+            "uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c",
+            "uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439",
+            "severity-cutoff: high",
+            "only-fixed: true",
+            "--syft-sbom",
             "docker save comic-sol:${{ needs.prepare.outputs.version }}",
             "mkdir -p container-assets",
         ):
@@ -191,6 +197,84 @@ class ContainerScriptContractTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 parse_base_image(tampered)
 
+    def test_syft_os_packages_merge_without_duplicate_python_packages(self):
+        python_ref = "pkg:pypi/python@3.11.15"
+        os_ref = "pkg:deb/debian/libc6@2.36?arch=amd64&distro=debian-12"
+        pypi_ref = "pkg:pypi/requests@2.32.0"
+        environment = {
+            "bomFormat": "CycloneDX",
+            "components": [
+                {
+                    "type": "library",
+                    "name": "python",
+                    "version": "3.11.15",
+                    "purl": python_ref,
+                    "bom-ref": "python-ref",
+                }
+            ],
+            "dependencies": [{"ref": "python-ref", "dependsOn": []}],
+        }
+        syft = {
+            "bomFormat": "CycloneDX",
+            "components": [
+                {
+                    "type": "library",
+                    "name": "libc6",
+                    "version": "2.36",
+                    "purl": os_ref,
+                    "bom-ref": os_ref,
+                },
+                {
+                    "type": "library",
+                    "name": "requests",
+                    "version": "2.32.0",
+                    "purl": pypi_ref,
+                    "bom-ref": pypi_ref,
+                },
+            ],
+            "dependencies": [{"ref": os_ref, "dependsOn": ["python-ref", pypi_ref]}],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            environment_path = Path(temporary) / "environment.json"
+            syft_path = Path(temporary) / "syft.json"
+            environment_path.write_text(json.dumps(environment), encoding="utf-8")
+            syft_path.write_text(json.dumps(syft), encoding="utf-8")
+
+            count = merge_syft_os_packages(environment_path, syft_path)
+            merged = json.loads(environment_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(1, count)
+        merged_purls = {component.get("purl") for component in merged["components"]}
+        self.assertEqual({python_ref, os_ref}, merged_purls)
+        self.assertNotIn(pypi_ref, merged_purls)
+        self.assertIn({"ref": os_ref, "dependsOn": [python_ref]}, merged["dependencies"])
+
+    def test_missing_syft_os_inventory_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            environment_path = Path(temporary) / "environment.json"
+            syft_path = Path(temporary) / "syft.json"
+            environment_path.write_text(
+                json.dumps({"components": [], "dependencies": []}), encoding="utf-8"
+            )
+            syft_path.write_text(
+                json.dumps(
+                    {
+                        "bomFormat": "CycloneDX",
+                        "components": [
+                            {
+                                "type": "library",
+                                "name": "requests",
+                                "purl": "pkg:pypi/requests@2.32.0",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "no operating-system package"):
+                merge_syft_os_packages(environment_path, syft_path)
+
 
 class ContainerDocumentationContractTests(unittest.TestCase):
     def test_install_documents_seccomp_policy_and_hardening(self):
@@ -232,6 +316,8 @@ class ContainerDocumentationContractTests(unittest.TestCase):
         self.assertIn("| `comic-sol-X-linux-x86_64.container.sbom.json` |", chain)
         self.assertIn("container_runtime_audit.py", chain)
         self.assertIn("pip-audit", chain)
+        self.assertIn("Grype", chain)
+        self.assertIn("Syft's OS-package components", chain)
         self.assertNotIn("DOCKER_BASE_DIGEST", chain)
 
 

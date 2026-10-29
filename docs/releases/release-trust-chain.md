@@ -170,14 +170,16 @@ source and the Dockerfile's single digest-pinned base `ARG` (the workflow
 passes no base-image build argument, so the digest cannot drift from the
 audited pin), audits the running container's hardening with
 `scripts/container_runtime_audit.py`, blocks on a `pip-audit` scan of the
-image's exact hash-locked dependency set, generates
-`comic-sol-X-linux-x86_64.container.sbom.json` by inventorying the image's own
-`site-packages`, exports the image with `docker save`, and publishes the tar
-and its SBOM as payloads: both are named by the signed manifest, covered by
-build-provenance attestations, and qualified by `docker load` plus the same
-runtime audit against the downloaded bytes. Publishing "by digest" is
-therefore the `SHA256SUMS` entry plus the attestation, and the signing story
-is the Sigstore bundle over that manifest.
+image's exact hash-locked dependency set and a Grype scan that fails on fixable
+high-or-critical findings. It generates
+`comic-sol-X-linux-x86_64.container.sbom.json` by combining the image's own
+`site-packages` inventory with Syft's OS-package components and recording the
+digest-pinned base image. The workflow exports the image with `docker save` and
+publishes the tar and its SBOM as payloads: both are named by the signed
+manifest, covered by build-provenance attestations, and qualified by
+`docker load` plus the same runtime audit against the downloaded bytes.
+Publishing "by digest" is therefore the `SHA256SUMS` entry plus the
+attestation, and the signing story is the Sigstore bundle over that manifest.
 
 A registry distribution (for example `ghcr.io`) would additionally require:
 push-by-digest with `packages: write` scoped to the release job alone, a
