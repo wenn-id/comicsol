@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from PIL import Image, ImageChops, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -454,6 +454,22 @@ class LetteringTests(unittest.TestCase):
             1000,
         )
         self.assertTrue(any(max(image.getpixel((x, 40))) < 80 for x in range(32, 370)))
+
+    def test_balloon_outline_expansion_matches_25px_max_filter(self):
+        from scripts.letter_panels import _expand_balloon_outline
+
+        mask = Image.new("L", (73, 65), 0)
+        draw = ImageDraw.Draw(mask)
+        draw.polygon([(-4, 0), (30, 0), (0, 28)], fill=255)
+        draw.rectangle((10, 8, 68, 58), fill=190)
+        draw.rectangle((23, 20, 53, 48), fill=0)
+        draw.line((0, 64, 72, 64), fill=127, width=1)
+
+        expected = mask.filter(ImageFilter.MaxFilter(25))
+        actual = _expand_balloon_outline(mask)
+
+        self.assertEqual(expected.tobytes(), actual.tobytes())
+        self.assertEqual(0, actual.getpixel((38, 34)))
 
     def test_dialogue_tail_attachment_has_no_internal_seam(self):
         from scripts.letter_panels import _organic_tail_geometry
