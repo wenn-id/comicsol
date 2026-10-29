@@ -89,7 +89,7 @@ ignore_missing_imports = true
 
 [tool.coverage.run]
 branch = true
-source = ["comic_sol_product", "scripts"]
+source = ["comic_sol_product", "integrations", "scripts"]
 omit = ["scripts/check_coverage.py"]
 
 [tool.coverage.report]

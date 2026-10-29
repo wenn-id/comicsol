@@ -48,7 +48,10 @@ class QualityGateContractTests(unittest.TestCase):
 
         coverage = config["tool"]["coverage"]
         self.assertTrue(coverage["run"]["branch"])
-        self.assertEqual(["comic_sol_product", "scripts"], coverage["run"]["source"])
+        self.assertEqual(
+            ["comic_sol_product", "integrations", "scripts"],
+            coverage["run"]["source"],
+        )
         self.assertNotIn("tests", coverage["run"]["source"])
 
     def test_workflow_runs_blocking_quality_tools_and_publishes_coverage(self):

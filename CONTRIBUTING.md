@@ -33,8 +33,8 @@ Run checks through same `.venv` interpreter used for dependency installation. Be
 
 ```bash
 .venv/bin/python -m pip install --require-hashes -r requirements/locks/quality-linux-x86_64.txt
-.venv/bin/python -m ruff check scripts comic_sol_product tests
-.venv/bin/python -m ruff format --check scripts comic_sol_product tests
+.venv/bin/python -m ruff check scripts comic_sol_product tests integrations
+.venv/bin/python -m ruff format --check scripts comic_sol_product tests integrations
 .venv/bin/python -m mypy
 .venv/bin/python -m coverage run -m unittest discover -s tests
 .venv/bin/python -m coverage json -o coverage.json
