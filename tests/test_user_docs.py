@@ -658,7 +658,7 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         """Capability-blocked projects record reality and resume before downstream QA."""
         section = self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :]
         capability_pos = section.find("record its real provider-neutral capability observation")
-        resume_pos = section.find("PYTHON scripts/comic_sol.py resume PROJECT --json")
+        resume_pos = section.find("comic-sol --json resume PROJECT")
         qa_pos = section.find("Continue normal visual QA")
         self.assertTrue(-1 < capability_pos < resume_pos < qa_pos)
         self.assertIn("otherwise preserve `BLOCKED`", section)

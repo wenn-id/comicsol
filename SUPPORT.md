@@ -34,16 +34,17 @@ architecture, and runtime combinations.
 
 Before opening an issue, attach machine-readable diagnostics. `doctor` checks
 runtime, Pillow, fonts, templates, references, and the output root, and reports
-optional MCP/image-capability checks as warnings:
+optional MCP/image-capability checks as warnings. Use the installed `comic-sol`
+CLI for the JSON envelope; the source engine script does not accept the same
+global `--json` option. From a source checkout, install the package first:
 
 ```bash
-# Source or Skill checkout (POSIX) — resolve one Python 3.11+ launcher as PYTHON:
-"$PYTHON" scripts/comic_sol.py --json doctor --output-root ./comic-sol-output
+"$PYTHON" -m pip install .
+```
 
-# Windows PowerShell:
-# $PYTHON = "py"; & $PYTHON -3 scripts\comic_sol.py --json doctor --output-root .\comic-sol-output
+Then run the same command on POSIX, PowerShell, or from a native archive:
 
-# Installed CLI or native archive:
+```bash
 comic-sol --json doctor --output-root ./comic-sol-output
 ```
 

@@ -155,7 +155,7 @@ archive are unchanged.
 |---|---|---|
 | Codex Skill placement | fresh agent session; `comic-sol doctor` for readiness | Platform default (table above) |
 | Codex Plugin bundle | fresh Codex session | Platform default (table above) |
-| Source (development) | `scripts/comic_sol.py --output-root <temp>` | None expected — explicit root required by convention |
+| Source (development) | `scripts/comic_sol.py doctor --output-root <temp>` | None expected — explicit root required by convention |
 | Installed CLI | `comic-sol doctor` | Platform default (table above) |
 | Native archive | installed `comic-sol doctor` | Platform default (table above); runtime lives separately |
 | MCP server | `comic-sol mcp --root <absolute path>` | None — explicit `--root` required |
