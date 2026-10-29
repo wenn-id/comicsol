@@ -707,6 +707,15 @@ def _organic_tail_geometry(
     }
 
 
+def _expand_balloon_outline(mask: Image.Image) -> Image.Image:
+    # Twelve 3×3 passes preserve the existing 25×25 dilation.
+    outline = mask
+    small_filter = ImageFilter.MaxFilter(3)
+    for _ in range(12):
+        outline = outline.filter(small_filter)
+    return outline
+
+
 def _draw_antialiased_balloon(
     image: Image.Image,
     bounds: tuple[int, int, int, int],
@@ -786,7 +795,7 @@ def _draw_antialiased_balloon(
 
     # Expand the merged silhouette before downsampling. This avoids the seam,
     # doubled edge, and jagged notch produced by outlining two separate shapes.
-    outline = mask.filter(ImageFilter.MaxFilter(25))
+    outline = _expand_balloon_outline(mask)
     resample = Image.Resampling.LANCZOS
     local_size = (right - left, bottom - top)
     mask = mask.resize(local_size, resample)
