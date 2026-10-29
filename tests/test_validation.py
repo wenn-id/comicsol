@@ -54,6 +54,17 @@ from scripts.quality_records import PANEL_CHECK_IDS, PAGE_CHECK_IDS  # noqa: E40
 from scripts.normalize_panels import normalize_panel  # noqa: E402
 
 
+def _provider_neutrality_violations(paths):
+    forbidden = re.compile(
+        r"OPENAI_API_KEY|ANTHROPIC_API_KEY|api[_ -]?key\s*=|requests\.|httpx\.|urllib\.request",
+        re.IGNORECASE,
+    )
+    source_files = []
+    for path in paths:
+        source_files.extend(sorted(path.rglob("*.py")) if path.is_dir() else [path])
+    return [path for path in sorted(set(source_files)) if forbidden.search(path.read_text("utf-8"))]
+
+
 def valid_manifest():
     data = json.loads((ROOT / "templates/manifest.json").read_text("utf-8"))
     data["project_id"] = "sunlight-courier"
@@ -2431,16 +2442,22 @@ class SkillContractTests(unittest.TestCase):
         ):
             self.assertIn(phrase, text)
 
-    def test_scripts_and_capability_reference_are_provider_neutral(self):
-        forbidden = re.compile(
-            r"OPENAI_API_KEY|ANTHROPIC_API_KEY|api[_ -]?key\s*=|requests\.|httpx\.|urllib\.request",
-            re.IGNORECASE,
-        )
-        paths = sorted((ROOT / "scripts").glob("*.py")) + [
-            ROOT / "references/capability-detection.md"
+    def test_engine_sources_and_capability_reference_are_provider_neutral(self):
+        paths = [
+            ROOT / "scripts",
+            ROOT / "comic_sol_product",
+            ROOT / "references/capability-detection.md",
         ]
-        for path in paths:
-            self.assertIsNone(forbidden.search(path.read_text("utf-8")), path)
+        self.assertEqual([], _provider_neutrality_violations(paths))
+
+    def test_provider_neutrality_scan_finds_nested_source_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_root = Path(temp_dir) / "comic_sol_product"
+            nested_file = source_root / "nested" / "engine.py"
+            nested_file.parent.mkdir(parents=True)
+            nested_file.write_text("client.api_key = OPENAI_API_KEY", encoding="utf-8")
+
+            self.assertEqual([nested_file], _provider_neutrality_violations([source_root]))
 
     def test_workflow_has_exact_error_questions_defaults_and_state_order(self):
         text = self.all_agent_text()
