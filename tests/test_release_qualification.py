@@ -180,12 +180,16 @@ class ReleaseQualificationContractTests(unittest.TestCase):
             )
             exception = json.loads((root / "summary-wsl.json").read_text(encoding="utf-8"))
             exception["status"] = "exception"
-            exception["exceptions"] = ["WSL2 not available on this runner"]
+            exception["exceptions"] = ["WSL2 has no installed WSL2 distribution on this runner"]
             (root / "summary-wsl.json").write_text(json.dumps(exception) + "\n", encoding="utf-8")
             blocked = aggregate_summaries(root, output, required_targets=required_targets)
             self.assertEqual("RELEASE BLOCKED", blocked["decision"])
             self.assertIn("wsl", blocked["failed_platforms"])
             self.assertEqual("exception", blocked["summaries"]["wsl"]["status"])
+            self.assertIn(
+                "no installed WSL2 distribution",
+                blocked["summaries"]["wsl"]["exceptions"][0],
+            )
 
     def test_verify_payload_checksums_covers_every_published_payload(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -807,6 +811,14 @@ class ReleaseQualificationContractTests(unittest.TestCase):
         self.assertIn("$summary = [ordered]@{", workflow)
         self.assertIn("architecture = $env:ARCH", workflow)
         self.assertIn("exceptions = @($reason)", workflow)
+        self.assertIn("$wslDistributions = & wsl.exe --list --verbose 2>&1", workflow)
+        self.assertIn("$hasWsl2Distribution", workflow)
+        self.assertIn("$distributionText -split '\\r?\\n'", workflow)
+        self.assertIn("no installed WSL2 distribution", workflow)
+        self.assertLess(
+            workflow.index("$hasWsl2Distribution"),
+            workflow.index("$wslRoot = (& wsl.exe wslpath"),
+        )
         self.assertIn(
             "$summary | ConvertTo-Json -Depth 3 | Set-Content -Encoding utf8 qualification/summary-wsl.json",
             workflow,
@@ -820,6 +832,8 @@ class ReleaseQualificationContractTests(unittest.TestCase):
         docs = DOCS.read_text(encoding="utf-8")
         self.assertIn("release qualification", docs.lower())
         self.assertIn("WSL2", docs)
+        self.assertIn("installed WSL2 distribution", docs)
+        self.assertIn("exception", docs)
         self.assertIn("recommended pinned mode", docs)
         self.assertIn("explicit local", docs)
         self.assertIn("staged `doctor`", docs)

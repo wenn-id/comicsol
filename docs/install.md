@@ -167,8 +167,9 @@ Linux x86_64, macOS arm64, Windows x86_64, and WSL2. It verifies the installed
 version, `doctor`, an offline fixture lifecycle, same-release reinstall, and safe
 uninstall. Its forced mid-swap rollback test deliberately uses explicit local
 assets so failure injection remains deterministic and independent of the network.
-An unavailable WSL2 runner is recorded as an exception and blocks release
-readiness rather than counting as a pass.
+An unavailable WSL2 engine or a runner without an installed WSL2 distribution is
+recorded as an exception and blocks release readiness rather than counting as a
+pass.
 
 ## Structured doctor diagnostics
 
