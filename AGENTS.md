@@ -138,15 +138,19 @@ reimplement it.
   lock or hand-roll a temp-file rename.
 - Installer and client-config writes follow the same rule: back up, write
   atomically, verify, and restore the original bytes when verification fails.
-- Direct `os.replace()` calls are limited to these tested publication paths:
+- In production code, direct `os.replace()` calls are allowed only in the tested
+  core helpers in `scripts/project_io.py` (`durable_external_write()`,
+  `replace_contained()`, `durable_atomic_write()`, `ProjectTransaction.commit()`,
+  and `ProjectTransaction.recover()`) and these product paths:
   `comic_sol_product/setup.py` (`_ConfigDirectory.replace()`, `_atomic_write()`,
   and `_publish_expected()`), `comic_sol_product/skill_install.py`
   (`_publish_new()`, `_exchange_paths()`, `install_skill()`, and
   `uninstall_skill()`), and `comic_sol_product/portable.py`
-  (`create_portable_archive()`). They may publish staged, fully written content
-  or restore a backup after failed verification. Every new direct call site
-  requires a failure-path regression test; general project artifacts still use
-  the atomic helpers above.
+  (`create_portable_archive()`). `uninstall_skill()` may detach the managed tree
+  for removal; other product calls publish staged content, exchange managed
+  trees, or restore backups after failed verification. Every new direct call
+  site requires a failure-path regression test; general project artifacts must
+  use the project I/O helpers above.
 
 ## Article 7 — Resumability and public JSON compatibility survive
 

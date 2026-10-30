@@ -155,7 +155,14 @@ class AgentConstitutionTests(unittest.TestCase):
             "`project.json` lifecycle fields `created_at` and `updated_at` may record the UTC time",
             "excluded from stage-cache identity",
             "deterministic stage artifacts must remain byte-identical across those updates",
-            "Direct `os.replace()` calls are limited to these tested publication paths",
+            "In production code, direct `os.replace()` calls are allowed only in the tested",
+            "core helpers in `scripts/project_io.py`",
+            "durable_external_write()",
+            "replace_contained()",
+            "durable_atomic_write()",
+            "ProjectTransaction.commit()",
+            "ProjectTransaction.recover()",
+            "`uninstall_skill()` may detach the managed tree for removal",
             "Every new direct call site requires a failure-path regression test",
             "comic_sol_product/setup.py",
             "comic_sol_product/skill_install.py",
@@ -176,16 +183,24 @@ class AgentConstitutionTests(unittest.TestCase):
                 "install_skill": 2,
                 "uninstall_skill": 1,
             },
+            "scripts/project_io.py": {
+                "durable_external_write": 1,
+                "replace_contained": 2,
+                "durable_atomic_write": 1,
+                "ProjectTransaction.commit": 2,
+                "ProjectTransaction.recover": 1,
+            },
         }
         actual_calls = {}
-        source_root = self.root / "comic_sol_product"
-        for path in sorted(source_root.rglob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            visitor = _OSReplaceCallVisitor(tree)
-            visitor.visit(tree)
-            if visitor.calls:
-                relative = path.relative_to(self.root).as_posix()
-                actual_calls[relative] = visitor.calls
+        source_roots = (self.root / "comic_sol_product", self.root / "scripts")
+        for source_root in source_roots:
+            for path in sorted(source_root.rglob("*.py")):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                visitor = _OSReplaceCallVisitor(tree)
+                visitor.visit(tree)
+                if visitor.calls:
+                    relative = path.relative_to(self.root).as_posix()
+                    actual_calls[relative] = visitor.calls
         self.assertEqual(expected_calls, actual_calls)
 
         required_tests = {
@@ -205,6 +220,15 @@ class AgentConstitutionTests(unittest.TestCase):
             },
             "tests/test_distribution.py": {
                 "test_portable_archive_publish_failure_preserves_existing_archive",
+            },
+            "tests/test_project_io.py": {
+                "test_orders_write_flush_file_fsync_replace_and_directory_fsync",
+                "test_replace_failure_cleans_temporary_and_preserves_destination",
+                "test_external_write_replace_failure_cleans_temporary_and_preserves_destination",
+                "test_replace_contained_failure_preserves_source_and_destination",
+                "test_second_publish_failure_restores_prior_set",
+                "test_recover_restores_interrupted_publishing_transaction",
+                "test_recover_restores_target_replaced_before_a_crash",
             },
         }
         for relative, expected_methods in required_tests.items():
