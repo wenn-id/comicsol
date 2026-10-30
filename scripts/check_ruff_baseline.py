@@ -7,7 +7,7 @@ import json
 import subprocess
 import sys
 from collections import Counter
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TypeAlias
 
 
@@ -54,9 +54,12 @@ def _baseline_entry(entry: object) -> tuple[FindingKey, int]:
     count = entry.get("count")
     if not isinstance(file_path, str) or not file_path:
         raise ValueError("Ruff baseline entry must name a file")
-    relative_path = Path(file_path)
+    relative_path = PurePosixPath(file_path)
+    windows_path = PureWindowsPath(file_path)
     if (
         relative_path.is_absolute()
+        or windows_path.anchor
+        or "\\" in file_path
         or ".." in relative_path.parts
         or relative_path.as_posix() != file_path
     ):
