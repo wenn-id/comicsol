@@ -80,8 +80,8 @@ def _json_member_spans(text: str, container_start: int, container_end: int):
             break
         member_start = offset
         try:
-            key, _ = decoder.scan_once(text, offset)
-        except StopIteration as error:
+            key, _ = decoder.raw_decode(text, offset)
+        except json.JSONDecodeError as error:
             raise ValueError("client config member key could not be decoded") from error
         offset = _end_of_value(text, offset)
         while offset < container_end and text[offset] in " \t\r\n":
@@ -97,8 +97,8 @@ def _end_of_value(text: str, offset: int) -> int:
         offset += 1
     decoder = json.JSONDecoder()
     try:
-        _, end = decoder.scan_once(text, offset)
-    except StopIteration as error:
+        _, end = decoder.raw_decode(text, offset)
+    except json.JSONDecodeError as error:
         raise ValueError("client config value could not be decoded") from error
     return end
 
@@ -190,7 +190,7 @@ class JsonClientAdapter:
         )
         if servers_member is not None:
             _, member_start, member_end = servers_member
-            _, key_end = decoder.scan_once(text, member_start)
+            _, key_end = decoder.raw_decode(text, member_start)
             value_start = key_end
             while value_start < member_end and text[value_start].isspace():
                 value_start += 1
@@ -212,7 +212,7 @@ class JsonClientAdapter:
             )
             if owned_member is not None:
                 _, owned_start, owned_end = owned_member
-                _, owned_key_end = decoder.scan_once(text, owned_start)
+                _, owned_key_end = decoder.raw_decode(text, owned_start)
                 owned_value_start = owned_key_end
                 while owned_value_start < owned_end and text[owned_value_start].isspace():
                     owned_value_start += 1
