@@ -1007,9 +1007,11 @@ def repair_plan_block(plan: PanelRepairPlan) -> str:
     if plan.defects:
         lines.append("- defects:")
         for defect in plan.defects:
-            target = "panel" if defect.target is None else f"{defect.scope} {defect.target}"
+            target_label = "panel" if defect.target is None else f"{defect.scope} {defect.target}"
             reason = "" if defect.fallback_reason is None else f" [{defect.fallback_reason}]"
-            lines.append(f"  {defect.check_id} {target} {defect.result}/{defect.severity}{reason}")
+            lines.append(
+                f"  {defect.check_id} {target_label} {defect.result}/{defect.severity}{reason}"
+            )
     return "\n".join(lines)
 
 

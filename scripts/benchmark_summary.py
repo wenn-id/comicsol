@@ -811,12 +811,12 @@ def render_summary_markdown(summary: Mapping[str, Any]) -> str:
         lines.extend(["| metric | value | pooled |", "| --- | --- | --- |"])
         consistency_metrics = cast(Mapping[str, Any], consistency["metrics"])
         for metric_id in CONSISTENCY_METRIC_IDS:
-            metric = consistency_metrics.get(metric_id)
-            if not isinstance(metric, Mapping):
+            consistency_metric = consistency_metrics.get(metric_id)
+            if not isinstance(consistency_metric, Mapping):
                 continue
             lines.append(
-                f"| `{metric_id}` | {metric['value']} "
-                f"| {metric['numerator']}/{metric['denominator']} |"
+                f"| `{metric_id}` | {consistency_metric['value']} "
+                f"| {consistency_metric['numerator']}/{consistency_metric['denominator']} |"
             )
         review = consistency.get("review")
         attribution = (
