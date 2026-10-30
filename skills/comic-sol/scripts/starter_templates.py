@@ -94,6 +94,7 @@ def load_starter(
     request_value = read_json_nofollow(root / "source/request.json")
     if not isinstance(request_value, dict):
         raise TypeError("starter request must be a JSON object")
+    validator: Callable[[dict[str, object]], dict[str, object]]
     if request_validator is None:
         # Import lazily because comic_sol imports this catalog during startup.
         from .comic_sol import validate_request_settings

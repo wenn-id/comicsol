@@ -287,7 +287,7 @@ def _stage_inputs(example_dir: Path, project: Path, seed: int) -> None:
     bible = read_json(project / "plan/character-bible.json")
     references = project / "references/characters"
     references.mkdir(parents=True, exist_ok=True)
-    for character in bible["characters"]:
+    for character in cast(list[dict[str, object]], bible["characters"]):
         image = _synthetic_raster((512, 512), _seeded_color(seed, f"reference:{character['id']}"))
         try:
             image.save(references / f"{character['id']}.png", format="PNG", optimize=False)
@@ -314,12 +314,12 @@ def _prepare_manifest(project: Path, contract: dict[str, object], panel_ids: Seq
                 "supports_reference_images": True,
             },
             "settings": {
-                **manifest["settings"],
+                **cast(dict[str, object], manifest["settings"]),
                 "page_count": int(cast(int, contract["page_count"])),
                 "panel_count": len(panel_ids),
             },
             "input": {
-                **manifest["input"],
+                **cast(dict[str, object], manifest["input"]),
                 "source_sha256": sha256_file(project / "source/input.txt"),
             },
         }
@@ -434,14 +434,18 @@ def _build_panels(
 def _tail_regions(project: Path, page_number: int) -> list[dict[str, object]]:
     """Build exact dialogue tail regions from committed text and placed geometry."""
     storyboard = read_json(project / "plan/storyboard.json")
-    page = next(page for page in storyboard["pages"] if page["number"] == page_number)
+    pages = cast(list[dict[str, object]], storyboard["pages"])
+    page = next(page for page in pages if page["number"] == page_number)
     regions: list[dict[str, object]] = []
-    for panel in page["panels"]:
-        dialogue = [item for item in panel["text"] if item.get("kind") == "dialogue"]
+    panels = cast(list[dict[str, object]], page["panels"])
+    for panel in panels:
+        panel_text = cast(list[dict[str, object]], panel["text"])
+        dialogue = [item for item in panel_text if item.get("kind") == "dialogue"]
         if not dialogue:
             continue
         geometry = read_json(project / f"panels/{panel['id']}/lettering.json")
-        placed = {item["id"]: item for item in geometry["items"]}
+        items = cast(list[dict[str, object]], geometry["items"])
+        placed = {item["id"]: item for item in items}
         for item in dialogue:
             regions.append(
                 {
@@ -450,7 +454,7 @@ def _tail_regions(project: Path, page_number: int) -> list[dict[str, object]]:
                     "speaker": item["speaker"],
                     "voice_source": item["voice_source"],
                     "speaker_anchor": item["speaker_anchor"],
-                    "tip": placed[item["id"]]["tail"]["tip"],
+                    "tip": cast(dict[str, object], placed[item["id"]]["tail"])["tip"],
                     "result": "pass",
                 }
             )
@@ -577,12 +581,15 @@ def discover_examples() -> tuple[Path, ...]:
 def _summarize(project: Path) -> str:
     """Return one compact human-readable build summary line."""
     manifest = read_json(project / "project.json")
-    pdf = manifest["artifacts"]["pdf"]["path"]
+    artifacts = cast(dict[str, object], manifest["artifacts"])
+    pdf_record = cast(dict[str, object], artifacts["pdf"])
+    pdf = cast(str, pdf_record["path"])
+    settings = cast(dict[str, object], manifest["settings"])
     size = (project / pdf).stat().st_size
     return (
-        f"{manifest['project_id']}: {manifest['status']} "
-        f"pages={manifest['settings']['page_count']} "
-        f"panels={manifest['settings']['panel_count']} "
+        f"{cast(str, manifest['project_id'])}: {cast(str, manifest['status'])} "
+        f"pages={cast(int, settings['page_count'])} "
+        f"panels={cast(int, settings['panel_count'])} "
         f"pdf={pdf} ({size / 1024:.0f} KiB)"
     )
 
