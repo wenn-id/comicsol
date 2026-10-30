@@ -36,6 +36,7 @@ Run checks through same `.venv` interpreter used for dependency installation. Be
 .venv/bin/python -m ruff check scripts comic_sol_product tests integrations
 .venv/bin/python -m ruff format --check scripts comic_sol_product tests integrations
 .venv/bin/python -m mypy
+.venv/bin/python -m mypy --platform win32 --show-error-codes
 .venv/bin/python -m coverage run -m unittest discover -s tests
 .venv/bin/python -m coverage json -o coverage.json
 .venv/bin/python scripts/check_coverage.py coverage.json

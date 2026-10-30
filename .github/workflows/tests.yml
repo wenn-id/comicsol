@@ -169,6 +169,8 @@ jobs:
       run: python -m ruff format --check scripts comic_sol_product tests integrations
     - name: Mypy incremental scope
       run: python -m mypy
+    - name: Mypy Windows platform analysis
+      run: python -m mypy --platform win32 --show-error-codes
     - name: Application coverage gates
       run: |
         python -m coverage run -m unittest discover -s tests
