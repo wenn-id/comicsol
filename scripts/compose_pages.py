@@ -9,6 +9,7 @@ import io
 import json
 import sys
 from pathlib import Path
+from typing import cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -104,7 +105,7 @@ def _rect(panel: dict) -> tuple[int, int, int, int]:
     values = tuple(rect.get(key) for key in ("x", "y", "width", "height"))
     if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
         raise ValueError(f"panel {panel.get('id')} rectangle must contain integers")
-    x, y, width, height = values
+    x, y, width, height = cast(tuple[int, int, int, int], values)
     if (
         x < 0
         or y < 0
@@ -237,7 +238,7 @@ def _compose_all_pages_locked(project_dir: Path) -> list[Path]:
     if not isinstance(pages, list):
         raise ValueError("storyboard pages must be an array")
     page_numbers = sorted(
-        page.get("number")
+        cast(int, page.get("number"))
         for page in pages
         if isinstance(page, dict)
         and isinstance(page.get("number"), int)
