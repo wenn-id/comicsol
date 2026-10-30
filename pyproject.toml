@@ -92,6 +92,7 @@ files = [
     "comic_sol_product/skill_install.py",
     "comic_sol_product/__init__.py",
     "comic_sol_product/cli_command_spec.py",
+    "integrations/comfyui-local/comfyui_executor.py",
     "scripts/__init__.py",
     "scripts/assemble_release.py",
     "scripts/benchmark.py",
