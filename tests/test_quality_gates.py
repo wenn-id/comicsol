@@ -65,6 +65,7 @@ TYPED_FILES = [
     "scripts/schema.py",
     "scripts/sfx_repair.py",
     "scripts/sfx_verification.py",
+    "scripts/starter_templates.py",
     "scripts/sync_plugin_bundle.py",
     "scripts/typography.py",
     "scripts/version.py",
