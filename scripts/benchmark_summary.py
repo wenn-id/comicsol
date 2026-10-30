@@ -28,13 +28,17 @@ import json
 import math
 import sys
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, Callable, Mapping, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     __package__ = "scripts"
 
 from .benchmark import HARNESS_VERSION, METRIC_DIRECTIONS, METRIC_IDS, load_results
+
+CANONICAL_CONSISTENCY_DIMENSIONS: tuple[str, ...]
+canonical_definition_digest: Callable[..., Any] | None
+canonical_structural_baseline: Callable[..., Any] | None
 
 try:
     from tests.consistency_benchmark import (
@@ -316,7 +320,10 @@ def load_consistency_baseline(path: Path) -> dict[str, Any]:
     if not isinstance(structural, Mapping):
         problems.append("structural must be a JSON object")
     else:
-        canonical = cast(Mapping[str, Any], canonical_structural_baseline())
+        canonical = cast(
+            Mapping[str, Any],
+            cast(Callable[..., Any], canonical_structural_baseline)(),
+        )
         for field in (
             "backgrounds",
             "characters",
@@ -363,9 +370,10 @@ def load_consistency_baseline(path: Path) -> dict[str, Any]:
             visual["total_dimensions"]
         ):
             problems.append("visual.scored_dimensions must not exceed total_dimensions")
-        canonical_total = cast(Mapping[str, Any], canonical_structural_baseline())[
-            "trait_restatements"
-        ]["expected"]
+        canonical_total = cast(
+            Mapping[str, Any],
+            cast(Callable[..., Any], canonical_structural_baseline)(),
+        )["trait_restatements"]["expected"]
         if visual.get("total_dimensions") != canonical_total:
             problems.append("visual.total_dimensions does not match the canonical definition")
     if problems:

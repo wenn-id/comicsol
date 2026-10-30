@@ -135,6 +135,14 @@ def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
         return _load_font_path(str(FONT_PATH_FALLBACK), size)
 
 
+def _font_path(font: ImageFont.FreeTypeFont) -> Path:
+    return Path(cast(str, font.path))
+
+
+def _font_size(font: ImageFont.FreeTypeFont) -> int:
+    return cast(int, font.size)
+
+
 def _script_extension_font(size: int, character: str) -> ImageFont.FreeTypeFont | None:
     """Load the configured face for a character's script when it covers it."""
     if not SCRIPT_FONT_EXTENSIONS:
@@ -164,8 +172,8 @@ def _font_runs(
     """
     primary = primary or _load_font(size, bold)
     fallback = _load_font_path(str(FONT_PATH_FALLBACK), size)
-    primary_path = Path(primary.path)
-    fallback_path = Path(fallback.path)
+    primary_path = _font_path(primary)
+    fallback_path = _font_path(fallback)
     runs: list[tuple[str, ImageFont.FreeTypeFont]] = []
     for character in text:
         if character == "\n" or _font_supports(primary_path, character):
@@ -174,7 +182,7 @@ def _font_runs(
             selected = fallback
         else:
             selected = _script_extension_font(size, character) or fallback
-        if runs and Path(runs[-1][1].path) == Path(selected.path):
+        if runs and _font_path(runs[-1][1]) == _font_path(selected):
             runs[-1] = (runs[-1][0] + character, selected)
         else:
             runs.append((character, selected))
@@ -188,9 +196,10 @@ def _styled_font_runs(
     """Compose emphasis chunks and per-character fallback into drawable runs."""
     runs: list[tuple[str, ImageFont.FreeTypeFont]] = []
     for chunk, bold in _parse_emphasis(text):
-        primary = _load_font(regular_font.size, True) if bold else regular_font
-        for run_text, run_font in _font_runs(chunk, regular_font.size, bold, primary):
-            if runs and Path(runs[-1][1].path) == Path(run_font.path):
+        size = _font_size(regular_font)
+        primary = _load_font(size, True) if bold else regular_font
+        for run_text, run_font in _font_runs(chunk, size, bold, primary):
+            if runs and _font_path(runs[-1][1]) == _font_path(run_font):
                 runs[-1] = (runs[-1][0] + run_text, run_font)
             else:
                 runs.append((run_text, run_font))
@@ -229,7 +238,7 @@ def _merge_font_tokens(
     """Merge adjacent character tokens that use the same font face."""
     runs: list[tuple[str, ImageFont.FreeTypeFont]] = []
     for character, font in tokens:
-        if runs and Path(runs[-1][1].path) == Path(font.path):
+        if runs and _font_path(runs[-1][1]) == _font_path(font):
             runs[-1] = (runs[-1][0] + character, font)
         else:
             runs.append((character, font))
@@ -251,8 +260,8 @@ def _measure_styled_line(
     return _StyledLine(
         runs=runs,
         width=width,
-        top=min(box[1] for box in boxes),
-        bottom=max(box[3] for box in boxes),
+        top=cast(int, min(box[1] for box in boxes)),
+        bottom=cast(int, max(box[3] for box in boxes)),
     )
 
 
@@ -272,7 +281,7 @@ def _layout_styled_text(
     source_runs = (
         _styled_font_runs(content, regular_font)
         if emphasis
-        else _font_runs(content, regular_font.size, primary=regular_font)
+        else _font_runs(content, _font_size(regular_font), primary=regular_font)
     )
     for text, run_font in source_runs:
         for character in text:
@@ -1065,7 +1074,7 @@ def letter_panel(
     word_count = sum(normalized_word_count(item["content"]) for item in ordered)
     placements: list[dict[str, object]] = []
     summary = {
-        "font_used": str(Path(_load_font(12).path)),
+        "font_used": str(_font_path(_load_font(12))),
         "lettered_path": str(path),
         "lettered_sfx_count": lettered_sfx_count,
         "rendered_text_count": rendered_text_count,
@@ -1113,14 +1122,14 @@ def letter_panel(
         # from the same path that drew them: reporting `**` spans the renderer
         # never honoured would make the geometry record disagree with the raster.
         drawn_runs = (
-            _font_runs(display, font.size, primary=font)
+            _font_runs(display, _font_size(font), primary=font)
             if item.get("kind") == "sfx"
             else _styled_font_runs(display, font)
         )
         font_runs = [
             {
-                "font_id": Path(run_font.path).name,
-                "style": ("bold" if Path(run_font.path) == FONT_PATH_BOLD else "regular"),
+                "font_id": _font_path(run_font).name,
+                "style": ("bold" if _font_path(run_font) == FONT_PATH_BOLD else "regular"),
                 "text": run_text,
             }
             for run_text, run_font in drawn_runs

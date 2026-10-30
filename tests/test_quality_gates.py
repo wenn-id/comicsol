@@ -104,7 +104,7 @@ class QualityGateContractTests(unittest.TestCase):
 
         mypy = config["tool"]["mypy"]
         self.assertEqual(TYPED_FILES, mypy["files"])
-        self.assertEqual("skip", mypy["follow_imports"])
+        self.assertEqual("silent", mypy["follow_imports"])
         self.assertTrue(mypy["ignore_missing_imports"])
         self.assertIn("python_version", mypy)
 
