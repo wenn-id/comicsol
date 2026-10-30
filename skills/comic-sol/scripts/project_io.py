@@ -217,7 +217,7 @@ class ProjectLock:
     @staticmethod
     def _lock(handle: BinaryIO) -> None:
         """Acquire the platform-specific lock for an open handle."""
-        if os.name == "nt":
+        if sys.platform == "win32":
             import msvcrt
 
             handle.seek(_LOCK_BYTE_OFFSET)
@@ -237,7 +237,7 @@ class ProjectLock:
     @staticmethod
     def _unlock(handle: BinaryIO) -> None:
         """Release the platform-specific lock for an open handle."""
-        if os.name == "nt":
+        if sys.platform == "win32":
             import msvcrt
 
             handle.seek(_LOCK_BYTE_OFFSET)

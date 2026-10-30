@@ -184,6 +184,31 @@ class ContainedProjectPathTests(unittest.TestCase):
                     pass
         self.assertEqual(errno.EINVAL, raised.exception.errno)
 
+    def test_project_lock_uses_msvcrt_when_sys_platform_is_win32(self):
+        handle = mock.Mock()
+        msvcrt = mock.Mock()
+        msvcrt.LK_NBLCK = 1
+        msvcrt.LK_UNLCK = 2
+
+        with (
+            mock.patch.object(sys, "platform", "win32"),
+            mock.patch.dict(sys.modules, {"msvcrt": msvcrt}),
+        ):
+            project_io.ProjectLock._lock(handle)
+            project_io.ProjectLock._unlock(handle)
+
+        self.assertEqual(
+            [
+                mock.call(handle.fileno(), msvcrt.LK_NBLCK, 1),
+                mock.call(handle.fileno(), msvcrt.LK_UNLCK, 1),
+            ],
+            msvcrt.locking.call_args_list,
+        )
+        self.assertEqual(
+            [mock.call(project_io._LOCK_BYTE_OFFSET)] * 2,
+            handle.seek.call_args_list,
+        )
+
     def test_read_only_lock_rejects_link_when_nofollow_is_unavailable(self):
         (self.project / ".comic-sol.lock").write_bytes(b"holder\n")
         with (

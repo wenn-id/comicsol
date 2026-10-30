@@ -69,6 +69,7 @@ class QualityGateContractTests(unittest.TestCase):
         self.assertIn("python -m ruff check", workflow)
         self.assertIn("python -m ruff format --check", workflow)
         self.assertIn("python -m mypy", workflow)
+        self.assertIn("python -m mypy --platform win32 --show-error-codes", workflow)
         self.assertIn("python -m coverage run", workflow)
         self.assertIn("python -m coverage json -o coverage.json", workflow)
         self.assertIn("python scripts/check_coverage.py coverage.json", workflow)
