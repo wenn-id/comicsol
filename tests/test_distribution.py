@@ -432,6 +432,23 @@ class NativeDistributionContractTests(unittest.TestCase):
                         create_portable_archive(runtime, archive, architecture="x86_64")
                     self.assertFalse(archive.exists())
 
+    def test_portable_archive_publish_failure_preserves_existing_archive(self):
+        from comic_sol_product import portable
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            runtime = self._portable_runtime(root)
+            archive = root / "portable.zip"
+            original = b"existing archive"
+            archive.write_bytes(original)
+
+            with mock.patch.object(portable.os, "replace", side_effect=OSError("publish failed")):
+                with self.assertRaisesRegex(OSError, "publish failed"):
+                    portable.create_portable_archive(runtime, archive, architecture="x86_64")
+
+            self.assertEqual(original, archive.read_bytes())
+            self.assertEqual([], list(root.glob(f".{archive.name}.*")))
+
     def test_release_assembly_rejects_architecture_mismatch(self):
         from scripts import assemble_release
 
