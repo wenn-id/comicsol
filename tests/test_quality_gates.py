@@ -42,6 +42,7 @@ TYPED_FILES = [
     "scripts/dogfood_summary.py",
     "scripts/export_pdf.py",
     "scripts/font_cmap.py",
+    "scripts/handoff_archive.py",
     "scripts/input_limits.py",
     "scripts/installed_mcp_smoke.py",
     "scripts/layouts.py",

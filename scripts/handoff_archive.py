@@ -13,7 +13,7 @@ import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Iterator
+from typing import BinaryIO, Iterator, Protocol, cast
 
 from .core_primitives import canonical_json_bytes
 from .input_limits import MAX_JSON_BYTES, loads_bounded_json
@@ -34,6 +34,10 @@ from .project_io import (
     read_contained_json,
     remove_contained,
 )
+
+
+class _ZipInfoWithCompressionLevel(Protocol):
+    _compresslevel: int | None
 
 
 ARCHIVE_FORMAT_VERSION = "1.0"
@@ -124,7 +128,8 @@ def _regular_zip_info(name: str) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(name, FIXED_ZIP_DATETIME)
     info.create_system = 3
     info.compress_type = zipfile.ZIP_DEFLATED
-    info._compresslevel = 0
+    # ZipFile.open() has no public per-entry level argument for streamed members.
+    cast(_ZipInfoWithCompressionLevel, info)._compresslevel = 0
     info.external_attr = (stat.S_IFREG | 0o644) << 16
     return info
 
@@ -188,10 +193,11 @@ def _format_metadata_payload(project_id: str) -> bytes:
 
 
 def _checksum_manifest_payload(checksums: list[dict[str, str]]) -> bytes:
+    sorted_checksums = sorted(checksums, key=lambda item: item["path"])
     return canonical_json_bytes(
         {
             "algorithm": "sha256",
-            "files": sorted(checksums, key=lambda item: item["path"]),
+            "files": sorted_checksums,
             "format_version": ARCHIVE_FORMAT_VERSION,
         }
     )
