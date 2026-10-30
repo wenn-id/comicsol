@@ -59,6 +59,7 @@ TYPED_FILES = [
     "scripts/render_report.py",
     "scripts/repair_strategy.py",
     "scripts/schema.py",
+    "scripts/sfx_repair.py",
     "scripts/sfx_verification.py",
     "scripts/sync_plugin_bundle.py",
     "scripts/typography.py",

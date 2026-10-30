@@ -43,6 +43,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import NoReturn, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -257,7 +258,7 @@ def replace_generated_sfx(
         storyboard_sha256 = hashlib.sha256(storyboard_payload).hexdigest()
 
         record = _read_audit(project_dir, panel_id)
-        replacements = list(record["replacements"])  # type: ignore[arg-type]
+        replacements = list(cast(list[object], record["replacements"]))
         entry: dict[str, object] = {
             "archived": archived,
             "content": item.get("content"),
@@ -329,7 +330,7 @@ def replace_generated_sfx(
 
 
 class _SfxRepairArgumentParser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         """Raise instead of exiting, so `main` reports one uniform error line."""
         raise ValueError(f"invalid invocation: {message}")
 
