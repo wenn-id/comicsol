@@ -332,6 +332,44 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertNotEqual(first, stage_cache_key("planning", [{"a": 1, "b": 3}], [], "1"))
 
+    def test_lifecycle_timestamps_do_not_change_artifact_bytes_or_cache_identity(self):
+        manifest = read_json(self.project / "project.json")
+        created_at = manifest["created_at"]
+        updated_at = manifest["updated_at"]
+        story_plan = self.project / "plan/story-plan.json"
+        artifact_before = story_plan.read_bytes()
+        canonical_inputs, files = self._stage_material("planning")
+        stage_version = manifest["stage_versions"]["planning"]
+        first_key = stage_cache_key(
+            "planning",
+            [{"created_at": created_at, "updated_at": updated_at}, *canonical_inputs],
+            files,
+            stage_version,
+        )
+
+        manifest["status"] = "INIT"
+        atomic_write_json(self.project / "project.json", manifest)
+        next_timestamp = "2030-04-05T06:07:08Z"
+        with patch("scripts.comic_sol._utc_now", return_value=next_timestamp):
+            updated_manifest = transition(self.project, "PLANNED")
+
+        self.assertEqual(created_at, updated_manifest["created_at"])
+        self.assertEqual(next_timestamp, updated_manifest["updated_at"])
+        second_key = stage_cache_key(
+            "planning",
+            [
+                {
+                    "created_at": updated_manifest["created_at"],
+                    "updated_at": updated_manifest["updated_at"],
+                },
+                *canonical_inputs,
+            ],
+            files,
+            stage_version,
+        )
+        self.assertEqual(first_key, second_key)
+        self.assertEqual(artifact_before, story_plan.read_bytes())
+
     def test_finalize_treats_regenerate_and_rerun_as_stale(self):
         for action in ("regenerate", "rerun"):
             with self.subTest(action=action):
