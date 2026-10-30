@@ -9,7 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -177,7 +177,11 @@ def character_consistency_context(
         immutable = identity.get("immutable_traits")
         wardrobe = identity.get("wardrobe")
         proportions = identity.get("proportions")
-        if not all(isinstance(value, Mapping) for value in (immutable, wardrobe, proportions)):
+        if not (
+            isinstance(immutable, Mapping)
+            and isinstance(wardrobe, Mapping)
+            and isinstance(proportions, Mapping)
+        ):
             raise CharacterQualityError(f"character '{character_id}' identity is incomplete")
         expected = (
             immutable.get("face"),
@@ -295,7 +299,7 @@ def build_character_identity_check(
         for expectation in traits:
             if not isinstance(expectation, Mapping):
                 raise CharacterQualityError(f"context trait is invalid for {character_id}")
-            trait = expectation.get("trait")
+            trait = cast(str, expectation.get("trait"))
             key = (character_id, trait)
             expected_keys.append(key)
             assessment = indexed.get(key)
