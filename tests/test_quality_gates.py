@@ -31,6 +31,7 @@ TYPED_FILES = [
     "comic_sol_product/cli_command_spec.py",
     "scripts/__init__.py",
     "scripts/assemble_release.py",
+    "scripts/benchmark.py",
     "scripts/benchmark_summary.py",
     "scripts/build_portable.py",
     "scripts/character_identity.py",
