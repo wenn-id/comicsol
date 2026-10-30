@@ -161,8 +161,9 @@ def _load_page_records(project_dir: Path) -> list[dict[str, object]]:
 
     def sort_key(record: dict[str, object]) -> tuple[str, str]:
         """Order page-QA records without trusting legacy page field types."""
-        if isinstance(record.get("subject_id"), str):
-            return ("v2", record["subject_id"])
+        subject_id = record.get("subject_id")
+        if isinstance(subject_id, str):
+            return ("v2", subject_id)
         page = record.get("page")
         return (
             "v1",
@@ -542,18 +543,15 @@ def _integrity(
             f"- `{_relative(project_dir, page)}` — dimensions: {dimensions}; valid page: {'yes' if valid else 'no'}; sha256: `{sha256_file(page) if page.is_file() else 'missing'}`"
         )
 
-    references = sorted(
-        {
-            reference
-            for record in records
-            for reference in (
-                record.get("generation", {}).get("reference_paths", [])
-                if isinstance(record.get("generation"), dict)
-                else []
-            )
-            if isinstance(reference, str)
-        }
-    )
+    reference_values: set[str] = set()
+    for record in records:
+        generation = record.get("generation")
+        if not isinstance(generation, dict):
+            continue
+        for reference in generation.get("reference_paths", []):
+            if isinstance(reference, str):
+                reference_values.add(reference)
+    references = sorted(reference_values)
     for reference in references:
         path = _contained_or_none(project_dir, reference)
         valid = path is not None and path.is_file()

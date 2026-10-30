@@ -56,6 +56,7 @@ TYPED_FILES = [
     "scripts/raster_limits.py",
     "scripts/reference_strategy.py",
     "scripts/release_identity.py",
+    "scripts/render_report.py",
     "scripts/repair_strategy.py",
     "scripts/schema.py",
     "scripts/sfx_verification.py",
