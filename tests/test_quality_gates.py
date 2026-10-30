@@ -23,6 +23,9 @@ TYPED_FILES = [
     "comic_sol_product/version.py",
     "comic_sol_product/errors.py",
     "comic_sol_product/config.py",
+    "comic_sol_product/distribution.py",
+    "comic_sol_product/engine_api.py",
+    "comic_sol_product/skill_install.py",
 ]
 
 
