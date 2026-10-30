@@ -25,7 +25,7 @@ from bisect import bisect_right
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -576,8 +576,8 @@ def coverage_inventory(font_policy: Mapping[str, object]) -> dict[str, object]:
                 "total": block.total,
             }
         )
-        entry["covered"] = int(entry["covered"]) + covered_here
-        entry["total"] = int(entry["total"]) + block.total
+        entry["covered"] = int(cast(int, entry["covered"])) + covered_here
+        entry["total"] = int(cast(int, entry["total"])) + block.total
 
     for entry in scripts.values():
         recommendation = recommended_font(str(entry["script"]))
@@ -606,10 +606,10 @@ def _script_status(entry: Mapping[str, object]) -> str:
     """Summarize one script's lettering availability under a font policy."""
     if entry["shaping"] == SHAPING_COMPLEX:
         return "shaping-unsupported"
-    covered = int(entry["covered"])
+    covered = int(cast(int, entry["covered"]))
     if covered == 0:
         return "uncovered"
-    return "covered" if covered == int(entry["total"]) else "partial"
+    return "covered" if covered == int(cast(int, entry["total"])) else "partial"
 
 
 def _default_policy() -> dict[str, Path]:
