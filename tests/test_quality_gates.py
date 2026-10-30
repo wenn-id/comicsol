@@ -60,6 +60,7 @@ TYPED_FILES = [
     "scripts/materialize_sample.py",
     "scripts/mcp_server.py",
     "scripts/normalize_panels.py",
+    "scripts/page_quality.py",
     "scripts/pdf_quality.py",
     "scripts/portable_release_smoke.py",
     "scripts/quality_records.py",
