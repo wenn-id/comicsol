@@ -27,7 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import BinaryIO, TextIO
+from typing import Any, BinaryIO, ContextManager, IO, TextIO, TypeGuard, cast
 
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -121,7 +121,7 @@ class _RejectRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(
         self,
         req: urllib.request.Request,
-        fp: BinaryIO,
+        fp: IO[bytes],
         code: int,
         msg: str,
         headers: object,
@@ -314,7 +314,7 @@ class ComfyUIClient:
             )
             if not hasattr(response_object, "__enter__"):
                 raise ExecutorError("unexpected-response")
-            with response_object as response:
+            with cast(ContextManager[Any], response_object) as response:
                 status_code = getattr(response, "status", 0)
                 if status_code != 200:
                     raise ExecutorError("unexpected-response")
@@ -480,13 +480,14 @@ def _read_stream_bounded(
             chunk = stream.read(amount)
         else:
             remaining = deadline - time.monotonic()
-            chunk = _call_with_timeout(
+            chunk_value = _call_with_timeout(
                 lambda: stream.read(amount),
                 remaining,
                 timeout_category,
             )
-            if not isinstance(chunk, bytes):
+            if not isinstance(chunk_value, bytes):
                 raise ExecutorError("unexpected-response")
+            chunk = chunk_value
         if not chunk:
             break
         total += len(chunk)
@@ -589,7 +590,7 @@ def _exact_keys(value: object, keys: set[str], category: str) -> dict[str, objec
     return value
 
 
-def _is_int(value: object) -> bool:
+def _is_int(value: object) -> TypeGuard[int]:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
