@@ -96,9 +96,13 @@ def load_starter(
         raise TypeError("starter request must be a JSON object")
     if request_validator is None:
         # Import lazily because comic_sol imports this catalog during startup.
-        from .comic_sol import validate_request_settings as request_validator
+        from .comic_sol import validate_request_settings
 
-    request = request_validator(cast(dict[str, object], request_value))
+        validator = validate_request_settings
+    else:
+        validator = request_validator
+
+    request = validator(cast(dict[str, object], request_value))
     story = cast(dict[str, object], read_json_nofollow(root / "plan/story-plan.json"))
     characters = cast(dict[str, object], read_json_nofollow(root / "plan/character-bible.json"))
     storyboard = cast(dict[str, object], read_json_nofollow(root / "plan/storyboard.json"))
@@ -118,10 +122,10 @@ def load_starter(
         if problem is not None:
             raise ValueError(f"starter {starter_id} has invalid {label}: {problem}")
 
-    known_characters = {
-        item.get("id") for item in characters.get("characters", []) if isinstance(item, dict)
-    }
-    for scene in story.get("scenes", []):
+    character_entries = cast(list[object], characters.get("characters", []))
+    known_characters = {item.get("id") for item in character_entries if isinstance(item, dict)}
+    scene_entries = cast(list[object], story.get("scenes", []))
+    for scene in scene_entries:
         if not isinstance(scene, dict):
             continue
         for character_id in scene.get("characters", []):
