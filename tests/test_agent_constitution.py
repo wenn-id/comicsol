@@ -152,17 +152,26 @@ class AgentConstitutionTests(unittest.TestCase):
     def test_reference_integrations_are_in_lint_and_coverage_gates(self):
         project = tomllib.loads((self.root / "pyproject.toml").read_text(encoding="utf-8"))
         self.assertIn("integrations", project["tool"]["coverage"]["run"]["source"])
+        selected_rules = project["tool"]["ruff"]["lint"]["select"]
+        self.assertIn("B", selected_rules)
+        self.assertIn("C90", selected_rules)
 
         workflow = (self.root / ".github/workflows/tests.yml").read_text(encoding="utf-8")
         for command in (
-            "python -m ruff check scripts comic_sol_product tests integrations",
+            "python scripts/check_ruff_baseline.py",
             "python -m ruff format --check scripts comic_sol_product tests integrations",
         ):
             self.assertIn(command, workflow)
 
+        baseline_checker = (self.root / "scripts/check_ruff_baseline.py").read_text(
+            encoding="utf-8"
+        )
+        for target in ('"scripts"', '"comic_sol_product"', '"tests"', '"integrations"'):
+            self.assertIn(target, baseline_checker)
+
         contributing = (self.root / "CONTRIBUTING.md").read_text(encoding="utf-8")
         self.assertIn(
-            ".venv/bin/python -m ruff check scripts comic_sol_product tests integrations",
+            ".venv/bin/python scripts/check_ruff_baseline.py",
             contributing,
         )
         self.assertIn(

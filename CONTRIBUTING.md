@@ -29,11 +29,11 @@ $PYTHON = "py"  # resolve Python 3.11+ first; use `py -3`
 
 ## Required validation
 
-Run checks through same `.venv` interpreter used for dependency installation. Before requesting merge, the complete deterministic suite and the blocking quality policy must pass. The quality gate runs on Linux with the hash-locked toolchain:
+Run checks through same `.venv` interpreter used for dependency installation. Before requesting merge, the complete deterministic suite and the blocking quality policy must pass. Ruff's Bugbear and Complexity findings are capped by a checked-in per-file/rule baseline; the gate fails when a count increases and never rewrites that baseline. The quality gate runs on Linux with the hash-locked toolchain:
 
 ```bash
 .venv/bin/python -m pip install --require-hashes -r requirements/locks/quality-linux-x86_64.txt
-.venv/bin/python -m ruff check scripts comic_sol_product tests integrations
+.venv/bin/python scripts/check_ruff_baseline.py
 .venv/bin/python -m ruff format --check scripts comic_sol_product tests integrations
 .venv/bin/python -m mypy
 .venv/bin/python -m mypy --platform win32 --show-error-codes

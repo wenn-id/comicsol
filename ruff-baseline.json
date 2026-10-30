@@ -1,0 +1,380 @@
+{
+  "schema_version": 1,
+  "ruff_version": "0.17.2",
+  "rules": [
+    "B",
+    "C90"
+  ],
+  "findings": [
+    {
+      "file": "comic_sol_product/cli.py",
+      "code": "C901",
+      "count": 4
+    },
+    {
+      "file": "comic_sol_product/clients.py",
+      "code": "C901",
+      "count": 2
+    },
+    {
+      "file": "comic_sol_product/distribution.py",
+      "code": "C901",
+      "count": 2
+    },
+    {
+      "file": "comic_sol_product/errors.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "comic_sol_product/portable.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "comic_sol_product/release.py",
+      "code": "B005",
+      "count": 1
+    },
+    {
+      "file": "comic_sol_product/release.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "comic_sol_product/setup.py",
+      "code": "C901",
+      "count": 4
+    },
+    {
+      "file": "comic_sol_product/skill_install.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "integrations/comfyui-local/comfyui_executor.py",
+      "code": "B023",
+      "count": 1
+    },
+    {
+      "file": "integrations/comfyui-local/comfyui_executor.py",
+      "code": "C901",
+      "count": 10
+    },
+    {
+      "file": "scripts/benchmark.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "file": "scripts/benchmark.py",
+      "code": "C901",
+      "count": 5
+    },
+    {
+      "file": "scripts/benchmark_summary.py",
+      "code": "C901",
+      "count": 6
+    },
+    {
+      "file": "scripts/character_identity.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "scripts/character_quality.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "file": "scripts/character_quality.py",
+      "code": "C901",
+      "count": 5
+    },
+    {
+      "file": "scripts/clean_install_smoke.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "scripts/comic_sol.py",
+      "code": "B007",
+      "count": 1
+    },
+    {
+      "file": "scripts/comic_sol.py",
+      "code": "C901",
+      "count": 20
+    },
+    {
+      "file": "scripts/command_service.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "scripts/container_sbom.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "scripts/dogfood_report.py",
+      "code": "C901",
+      "count": 3
+    },
+    {
+      "file": "scripts/dogfood_summary.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "scripts/font_cmap.py",
+      "code": "C901",
+      "count": 2
+    },
+    {
+      "file": "scripts/font_coverage.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "scripts/handoff.py",
+      "code": "C901",
+      "count": 5
+    },
+    {
+      "file": "scripts/handoff_archive.py",
+      "code": "C901",
+      "count": 7
+    },
+    {
+      "file": "scripts/input_limits.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "scripts/letter_panels.py",
+      "code": "C901",
+      "count": 4
+    },
+    {
+      "file": "scripts/live_visual_evidence.py",
+      "code": "C901",
+      "count": 2
+    },
+    {
+      "file": "scripts/materialize_sample.py",
+      "code": "B904",
+      "count": 1
+    },
+    {
+      "file": "scripts/mcp_server.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "scripts/page_quality.py",
+      "code": "C901",
+      "count": 4
+    },
+    {
+      "file": "scripts/pdf_quality.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "file": "scripts/project_io.py",
+      "code": "C901",
+      "count": 4
+    },
+    {
+      "file": "scripts/quality_records.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "scripts/release_evidence.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "scripts/release_identity.py",
+      "code": "C901",
+      "count": 2
+    },
+    {
+      "file": "scripts/release_qualification.py",
+      "code": "C901",
+      "count": 3
+    },
+    {
+      "file": "scripts/release_visual_gate.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "scripts/render_report.py",
+      "code": "C901",
+      "count": 2
+    },
+    {
+      "file": "scripts/repair_strategy.py",
+      "code": "C901",
+      "count": 3
+    },
+    {
+      "file": "scripts/sfx_repair.py",
+      "code": "C901",
+      "count": 2
+    },
+    {
+      "file": "scripts/sfx_verification.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "scripts/starter_templates.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "scripts/typography.py",
+      "code": "C901",
+      "count": 2
+    },
+    {
+      "file": "scripts/validate_project.py",
+      "code": "B905",
+      "count": 2
+    },
+    {
+      "file": "scripts/validate_project.py",
+      "code": "C901",
+      "count": 15
+    },
+    {
+      "file": "tests/consistency_benchmark.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "file": "tests/consistency_benchmark.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "tests/test_client_setup.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "tests/test_composition.py",
+      "code": "B905",
+      "count": 2
+    },
+    {
+      "file": "tests/test_concurrency.py",
+      "code": "B023",
+      "count": 27
+    },
+    {
+      "file": "tests/test_concurrency.py",
+      "code": "C901",
+      "count": 3
+    },
+    {
+      "file": "tests/test_export_pdf.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "file": "tests/test_handoff_archive.py",
+      "code": "B023",
+      "count": 5
+    },
+    {
+      "file": "tests/test_handoff_contracts.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "tests/test_handoff_lifecycle.py",
+      "code": "B023",
+      "count": 63
+    },
+    {
+      "file": "tests/test_handoff_lifecycle.py",
+      "code": "C901",
+      "count": 2
+    },
+    {
+      "file": "tests/test_layouts.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "file": "tests/test_lettering.py",
+      "code": "B905",
+      "count": 1
+    },
+    {
+      "file": "tests/test_lifecycle_failures.py",
+      "code": "B023",
+      "count": 1
+    },
+    {
+      "file": "tests/test_lifecycle_failures.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "tests/test_mcp_server.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "tests/test_page_quality.py",
+      "code": "B007",
+      "count": 1
+    },
+    {
+      "file": "tests/test_pdf_quality.py",
+      "code": "B028",
+      "count": 1
+    },
+    {
+      "file": "tests/test_release_docs.py",
+      "code": "B023",
+      "count": 3
+    },
+    {
+      "file": "tests/test_resume.py",
+      "code": "B023",
+      "count": 5
+    },
+    {
+      "file": "tests/test_resume.py",
+      "code": "C901",
+      "count": 1
+    },
+    {
+      "file": "tests/test_typography.py",
+      "code": "B023",
+      "count": 1
+    },
+    {
+      "file": "tests/test_validation.py",
+      "code": "B017",
+      "count": 1
+    },
+    {
+      "file": "tests/test_validation.py",
+      "code": "B023",
+      "count": 3
+    },
+    {
+      "file": "tests/test_validation.py",
+      "code": "C901",
+      "count": 1
+    }
+  ]
+}
