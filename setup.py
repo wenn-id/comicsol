@@ -18,6 +18,7 @@ BUILD_ONLY_SCRIPTS = {
     "benchmark_summary.py",
     "build_portable.py",
     "check_coverage.py",
+    "check_ruff_baseline.py",
     "clean_install_smoke.py",
     "dogfood_summary.py",
     "installed_mcp_smoke.py",

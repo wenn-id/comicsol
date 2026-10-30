@@ -34,6 +34,7 @@ TYPED_FILES = [
     "scripts/build_portable.py",
     "scripts/character_identity.py",
     "scripts/check_coverage.py",
+    "scripts/check_ruff_baseline.py",
     "scripts/command_service.py",
     "scripts/container_runtime_audit.py",
     "scripts/container_sbom.py",
@@ -76,6 +77,8 @@ class QualityGateContractTests(unittest.TestCase):
         self.assertIn("line-length", ruff)
         self.assertIn("lint", ruff)
         self.assertIn("format", ruff)
+        self.assertIn("B", ruff["lint"]["select"])
+        self.assertIn("C90", ruff["lint"]["select"])
         self.assertEqual(
             {
                 "scripts/assemble_release.py": ["E402"],
@@ -104,7 +107,7 @@ class QualityGateContractTests(unittest.TestCase):
         self.assertIn("requirements/locks/runtime-linux-x86_64.txt", workflow)
         self.assertIn("requirements/locks/quality-linux-x86_64.txt", workflow)
         self.assertIn("name: Quality gates", workflow)
-        self.assertIn("python -m ruff check", workflow)
+        self.assertIn("python scripts/check_ruff_baseline.py", workflow)
         self.assertIn("python -m ruff format --check", workflow)
         self.assertIn("python -m mypy", workflow)
         self.assertIn("python -m mypy --platform win32 --show-error-codes", workflow)
@@ -119,6 +122,7 @@ class QualityGateContractTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", workflow)
         self.assertIn("quality-coverage", workflow)
         self.assertIn('"check_coverage.py"', SETUP.read_text(encoding="utf-8"))
+        self.assertIn('"check_ruff_baseline.py"', SETUP.read_text(encoding="utf-8"))
 
     def test_release_caller_gates_the_exact_sha_without_a_relaxed_mode(self):
         release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
