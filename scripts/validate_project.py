@@ -15,7 +15,7 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Never, TypeGuard, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -231,7 +231,12 @@ def _narrative_field(
     return valid
 
 
-def _identifier(value: object, issues: list[ValidationIssue], path: str, field: str) -> bool:
+def _identifier(
+    value: object,
+    issues: list[ValidationIssue],
+    path: str,
+    field: str,
+) -> TypeGuard[str]:
     """Validate a Comic Sol identifier field."""
     if not isinstance(value, str) or ID_PATTERN.fullmatch(value) is None:
         _add(issues, path, field, "must match ^[a-z][a-z0-9-]{0,47}$")
@@ -606,8 +611,9 @@ def validate_character_bible(data: dict[str, object]) -> list[ValidationIssue]:
         character = _object(value, character_fields, character_fields, issues, path, prefix)
         if character is None:
             continue
-        if _identifier(character.get("id"), issues, path, f"{prefix}.id"):
-            ids.append(character["id"])
+        character_id = character.get("id")
+        if _identifier(character_id, issues, path, f"{prefix}.id"):
+            ids.append(character_id)
         for field in ("name", "role", "age_band", "pronouns", "motivation", "speech"):
             _nonempty_string(character.get(field), issues, path, f"{prefix}.{field}")
         _string_list(character.get("personality"), issues, path, f"{prefix}.personality", minimum=1)
@@ -705,8 +711,9 @@ def validate_story_plan(data: dict[str, object]) -> list[ValidationIssue]:
         scene = _object(value, scene_fields, scene_fields, issues, path, prefix)
         if scene is None:
             continue
-        if _identifier(scene.get("id"), issues, path, f"{prefix}.id"):
-            ids.append(scene["id"])
+        scene_id = scene.get("id")
+        if _identifier(scene_id, issues, path, f"{prefix}.id"):
+            ids.append(scene_id)
         for field in ("purpose", "location", "time", "continuity_anchor"):
             _nonempty_string(scene.get(field), issues, path, f"{prefix}.{field}")
         character_ids = _string_list(scene.get("characters"), issues, path, f"{prefix}.characters")
@@ -727,10 +734,10 @@ def validate_story_character_references(
     issues: list[ValidationIssue] = []
     known = {
         character.get("id")
-        for character in characters.get("characters", [])
+        for character in cast(Iterable[object], characters.get("characters", []))
         if isinstance(character, dict)
     }
-    for scene_index, scene in enumerate(story.get("scenes", [])):
+    for scene_index, scene in enumerate(cast(Iterable[object], story.get("scenes", []))):
         if not isinstance(scene, dict):
             continue
         scene_characters = scene.get("characters", [])
@@ -906,24 +913,24 @@ def validate_storyboard(
 
     known_scenes = {
         scene.get("id")
-        for scene in story.get("scenes", [])
+        for scene in cast(Iterable[object], story.get("scenes", []))
         if isinstance(scene, dict) and isinstance(scene.get("id"), str)
     }
     scene_anchors = {
         scene.get("id"): scene.get("continuity_anchor", "").strip()
-        for scene in story.get("scenes", [])
+        for scene in cast(Iterable[object], story.get("scenes", []))
         if isinstance(scene, dict)
         and isinstance(scene.get("id"), str)
         and isinstance(scene.get("continuity_anchor"), str)
     }
-    known_characters = {
-        character.get("id")
-        for character in characters.get("characters", [])
-        if isinstance(character, dict) and isinstance(character.get("id"), str)
+    known_characters: set[str] = {
+        character_id
+        for character in cast(Iterable[object], characters.get("characters", []))
+        if isinstance(character, dict) and isinstance(character_id := character.get("id"), str)
     }
     character_invariants = {
         character.get("id"): set(character.get("visual_fingerprint", {}).get("invariants", []))
-        for character in characters.get("characters", [])
+        for character in cast(Iterable[object], characters.get("characters", []))
         if isinstance(character, dict)
         and isinstance(character.get("id"), str)
         and isinstance(character.get("visual_fingerprint"), dict)
@@ -1045,7 +1052,9 @@ def validate_storyboard(
                 isinstance(rect.get(key), int) and not isinstance(rect.get(key), bool)
                 for key in ("x", "y", "width", "height")
             ):
-                valid_rect = {key: int(rect[key]) for key in ("x", "y", "width", "height")}
+                valid_rect = {
+                    key: int(cast(int, rect[key])) for key in ("x", "y", "width", "height")
+                }
                 if (
                     valid_rect["width"] <= 0
                     or valid_rect["height"] <= 0
@@ -1293,7 +1302,7 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
         _add(issues, path, "schema_version", "must equal 1.0")
     if (
         not isinstance(root.get("panel_id"), str)
-        or PANEL_ID_PATTERN.fullmatch(root["panel_id"]) is None
+        or PANEL_ID_PATTERN.fullmatch(cast(str, root["panel_id"])) is None
     ):
         _add(issues, path, "panel_id", "must match pNN-NN")
     for field in ("source_prompt_path", "raw_path", "clean_path"):
@@ -1428,9 +1437,15 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
         if root.get("raw_sha256") is None:
             _add(issues, path, "raw_sha256", "is required after generation")
         if isinstance(dimensions, dict):
-            if not isinstance(dimensions.get("width"), int) or dimensions.get("width", 0) <= 0:
+            if (
+                not isinstance(dimensions.get("width"), int)
+                or cast(int, dimensions.get("width", 0)) <= 0
+            ):
                 _add(issues, path, "dimensions.width", "must be positive after generation")
-            if not isinstance(dimensions.get("height"), int) or dimensions.get("height", 0) <= 0:
+            if (
+                not isinstance(dimensions.get("height"), int)
+                or cast(int, dimensions.get("height", 0)) <= 0
+            ):
                 _add(issues, path, "dimensions.height", "must be positive after generation")
         if isinstance(generation, dict):
             if generation.get("capability_name") is None:
@@ -1551,20 +1566,23 @@ def validate_panel_provenance(
             continue
         resolved[prefix] = path
         digest_field = f"{prefix}_sha256"
-        expected = bindings.get(digest_field)
-        if not isinstance(expected, str) or SHA256_PATTERN.fullmatch(expected) is None:
+        expected_digest = bindings.get(digest_field)
+        if (
+            not isinstance(expected_digest, str)
+            or SHA256_PATTERN.fullmatch(expected_digest) is None
+        ):
             stale(digest_field, "bound SHA-256 is invalid")
-        elif sha256_file(path) != expected:
+        elif sha256_file(path) != expected_digest:
             stale(digest_field, "bound SHA-256 does not match current bytes")
 
     for prefix in ("raw", "clean"):
-        path = resolved.get(prefix)
-        if path is None:
+        raster_path = resolved.get(prefix)
+        if raster_path is None:
             continue
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("error", Image.DecompressionBombWarning)
-                with open_path_nofollow(path) as stream, Image.open(stream) as image:
+                with open_path_nofollow(raster_path) as stream, Image.open(stream) as image:
                     if image.width * image.height > MAX_DECODED_PIXELS:
                         raise Image.DecompressionBombError("raster exceeds decode limit")
                     image.load()
@@ -2208,7 +2226,7 @@ def _receipt_failure_location(
                 )
         return fallback, "attempt_id", detail
     if "contiguous" in detail:
-        ordered = sorted(
+        ordered_attempt_paths = sorted(
             (
                 (allowed[identifier], path)
                 for path, receipt in receipts
@@ -2217,7 +2235,11 @@ def _receipt_failure_location(
             )
         )
         path = next(
-            (path for expected, (ordinal, path) in enumerate(ordered, 1) if ordinal != expected),
+            (
+                path
+                for expected, (ordinal, path) in enumerate(ordered_attempt_paths, 1)
+                if ordinal != expected
+            ),
             fallback,
         )
         return path, "attempt_id", "receipt attempt ordinals must be contiguous from 1"
@@ -2244,9 +2266,15 @@ def _successful_reference_path(project_dir: Path, subject_id: object) -> str | N
     if local_issues or characters is None or story is None:
         return None
     character_ids = {
-        item.get("id") for item in characters.get("characters", []) if isinstance(item, dict)
+        item.get("id")
+        for item in cast(Iterable[object], characters.get("characters", []))
+        if isinstance(item, dict)
     }
-    scene_ids = {item.get("id") for item in story.get("scenes", []) if isinstance(item, dict)}
+    scene_ids = {
+        item.get("id")
+        for item in cast(Iterable[object], story.get("scenes", []))
+        if isinstance(item, dict)
+    }
     if subject_id in character_ids and subject_id not in scene_ids:
         return f"references/characters/{subject_id}.png"
     if subject_id in scene_ids and subject_id not in character_ids:
@@ -2322,8 +2350,10 @@ def _validate_handoff_binding(
     if contract_issues:
         return
     scope_reference_paths: set[str] = set()
-    for required_artifact in handoff_manifest["required_artifacts"]:
-        artifact_path = required_artifact["path"]
+    for required_artifact in cast(
+        Iterable[dict[str, object]], handoff_manifest["required_artifacts"]
+    ):
+        artifact_path = cast(str, required_artifact["path"])
         if artifact_path.startswith(("references/characters/", "references/scenes/")):
             scope_reference_paths.add(artifact_path)
         try:
@@ -2346,8 +2376,8 @@ def _validate_handoff_binding(
         actual_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
         if actual_sha256 != required_artifact["sha256"]:
             _add(issues, artifact_path, "sha256", "does not match handoff manifest")
-    batches = handoff_manifest["batches"]
-    batches_path = batches["path"]
+    batches = cast(dict[str, object], handoff_manifest["batches"])
+    batches_path = cast(str, batches["path"])
     batch_map = _read_canonical_json(project_dir, batches_path, issues)
     batch_membership: dict[str, tuple[str, str]] | None = None
     if batch_map is not None:
@@ -2362,21 +2392,24 @@ def _validate_handoff_binding(
             )
         if not batch_issues:
             batch_membership = {
-                job_id: (batch["batch_id"], batch["kind"])
-                for batch in batch_map["batches"]
-                for job_id in batch["job_ids"]
+                cast(str, job_id): (
+                    cast(str, batch["batch_id"]),
+                    cast(str, batch["kind"]),
+                )
+                for batch in cast(Iterable[dict[str, object]], batch_map["batches"])
+                for job_id in cast(Iterable[object], batch["job_ids"])
             }
             actual_sha256 = hashlib.sha256(canonical_artifact_bytes(batch_map)).hexdigest()
             if actual_sha256 != batches["sha256"]:
                 _add(issues, batches_path, "sha256", "does not match handoff manifest")
     job_reference_paths: set[str] = set(scope_reference_paths)
     jobs_by_id: dict[str, dict[str, object]] = {}
-    descriptor_indices = {
-        descriptor["job_id"]: index for index, descriptor in enumerate(handoff_manifest["jobs"])
+    handoff_jobs = cast(list[dict[str, object]], handoff_manifest["jobs"])
+    descriptor_indices: dict[str, int] = {
+        cast(str, descriptor["job_id"]): index for index, descriptor in enumerate(handoff_jobs)
     }
     if batch_membership is not None:
-        handoff_jobs = handoff_manifest["jobs"]
-        manifest_job_ids = {job["job_id"] for job in handoff_jobs}
+        manifest_job_ids = {cast(str, job["job_id"]) for job in handoff_jobs}
         if manifest_job_ids != set(batch_membership):
             _add(
                 issues,
@@ -2387,7 +2420,7 @@ def _validate_handoff_binding(
         for handoff_job in handoff_jobs:
             if handoff_job["status"] == "missing":
                 continue
-            job_path = handoff_job["path"]
+            job_path = cast(str, handoff_job["path"])
             job = _read_canonical_json(project_dir, job_path, issues)
             if job is None:
                 continue
@@ -2402,35 +2435,36 @@ def _validate_handoff_binding(
                 )
             if job_issues:
                 continue
-            job_reference_paths.update(reference["path"] for reference in job["references"])
-            job_id = handoff_job["job_id"]
+            job_references = cast(list[dict[str, object]], job["references"])
+            job_reference_paths.update(cast(str, reference["path"]) for reference in job_references)
+            job_id = cast(str, handoff_job["job_id"])
             jobs_by_id[job_id] = job
-            for reference_index, reference in enumerate(job["references"]):
+            for reference_index, reference in enumerate(job_references):
                 _validate_raster(
                     project_dir,
-                    reference["path"],
+                    cast(str, reference["path"]),
                     job_path,
                     f"references[{reference_index}].path",
                     issues,
                     expected_format="PNG",
                 )
             if handoff_job["status"] == "ready":
-                job_inputs = [
+                job_inputs: list[tuple[str, str, str, str]] = [
                     (
-                        job["prompt_path"],
+                        cast(str, job["prompt_path"]),
                         "prompt_path",
                         "prompt_sha256",
-                        job["prompt_sha256"],
+                        cast(str, job["prompt_sha256"]),
                     )
                 ]
                 job_inputs.extend(
                     (
-                        reference["path"],
+                        cast(str, reference["path"]),
                         f"references[{index}].path",
                         f"references[{index}].sha256",
-                        reference["sha256"],
+                        cast(str, reference["sha256"]),
                     )
-                    for index, reference in enumerate(job["references"])
+                    for index, reference in enumerate(job_references)
                 )
                 for input_path, path_field, sha256_field, expected_sha256 in job_inputs:
                     try:
@@ -2506,7 +2540,7 @@ def _validate_handoff_binding(
     current_attempt_ids = {
         attempt_id(job_id=job_id, attempt=ordinal)
         for job_id, job in jobs_by_id.items()
-        for ordinal in range(1, job["retry_limit"] + 2)
+        for ordinal in range(1, cast(int, job["retry_limit"]) + 2)
     }
     for receipt_path, receipt in receipt_inventory:
         receipt_job_id = receipt.get("job_id")
@@ -2521,8 +2555,8 @@ def _validate_handoff_binding(
             continue
         receipts_by_job[receipt_job_id].append((receipt_path, receipt))
 
-    for descriptor in handoff_manifest["jobs"]:
-        job_id = descriptor["job_id"]
+    for descriptor in handoff_jobs:
+        job_id = cast(str, descriptor["job_id"])
         job = jobs_by_id.get(job_id)
         if job is None:
             continue
@@ -2530,9 +2564,9 @@ def _validate_handoff_binding(
         try:
             state = reconcile_job_receipts(
                 job=job,
-                job_sha256=descriptor["sha256"],
+                job_sha256=cast(str, descriptor["sha256"]),
                 receipts=[receipt for _, receipt in paired_receipts],
-                declared_status=descriptor["status"],
+                declared_status=cast(str, descriptor["status"]),
                 stale=scope_stale,
             )
         except HandoffContractError as error:
@@ -2796,10 +2830,10 @@ def _validate_raster(
 def _storyboard_panel_map(storyboard: dict[str, object]) -> dict[str, dict[str, object]]:
     """Return storyboard panels keyed by canonical panel identifier."""
     result: dict[str, dict[str, object]] = {}
-    for page in storyboard.get("pages", []):
+    for page in cast(Iterable[object], storyboard.get("pages", [])):
         if not isinstance(page, dict):
             continue
-        for panel in page.get("panels", []):
+        for panel in cast(Iterable[object], page.get("panels", [])):
             if isinstance(panel, dict) and isinstance(panel.get("id"), str):
                 result[panel["id"]] = panel
     return result
@@ -3178,12 +3212,12 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                     )
         if manifest is not None:
             source_path = (
-                manifest.get("input", {}).get("source_path")
+                cast(dict[str, object], manifest.get("input", {})).get("source_path")
                 if isinstance(manifest.get("input"), dict)
                 else None
             )
             source_hash = (
-                manifest.get("input", {}).get("source_sha256")
+                cast(dict[str, object], manifest.get("input", {})).get("source_sha256")
                 if isinstance(manifest.get("input"), dict)
                 else None
             )
@@ -3378,8 +3412,9 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                 _add(issues, expected_page, "", "composed page is missing")
             elif is_legacy_flat:
                 page_hash = sha256_file(page_path)
-                if isinstance(page_qa.get("page_sha256"), str):
-                    if page_qa["page_sha256"] != page_hash:
+                legacy_page_qa = cast(dict[str, object], page_qa)
+                if isinstance(legacy_page_qa.get("page_sha256"), str):
+                    if legacy_page_qa["page_sha256"] != page_hash:
                         _add(
                             issues,
                             page_qa_relative,
@@ -3473,7 +3508,7 @@ def _validate_required_artifacts(
 
 
 class _ValidationArgumentParser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> Never:
         """Report command-line validation errors without usage noise."""
         raise ValueError(f"invalid invocation: {message}")
 
