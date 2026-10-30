@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Mapping, Sequence, cast
 
 from PIL import Image
 
@@ -404,7 +404,7 @@ def _protected_anchors(
 def _subject_obstruction_regions(
     panel_id: str,
     anchors: Sequence[tuple[str, int, int]],
-    boxes: Sequence[tuple[str, dict[str, object], object]],
+    boxes: Sequence[tuple[str, Mapping[str, int], object]],
     width: int,
     height: int,
 ) -> list[dict[str, object]]:
@@ -551,7 +551,7 @@ def _tail_geometry_regions(
 
 def _crowding_regions(
     panel_id: str,
-    boxes: Sequence[tuple[str, dict[str, object], object]],
+    boxes: Sequence[tuple[str, Mapping[str, int], object]],
     width: int,
     height: int,
 ) -> list[dict[str, object]]:
@@ -565,7 +565,7 @@ def _crowding_regions(
     # enforces as an error, and is capped so a published ratio stays meaningful
     # on a page that is failing both checks at once.
     panel = {"x": 0, "y": 0, "width": width, "height": height}
-    covered = sum(rectangle_overlap_area(box, panel) for _, box, _ in boxes)
+    covered = sum((rectangle_overlap_area(box, panel) for _, box, _ in boxes), start=0)
     coverage = min(1.0, covered / area)
     required_separation = balloon_separation_minimum(width, height)
     tight: list[dict[str, object]] = []
@@ -611,7 +611,7 @@ def _crowding_check(regions: Sequence[Mapping[str, object]]) -> dict[str, object
     panels = ", ".join(str(region.get("panel_id")) for region in regions)
     crowded = any(
         isinstance(region.get("coverage_ratio"), float)
-        and region["coverage_ratio"] > BALLOON_COVERAGE_WARNING_RATIO
+        and cast(float, region["coverage_ratio"]) > BALLOON_COVERAGE_WARNING_RATIO
         for region in regions
     )
     tight = any(region.get("tight_pairs") for region in regions)
@@ -656,14 +656,14 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
         items = geometry.get("items")
         if not isinstance(items, list):
             items = []
-        boxes: list[tuple[str, dict[str, object], object]] = []
+        boxes: list[tuple[str, Mapping[str, int], object]] = []
         orders: list[int] = []
         placements: dict[str, Mapping[str, object]] = {}
         panel_width, panel_height = context.clean_sizes[panel_index - 1]
         for item in items:
             if not isinstance(item, dict):
                 continue
-            item_id = item.get("id") if isinstance(item.get("id"), str) else "unknown"
+            item_id = cast(str, item.get("id")) if isinstance(item.get("id"), str) else "unknown"
             if isinstance(item.get("id"), str):
                 placements[item["id"]] = item
             box = item.get("box")
@@ -675,13 +675,15 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
                     {"panel_id": panel_id, "item_id": item_id, "reason": "missing-box"}
                 )
                 continue
+            box = cast(dict[str, object], box)
             values = tuple(box.get(key) for key in ("x", "y", "width", "height"))
             if not all(isinstance(value, int) and not isinstance(value, bool) for value in values):
                 clipped_regions.append(
                     {"panel_id": panel_id, "item_id": item_id, "reason": "invalid-box"}
                 )
                 continue
-            x, y, width, height = values
+            x, y, width, height = cast(tuple[int, int, int, int], values)
+            box = cast(Mapping[str, int], box)
             clipped = (
                 x < 0
                 or y < 0
@@ -771,7 +773,7 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
             "Every dialogue tail attaches to its balloon and points at its authored speaker anchor inside the panel.",
         ),
     )
-    checks = []
+    checks: list[dict[str, object]] = []
     for check_id, failures, evidence in definitions:
         checks.append(
             {
@@ -816,7 +818,7 @@ def _validate_tail_evidence(context: PageContext, checks: Sequence[Mapping[str, 
     for panel in context.panels:
         if not isinstance(panel.get("id"), str):
             raise ValueError("bubble-tail-evidence-mismatch: panel is invalid")
-        panel_id = panel["id"]
+        panel_id = cast(str, panel["id"])
         geometry = geometry_by_panel.get(panel_id)
         items = geometry.get("items") if isinstance(geometry, dict) else None
         if not isinstance(items, list):
@@ -859,8 +861,8 @@ def _validate_tail_evidence(context: PageContext, checks: Sequence[Mapping[str, 
     for region in regions:
         if not isinstance(region, dict) or set(region) != required_fields:
             raise ValueError("bubble-tail-evidence-mismatch: region fields are invalid")
-        panel_id = region.get("panel_id")
-        text_id = region.get("text_id")
+        panel_id = cast(str, region.get("panel_id"))
+        text_id = cast(str, region.get("text_id"))
         if not isinstance(panel_id, str) or not isinstance(text_id, str):
             raise ValueError("bubble-tail-evidence-mismatch: region identity is invalid")
         key = (panel_id, text_id)
@@ -1208,7 +1210,7 @@ def _require_publishable(context: PageContext, record: Mapping[str, object]) -> 
     if categories:
         raise PageQualityMigrationError(", ".join(categories))
     try:
-        _validate_tail_evidence(context, record["checks"])
+        _validate_tail_evidence(context, cast(Sequence[Mapping[str, object]], record["checks"]))
     except ValueError as error:
         raise PageQualityMigrationError(str(error)) from error
 
