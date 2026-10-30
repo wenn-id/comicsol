@@ -620,7 +620,7 @@ def init_project(
                 {
                     "project_id": project_dir.name,
                     "source_path": "source/input.txt",
-                    "source_sha256": manifest["input"]["source_sha256"],
+                    "source_sha256": cast(dict[str, object], manifest["input"])["source_sha256"],
                 },
             )
             if selected_starter is not None:
@@ -914,7 +914,7 @@ def _resume_stage_material(
         return [story, identities], []
     storyboard = read_json(project_dir / "plan/storyboard.json")
     panels = _storyboard_panels(storyboard)
-    panel_ids = [panel.get("id") for panel in panels if isinstance(panel.get("id"), str)]
+    panel_ids = [cast(str, panel.get("id")) for panel in panels if isinstance(panel.get("id"), str)]
     if not panel_ids:
         raise ValueError("storyboard has no panels")
     if material_kind == "generation":
@@ -944,6 +944,8 @@ def _resume_stage_material(
         prompt_paths: list[str] = []
         for panel_id in panel_ids:
             record = read_json(project_dir / f"qa/panels/{panel_id}.json")
+            source_prompt_path: object
+            references: list[str] | None
             if record.get("schema_version") == "2.0":
                 record_panel_id = record.get("subject_id")
                 source_prompt_path = f"prompts/panels/{panel_id}.txt"
@@ -957,8 +959,9 @@ def _resume_stage_material(
                 record_panel_id = record.get("panel_id")
                 source_prompt_path = record.get("source_prompt_path")
                 generation = record.get("generation")
-                references = (
-                    generation.get("reference_paths") if isinstance(generation, dict) else None
+                references = cast(
+                    list[str] | None,
+                    generation.get("reference_paths") if isinstance(generation, dict) else None,
                 )
             if record_panel_id != panel_id:
                 raise ValueError(f"panel QA record does not match {panel_id}")
@@ -1096,7 +1099,7 @@ def _stage_output_files(
         )
     if output_kind == "composition":
         page_numbers = []
-        for page in storyboard.get("pages", []):
+        for page in cast(Sequence[object], storyboard.get("pages", [])):
             if isinstance(page, dict) and isinstance(page.get("number"), int):
                 page_numbers.append(page["number"])
         return _project_files(
@@ -1234,7 +1237,7 @@ def _accepted_panel_problem(
         }
         if any(bindings.get(field) != value for field, value in expected_paths.items()):
             return "accepted panel paths do not match the canonical project layout"
-        artifact_specs = (
+        artifact_specs: tuple[tuple[str, str, object | None, tuple[object, object] | None], ...] = (
             (
                 "raw",
                 expected_paths["raw_path"],
@@ -2298,10 +2301,12 @@ def _prepared_handoff_snapshot(
     for descriptor in descriptors:
         descriptor = cast(dict[str, object], descriptor)
         job_id = cast(str, descriptor["job_id"])
-        job = jobs.get(job_id)
+        descriptor_job: dict[str, object] | None = jobs.get(job_id)
         state = reconcile_job_receipts(
-            job=job,
-            job_sha256=descriptor.get("sha256") if job is not None else None,
+            job=descriptor_job,
+            job_sha256=(
+                cast(str | None, descriptor.get("sha256")) if descriptor_job is not None else None
+            ),
             receipts=receipts_by_job.get(job_id, []),
             declared_status=cast(str, descriptor["status"]),
             stale=stale,
@@ -2314,8 +2319,12 @@ def _prepared_handoff_snapshot(
                 "next_attempt": state["next_attempt"],
                 "path": descriptor["path"],
                 "status": state["status"],
-                "subject_id": None if job is None else job.get("subject_id"),
-                "subject_kind": None if job is None else job.get("subject_kind"),
+                "subject_id": (
+                    None if descriptor_job is None else descriptor_job.get("subject_id")
+                ),
+                "subject_kind": (
+                    None if descriptor_job is None else descriptor_job.get("subject_kind")
+                ),
             }
         )
     batches = cast(list[dict[str, object]], batch_map["batches"])
@@ -2955,6 +2964,7 @@ def _build_handoff_content(
                     "subject_kind": "panel",
                 }
                 prepared = _prepared_job_for_brief(existing_jobs, brief)
+                spec: dict[str, object]
                 if prepared is None:
                     attempt_kind, sequence = _next_panel_attempt_identity(project_dir, panel_id)
                     spec = {
@@ -2997,9 +3007,9 @@ def _build_handoff_content(
         for batch_id, page_specs in panel_specs_by_page:
             page_jobs: list[dict[str, object]] = []
             for spec in page_specs:
-                prepared = spec.get("prepared")
-                if isinstance(prepared, dict):
-                    job = prepared
+                prepared_job = spec.get("prepared")
+                if isinstance(prepared_job, dict):
+                    job = prepared_job
                 else:
                     brief = cast(dict[str, object], spec["brief"])
                     attempt_kind = cast(str, spec["attempt_kind"])
@@ -3183,6 +3193,7 @@ def prepare_handoff(project_dir: Path) -> dict[str, object]:
                     ["prepared handoff differs from the complete intended state"]
                 )
             if not changed_paths:
+                existing = cast(dict[str, object], existing)
                 jobs = cast(list[dict[str, object]], existing["effective_jobs"])
                 return {
                     "batch_count": len(

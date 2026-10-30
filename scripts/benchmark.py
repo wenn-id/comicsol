@@ -29,7 +29,7 @@ import math
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Mapping, Sequence, TypeGuard, cast
+from typing import Any, Literal, Mapping, Sequence, TypeGuard, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -565,7 +565,7 @@ def materialize_case_project(
         (project / relative).write_bytes((fixture / relative).read_bytes())
 
     bible = read_json(project / "plan/character-bible.json")
-    for character in bible.get("characters", []):
+    for character in cast(list[object], bible.get("characters", [])):
         if not isinstance(character, dict) or not isinstance(character.get("id"), str):
             continue
         reference = project / f"references/characters/{character['id']}.png"
@@ -620,7 +620,7 @@ def _panel_attempts(
     promoted_attempts: dict[str, Path] = {}
     for panel_id in case["panels"]:
         size = panel_raster_size(panels[panel_id]["rect"])
-        planned: list[tuple[str, int]] = [("initial", 0)]
+        planned: list[tuple[Literal["initial", "visual_retry"], int]] = [("initial", 0)]
         if panel_id in repairs:
             planned.append(("visual_retry", 1))
         for kind, revision in planned:
@@ -775,7 +775,7 @@ def dialogue_tail_regions(project: Path, page_number: int) -> list[dict[str, Any
     storyboard = read_json(project / "plan/storyboard.json")
     pages = [
         page
-        for page in storyboard.get("pages", [])
+        for page in cast(list[object], storyboard.get("pages", []))
         if isinstance(page, dict) and page.get("number") == page_number
     ]
     if len(pages) != 1:
@@ -787,7 +787,9 @@ def dialogue_tail_regions(project: Path, page_number: int) -> list[dict[str, Any
         panel_id = panel["id"]
         geometry = read_json(project / f"panels/{panel_id}/lettering.json")
         placed = {
-            item.get("id"): item for item in geometry.get("items", []) if isinstance(item, dict)
+            item.get("id"): item
+            for item in cast(list[object], geometry.get("items", []))
+            if isinstance(item, dict)
         }
         normalization = read_json(project / f"panels/{panel_id}/normalization.json")
         clean = normalization.get("clean")
@@ -931,7 +933,7 @@ def _dialogue_counts(project: Path, case: Mapping[str, Any]) -> tuple[int, int]:
     storyboard = read_json(project / "plan/storyboard.json")
     pages = {
         page.get("number"): page
-        for page in storyboard.get("pages", [])
+        for page in cast(list[object], storyboard.get("pages", []))
         if isinstance(page, dict) and isinstance(page.get("number"), int)
     }
     for page_number in range(1, int(case["page_count"]) + 1):
@@ -948,7 +950,7 @@ def _dialogue_counts(project: Path, case: Mapping[str, Any]) -> tuple[int, int]:
         record = read_json(project / f"qa/pages/page-{page_number:03d}.json")
         checks = {
             check["id"]: check
-            for check in record.get("checks", [])
+            for check in cast(list[object], record.get("checks", []))
             if isinstance(check, dict) and isinstance(check.get("id"), str)
         }
         for check_id in DIALOGUE_PAGE_CHECK_IDS:
@@ -1066,11 +1068,13 @@ def _resume_drill(project: Path, case: Mapping[str, Any]) -> dict[str, Any]:
         "succeeded": False,
     }
     before = resume_project(project)
-    observation["preserved_before_invalidation"] = list(before.get("preserved", []))
+    observation["preserved_before_invalidation"] = list(
+        cast(list[str], before.get("preserved", []))
+    )
     invalidate_from(project, stage)
     after = resume_project(project)
-    observation["preserved"] = list(after.get("preserved", []))
-    observation["invalidated"] = list(after.get("invalidated", []))
+    observation["preserved"] = list(cast(list[str], after.get("preserved", [])))
+    observation["invalidated"] = list(cast(list[str], after.get("invalidated", [])))
     if (
         observation["preserved_before_invalidation"] != list(RESUME_STAGES)
         or observation["preserved"] != expected_preserved

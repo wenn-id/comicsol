@@ -40,6 +40,7 @@ TYPED_FILES = [
     "scripts/check_coverage.py",
     "scripts/check_ruff_baseline.py",
     "scripts/clean_install_smoke.py",
+    "scripts/comic_sol.py",
     "scripts/command_service.py",
     "scripts/compose_pages.py",
     "scripts/container_runtime_audit.py",
