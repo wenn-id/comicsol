@@ -87,6 +87,7 @@ files = [
     "comic_sol_product/errors.py",
     "comic_sol_product/config.py",
     "comic_sol_product/distribution.py",
+    "comic_sol_product/portable.py",
     "comic_sol_product/engine_api.py",
     "comic_sol_product/skill_install.py",
     "comic_sol_product/__init__.py",
