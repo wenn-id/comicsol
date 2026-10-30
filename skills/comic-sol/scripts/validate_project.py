@@ -86,6 +86,7 @@ from .schema import (
     MIN_READER_PROJECT_SCHEMA_VERSION,
     SUPPORTED_PROJECT_SCHEMA_VERSIONS,
 )
+from .stage_registry import RESUME_STAGES
 from .font_coverage import SHAPING_LINEAR, script_for_codepoint, shaping_policy
 from .layouts import MARGIN, PAGE_HEIGHT, PAGE_WIDTH
 from .core_primitives import canonical_artifact_bytes, rectangles_overlap
@@ -533,7 +534,7 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
                 _relative_path(item.get("path"), issues, path, f"artifacts.{name}.path")
                 _sha256(item.get("sha256"), issues, path, f"artifacts.{name}.sha256")
 
-    version_fields = {"planning", "storyboard", "generation", "lettering", "composition", "export"}
+    version_fields = set(RESUME_STAGES)
     versions = _object(
         root.get("stage_versions"), version_fields, version_fields, issues, path, "stage_versions"
     )
