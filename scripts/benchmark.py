@@ -29,7 +29,7 @@ import math
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Mapping, Sequence, cast
+from typing import Any, Mapping, Sequence, TypeGuard, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -83,7 +83,7 @@ try:
     from .core_primitives import tail_geometry_result
 except ImportError:
 
-    def _is_point(value: object) -> bool:
+    def _is_point(value: object) -> TypeGuard[Sequence[float]]:
         return (
             isinstance(value, (list, tuple))
             and len(value) == 2
