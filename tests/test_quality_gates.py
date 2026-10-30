@@ -45,6 +45,7 @@ TYPED_FILES = [
     "scripts/installed_mcp_smoke.py",
     "scripts/layouts.py",
     "scripts/lifecycle_contracts.py",
+    "scripts/live_visual_evidence.py",
     "scripts/materialize_sample.py",
     "scripts/mcp_server.py",
     "scripts/normalize_panels.py",
