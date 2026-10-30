@@ -45,6 +45,7 @@ TYPED_FILES = [
     "scripts/export_pdf.py",
     "scripts/font_cmap.py",
     "scripts/font_coverage.py",
+    "scripts/handoff.py",
     "scripts/handoff_archive.py",
     "scripts/input_limits.py",
     "scripts/installed_mcp_smoke.py",
