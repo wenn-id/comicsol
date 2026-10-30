@@ -49,6 +49,7 @@ TYPED_FILES = [
     "scripts/input_limits.py",
     "scripts/installed_mcp_smoke.py",
     "scripts/layouts.py",
+    "scripts/letter_panels.py",
     "scripts/lifecycle_contracts.py",
     "scripts/live_visual_evidence.py",
     "scripts/materialize_sample.py",

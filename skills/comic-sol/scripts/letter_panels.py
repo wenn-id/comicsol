@@ -14,6 +14,7 @@ import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Never, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -1039,7 +1040,10 @@ def letter_panel(
                 f"text item {item.get('id', 'unknown')} render_mode {render_mode_issue}"
             )
         content = normalize_content(item.get("content", ""))
-        limit = {"dialogue": 32, "caption": 45, "sfx": 3}.get(item.get("kind"))
+        kind = item.get("kind")
+        limit = (
+            {"dialogue": 32, "caption": 45, "sfx": 3}.get(kind) if isinstance(kind, str) else None
+        )
         if limit is None:
             raise ValueError(f"text item {item.get('id', 'unknown')} has unknown kind")
         if not content or normalized_word_count(content) > limit:
@@ -1059,6 +1063,7 @@ def letter_panel(
     sfx_items_total = [item for item in ordered if item.get("kind") == "sfx"]
     lettered_sfx_count = len([item for item in sfx_items_total if is_deterministic_sfx(item)])
     word_count = sum(normalized_word_count(item["content"]) for item in ordered)
+    placements: list[dict[str, object]] = []
     summary = {
         "font_used": str(Path(_load_font(12).path)),
         "lettered_path": str(path),
@@ -1067,7 +1072,7 @@ def letter_panel(
         "sfx_count": len(sfx_items_total),
         "text_count": len(ordered),
         "word_count": word_count,
-        "placements": [],
+        "placements": placements,
     }
     if rendered_text_count == 0:
         encoded = io.BytesIO()
@@ -1138,13 +1143,15 @@ def letter_panel(
                 panel_height,
                 voice_source,
             )
-        summary["placements"].append(
+        item_id = item.get("id")
+        attribution = attributions.get(item_id) if isinstance(item_id, str) else None
+        placements.append(
             {
                 "anchor": selected_anchor,
-                "attribution": attributions.get(item.get("id")),
+                "attribution": attribution,
                 "box": {key: int(rect[key]) for key in ("x", "y", "width", "height")},
                 "font_runs": font_runs,
-                "id": item.get("id"),
+                "id": item_id,
                 "kind": item.get("kind"),
                 "reading_order": reading_order,
                 "tail": tail_geometry,
@@ -1281,7 +1288,7 @@ def _letter_project_with_summaries(
             # Also reported in the run summary, so a flag is visible in the output
             # of the command that lettered the panel rather than only inside an
             # artifact somebody has to know to open.
-            summary["sfx_flags"] = geometry["sfx"]["flags"]
+            summary["sfx_flags"] = cast(dict[str, object], geometry["sfx"])["flags"]
             staged.append(
                 (
                     panel_id,
@@ -1316,7 +1323,7 @@ def letter_project(project_dir: Path) -> list[Path]:
 
 
 class _LetteringArgumentParser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> Never:
         raise ValueError(f"invalid invocation: {message}")
 
 
