@@ -144,7 +144,7 @@ files = [
     "scripts/version.py",
 ]
 python_version = "3.11"
-follow_imports = "skip"
+follow_imports = "silent"
 ignore_missing_imports = true
 
 [tool.coverage.run]

@@ -15,7 +15,7 @@ if __package__ in {None, ""}:
     __package__ = "scripts"
 
 try:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.fastmcp import FastMCP  # type: ignore[attr-defined]
     from mcp.server.fastmcp.exceptions import ToolError
 except ModuleNotFoundError:
     from mcp.server.mcpserver import MCPServer as FastMCP
