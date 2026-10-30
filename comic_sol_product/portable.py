@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
-from typing import BinaryIO, Iterable, Iterator
+from typing import BinaryIO, Iterable, Iterator, Literal
 
 REQUIRED_RUNTIME_SUFFIXES = frozenset(
     {
@@ -355,7 +355,7 @@ def _detect_elf(payload: bytes) -> frozenset[str]:
         raise ValueError("invalid ELF binary header")
     if payload[6] != 1:
         raise ValueError("invalid ELF binary version")
-    byteorder = "little" if payload[5] == 1 else "big"
+    byteorder: Literal["little", "big"] = "little" if payload[5] == 1 else "big"
     header_size = 52 if payload[4] == 1 else 64
     size_offset = 40 if payload[4] == 1 else 52
     if len(payload) < header_size:
@@ -412,7 +412,7 @@ def _detect_elf(payload: bytes) -> frozenset[str]:
 
 def _detect_thin_macho(payload: bytes) -> tuple[int, frozenset[str]] | None:
     magic = payload[:4]
-    formats = {
+    formats: dict[bytes, tuple[Literal["big", "little"], int]] = {
         b"\xfe\xed\xfa\xce": ("big", 28),
         b"\xce\xfa\xed\xfe": ("little", 28),
         b"\xfe\xed\xfa\xcf": ("big", 32),
@@ -451,7 +451,7 @@ def _detect_thin_macho(payload: bytes) -> tuple[int, frozenset[str]] | None:
 
 def _detect_fat_macho(payload: bytes) -> frozenset[str] | None:
     magic = payload[:4]
-    formats = {
+    formats: dict[bytes, tuple[Literal["big", "little"], int, bool]] = {
         b"\xca\xfe\xba\xbe": ("big", 20, False),
         b"\xbe\xba\xfe\xca": ("little", 20, False),
         b"\xca\xfe\xba\xbf": ("big", 32, True),
