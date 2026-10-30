@@ -33,6 +33,7 @@ TYPED_FILES = [
     "scripts/assemble_release.py",
     "scripts/benchmark.py",
     "scripts/benchmark_summary.py",
+    "scripts/build_examples.py",
     "scripts/build_portable.py",
     "scripts/character_identity.py",
     "scripts/character_quality.py",

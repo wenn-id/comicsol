@@ -30,7 +30,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, cast
 
 from PIL import Image, ImageDraw
 
@@ -244,17 +244,24 @@ def _storyboard_panels(
 
 def _panel_size(panel: dict[str, object]) -> tuple[int, int]:
     """Return the exact storyboard rectangle size for a panel."""
-    rect = panel["rect"]
-    return int(rect["width"]), int(rect["height"])
+    rect = cast(dict[str, object], panel["rect"])
+    return int(cast(int, rect["width"])), int(cast(int, rect["height"]))
 
 
 def _verify_declared_layouts(panels: Sequence[tuple[int, str, dict[str, object]]]) -> None:
     """Fail when a declared page layout does not match its rectangles."""
     by_page: dict[int, tuple[str, list[tuple[int, int, int, int]]]] = {}
     for page_number, layout, panel in panels:
-        rect = panel["rect"]
+        rect = cast(dict[str, object], panel["rect"])
         entry = by_page.setdefault(page_number, (layout, []))
-        entry[1].append((int(rect["x"]), int(rect["y"]), int(rect["width"]), int(rect["height"])))
+        entry[1].append(
+            (
+                int(cast(int, rect["x"])),
+                int(cast(int, rect["y"])),
+                int(cast(int, rect["width"])),
+                int(cast(int, rect["height"])),
+            )
+        )
     for page_number, (layout, rectangles) in sorted(by_page.items()):
         matched = match_layout(rectangles)
         if matched != layout:
@@ -308,7 +315,7 @@ def _prepare_manifest(project: Path, contract: dict[str, object], panel_ids: Seq
             },
             "settings": {
                 **manifest["settings"],
-                "page_count": int(contract["page_count"]),
+                "page_count": int(cast(int, contract["page_count"])),
                 "panel_count": len(panel_ids),
             },
             "input": {
@@ -512,18 +519,18 @@ def build_example(example_dir: Path, output_root: Path) -> Path:
     """Build one committed example into a complete validated project."""
     example_dir = Path(example_dir)
     contract = _read_contract(example_dir)
-    seed = int(contract["seed"])
+    seed = int(cast(int, contract["seed"]))
 
     storyboard = read_json(example_dir / "plan/storyboard.json")
     panels = _storyboard_panels(storyboard)
     _verify_declared_layouts(panels)
     panel_ids = [str(panel["id"]) for _page, _layout, panel in panels]
-    if len(panel_ids) != int(contract["panel_count"]):
+    if len(panel_ids) != int(cast(int, contract["panel_count"])):
         raise ExampleError(
             f"contract declares {contract['panel_count']} panels but the storyboard has {len(panel_ids)}"
         )
     page_numbers = sorted({page for page, _layout, _panel in panels})
-    if len(page_numbers) != int(contract["page_count"]):
+    if len(page_numbers) != int(cast(int, contract["page_count"])):
         raise ExampleError(
             f"contract declares {contract['page_count']} pages but the storyboard has {len(page_numbers)}"
         )
