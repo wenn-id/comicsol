@@ -357,13 +357,13 @@ def _scorecard_metrics(path: Path) -> dict[str, Any]:
         for name in sorted(expected_names):
             values = [entry["score"] for entry in scored if entry[axis] == name]
             groups[axis][name] = round(sum(values) / len(values), 3) if values else 0.0
-    scores = [entry["score"] for entry in scored]
+    score_values = [entry["score"] for entry in scored]
     return {
         "scorecard": scorecard,
-        "scored_dimensions": len(scores),
+        "scored_dimensions": len(score_values),
         "total_dimensions": len(entries),
-        "overall_mean": round(sum(scores) / len(scores), 3) if scores else 0.0,
-        "minimum_score": min(scores) if scores else 0,
+        "overall_mean": round(sum(score_values) / len(score_values), 3) if score_values else 0.0,
+        "minimum_score": min(score_values) if score_values else 0,
         "group_means": groups,
     }
 
