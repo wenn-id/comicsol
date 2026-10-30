@@ -373,6 +373,31 @@ class PublicInstallerContractTests(unittest.TestCase):
                 fingerprint[path.relative_to(root).as_posix()] = path.read_bytes()
         return fingerprint
 
+    def make_user_project(self, project):
+        project.mkdir()
+        (project / "do-not-delete.txt").write_text("user project", encoding="utf-8")
+        generated = project / "runs" / "demo" / "exports" / "page-01.png"
+        generated.parent.mkdir(parents=True)
+        generated.write_bytes(
+            (self.root / "tests/fixtures/valid-one-page/panels/clean/p01-01.png").read_bytes()
+        )
+        checkpoint = project / "runs" / "demo" / "state" / "checkpoint.bin"
+        checkpoint.parent.mkdir(parents=True)
+        checkpoint.write_bytes(bytes(range(256)) + b"\x00\xff")
+        unrelated = project / "notes" / "unrelated.txt"
+        unrelated.parent.mkdir(parents=True)
+        unrelated.write_bytes(b"keep this output-root content\n")
+        (project / "empty-directory").mkdir()
+
+    @staticmethod
+    def snapshot_user_project(project):
+        return {
+            path.relative_to(project).as_posix(): (
+                ("directory", None) if path.is_dir() else ("file", path.read_bytes())
+            )
+            for path in sorted(project.rglob("*"))
+        }
+
     @staticmethod
     def write_signature_fixture(
         root,
@@ -1615,9 +1640,8 @@ class PublicInstallerContractTests(unittest.TestCase):
             root = Path(raw)
             install_root = root / "runtime"
             project = root / "user-project"
-            project.mkdir()
-            project_sentinel = project / "do-not-delete.txt"
-            project_sentinel.write_text("user project", encoding="utf-8")
+            self.make_user_project(project)
+            project_snapshot = self.snapshot_user_project(project)
             config = root / "home" / "client-config.json"
             config.parent.mkdir(parents=True)
             config.write_text('{"client":"preserved"}\n', encoding="utf-8")
@@ -1630,6 +1654,7 @@ class PublicInstallerContractTests(unittest.TestCase):
 
             first = self.run_powershell_archive_install(archive, install_root, env=environment)
             self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+            self.assertEqual(project_snapshot, self.snapshot_user_project(project))
             runtime_snapshot = self.snapshot_tree(install_root)
             self.assertEqual(
                 "2.0.0rc4",
@@ -1637,24 +1662,27 @@ class PublicInstallerContractTests(unittest.TestCase):
             )
             repeated = self.run_powershell_archive_install(archive, install_root, env=environment)
             self.assertEqual(0, repeated.returncode, repeated.stdout + repeated.stderr)
+            self.assertEqual(project_snapshot, self.snapshot_user_project(project))
             self.assertEqual(runtime_snapshot, self.snapshot_tree(install_root))
 
             uninstall = self.run_uninstall(install_root)
             self.assertEqual(0, uninstall.returncode, uninstall.stdout + uninstall.stderr)
             self.assertFalse(install_root.exists())
+            self.assertEqual(project_snapshot, self.snapshot_user_project(project))
             repeated_uninstall = self.run_uninstall(install_root)
             self.assertEqual(
                 0,
                 repeated_uninstall.returncode,
                 repeated_uninstall.stdout + repeated_uninstall.stderr,
             )
+            self.assertEqual(project_snapshot, self.snapshot_user_project(project))
             reinstall = self.run_powershell_archive_install(archive, install_root, env=environment)
             self.assertEqual(0, reinstall.returncode, reinstall.stdout + reinstall.stderr)
+            self.assertEqual(project_snapshot, self.snapshot_user_project(project))
             self.assertEqual(
                 "2.0.0rc4",
                 (install_root / "active-version").read_text(encoding="utf-8").strip(),
             )
-            self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
             self.assertEqual('{"client":"preserved"}\n', config.read_text(encoding="utf-8"))
 
     @unittest.skipUnless(os.name == "nt", "PowerShell installer lifecycle test")
@@ -1663,9 +1691,8 @@ class PublicInstallerContractTests(unittest.TestCase):
             root = Path(raw)
             install_root = root / "runtime"
             project = root / "user-project"
-            project.mkdir()
-            project_sentinel = project / "do-not-delete.txt"
-            project_sentinel.write_text("user project", encoding="utf-8")
+            self.make_user_project(project)
+            project_snapshot = self.snapshot_user_project(project)
             config = root / "home" / "client-config.json"
             config.parent.mkdir(parents=True)
             config.write_text('{"client":"preserved"}\n', encoding="utf-8")
@@ -1683,11 +1710,13 @@ class PublicInstallerContractTests(unittest.TestCase):
 
             first = self.run_powershell_archive_install(old_archive, install_root, env=environment)
             self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+            self.assertEqual(project_snapshot, self.snapshot_user_project(project))
             old_bin = (install_root / "bin" / "comic-sol.exe").read_bytes()
             upgraded = self.run_powershell_archive_install(
                 new_archive, install_root, env=environment
             )
             self.assertEqual(0, upgraded.returncode, upgraded.stdout + upgraded.stderr)
+            self.assertEqual(project_snapshot, self.snapshot_user_project(project))
             self.assertEqual(
                 "2.0.0rc6",
                 (install_root / "active-version").read_text(encoding="utf-8").strip(),
@@ -1700,7 +1729,6 @@ class PublicInstallerContractTests(unittest.TestCase):
             self.assertFalse((install_root / "versions" / ".2.0.0rc6.rollback").exists())
             self.assertFalse((install_root / ".bin.rollback").exists())
             self.assertTrue((install_root / "versions" / "2.0.0rc4").is_dir())
-            self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
             self.assertEqual('{"client":"preserved"}\n', config.read_text(encoding="utf-8"))
 
     @unittest.skipUnless(os.name == "nt", "PowerShell installer lifecycle test")
@@ -1709,9 +1737,8 @@ class PublicInstallerContractTests(unittest.TestCase):
             root = Path(raw)
             install_root = root / "runtime"
             project = root / "user-project"
-            project.mkdir()
-            project_sentinel = project / "do-not-delete.txt"
-            project_sentinel.write_text("user project", encoding="utf-8")
+            self.make_user_project(project)
+            project_snapshot = self.snapshot_user_project(project)
             config = root / "home" / "client-config.json"
             config.parent.mkdir(parents=True)
             config.write_text('{"client":"preserved"}\n', encoding="utf-8")
@@ -1744,13 +1771,13 @@ class PublicInstallerContractTests(unittest.TestCase):
 
             self.assertNotEqual(0, failed.returncode, failed.stdout + failed.stderr)
             self.assertEqual(runtime_snapshot, self.snapshot_tree(install_root))
+            self.assertEqual(project_snapshot, self.snapshot_user_project(project))
             self.assertFalse((install_root / "bin.new").exists())
             self.assertFalse((install_root / ".bin.rollback").exists())
             self.assertFalse((install_root / "versions" / ".2.0.0rc6.rollback").exists())
             self.assertFalse((install_root / "versions" / "2.0.0rc6").exists())
             self.assertFalse((install_root / "active-version.new").exists())
             self.assertFalse((install_root / ".comic-sol-install.new").exists())
-            self.assertEqual("user project", project_sentinel.read_text(encoding="utf-8"))
             self.assertEqual('{"client":"preserved"}\n', config.read_text(encoding="utf-8"))
 
     def test_native_uninstall_refuses_sensitive_project_root(self):

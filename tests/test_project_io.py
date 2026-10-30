@@ -13,6 +13,34 @@ from scripts.project_io import contained_project_path
 from tests.support import make_symlink
 
 
+class SourceValidationTests(unittest.TestCase):
+    def test_accepts_valid_utf8_at_source_byte_limit(self):
+        source = b"a" * project_io.MAX_SOURCE_BYTES
+
+        self.assertEqual(source.decode("utf-8"), project_io.validate_source_bytes(source))
+
+    def test_rejects_source_one_byte_over_limit(self):
+        source = b"a" * (project_io.MAX_SOURCE_BYTES + 1)
+
+        with self.assertRaisesRegex(ValueError, "at most 200 KiB"):
+            project_io.validate_source_bytes(source)
+
+    def test_rejects_invalid_utf8(self):
+        with self.assertRaisesRegex(ValueError, "valid UTF-8"):
+            project_io.validate_source_bytes(b"\xff")
+
+    def test_suffix_allowlist_accepts_txt_and_md(self):
+        for suffix in (".txt", ".md"):
+            with self.subTest(suffix=suffix):
+                self.assertEqual("source", project_io.validate_source_bytes(b"source", suffix))
+
+    def test_suffix_allowlist_rejects_other_suffixes(self):
+        for suffix in (".html", ".png", ""):
+            with self.subTest(suffix=suffix):
+                with self.assertRaisesRegex(ValueError, r"\.txt or \.md"):
+                    project_io.validate_source_bytes(b"source", suffix)
+
+
 class ContainedProjectPathTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
