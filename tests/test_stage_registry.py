@@ -14,6 +14,7 @@ from scripts.stage_registry import (
     STAGE_INVALIDATION_STATUS,
     STAGE_REGISTRY,
 )
+from scripts.validate_project import STAGES as VALIDATION_SCOPES, validate_project
 
 
 class StageRegistryTests(unittest.TestCase):
@@ -32,6 +33,17 @@ class StageRegistryTests(unittest.TestCase):
             self.assertTrue(definition.material_kind)
             self.assertTrue(definition.output_kind)
             self.assertIn(definition.stale_action, {"regenerate", "rerun"})
+
+    def test_validation_scopes_remain_separate_from_resume_stages(self):
+        self.assertEqual(
+            ("all", "plan", "storyboard", "panels", "final", "export-ready"),
+            VALIDATION_SCOPES,
+        )
+        self.assertNotEqual(set(VALIDATION_SCOPES), set(RESUME_STAGES))
+        for stage in ("planning", "generation", "lettering", "composition", "export"):
+            with self.subTest(stage=stage):
+                with self.assertRaisesRegex(ValueError, f"unknown validation stage: {stage}"):
+                    validate_project(Path("missing-project"), stage)
 
     def test_artifacts_have_one_registered_owner(self):
         self.assertEqual(

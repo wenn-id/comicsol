@@ -38,7 +38,11 @@ from scripts.schema import (  # noqa: E402
     migrate_project_manifest,
     read_project_manifest,
 )
-from scripts.validate_project import ProjectValidationError  # noqa: E402
+from scripts.stage_registry import RESUME_STAGES  # noqa: E402
+from scripts.validate_project import (  # noqa: E402
+    ProjectValidationError,
+    validate_manifest,
+)
 from scripts import comic_sol, letter_panels, project_io  # noqa: E402
 
 
@@ -73,6 +77,20 @@ class ManifestTests(unittest.TestCase):
             },
             manifest["stage_versions"],
         )
+
+    def test_manifest_stage_version_fields_follow_resume_registry(self):
+        project = init_project(
+            self.root,
+            "Stage Registry Contract",
+            b"Stage registry contract source",
+            {"mode": "short_prompt", "language": "en"},
+        )
+        manifest = read_json(project / "project.json")
+        stages_with_future_extension = (*RESUME_STAGES, "future-stage")
+        manifest["stage_versions"] = {stage: "1" for stage in stages_with_future_extension}
+
+        with mock.patch("scripts.validate_project.RESUME_STAGES", stages_with_future_extension):
+            self.assertEqual([], validate_manifest(manifest))
 
     def test_project_schema_contract_is_explicit_and_readable(self):
         self.assertEqual("1.1", CURRENT_PROJECT_SCHEMA_VERSION)
