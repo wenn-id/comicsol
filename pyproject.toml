@@ -96,6 +96,7 @@ files = [
     "scripts/benchmark_summary.py",
     "scripts/build_portable.py",
     "scripts/character_identity.py",
+    "scripts/character_quality.py",
     "scripts/check_coverage.py",
     "scripts/check_ruff_baseline.py",
     "scripts/clean_install_smoke.py",
