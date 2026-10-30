@@ -12,6 +12,12 @@ import tempfile
 import tomllib
 import venv
 from pathlib import Path
+from typing import TypedDict
+
+
+class _CodexEntry(TypedDict):
+    command: str
+    args: list[str]
 
 
 def run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> str:
@@ -64,7 +70,7 @@ def smoke_engine_api(python: Path, *, cwd: Path) -> None:
     run([str(python), "-c", program], cwd=cwd)
 
 
-def read_codex_entry(config: Path, output_root: Path, executable: Path) -> dict[str, object]:
+def read_codex_entry(config: Path, output_root: Path, executable: Path) -> _CodexEntry:
     """Read and validate the exact MCP entry produced for Codex."""
     record = tomllib.loads(config.read_text(encoding="utf-8"))
     try:
@@ -85,7 +91,7 @@ def read_codex_entry(config: Path, output_root: Path, executable: Path) -> dict[
 
 def minimal_environment(environment: dict[str, str]) -> dict[str, str]:
     """Keep platform essentials while excluding installation search paths."""
-    minimal = {
+    minimal: dict[str, str] = {
         key: environment[key]
         for key in (
             "HOME",
