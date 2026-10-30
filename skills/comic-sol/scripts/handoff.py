@@ -232,8 +232,11 @@ def _attempt_target(root: Mapping[str, object], issues: list[str]) -> None:
     subject_kind = root.get("subject_kind")
     subject_id = root.get("subject_id")
     attempt_kind = root.get("attempt_kind")
-    if not all(
-        isinstance(value, str) for value in (target, subject_kind, subject_id, attempt_kind)
+    if not (
+        isinstance(target, str)
+        and isinstance(subject_kind, str)
+        and isinstance(subject_id, str)
+        and isinstance(attempt_kind, str)
     ):
         return
     if subject_kind == "panel":
@@ -278,9 +281,10 @@ def validate_generation_batches(value: object) -> list[str]:
         )
         if item is None:
             continue
-        _identifier(item.get("batch_id"), f"{field}.batch_id", issues)
-        if isinstance(item.get("batch_id"), str):
-            batch_ids.append(item["batch_id"])
+        batch_id = item.get("batch_id")
+        _identifier(batch_id, f"{field}.batch_id", issues)
+        if isinstance(batch_id, str):
+            batch_ids.append(batch_id)
         if item.get("kind") not in {"reference", "panel"}:
             issues.append(f"{field}.kind: must be reference or panel")
         job_ids = item.get("job_ids")
@@ -370,10 +374,11 @@ def validate_generation_job(value: object) -> list[str]:
             )
             if item is None:
                 continue
-            _relative_path(item.get("path"), f"{field}.path", issues)
-            _reference_raster_path(item.get("path"), f"{field}.path", issues)
-            if isinstance(item.get("path"), str):
-                reference_paths.append(item["path"])
+            reference_path = item.get("path")
+            _relative_path(reference_path, f"{field}.path", issues)
+            _reference_raster_path(reference_path, f"{field}.path", issues)
+            if isinstance(reference_path, str):
+                reference_paths.append(reference_path)
             _sha256(item.get("sha256"), f"{field}.sha256", issues)
         if len(reference_paths) != len(set(reference_paths)):
             issues.append("references: paths must be unique")
@@ -759,11 +764,12 @@ def validate_handoff_manifest(value: object) -> list[str]:
             )
             if item is None:
                 continue
-            _sha256(item.get("job_id"), f"{field}.job_id", issues)
+            job_id = item.get("job_id")
+            _sha256(job_id, f"{field}.job_id", issues)
             _relative_path(item.get("path"), f"{field}.path", issues)
-            if isinstance(item.get("job_id"), str):
-                job_ids.append(item["job_id"])
-                expected_path = f"generation/jobs/{item['job_id']}.json"
+            if isinstance(job_id, str):
+                job_ids.append(job_id)
+                expected_path = f"generation/jobs/{job_id}.json"
                 if item.get("path") != expected_path:
                     issues.append(f"{field}.path: must equal {expected_path}")
             _sha256(item.get("sha256"), f"{field}.sha256", issues)
@@ -787,9 +793,10 @@ def validate_handoff_manifest(value: object) -> list[str]:
             )
             if item is None:
                 continue
-            _relative_path(item.get("path"), f"{field}.path", issues)
-            if isinstance(item.get("path"), str):
-                artifact_paths.append(item["path"])
+            artifact_path = item.get("path")
+            _relative_path(artifact_path, f"{field}.path", issues)
+            if isinstance(artifact_path, str):
+                artifact_paths.append(artifact_path)
             _sha256(item.get("sha256"), f"{field}.sha256", issues)
         if len(artifact_paths) != len(set(artifact_paths)):
             issues.append("required_artifacts: paths must be unique")
