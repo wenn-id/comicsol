@@ -78,6 +78,7 @@ TYPED_FILES = [
     "scripts/starter_templates.py",
     "scripts/sync_plugin_bundle.py",
     "scripts/typography.py",
+    "scripts/validate_project.py",
     "scripts/version.py",
 ]
 
