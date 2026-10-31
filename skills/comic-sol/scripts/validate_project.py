@@ -2478,48 +2478,86 @@ def _validate_handoff_locked_scope(
     return scope_stale
 
 
-def _validate_handoff_binding(
+def _read_validate_handoff_job(
     project_dir: Path,
-    manifest: dict[str, object],
+    handoff_job: dict[str, object],
     issues: list[ValidationIssue],
-    *,
-    require_panel_acceptance: bool = False,
-) -> None:
-    """Validate the populated project-to-handoff manifest binding."""
-    binding = _populated_handoff_binding(manifest)
-    if binding is None:
-        return
-    manifest_path, locked_scope = binding
-    handoff_manifest = _read_canonical_json(project_dir, manifest_path, issues)
-    if handoff_manifest is None:
-        return
-    contract_issues = validate_handoff_manifest(handoff_manifest)
-    for contract_issue in contract_issues:
-        field, separator, message = contract_issue.partition(": ")
+) -> tuple[str, dict[str, object] | None, set[str]]:
+    job_path = cast(str, handoff_job["path"])
+    job = _read_canonical_json(project_dir, job_path, issues)
+    if job is None:
+        return job_path, None, set()
+    job_issues = validate_generation_job(job)
+    for job_issue in job_issues:
+        field, separator, message = job_issue.partition(": ")
         _add(
             issues,
-            manifest_path,
+            job_path,
             field,
-            message if separator else contract_issue,
+            message if separator else job_issue,
         )
-    if contract_issues:
-        return
-    scope_reference_paths = _validate_handoff_required_artifacts(
-        project_dir,
-        handoff_manifest,
-        issues,
-    )
-    batch_membership = _validate_handoff_batch_membership(
-        project_dir,
-        handoff_manifest,
-        issues,
-    )
-    job_reference_paths: set[str] = set(scope_reference_paths)
+    if job_issues:
+        return job_path, None, set()
+    job_references = cast(list[dict[str, object]], job["references"])
+    job_reference_paths = {cast(str, reference["path"]) for reference in job_references}
+    for reference_index, reference in enumerate(job_references):
+        _validate_raster(
+            project_dir,
+            cast(str, reference["path"]),
+            job_path,
+            f"references[{reference_index}].path",
+            issues,
+            expected_format="PNG",
+        )
+    if handoff_job["status"] == "ready":
+        _validate_ready_handoff_job_inputs(
+            project_dir,
+            job_path,
+            job,
+            job_references,
+            issues,
+        )
+    return job_path, job, job_reference_paths
+
+
+def _validate_handoff_job_bindings(
+    job_path: str,
+    handoff_job: dict[str, object],
+    job: dict[str, object],
+    batch_membership: dict[str, tuple[str, str]],
+    issues: list[ValidationIssue],
+) -> None:
+    job_id = cast(str, handoff_job["job_id"])
+    if job["job_id"] != job_id:
+        _add(issues, job_path, "job_id", "does not match handoff manifest")
+    membership = batch_membership.get(job_id)
+    if membership is not None:
+        expected_batch_id, expected_kind = membership
+        if job["batch_id"] != expected_batch_id:
+            _add(issues, job_path, "batch_id", "does not match generation/batches.json")
+        if job["subject_kind"] != expected_kind:
+            _add(
+                issues,
+                job_path,
+                "subject_kind",
+                "does not match generation/batches.json",
+            )
+    actual_sha256 = hashlib.sha256(canonical_artifact_bytes(job)).hexdigest()
+    if actual_sha256 != handoff_job["sha256"]:
+        _add(issues, job_path, "sha256", "does not match handoff manifest")
+
+
+def _validate_handoff_jobs(
+    project_dir: Path,
+    manifest_path: str,
+    handoff_manifest: dict[str, object],
+    batch_membership: dict[str, tuple[str, str]] | None,
+    reference_paths: set[str],
+    issues: list[ValidationIssue],
+) -> tuple[set[str], dict[str, dict[str, object]], list[dict[str, object]]]:
+    job_reference_paths = set(reference_paths)
     jobs_by_id: dict[str, dict[str, object]] = {}
     handoff_jobs = cast(list[dict[str, object]], handoff_manifest["jobs"])
-    descriptor_indices: dict[str, int] = {
-        cast(str, descriptor["job_id"]): index for index, descriptor in enumerate(handoff_jobs)
-    }
     if batch_membership is not None:
         manifest_job_ids = {cast(str, job["job_id"]) for job in handoff_jobs}
         if manifest_job_ids != set(batch_membership):
@@ -2532,66 +2570,222 @@ def _validate_handoff_binding(
         for handoff_job in handoff_jobs:
             if handoff_job["status"] == "missing":
                 continue
-            job_path = cast(str, handoff_job["path"])
-            job = _read_canonical_json(project_dir, job_path, issues)
+            job_path, job, references = _read_validate_handoff_job(
+                project_dir,
+                handoff_job,
+                issues,
+            )
+            job_reference_paths.update(references)
             if job is None:
                 continue
-            job_issues = validate_generation_job(job)
-            for job_issue in job_issues:
-                field, separator, message = job_issue.partition(": ")
-                _add(
-                    issues,
-                    job_path,
-                    field,
-                    message if separator else job_issue,
-                )
-            if job_issues:
-                continue
-            job_references = cast(list[dict[str, object]], job["references"])
-            job_reference_paths.update(cast(str, reference["path"]) for reference in job_references)
             job_id = cast(str, handoff_job["job_id"])
             jobs_by_id[job_id] = job
-            for reference_index, reference in enumerate(job_references):
-                _validate_raster(
-                    project_dir,
-                    cast(str, reference["path"]),
-                    job_path,
-                    f"references[{reference_index}].path",
-                    issues,
-                    expected_format="PNG",
-                )
-            if handoff_job["status"] == "ready":
-                _validate_ready_handoff_job_inputs(
-                    project_dir,
-                    job_path,
-                    job,
-                    job_references,
-                    issues,
-                )
-            if job["job_id"] != job_id:
-                _add(issues, job_path, "job_id", "does not match handoff manifest")
-            membership = batch_membership.get(job_id)
-            if membership is not None:
-                expected_batch_id, expected_kind = membership
-                if job["batch_id"] != expected_batch_id:
-                    _add(issues, job_path, "batch_id", "does not match generation/batches.json")
-                if job["subject_kind"] != expected_kind:
-                    _add(
-                        issues,
-                        job_path,
-                        "subject_kind",
-                        "does not match generation/batches.json",
-                    )
-            actual_sha256 = hashlib.sha256(canonical_artifact_bytes(job)).hexdigest()
-            if actual_sha256 != handoff_job["sha256"]:
-                _add(issues, job_path, "sha256", "does not match handoff manifest")
-    scope_stale = _validate_handoff_locked_scope(
+            _validate_handoff_job_bindings(
+                job_path,
+                handoff_job,
+                job,
+                batch_membership,
+                issues,
+            )
+    return job_reference_paths, jobs_by_id, handoff_jobs
+
+
+def _validate_handoff_successful_raster_dimensions(
+    project_dir: Path,
+    raster_path: str,
+    job: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    if not raster_path.endswith(".png"):
+        return
+    raster_dimensions = _validate_raster(
         project_dir,
-        manifest_path,
-        locked_scope,
-        job_reference_paths,
+        raster_path,
+        raster_path,
+        "file",
+        issues,
+        expected_format="PNG",
+    )
+    if raster_dimensions is None:
+        return
+    width, height = raster_dimensions
+    requested_dimensions = job.get("requested_dimensions")
+    if isinstance(requested_dimensions, dict) and (width, height) != (
+        requested_dimensions.get("width"),
+        requested_dimensions.get("height"),
+    ):
+        _add(
+            issues,
+            raster_path,
+            "dimensions",
+            "successful receipt raster does not match generation job dimensions",
+        )
+    requested_ratio = job.get("requested_aspect_ratio")
+    if isinstance(requested_ratio, str):
+        ratio_width, ratio_height = map(int, requested_ratio.split(":"))
+        if width * ratio_height != height * ratio_width:
+            _add(
+                issues,
+                raster_path,
+                "aspect_ratio",
+                "successful receipt raster does not match generation job aspect ratio",
+            )
+
+
+def _validate_handoff_successful_raster(
+    project_dir: Path,
+    receipt_path: str,
+    receipt: dict[str, object],
+    job: dict[str, object],
+    issues: list[ValidationIssue],
+) -> tuple[str, bytes] | None:
+    raster_path = receipt.get("raster_path")
+    raster_sha256 = receipt.get("raster_sha256")
+    if raster_path != job.get("target_path"):
+        _add(
+            issues,
+            receipt_path,
+            "raster_path",
+            "successful receipt must match the generation job target_path",
+        )
+        return None
+    if not isinstance(raster_path, str) or not isinstance(raster_sha256, str):
+        return None
+    try:
+        raster_bytes = read_contained_bytes(
+            project_dir,
+            raster_path,
+            max_bytes=MAX_ENCODED_RASTER_BYTES,
+        )
+    except FileNotFoundError:
+        _add(
+            issues,
+            raster_path,
+            "file",
+            "successful receipt retained raster is missing",
+        )
+        return None
+    except (OSError, ValueError) as error:
+        _add(
+            issues,
+            raster_path,
+            "file",
+            f"cannot read successful receipt raster: {type(error).__name__}",
+        )
+        return None
+    if hashlib.sha256(raster_bytes).hexdigest() != raster_sha256:
+        _add(
+            issues,
+            raster_path,
+            "sha256",
+            "does not match successful receipt raster digest",
+        )
+    _validate_handoff_successful_raster_dimensions(project_dir, raster_path, job, issues)
+    return raster_path, raster_bytes
+
+
+def _validate_handoff_successful_reference(
+    project_dir: Path,
+    receipt_path: str,
+    raster_bytes: bytes,
+    job: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    if job.get("subject_kind") != "reference":
+        return
+    canonical_path = _successful_reference_path(project_dir, job.get("subject_id"))
+    if canonical_path is None:
+        _add(
+            issues,
+            receipt_path,
+            "raster_path",
+            (
+                "successful reference receipt subject must resolve to exactly one "
+                "canonical character or scene activation path"
+            ),
+        )
+        return
+    try:
+        canonical_bytes = read_contained_bytes(
+            project_dir,
+            canonical_path,
+            max_bytes=MAX_ENCODED_RASTER_BYTES,
+        )
+    except FileNotFoundError:
+        _add(
+            issues,
+            canonical_path,
+            "file",
+            "successful reference receipt activated canonical raster is missing",
+        )
+    except (OSError, ValueError) as error:
+        _add(
+            issues,
+            canonical_path,
+            "file",
+            (f"cannot read successful reference receipt activation: {type(error).__name__}"),
+        )
+    else:
+        if canonical_bytes != raster_bytes:
+            _add(
+                issues,
+                canonical_path,
+                "sha256",
+                "activated canonical raster does not match successful reference receipt",
+            )
+
+
+def _validate_handoff_successful_receipt(
+    project_dir: Path,
+    receipt_path: str,
+    receipt: dict[str, object],
+    job: dict[str, object],
+    require_panel_acceptance: bool,
+    issues: list[ValidationIssue],
+) -> None:
+    raster = _validate_handoff_successful_raster(
+        project_dir,
+        receipt_path,
+        receipt,
+        job,
         issues,
     )
+    if raster is None:
+        return
+    _, raster_bytes = raster
+    _validate_handoff_successful_reference(
+        project_dir,
+        receipt_path,
+        raster_bytes,
+        job,
+        issues,
+    )
+    if (
+        require_panel_acceptance
+        and job.get("subject_kind") == "panel"
+        and not _successful_panel_is_accepted(project_dir, job)
+    ):
+        panel_id = job.get("subject_id")
+        _add(
+            issues,
+            receipt_path,
+            "raster_path",
+            (
+                f"successful panel receipt must be promoted to "
+                f"panels/raw/{panel_id}.png and accepted by matching visual QA"
+            ),
+        )
+
+
+def _validate_handoff_receipts(
+    project_dir: Path,
+    manifest_path: str,
+    handoff_jobs: list[dict[str, object]],
+    jobs_by_id: dict[str, dict[str, object]],
+    scope_stale: bool,
+    require_panel_acceptance: bool,
+    issues: list[ValidationIssue],
+) -> None:
     receipt_inventory = _handoff_receipt_inventory(project_dir, issues)
     receipts_by_job: dict[str, list[tuple[str, dict[str, object]]]] = {
         job_id: [] for job_id in jobs_by_id
@@ -2614,6 +2808,9 @@ def _validate_handoff_binding(
             continue
         receipts_by_job[receipt_job_id].append((receipt_path, receipt))
 
+    descriptor_indices = {
+        cast(str, descriptor["job_id"]): index for index, descriptor in enumerate(handoff_jobs)
+    }
     for descriptor in handoff_jobs:
         job_id = cast(str, descriptor["job_id"])
         job = jobs_by_id.get(job_id)
@@ -2653,146 +2850,76 @@ def _validate_handoff_binding(
         for receipt_path, receipt in paired_receipts:
             if receipt.get("outcome") != "success":
                 continue
-            raster_path = receipt.get("raster_path")
-            raster_sha256 = receipt.get("raster_sha256")
-            if raster_path != job.get("target_path"):
-                _add(
-                    issues,
-                    receipt_path,
-                    "raster_path",
-                    "successful receipt must match the generation job target_path",
-                )
-                continue
-            if not isinstance(raster_path, str) or not isinstance(raster_sha256, str):
-                continue
-            try:
-                raster_bytes = read_contained_bytes(
-                    project_dir,
-                    raster_path,
-                    max_bytes=MAX_ENCODED_RASTER_BYTES,
-                )
-            except FileNotFoundError:
-                _add(
-                    issues,
-                    raster_path,
-                    "file",
-                    "successful receipt retained raster is missing",
-                )
-                continue
-            except (OSError, ValueError) as error:
-                _add(
-                    issues,
-                    raster_path,
-                    "file",
-                    f"cannot read successful receipt raster: {type(error).__name__}",
-                )
-                continue
-            if hashlib.sha256(raster_bytes).hexdigest() != raster_sha256:
-                _add(
-                    issues,
-                    raster_path,
-                    "sha256",
-                    "does not match successful receipt raster digest",
-                )
-            raster_dimensions = None
-            if raster_path.endswith(".png"):
-                raster_dimensions = _validate_raster(
-                    project_dir,
-                    raster_path,
-                    raster_path,
-                    "file",
-                    issues,
-                    expected_format="PNG",
-                )
-            if raster_dimensions is not None:
-                width, height = raster_dimensions
-                requested_dimensions = job.get("requested_dimensions")
-                if isinstance(requested_dimensions, dict) and (width, height) != (
-                    requested_dimensions.get("width"),
-                    requested_dimensions.get("height"),
-                ):
-                    _add(
-                        issues,
-                        raster_path,
-                        "dimensions",
-                        "successful receipt raster does not match generation job dimensions",
-                    )
-                requested_ratio = job.get("requested_aspect_ratio")
-                if isinstance(requested_ratio, str):
-                    ratio_width, ratio_height = map(int, requested_ratio.split(":"))
-                    if width * ratio_height != height * ratio_width:
-                        _add(
-                            issues,
-                            raster_path,
-                            "aspect_ratio",
-                            "successful receipt raster does not match generation job aspect ratio",
-                        )
-            if job.get("subject_kind") == "reference":
-                canonical_path = _successful_reference_path(
-                    project_dir,
-                    job.get("subject_id"),
-                )
-                if canonical_path is None:
-                    _add(
-                        issues,
-                        receipt_path,
-                        "raster_path",
-                        (
-                            "successful reference receipt subject must resolve to exactly one "
-                            "canonical character or scene activation path"
-                        ),
-                    )
-                else:
-                    try:
-                        canonical_bytes = read_contained_bytes(
-                            project_dir,
-                            canonical_path,
-                            max_bytes=MAX_ENCODED_RASTER_BYTES,
-                        )
-                    except FileNotFoundError:
-                        _add(
-                            issues,
-                            canonical_path,
-                            "file",
-                            "successful reference receipt activated canonical raster is missing",
-                        )
-                    except (OSError, ValueError) as error:
-                        _add(
-                            issues,
-                            canonical_path,
-                            "file",
-                            (
-                                "cannot read successful reference receipt activation: "
-                                f"{type(error).__name__}"
-                            ),
-                        )
-                    else:
-                        if canonical_bytes != raster_bytes:
-                            _add(
-                                issues,
-                                canonical_path,
-                                "sha256",
-                                (
-                                    "activated canonical raster does not match successful "
-                                    "reference receipt"
-                                ),
-                            )
-            if (
-                require_panel_acceptance
-                and job.get("subject_kind") == "panel"
-                and not _successful_panel_is_accepted(project_dir, job)
-            ):
-                panel_id = job.get("subject_id")
-                _add(
-                    issues,
-                    receipt_path,
-                    "raster_path",
-                    (
-                        f"successful panel receipt must be promoted to "
-                        f"panels/raw/{panel_id}.png and accepted by matching visual QA"
-                    ),
-                )
+            _validate_handoff_successful_receipt(
+                project_dir,
+                receipt_path,
+                receipt,
+                job,
+                require_panel_acceptance,
+                issues,
+            )
 
+
+def _validate_handoff_binding(
+    project_dir: Path,
+    manifest: dict[str, object],
+    issues: list[ValidationIssue],
+    *,
+    require_panel_acceptance: bool = False,
+) -> None:
+    """Validate the populated project-to-handoff manifest binding."""
+    binding = _populated_handoff_binding(manifest)
+    if binding is None:
+        return
+    manifest_path, locked_scope = binding
+    handoff_manifest = _read_canonical_json(project_dir, manifest_path, issues)
+    if handoff_manifest is None:
+        return
+    contract_issues = validate_handoff_manifest(handoff_manifest)
+    for contract_issue in contract_issues:
+        field, separator, message = contract_issue.partition(": ")
+        _add(
+            issues,
+            manifest_path,
+            field,
+            message if separator else contract_issue,
+        )
+    if contract_issues:
+        return
+    scope_reference_paths = _validate_handoff_required_artifacts(
+        project_dir,
+        handoff_manifest,
+        issues,
+    )
+    batch_membership = _validate_handoff_batch_membership(
+        project_dir,
+        handoff_manifest,
+        issues,
+    )
+    job_reference_paths, jobs_by_id, handoff_jobs = _validate_handoff_jobs(
+        project_dir,
+        manifest_path,
+        handoff_manifest,
+        batch_membership,
+        scope_reference_paths,
+        issues,
+    )
+    scope_stale = _validate_handoff_locked_scope(
+        project_dir,
+        manifest_path,
+        locked_scope,
+        job_reference_paths,
+        issues,
+    )
+    _validate_handoff_receipts(
+        project_dir,
+        manifest_path,
+        handoff_jobs,
+        jobs_by_id,
+        scope_stale,
+        require_panel_acceptance,
+        issues,
+    )
     expected = {
         "locked_scope_sha256": locked_scope,
         "project_id": manifest.get("project_id"),
