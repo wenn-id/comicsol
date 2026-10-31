@@ -1290,6 +1290,38 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
     return _sorted(issues)
 
 
+def _validate_panel_override_consistency(
+    root: dict[str, object],
+    checks: object,
+    decision: object,
+    unresolved: list[str] | None,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
+    failure_category = root.get("failure_category")
+    override_reason = root.get("override_reason")
+    if "override_reason" in root:
+        has_overridden_failure = isinstance(checks, list) and any(
+            isinstance(check, dict)
+            and check.get("result") == "fail"
+            and check.get("severity") == "warning"
+            for check in checks
+        )
+        if failure_category != "visual_qa":
+            _add(issues, path, "failure_category", "an override must record visual_qa")
+        if decision != "accept_with_warnings":
+            _add(issues, path, "override_reason", "is allowed only for accept_with_warnings")
+        if not has_overridden_failure:
+            _add(
+                issues,
+                path,
+                "override_reason",
+                "requires a failed check downgraded to warning severity",
+            )
+        if unresolved is not None and override_reason not in unresolved:
+            _add(issues, path, "override_reason", "must also appear in unresolved_warnings")
+
+
 def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
     """Validate a panel quality record from either supported schema."""
     if isinstance(data, dict) and data.get("schema_version") == "2.0":
@@ -1433,26 +1465,7 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
             "unresolved_warnings",
             "accepted warnings require check evidence and user-visible impact",
         )
-    if "override_reason" in root:
-        has_overridden_failure = isinstance(checks, list) and any(
-            isinstance(check, dict)
-            and check.get("result") == "fail"
-            and check.get("severity") == "warning"
-            for check in checks
-        )
-        if failure_category != "visual_qa":
-            _add(issues, path, "failure_category", "an override must record visual_qa")
-        if decision != "accept_with_warnings":
-            _add(issues, path, "override_reason", "is allowed only for accept_with_warnings")
-        if not has_overridden_failure:
-            _add(
-                issues,
-                path,
-                "override_reason",
-                "requires a failed check downgraded to warning severity",
-            )
-        if unresolved is not None and override_reason not in unresolved:
-            _add(issues, path, "override_reason", "must also appear in unresolved_warnings")
+    _validate_panel_override_consistency(root, checks, decision, unresolved, issues, path)
     attempts = root.get("attempts")
     if isinstance(attempts, int) and not isinstance(attempts, bool) and attempts > 0:
         for field in ("source_prompt_path", "raw_path", "clean_path"):
