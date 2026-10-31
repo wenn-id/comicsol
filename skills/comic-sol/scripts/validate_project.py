@@ -3410,6 +3410,59 @@ def require_valid_project(project_dir: Path, stage: str) -> None:
         raise ProjectValidationError(issues)
 
 
+def _pdf_source_page_stale_reasons(
+    project_dir: Path,
+    sources: object,
+    page_count: int,
+) -> list[str]:
+    stale_reasons: list[str] = []
+    if not isinstance(sources, list) or len(sources) != page_count:
+        stale_reasons.append("ordered source page bindings are incomplete")
+    else:
+        for page_number, source in enumerate(sources, 1):
+            expected_page = f"pages/page-{page_number:03d}.png"
+            expected_qa = f"qa/pages/page-{page_number:03d}.json"
+            if not isinstance(source, dict):
+                stale_reasons.append(f"page {page_number} binding is invalid")
+                continue
+            if source.get("path") != expected_page:
+                stale_reasons.append(f"page {page_number} path binding is stale")
+            if source.get("page_qa_path") != expected_qa:
+                stale_reasons.append(f"page {page_number} QA path binding is stale")
+            if source.get("dimensions") != [PAGE_WIDTH, PAGE_HEIGHT]:
+                stale_reasons.append(f"page {page_number} dimensions are stale")
+            for binding, relative_path in (
+                ("sha256", expected_page),
+                ("page_qa_sha256", expected_qa),
+            ):
+                expected_hash = source.get(binding)
+                try:
+                    current_path = contained_project_path(project_dir, relative_path)
+                except (OSError, ValueError):
+                    current_path = None
+                if (
+                    not isinstance(expected_hash, str)
+                    or not SHA256_PATTERN.fullmatch(expected_hash)
+                    or current_path is None
+                    or not current_path.is_file()
+                    or sha256_file(current_path) != expected_hash
+                ):
+                    stale_reasons.append(f"page {page_number} {binding} binding is stale")
+    return stale_reasons
+
+
+def _pdf_verification_metadata_stale_reasons(record: dict[str, object]) -> list[str]:
+    stale_reasons: list[str] = []
+    if record.get("schema_version") != "1.0":
+        stale_reasons.append("schema version is unsupported")
+    if record.get("kind") != "pdf-verification":
+        stale_reasons.append("record kind is invalid")
+    verified_at = record.get("verified_at")
+    if not isinstance(verified_at, str) or TIMESTAMP_PATTERN.fullmatch(verified_at) is None:
+        stale_reasons.append("verification timestamp is not ISO 8601 UTC")
+    return stale_reasons
+
+
 def validate_pdf_verification(
     project_dir: Path,
     project_id: str,
@@ -3434,13 +3487,7 @@ def validate_pdf_verification(
         stale_reasons.append("verification record is missing or unreadable")
 
     if isinstance(record, dict):
-        if record.get("schema_version") != "1.0":
-            stale_reasons.append("schema version is unsupported")
-        if record.get("kind") != "pdf-verification":
-            stale_reasons.append("record kind is invalid")
-        verified_at = record.get("verified_at")
-        if not isinstance(verified_at, str) or TIMESTAMP_PATTERN.fullmatch(verified_at) is None:
-            stale_reasons.append("verification timestamp is not ISO 8601 UTC")
+        stale_reasons.extend(_pdf_verification_metadata_stale_reasons(record))
         expected_pdf = f"exports/{project_id}.pdf"
         if record.get("pdf_path") != expected_pdf:
             stale_reasons.append("PDF path binding is stale")
@@ -3460,39 +3507,9 @@ def validate_pdf_verification(
         if record.get("page_count") != page_count:
             stale_reasons.append("page count binding is stale")
 
-        sources = record.get("source_pages")
-        if not isinstance(sources, list) or len(sources) != page_count:
-            stale_reasons.append("ordered source page bindings are incomplete")
-        else:
-            for page_number, source in enumerate(sources, 1):
-                expected_page = f"pages/page-{page_number:03d}.png"
-                expected_qa = f"qa/pages/page-{page_number:03d}.json"
-                if not isinstance(source, dict):
-                    stale_reasons.append(f"page {page_number} binding is invalid")
-                    continue
-                if source.get("path") != expected_page:
-                    stale_reasons.append(f"page {page_number} path binding is stale")
-                if source.get("page_qa_path") != expected_qa:
-                    stale_reasons.append(f"page {page_number} QA path binding is stale")
-                if source.get("dimensions") != [PAGE_WIDTH, PAGE_HEIGHT]:
-                    stale_reasons.append(f"page {page_number} dimensions are stale")
-                for binding, relative_path in (
-                    ("sha256", expected_page),
-                    ("page_qa_sha256", expected_qa),
-                ):
-                    expected_hash = source.get(binding)
-                    try:
-                        current_path = contained_project_path(project_dir, relative_path)
-                    except (OSError, ValueError):
-                        current_path = None
-                    if (
-                        not isinstance(expected_hash, str)
-                        or not SHA256_PATTERN.fullmatch(expected_hash)
-                        or current_path is None
-                        or not current_path.is_file()
-                        or sha256_file(current_path) != expected_hash
-                    ):
-                        stale_reasons.append(f"page {page_number} {binding} binding is stale")
+        stale_reasons.extend(
+            _pdf_source_page_stale_reasons(project_dir, record.get("source_pages"), page_count)
+        )
     elif not stale_reasons:
         stale_reasons.append("verification record must be an object")
 
