@@ -1264,33 +1264,12 @@ def validate_storyboard(
     return _sorted(issues)
 
 
-def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
-    """Validate a schema-v2 panel quality record."""
-    panel_name = data.get("subject_id") if isinstance(data, dict) else "unknown"
-    path = f"qa/panels/{panel_name}.json"
-    issues: list[ValidationIssue] = []
-    required_fields = {
-        "schema_version",
-        "kind",
-        "subject_id",
-        "bindings",
-        "checks",
-        "review",
-        "decision",
-        "unresolved_warnings",
-    }
-    fields = required_fields | {"override_reason"}
-    root = _object(data, fields, required_fields, issues, path, "")
-    if root is None:
-        return _sorted(issues)
-    if root.get("schema_version") != "2.0":
-        _add(issues, path, "schema_version", "must equal 2.0")
-    if root.get("kind") != "panel-qa":
-        _add(issues, path, "kind", "must equal panel-qa")
-    subject_id = root.get("subject_id")
-    if not isinstance(subject_id, str) or PANEL_ID_PATTERN.fullmatch(subject_id) is None:
-        _add(issues, path, "subject_id", "must match pNN-NN")
-
+def _validate_panel_record_v2_bindings(
+    root: dict[str, object],
+    subject_id: object,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
     binding_fields = {
         "raw_path",
         "raw_sha256",
@@ -1322,6 +1301,36 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
             _sha256(bindings.get(name), issues, path, f"bindings.{name}")
         for name in ("raw_width", "raw_height", "clean_width", "clean_height"):
             _integer(bindings.get(name), 1, 100_000, issues, path, f"bindings.{name}")
+
+
+def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
+    """Validate a schema-v2 panel quality record."""
+    panel_name = data.get("subject_id") if isinstance(data, dict) else "unknown"
+    path = f"qa/panels/{panel_name}.json"
+    issues: list[ValidationIssue] = []
+    required_fields = {
+        "schema_version",
+        "kind",
+        "subject_id",
+        "bindings",
+        "checks",
+        "review",
+        "decision",
+        "unresolved_warnings",
+    }
+    fields = required_fields | {"override_reason"}
+    root = _object(data, fields, required_fields, issues, path, "")
+    if root is None:
+        return _sorted(issues)
+    if root.get("schema_version") != "2.0":
+        _add(issues, path, "schema_version", "must equal 2.0")
+    if root.get("kind") != "panel-qa":
+        _add(issues, path, "kind", "must equal panel-qa")
+    subject_id = root.get("subject_id")
+    if not isinstance(subject_id, str) or PANEL_ID_PATTERN.fullmatch(subject_id) is None:
+        _add(issues, path, "subject_id", "must match pNN-NN")
+
+    _validate_panel_record_v2_bindings(root, subject_id, issues, path)
 
     checks = root.get("checks")
     for category in validate_quality_checks(checks, PANEL_CHECK_IDS):
