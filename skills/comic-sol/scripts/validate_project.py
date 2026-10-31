@@ -1419,6 +1419,82 @@ def _validate_panel_override_consistency(
             _add(issues, path, "override_reason", "must also appear in unresolved_warnings")
 
 
+def _validate_panel_decision_policy(
+    root: dict[str, object],
+    checks: object,
+    issues: list[ValidationIssue],
+    path: str,
+) -> tuple[object, bool]:
+    decision = root.get("decision")
+    if decision not in {"accept", "regenerate", "accept_with_warnings"}:
+        _add(issues, path, "decision", "unknown panel decision")
+    has_error_failure = isinstance(checks, list) and any(
+        isinstance(check, dict)
+        and check.get("result") == "fail"
+        and check.get("severity") == "error"
+        for check in checks
+    )
+    if has_error_failure and decision != "regenerate":
+        _add(issues, path, "decision", "error-level failed checks require regeneration")
+    has_warning = isinstance(checks, list) and any(
+        isinstance(check, dict)
+        and (
+            check.get("result") == "warning"
+            or (check.get("result") == "fail" and check.get("severity") == "warning")
+        )
+        for check in checks
+    )
+    if has_warning and decision not in {"accept_with_warnings", "regenerate"}:
+        _add(
+            issues, path, "decision", "warning checks require accept_with_warnings or regeneration"
+        )
+    retry_reason = root.get("retry_reason")
+    if decision == "regenerate":
+        _nonempty_string(retry_reason, issues, path, "retry_reason")
+    elif retry_reason is not None:
+        _add(issues, path, "retry_reason", "must be null unless regenerating")
+    return decision, has_warning
+
+
+def _validate_panel_warning_metadata(
+    root: dict[str, object],
+    checks: object,
+    decision: object,
+    has_warning: bool,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
+    failure_category = root.get("failure_category")
+    if failure_category is not None and (
+        not isinstance(failure_category, str) or CATEGORY.fullmatch(failure_category) is None
+    ):
+        _add(issues, path, "failure_category", "must be a sanitized category string or null")
+    override_reason = root.get("override_reason")
+    if "override_reason" in root:
+        _narrative_field(
+            override_reason,
+            issues,
+            path,
+            "override_reason",
+            max_chars=MAX_OVERRIDE_REASON_CHARS,
+        )
+    unresolved = _string_list(
+        root.get("unresolved_warnings"),
+        issues,
+        path,
+        "unresolved_warnings",
+        entry_max_chars=MAX_WARNING_CHARS,
+    )
+    if decision == "accept_with_warnings" and (not has_warning or not unresolved):
+        _add(
+            issues,
+            path,
+            "unresolved_warnings",
+            "accepted warnings require check evidence and user-visible impact",
+        )
+    _validate_panel_override_consistency(root, checks, decision, unresolved, issues, path)
+
+
 def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
     """Validate a panel quality record from either supported schema."""
     if isinstance(data, dict) and data.get("schema_version") == "2.0":
@@ -1506,63 +1582,8 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
             if check.get("severity") not in {"error", "warning"}:
                 _add(issues, path, f"{prefix}.severity", "unknown check severity")
             _nonempty_string(check.get("evidence"), issues, path, f"{prefix}.evidence")
-    decision = root.get("decision")
-    if decision not in {"accept", "regenerate", "accept_with_warnings"}:
-        _add(issues, path, "decision", "unknown panel decision")
-    has_error_failure = isinstance(checks, list) and any(
-        isinstance(check, dict)
-        and check.get("result") == "fail"
-        and check.get("severity") == "error"
-        for check in checks
-    )
-    if has_error_failure and decision != "regenerate":
-        _add(issues, path, "decision", "error-level failed checks require regeneration")
-    has_warning = isinstance(checks, list) and any(
-        isinstance(check, dict)
-        and (
-            check.get("result") == "warning"
-            or (check.get("result") == "fail" and check.get("severity") == "warning")
-        )
-        for check in checks
-    )
-    if has_warning and decision not in {"accept_with_warnings", "regenerate"}:
-        _add(
-            issues, path, "decision", "warning checks require accept_with_warnings or regeneration"
-        )
-    retry_reason = root.get("retry_reason")
-    if decision == "regenerate":
-        _nonempty_string(retry_reason, issues, path, "retry_reason")
-    elif retry_reason is not None:
-        _add(issues, path, "retry_reason", "must be null unless regenerating")
-    failure_category = root.get("failure_category")
-    if failure_category is not None and (
-        not isinstance(failure_category, str) or CATEGORY.fullmatch(failure_category) is None
-    ):
-        _add(issues, path, "failure_category", "must be a sanitized category string or null")
-    override_reason = root.get("override_reason")
-    if "override_reason" in root:
-        _narrative_field(
-            override_reason,
-            issues,
-            path,
-            "override_reason",
-            max_chars=MAX_OVERRIDE_REASON_CHARS,
-        )
-    unresolved = _string_list(
-        root.get("unresolved_warnings"),
-        issues,
-        path,
-        "unresolved_warnings",
-        entry_max_chars=MAX_WARNING_CHARS,
-    )
-    if decision == "accept_with_warnings" and (not has_warning or not unresolved):
-        _add(
-            issues,
-            path,
-            "unresolved_warnings",
-            "accepted warnings require check evidence and user-visible impact",
-        )
-    _validate_panel_override_consistency(root, checks, decision, unresolved, issues, path)
+    decision, has_warning = _validate_panel_decision_policy(root, checks, issues, path)
+    _validate_panel_warning_metadata(root, checks, decision, has_warning, issues, path)
     attempts = root.get("attempts")
     if isinstance(attempts, int) and not isinstance(attempts, bool) and attempts > 0:
         for field in ("source_prompt_path", "raw_path", "clean_path"):
