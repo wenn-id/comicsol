@@ -105,6 +105,62 @@ def valid_handoff_manifest():
     )
 
 
+class HandoffSummaryTests(unittest.TestCase):
+    def test_reference_phase_actions(self):
+        self.assertEqual(
+            "render-references",
+            handoff._handoff_next_action("reference", []),
+        )
+        self.assertEqual(
+            "prepare",
+            handoff._handoff_next_action("reference", [{"status": "completed"}]),
+        )
+
+    def test_panel_phase_actions(self):
+        self.assertEqual(
+            "render-panels",
+            handoff._handoff_next_action("panel", [{"status": "ready"}]),
+        )
+        self.assertEqual(
+            "visual-qa",
+            handoff._handoff_next_action("panel", [{"status": "completed"}]),
+        )
+
+    def test_stale_and_failed_statuses_keep_their_precedence(self):
+        self.assertEqual(
+            "invalidate",
+            handoff._handoff_next_action("panel", [{"status": "failed"}, {"status": "stale"}]),
+        )
+        self.assertEqual(
+            "retry-exhausted",
+            handoff._handoff_next_action("panel", [{"status": "failed"}, {"status": "ready"}]),
+        )
+
+    def test_job_counts_ignore_unrecognized_statuses_and_preserve_key_order(self):
+        jobs = [
+            {"status": "missing"},
+            {"status": "ready"},
+            {"status": "ready"},
+            {"status": "completed"},
+            {"status": "failed"},
+            {"status": "stale"},
+            {"status": "unknown"},
+            {"status": None},
+            {},
+        ]
+
+        self.assertEqual(
+            [
+                ("missing", 1),
+                ("ready", 2),
+                ("completed", 1),
+                ("failed", 1),
+                ("stale", 1),
+            ],
+            list(handoff._handoff_job_counts(jobs).items()),
+        )
+
+
 class GenerationContractTests(unittest.TestCase):
     def assert_invalid(self, validator, value, fragment):
         issues = validator(value)

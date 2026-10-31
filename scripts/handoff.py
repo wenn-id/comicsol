@@ -597,6 +597,26 @@ def build_generation_receipt(
     return record
 
 
+def _handoff_next_action(phase: str, jobs: Sequence[Mapping[str, object]]) -> str:
+    statuses = {job.get("status") for job in jobs}
+    if "stale" in statuses:
+        return "invalidate"
+    if "failed" in statuses:
+        return "retry-exhausted"
+    if phase == "reference":
+        return "prepare" if statuses == {"completed"} else "render-references"
+    return "visual-qa" if statuses == {"completed"} else "render-panels"
+
+
+def _handoff_job_counts(jobs: Sequence[Mapping[str, object]]) -> dict[str, int]:
+    counts = {status: 0 for status in ("missing", "ready", "completed", "failed", "stale")}
+    for job in jobs:
+        status = job.get("status")
+        if isinstance(status, str) and status in counts:
+            counts[status] += 1
+    return counts
+
+
 def reconcile_job_receipts(
     *,
     job: Mapping[str, object] | None,
