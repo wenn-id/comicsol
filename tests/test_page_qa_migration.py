@@ -24,7 +24,10 @@ from scripts.page_quality import (  # noqa: E402
 )
 from scripts.project_io import ProjectTransaction  # noqa: E402
 from scripts.schema import UnsupportedSchemaVersionError  # noqa: E402
-from scripts.validate_project import validate_project  # noqa: E402
+from scripts.validate_project import (  # noqa: E402
+    LEGACY_PAGE_QA_SCHEMA_VERSION,
+    validate_project,
+)
 from tests.support import bounded_tail_regions  # noqa: E402
 
 
@@ -293,6 +296,55 @@ class PageQaMigrationTests(unittest.TestCase):
         ]
 
         self.assertEqual([], issues)
+
+    def test_legacy_flat_record_keeps_binding_hash_and_missing_page_checks(self):
+        page_path = self.project / "pages/page-001.png"
+        record = {
+            "page": 1,
+            "page_path": "pages/page-001.png",
+            "page_sha256": sha256_file(page_path),
+            "schema_version": LEGACY_PAGE_QA_SCHEMA_VERSION,
+            "status": "reviewed",
+        }
+        atomic_write_json(self.record_path, record)
+        migration_issue = (
+            "schema_version",
+            "quality-migration-required: schema 1.0 page QA must be migrated",
+        )
+
+        for stage in ("all", "final", "export-ready"):
+            with self.subTest(stage=stage):
+                issues = [
+                    issue
+                    for issue in validate_project(self.project, stage)
+                    if issue.path == RECORD_RELATIVE
+                ]
+                self.assertEqual(
+                    [migration_issue],
+                    [(issue.field, issue.message) for issue in issues],
+                )
+
+        record["page_sha256"] = "0" * 64
+        atomic_write_json(self.record_path, record)
+        issues = [
+            issue
+            for issue in validate_project(self.project, "export-ready")
+            if issue.path == RECORD_RELATIVE
+        ]
+        self.assertIn(
+            ("page_sha256", "hash does not match the page image"),
+            [(issue.field, issue.message) for issue in issues],
+        )
+
+        page_path.unlink()
+        issues = validate_project(self.project, "export-ready")
+        self.assertTrue(
+            any(
+                issue.path == "pages/page-001.png" and issue.message == "composed page is missing"
+                for issue in issues
+            ),
+            issues,
+        )
 
 
 if __name__ == "__main__":

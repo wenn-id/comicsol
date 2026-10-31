@@ -2964,6 +2964,121 @@ def validate_pdf_verification(
     ]
 
 
+def _validate_legacy_page_qa_bindings(
+    page_qa: dict[str, object],
+    page_number: int,
+    page_qa_relative: str,
+    expected_page: str,
+    issues: list[ValidationIssue],
+) -> None:
+    issues.extend(validate_page_qa_record(page_qa))
+    _add(
+        issues,
+        page_qa_relative,
+        "schema_version",
+        "quality-migration-required: schema 1.0 page QA must be migrated",
+    )
+    if page_qa.get("page") != page_number:
+        _add(issues, page_qa_relative, "page", "must match the canonical page number")
+    if page_qa.get("page_path") != expected_page:
+        _add(
+            issues,
+            page_qa_relative,
+            "page_path",
+            "must match the canonical page path",
+        )
+
+
+def _validate_page_qa_record(
+    project_dir: Path,
+    page_number: int,
+    issues: list[ValidationIssue],
+) -> tuple[dict[str, object] | None, bool]:
+    page_qa_relative = f"qa/pages/page-{page_number:03d}.json"
+    page_qa = _read_canonical_json(project_dir, page_qa_relative, issues)
+    if page_qa is None:
+        return None, False
+
+    expected_page = f"pages/page-{page_number:03d}.png"
+    page_qa_version = page_qa.get("schema_version")
+    is_current_page_qa = page_qa_version == CURRENT_PAGE_QA_SCHEMA_VERSION
+    # Schema 1.0 is the only flat legacy record; unknown versions stay unsupported.
+    # JSON may contain an unhashable version, so guard the migration-set lookup.
+    is_migratable_page_qa = (
+        isinstance(page_qa_version, str) and page_qa_version in PAGE_QA_MIGRATION_SOURCES
+    )
+    is_legacy_flat = page_qa_version == LEGACY_PAGE_QA_SCHEMA_VERSION
+    if is_current_page_qa:
+        for issue in validate_page_quality(project_dir, page_number):
+            _add(issues, issue.path, issue.field, issue.message)
+    elif is_migratable_page_qa:
+        _add(
+            issues,
+            page_qa_relative,
+            "schema_version",
+            f"quality-migration-required: schema {page_qa_version} page QA "
+            f"must be migrated to {CURRENT_PAGE_QA_SCHEMA_VERSION}",
+        )
+    elif is_legacy_flat:
+        _validate_legacy_page_qa_bindings(
+            page_qa,
+            page_number,
+            page_qa_relative,
+            expected_page,
+            issues,
+        )
+    else:
+        _add(
+            issues,
+            page_qa_relative,
+            "schema_version",
+            "quality-migration-required: unsupported page QA schema; no "
+            f"migration path to {CURRENT_PAGE_QA_SCHEMA_VERSION} is registered",
+        )
+    return page_qa, is_legacy_flat
+
+
+def _validate_composed_page_artifact(
+    project_dir: Path,
+    page_number: int,
+    page_qa: dict[str, object] | None,
+    is_legacy_flat: bool,
+    issues: list[ValidationIssue],
+) -> None:
+    expected_page = f"pages/page-{page_number:03d}.png"
+    page_path = project_dir / expected_page
+    if not page_path.is_file():
+        _add(issues, expected_page, "", "composed page is missing")
+    elif is_legacy_flat:
+        page_hash = sha256_file(page_path)
+        legacy_page_qa = cast(dict[str, object], page_qa)
+        if isinstance(legacy_page_qa.get("page_sha256"), str):
+            if legacy_page_qa["page_sha256"] != page_hash:
+                page_qa_relative = f"qa/pages/page-{page_number:03d}.json"
+                _add(
+                    issues,
+                    page_qa_relative,
+                    "page_sha256",
+                    "hash does not match the page image",
+                )
+
+
+def _validate_page_qa_artifacts(
+    project_dir: Path,
+    page_count: int,
+    issues: list[ValidationIssue],
+) -> None:
+    for page_number in range(1, page_count + 1):
+        page_qa, is_legacy_flat = _validate_page_qa_record(project_dir, page_number, issues)
+        _validate_composed_page_artifact(
+            project_dir,
+            page_number,
+            page_qa,
+            is_legacy_flat,
+            issues,
+        )
+
+
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
     """Validate all artifacts required for a project stage."""
     project_dir = Path(project_dir)
@@ -3351,76 +3466,7 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
             require_terminal=(stage != "export-ready"),
         )
 
-        # Page-QA records.
-        for page_number in range(1, page_count + 1):
-            page_qa_relative = f"qa/pages/page-{page_number:03d}.json"
-            page_qa = _read_canonical_json(project_dir, page_qa_relative, issues)
-            expected_page = f"pages/page-{page_number:03d}.png"
-            page_qa_version = page_qa.get("schema_version") if page_qa is not None else None
-            # Each version is diagnosed as what it actually is. A record with a
-            # registered migration needs migrating; only a declared schema-1.0
-            # record is a flat five-field record, so only it goes through that
-            # validator; anything else is unsupported rather than a broken 1.0
-            # record. The isinstance guard keeps a corrupt non-string version
-            # from failing the set lookup.
-            is_current_page_qa = page_qa_version == CURRENT_PAGE_QA_SCHEMA_VERSION
-            is_migratable_page_qa = (
-                isinstance(page_qa_version, str) and page_qa_version in PAGE_QA_MIGRATION_SOURCES
-            )
-            is_legacy_flat = page_qa_version == LEGACY_PAGE_QA_SCHEMA_VERSION
-            if page_qa is not None:
-                if is_current_page_qa:
-                    for issue in validate_page_quality(project_dir, page_number):
-                        _add(issues, issue.path, issue.field, issue.message)
-                elif is_migratable_page_qa:
-                    _add(
-                        issues,
-                        page_qa_relative,
-                        "schema_version",
-                        f"quality-migration-required: schema {page_qa_version} page QA "
-                        f"must be migrated to {CURRENT_PAGE_QA_SCHEMA_VERSION}",
-                    )
-                elif is_legacy_flat:
-                    issues.extend(validate_page_qa_record(page_qa))
-                    _add(
-                        issues,
-                        page_qa_relative,
-                        "schema_version",
-                        "quality-migration-required: schema 1.0 page QA must be migrated",
-                    )
-                    if page_qa.get("page") != page_number:
-                        _add(
-                            issues, page_qa_relative, "page", "must match the canonical page number"
-                        )
-                    if page_qa.get("page_path") != expected_page:
-                        _add(
-                            issues,
-                            page_qa_relative,
-                            "page_path",
-                            "must match the canonical page path",
-                        )
-                else:
-                    _add(
-                        issues,
-                        page_qa_relative,
-                        "schema_version",
-                        "quality-migration-required: unsupported page QA schema; no "
-                        f"migration path to {CURRENT_PAGE_QA_SCHEMA_VERSION} is registered",
-                    )
-            page_path = project_dir / expected_page
-            if not page_path.is_file():
-                _add(issues, expected_page, "", "composed page is missing")
-            elif is_legacy_flat:
-                page_hash = sha256_file(page_path)
-                legacy_page_qa = cast(dict[str, object], page_qa)
-                if isinstance(legacy_page_qa.get("page_sha256"), str):
-                    if legacy_page_qa["page_sha256"] != page_hash:
-                        _add(
-                            issues,
-                            page_qa_relative,
-                            "page_sha256",
-                            "hash does not match the page image",
-                        )
+        _validate_page_qa_artifacts(project_dir, page_count, issues)
 
         # Lettered panels and their current typography/geometry provenance.
         for panel_id in panels:
