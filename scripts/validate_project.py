@@ -350,49 +350,12 @@ def _string_list(
     return [item for item in value if isinstance(item, str)]
 
 
-def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
-    """Validate the project manifest structure and references."""
-    path = "project.json"
-    issues: list[ValidationIssue] = []
-    base_required_fields = {
-        "project_id",
-        "title",
-        "created_at",
-        "updated_at",
-        "status",
-        "input",
-        "settings",
-        "capability",
-        "artifacts",
-        "stage_versions",
-        "panels",
-        "warnings",
-    }
-    declared_version = data.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
-    is_legacy = declared_version == LEGACY_PROJECT_SCHEMA_VERSION
-    required_fields = set(base_required_fields)
-    fields = required_fields | {"schema_version", "blocked_from", "blocked_reason"}
-    if not is_legacy:
-        required_fields.add("handoff")
-        fields.add("handoff")
-    root = _object(data, fields, required_fields, issues, path, "")
-    if root is None:
-        return _sorted(issues)
-    schema_version = root.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
-    if (
-        not isinstance(schema_version, str)
-        or schema_version not in SUPPORTED_PROJECT_SCHEMA_VERSIONS
-    ):
-        _add(
-            issues,
-            path,
-            "schema_version",
-            (
-                f"unsupported project schema version {schema_version!r}; "
-                f"reader supports {MIN_READER_PROJECT_SCHEMA_VERSION} through "
-                f"{CURRENT_PROJECT_SCHEMA_VERSION}"
-            ),
-        )
+def _validate_manifest_handoff(
+    root: dict[str, object],
+    is_legacy: bool,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
     if not is_legacy:
         handoff_fields = {"contract_version", "locked_scope_sha256", "manifest_path"}
         handoff = _object(
@@ -436,6 +399,52 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
                     "handoff.manifest_path",
                     "must equal handoff/manifest.json when populated",
                 )
+
+
+def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
+    """Validate the project manifest structure and references."""
+    path = "project.json"
+    issues: list[ValidationIssue] = []
+    base_required_fields = {
+        "project_id",
+        "title",
+        "created_at",
+        "updated_at",
+        "status",
+        "input",
+        "settings",
+        "capability",
+        "artifacts",
+        "stage_versions",
+        "panels",
+        "warnings",
+    }
+    declared_version = data.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
+    is_legacy = declared_version == LEGACY_PROJECT_SCHEMA_VERSION
+    required_fields = set(base_required_fields)
+    fields = required_fields | {"schema_version", "blocked_from", "blocked_reason"}
+    if not is_legacy:
+        required_fields.add("handoff")
+        fields.add("handoff")
+    root = _object(data, fields, required_fields, issues, path, "")
+    if root is None:
+        return _sorted(issues)
+    schema_version = root.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
+    if (
+        not isinstance(schema_version, str)
+        or schema_version not in SUPPORTED_PROJECT_SCHEMA_VERSIONS
+    ):
+        _add(
+            issues,
+            path,
+            "schema_version",
+            (
+                f"unsupported project schema version {schema_version!r}; "
+                f"reader supports {MIN_READER_PROJECT_SCHEMA_VERSION} through "
+                f"{CURRENT_PROJECT_SCHEMA_VERSION}"
+            ),
+        )
+    _validate_manifest_handoff(root, is_legacy, issues, path)
     _identifier(root.get("project_id"), issues, path, "project_id")
     _narrative_field(root.get("title"), issues, path, "title", max_chars=MAX_TITLE_CHARS)
     _timestamp(root.get("created_at"), issues, path, "created_at")
