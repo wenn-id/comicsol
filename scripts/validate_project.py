@@ -3079,6 +3079,50 @@ def _validate_page_qa_artifacts(
         )
 
 
+def _validate_terminal_panel_outcomes(
+    manifest: dict[str, object],
+    panel_errors: list[tuple[str, str]],
+    panel_warnings: list[tuple[str, str]],
+    issues: list[ValidationIssue],
+) -> None:
+    for record_path, reason in panel_errors:
+        _add(
+            issues,
+            record_path,
+            "decision",
+            f"unresolved panel error blocks final validation: {reason}",
+        )
+    manifest_warnings = manifest.get("warnings")
+    recorded_warnings = (
+        {warning for warning in manifest_warnings if isinstance(warning, str)}
+        if isinstance(manifest_warnings, list)
+        else set()
+    )
+    for _, warning in panel_warnings:
+        if warning not in recorded_warnings:
+            _add(
+                issues,
+                "project.json",
+                "warnings",
+                f"must include unresolved panel warning: {warning}",
+            )
+    status = manifest.get("status")
+    if panel_errors and status in {"COMPLETE", "COMPLETE_WITH_WARNINGS"}:
+        _add(
+            issues,
+            "project.json",
+            "status",
+            "cannot be terminal success while unresolved panel errors remain",
+        )
+    if panel_warnings and status == "COMPLETE":
+        _add(
+            issues,
+            "project.json",
+            "status",
+            "must be COMPLETE_WITH_WARNINGS while panel warnings remain",
+        )
+
+
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
     """Validate all artifacts required for a project stage."""
     project_dir = Path(project_dir)
@@ -3367,42 +3411,7 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                             )
 
     if stage in {"all", "final", "export-ready"} and manifest is not None:
-        for record_path, reason in panel_errors:
-            _add(
-                issues,
-                record_path,
-                "decision",
-                f"unresolved panel error blocks final validation: {reason}",
-            )
-        manifest_warnings = manifest.get("warnings")
-        recorded_warnings = (
-            {warning for warning in manifest_warnings if isinstance(warning, str)}
-            if isinstance(manifest_warnings, list)
-            else set()
-        )
-        for _, warning in panel_warnings:
-            if warning not in recorded_warnings:
-                _add(
-                    issues,
-                    "project.json",
-                    "warnings",
-                    f"must include unresolved panel warning: {warning}",
-                )
-        status = manifest.get("status")
-        if panel_errors and status in {"COMPLETE", "COMPLETE_WITH_WARNINGS"}:
-            _add(
-                issues,
-                "project.json",
-                "status",
-                "cannot be terminal success while unresolved panel errors remain",
-            )
-        if panel_warnings and status == "COMPLETE":
-            _add(
-                issues,
-                "project.json",
-                "status",
-                "must be COMPLETE_WITH_WARNINGS while panel warnings remain",
-            )
+        _validate_terminal_panel_outcomes(manifest, panel_errors, panel_warnings, issues)
         artifacts = manifest.get("artifacts")
         if isinstance(artifacts, dict):
             for name, descriptor in artifacts.items():
