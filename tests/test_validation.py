@@ -522,6 +522,31 @@ class StrictSchemaValidationTests(unittest.TestCase):
                 self.assert_issue(validate_story_plan(data), field)
         self.assertEqual([], validate_story_plan(valid_story()))
 
+    def test_character_bible_reports_character_diagnostics_in_sorted_order(self):
+        data = valid_characters()
+        data["characters"].append(valid_characters()["characters"][0])
+        data["characters"][0]["name"] = ""
+        data["characters"][0]["reference_path"] = "references/characters/other.png"
+
+        self.assertEqual(
+            [
+                ValidationIssue(
+                    "plan/character-bible.json", "characters", "character IDs must be unique"
+                ),
+                ValidationIssue(
+                    "plan/character-bible.json",
+                    "characters[0].name",
+                    "must be a non-empty string",
+                ),
+                ValidationIssue(
+                    "plan/character-bible.json",
+                    "characters[0].reference_path",
+                    "must match the character ID",
+                ),
+            ],
+            validate_character_bible(data),
+        )
+
     def test_story_plan_reports_scene_diagnostics_in_sorted_order(self):
         data = valid_story()
         data["scenes"][1]["id"] = data["scenes"][0]["id"]

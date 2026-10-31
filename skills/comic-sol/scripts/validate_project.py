@@ -611,6 +611,76 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
     return _sorted(issues)
 
 
+def _validate_character_bible_character(
+    value: object,
+    index: int,
+    issues: list[ValidationIssue],
+    path: str,
+    character_fields: set[str],
+    fingerprint_fields: set[str],
+) -> str | None:
+    prefix = f"characters[{index}]"
+    character = _object(value, character_fields, character_fields, issues, path, prefix)
+    if character is None:
+        return None
+    character_id = character.get("id")
+    valid_character_id: str | None = None
+    if _identifier(character_id, issues, path, f"{prefix}.id"):
+        valid_character_id = character_id
+    for field in ("name", "role", "age_band", "pronouns", "motivation", "speech"):
+        _nonempty_string(character.get(field), issues, path, f"{prefix}.{field}")
+    _string_list(character.get("personality"), issues, path, f"{prefix}.personality", minimum=1)
+    _relative_path(character.get("reference_path"), issues, path, f"{prefix}.reference_path")
+    if (
+        isinstance(character.get("id"), str)
+        and character.get("reference_path") != f"references/characters/{character['id']}.png"
+    ):
+        _add(issues, path, f"{prefix}.reference_path", "must match the character ID")
+    fingerprint = _object(
+        character.get("visual_fingerprint"),
+        fingerprint_fields,
+        fingerprint_fields,
+        issues,
+        path,
+        f"{prefix}.visual_fingerprint",
+    )
+    if fingerprint is not None:
+        for field in ("silhouette", "face", "hair", "wardrobe"):
+            _nonempty_string(
+                fingerprint.get(field), issues, path, f"{prefix}.visual_fingerprint.{field}"
+            )
+        _string_list(
+            fingerprint.get("palette"),
+            issues,
+            path,
+            f"{prefix}.visual_fingerprint.palette",
+            minimum=1,
+        )
+        _string_list(
+            fingerprint.get("signature_props"),
+            issues,
+            path,
+            f"{prefix}.visual_fingerprint.signature_props",
+            minimum=1,
+        )
+        _string_list(
+            fingerprint.get("invariants"),
+            issues,
+            path,
+            f"{prefix}.visual_fingerprint.invariants",
+            minimum=2,
+            maximum=5,
+        )
+        _string_list(
+            fingerprint.get("avoid"),
+            issues,
+            path,
+            f"{prefix}.visual_fingerprint.avoid",
+            minimum=1,
+        )
+    return valid_character_id
+
+
 def validate_character_bible(data: dict[str, object]) -> list[ValidationIssue]:
     """Validate the character bible artifact."""
     path = "plan/character-bible.json"
@@ -650,64 +720,16 @@ def validate_character_bible(data: dict[str, object]) -> list[ValidationIssue]:
         "avoid",
     }
     for index, value in enumerate(characters):
-        prefix = f"characters[{index}]"
-        character = _object(value, character_fields, character_fields, issues, path, prefix)
-        if character is None:
-            continue
-        character_id = character.get("id")
-        if _identifier(character_id, issues, path, f"{prefix}.id"):
-            ids.append(character_id)
-        for field in ("name", "role", "age_band", "pronouns", "motivation", "speech"):
-            _nonempty_string(character.get(field), issues, path, f"{prefix}.{field}")
-        _string_list(character.get("personality"), issues, path, f"{prefix}.personality", minimum=1)
-        _relative_path(character.get("reference_path"), issues, path, f"{prefix}.reference_path")
-        if (
-            isinstance(character.get("id"), str)
-            and character.get("reference_path") != f"references/characters/{character['id']}.png"
-        ):
-            _add(issues, path, f"{prefix}.reference_path", "must match the character ID")
-        fingerprint = _object(
-            character.get("visual_fingerprint"),
-            fingerprint_fields,
-            fingerprint_fields,
+        character_id = _validate_character_bible_character(
+            value,
+            index,
             issues,
             path,
-            f"{prefix}.visual_fingerprint",
+            character_fields,
+            fingerprint_fields,
         )
-        if fingerprint is not None:
-            for field in ("silhouette", "face", "hair", "wardrobe"):
-                _nonempty_string(
-                    fingerprint.get(field), issues, path, f"{prefix}.visual_fingerprint.{field}"
-                )
-            _string_list(
-                fingerprint.get("palette"),
-                issues,
-                path,
-                f"{prefix}.visual_fingerprint.palette",
-                minimum=1,
-            )
-            _string_list(
-                fingerprint.get("signature_props"),
-                issues,
-                path,
-                f"{prefix}.visual_fingerprint.signature_props",
-                minimum=1,
-            )
-            _string_list(
-                fingerprint.get("invariants"),
-                issues,
-                path,
-                f"{prefix}.visual_fingerprint.invariants",
-                minimum=2,
-                maximum=5,
-            )
-            _string_list(
-                fingerprint.get("avoid"),
-                issues,
-                path,
-                f"{prefix}.visual_fingerprint.avoid",
-                minimum=1,
-            )
+        if character_id is not None:
+            ids.append(character_id)
     if len(set(ids)) != len(ids):
         _add(issues, path, "characters", "character IDs must be unique")
     return _sorted(issues)
