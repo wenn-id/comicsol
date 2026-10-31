@@ -4163,6 +4163,102 @@ def _validate_project_plan_and_storyboard(
     return story, characters, storyboard
 
 
+def _validate_project_panel_record_quality(
+    project_dir: Path,
+    record_relative: str,
+    record: dict[str, object],
+    is_quality_v2: bool,
+    issues: list[ValidationIssue],
+) -> None:
+    if not is_quality_v2:
+        _add(
+            issues,
+            record_relative,
+            "quality-migration-required",
+            "schema 1.0 quality record remains readable but must be reviewed as schema 2.0",
+        )
+    else:
+        issues.extend(validate_panel_provenance(project_dir, record))
+        for detail in validate_character_quality_provenance(project_dir, record):
+            _add(
+                issues,
+                record_relative,
+                "character-consistency-provenance",
+                f"quality-record-stale: {detail}",
+            )
+
+
+def _validate_project_panel_record(
+    project_dir: Path,
+    panel_id: str,
+    panel: dict[str, object],
+    stage: str,
+    panel_errors: list[tuple[str, str]],
+    panel_warnings: list[tuple[str, str]],
+    issues: list[ValidationIssue],
+) -> None:
+    record_relative = f"qa/panels/{panel_id}.json"
+    record = _read_canonical_json(project_dir, record_relative, issues)
+    if record is None:
+        return
+    issues.extend(validate_panel_record(record))
+    is_quality_v2 = record.get("schema_version") == "2.0"
+    bindings = record.get("bindings") if is_quality_v2 else None
+    if not isinstance(bindings, dict):
+        bindings = {}
+    _validate_project_panel_record_quality(
+        project_dir, record_relative, record, is_quality_v2, issues
+    )
+    if stage in {"all", "final", "export-ready"}:
+        record_errors, record_warnings = _collect_panel_record_outcomes(record, record_relative)
+        panel_errors.extend(record_errors)
+        panel_warnings.extend(record_warnings)
+    record_panel_id = record.get("subject_id") if is_quality_v2 else record.get("panel_id")
+    if record_panel_id != panel_id:
+        id_field = "subject_id" if is_quality_v2 else "panel_id"
+        _add(issues, record_relative, id_field, "must match its storyboard panel")
+    _validate_panel_raster_bindings(
+        project_dir,
+        panel,
+        record_relative,
+        record,
+        is_quality_v2,
+        bindings,
+        issues,
+    )
+
+
+def _validate_project_panels(
+    project_dir: Path,
+    storyboard: dict[str, object],
+    manifest: dict[str, object] | None,
+    stage: str,
+    panel_errors: list[tuple[str, str]],
+    panel_warnings: list[tuple[str, str]],
+    issues: list[ValidationIssue],
+) -> None:
+    panel_map = _storyboard_panel_map(storyboard)
+    # The repair plan is optional provenance: absent until a repair is
+    # planned, but re-derived and compared with the current reviews whenever
+    # it is present, so a plan can never outlive the record it describes.
+    if (project_dir / REPAIR_PLAN_PATH).is_file():
+        if _read_canonical_json(project_dir, REPAIR_PLAN_PATH, issues) is not None:
+            for category in validate_repair_plan(project_dir):
+                _add(issues, REPAIR_PLAN_PATH, category, category)
+    for panel_id, panel in panel_map.items():
+        _validate_project_panel_record(
+            project_dir,
+            panel_id,
+            panel,
+            stage,
+            panel_errors,
+            panel_warnings,
+            issues,
+        )
+    if manifest is not None:
+        _validate_manifest_source_binding(project_dir, manifest, issues)
+
+
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
     """Validate all artifacts required for a project stage."""
     project_dir = Path(project_dir)
@@ -4201,61 +4297,15 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
     )
 
     if needs_panels and storyboard is not None:
-        panel_map = _storyboard_panel_map(storyboard)
-        # The repair plan is optional provenance: absent until a repair is
-        # planned, but re-derived and compared with the current reviews whenever
-        # it is present, so a plan can never outlive the record it describes.
-        if (project_dir / REPAIR_PLAN_PATH).is_file():
-            if _read_canonical_json(project_dir, REPAIR_PLAN_PATH, issues) is not None:
-                for category in validate_repair_plan(project_dir):
-                    _add(issues, REPAIR_PLAN_PATH, category, category)
-        for panel_id, panel in panel_map.items():
-            record_relative = f"qa/panels/{panel_id}.json"
-            record = _read_canonical_json(project_dir, record_relative, issues)
-            if record is None:
-                continue
-            issues.extend(validate_panel_record(record))
-            is_quality_v2 = record.get("schema_version") == "2.0"
-            bindings = record.get("bindings") if is_quality_v2 else None
-            if not isinstance(bindings, dict):
-                bindings = {}
-            if not is_quality_v2:
-                _add(
-                    issues,
-                    record_relative,
-                    "quality-migration-required",
-                    "schema 1.0 quality record remains readable but must be reviewed as schema 2.0",
-                )
-            else:
-                issues.extend(validate_panel_provenance(project_dir, record))
-                for detail in validate_character_quality_provenance(project_dir, record):
-                    _add(
-                        issues,
-                        record_relative,
-                        "character-consistency-provenance",
-                        f"quality-record-stale: {detail}",
-                    )
-            if stage in {"all", "final", "export-ready"}:
-                record_errors, record_warnings = _collect_panel_record_outcomes(
-                    record, record_relative
-                )
-                panel_errors.extend(record_errors)
-                panel_warnings.extend(record_warnings)
-            record_panel_id = record.get("subject_id") if is_quality_v2 else record.get("panel_id")
-            if record_panel_id != panel_id:
-                id_field = "subject_id" if is_quality_v2 else "panel_id"
-                _add(issues, record_relative, id_field, "must match its storyboard panel")
-            _validate_panel_raster_bindings(
-                project_dir,
-                panel,
-                record_relative,
-                record,
-                is_quality_v2,
-                bindings,
-                issues,
-            )
-        if manifest is not None:
-            _validate_manifest_source_binding(project_dir, manifest, issues)
+        _validate_project_panels(
+            project_dir,
+            storyboard,
+            manifest,
+            stage,
+            panel_errors,
+            panel_warnings,
+            issues,
+        )
 
     if stage in {"all", "final", "export-ready"} and manifest is not None:
         _validate_terminal_panel_outcomes(manifest, panel_errors, panel_warnings, issues)
