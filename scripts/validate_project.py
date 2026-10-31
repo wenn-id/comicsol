@@ -401,34 +401,12 @@ def _validate_manifest_handoff(
                 )
 
 
-def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
-    """Validate the project manifest structure and references."""
-    path = "project.json"
-    issues: list[ValidationIssue] = []
-    base_required_fields = {
-        "project_id",
-        "title",
-        "created_at",
-        "updated_at",
-        "status",
-        "input",
-        "settings",
-        "capability",
-        "artifacts",
-        "stage_versions",
-        "panels",
-        "warnings",
-    }
-    declared_version = data.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
-    is_legacy = declared_version == LEGACY_PROJECT_SCHEMA_VERSION
-    required_fields = set(base_required_fields)
-    fields = required_fields | {"schema_version", "blocked_from", "blocked_reason"}
-    if not is_legacy:
-        required_fields.add("handoff")
-        fields.add("handoff")
-    root = _object(data, fields, required_fields, issues, path, "")
-    if root is None:
-        return _sorted(issues)
+def _validate_manifest_identity_and_status(
+    root: dict[str, object],
+    is_legacy: bool,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
     schema_version = root.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
     if (
         not isinstance(schema_version, str)
@@ -460,6 +438,10 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
     elif root.get("blocked_from") is not None or root.get("blocked_reason") is not None:
         _add(issues, path, "status", "blocked fields must be null when not BLOCKED")
 
+
+def _validate_manifest_input(
+    root: dict[str, object], issues: list[ValidationIssue], path: str
+) -> None:
     input_fields = {"mode", "source_path", "source_sha256", "request_path", "language"}
     input_data = _object(root.get("input"), input_fields, input_fields, issues, path, "input")
     if input_data is not None:
@@ -474,6 +456,10 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         _sha256(input_data.get("source_sha256"), issues, path, "input.source_sha256")
         _nonempty_string(input_data.get("language"), issues, path, "input.language")
 
+
+def _validate_manifest_settings(
+    root: dict[str, object], issues: list[ValidationIssue], path: str
+) -> None:
     setting_fields = {
         "page_width",
         "page_height",
@@ -497,6 +483,10 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         _integer(settings.get("panel_count"), 0, MAX_PANELS, issues, path, "settings.panel_count")
         _nonempty_string(settings.get("style_anchor"), issues, path, "settings.style_anchor")
 
+
+def _validate_manifest_capability(
+    root: dict[str, object], issues: list[ValidationIssue], path: str
+) -> None:
     capability_fields = {
         "status",
         "name",
@@ -526,6 +516,10 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         ):
             _add(issues, path, "capability.detected_at", "is required after capability detection")
 
+
+def _validate_manifest_artifacts(
+    root: dict[str, object], issues: list[ValidationIssue], path: str
+) -> None:
     artifacts = _object(
         root.get("artifacts"),
         set(MANIFEST_ARTIFACT_KEYS),
@@ -548,6 +542,10 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
                 _relative_path(item.get("path"), issues, path, f"artifacts.{name}.path")
                 _sha256(item.get("sha256"), issues, path, f"artifacts.{name}.sha256")
 
+
+def _validate_manifest_stage_metadata(
+    root: dict[str, object], issues: list[ValidationIssue], path: str
+) -> None:
     version_fields = set(RESUME_STAGES)
     versions = _object(
         root.get("stage_versions"), version_fields, version_fields, issues, path, "stage_versions"
@@ -574,6 +572,42 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         _add(issues, path, "status", "must be COMPLETE_WITH_WARNINGS while warnings remain")
     if root.get("status") == "COMPLETE_WITH_WARNINGS" and warnings == []:
         _add(issues, path, "warnings", "COMPLETE_WITH_WARNINGS requires an unresolved warning")
+
+
+def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
+    """Validate the project manifest structure and references."""
+    path = "project.json"
+    issues: list[ValidationIssue] = []
+    base_required_fields = {
+        "project_id",
+        "title",
+        "created_at",
+        "updated_at",
+        "status",
+        "input",
+        "settings",
+        "capability",
+        "artifacts",
+        "stage_versions",
+        "panels",
+        "warnings",
+    }
+    declared_version = data.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
+    is_legacy = declared_version == LEGACY_PROJECT_SCHEMA_VERSION
+    required_fields = set(base_required_fields)
+    fields = required_fields | {"schema_version", "blocked_from", "blocked_reason"}
+    if not is_legacy:
+        required_fields.add("handoff")
+        fields.add("handoff")
+    root = _object(data, fields, required_fields, issues, path, "")
+    if root is None:
+        return _sorted(issues)
+    _validate_manifest_identity_and_status(root, is_legacy, issues, path)
+    _validate_manifest_input(root, issues, path)
+    _validate_manifest_settings(root, issues, path)
+    _validate_manifest_capability(root, issues, path)
+    _validate_manifest_artifacts(root, issues, path)
+    _validate_manifest_stage_metadata(root, issues, path)
     return _sorted(issues)
 
 
