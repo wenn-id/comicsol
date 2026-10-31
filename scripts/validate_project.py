@@ -3166,6 +3166,51 @@ def _validate_manifest_artifact_bindings(
                             )
 
 
+def _validate_manifest_source_binding(
+    project_dir: Path,
+    manifest: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    input_data = manifest.get("input")
+    source_path = (
+        cast(dict[str, object], input_data).get("source_path")
+        if isinstance(input_data, dict)
+        else None
+    )
+    source_hash = (
+        cast(dict[str, object], input_data).get("source_sha256")
+        if isinstance(input_data, dict)
+        else None
+    )
+    if isinstance(source_path, str) and isinstance(source_hash, str):
+        try:
+            source_file = _contained_project_path(project_dir, source_path)
+        except ValueError:
+            _add(
+                issues,
+                "project.json",
+                "input.source_path",
+                "referenced source path escapes the project boundary",
+            )
+        else:
+            if not source_file.is_file():
+                _add(
+                    issues,
+                    "project.json",
+                    "input.source_path",
+                    "referenced source is missing",
+                )
+            elif SHA256_PATTERN.fullmatch(source_hash):
+                source_file = contained_project_path(project_dir, source_path, must_exist=True)
+                if sha256_file(source_file) != source_hash:
+                    _add(
+                        issues,
+                        "project.json",
+                        "input.source_sha256",
+                        "hash does not match the source",
+                    )
+
+
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
     """Validate all artifacts required for a project stage."""
     project_dir = Path(project_dir)
@@ -3413,45 +3458,7 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                         issues,
                     )
         if manifest is not None:
-            source_path = (
-                cast(dict[str, object], manifest.get("input", {})).get("source_path")
-                if isinstance(manifest.get("input"), dict)
-                else None
-            )
-            source_hash = (
-                cast(dict[str, object], manifest.get("input", {})).get("source_sha256")
-                if isinstance(manifest.get("input"), dict)
-                else None
-            )
-            if isinstance(source_path, str) and isinstance(source_hash, str):
-                try:
-                    source_file = _contained_project_path(project_dir, source_path)
-                except ValueError:
-                    _add(
-                        issues,
-                        "project.json",
-                        "input.source_path",
-                        "referenced source path escapes the project boundary",
-                    )
-                else:
-                    if not source_file.is_file():
-                        _add(
-                            issues,
-                            "project.json",
-                            "input.source_path",
-                            "referenced source is missing",
-                        )
-                    elif SHA256_PATTERN.fullmatch(source_hash):
-                        source_file = contained_project_path(
-                            project_dir, source_path, must_exist=True
-                        )
-                        if sha256_file(source_file) != source_hash:
-                            _add(
-                                issues,
-                                "project.json",
-                                "input.source_sha256",
-                                "hash does not match the source",
-                            )
+            _validate_manifest_source_binding(project_dir, manifest, issues)
 
     if stage in {"all", "final", "export-ready"} and manifest is not None:
         _validate_terminal_panel_outcomes(manifest, panel_errors, panel_warnings, issues)
