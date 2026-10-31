@@ -510,6 +510,41 @@ class LetteringTests(unittest.TestCase):
                     [placement["anchor"] for placement in result["placements"]],
                 )
 
+    def test_anchor_search_tries_next_anchor_when_tail_geometry_fails(self):
+        boxes = {
+            "top-left": {"x": 20, "y": 20, "width": 100, "height": 80},
+            "top-center": {"x": 150, "y": 20, "width": 100, "height": 80},
+        }
+        maximum = {"x": 0, "y": 0, "width": 336, "height": 300}
+        tail_geometry = {"tip": [200.0, 100.0]}
+
+        def fitted(_draw, item, _maximum, _font):
+            return boxes[item["anchor"]]
+
+        output = self.root / "invalid-tail-fallback.png"
+        with (
+            mock.patch("scripts.letter_panels._anchor_rect", return_value=maximum),
+            mock.patch("scripts.letter_panels._fitted_item_rect", side_effect=fitted),
+            mock.patch(
+                "scripts.letter_panels._organic_tail_geometry",
+                side_effect=[ValueError("invalid tail geometry"), tail_geometry],
+            ) as tail_for,
+            mock.patch("scripts.letter_panels.render_text_item"),
+        ):
+            result = letter_panel(
+                str(output),
+                800,
+                1000,
+                [dialogue("Try again", 1)],
+                self.characters,
+                source_bytes=self.panel.read_bytes(),
+            )
+
+        self.assertEqual(
+            ["top-center"], [placement["anchor"] for placement in result["placements"]]
+        )
+        self.assertEqual(2, tail_for.call_count)
+
     def test_dialogue_has_white_oval_dark_stroke_and_tail(self):
         letter_panel(str(self.panel), 800, 1000, [dialogue()], self.characters)
         image = Image.open(self.panel).convert("RGB")

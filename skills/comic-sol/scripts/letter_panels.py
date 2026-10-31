@@ -1088,13 +1088,16 @@ def letter_panel(
             ):
                 if not isinstance(voice_source, str):
                     raise ValueError("dialogue voice source must be human or device")
-                candidate_tail_geometry = _organic_tail_geometry(
-                    fitted,
-                    tail_anchor,
-                    panel_width,
-                    panel_height,
-                    voice_source,
-                )
+                try:
+                    candidate_tail_geometry = _organic_tail_geometry(
+                        fitted,
+                        tail_anchor,
+                        panel_width,
+                        panel_height,
+                        voice_source,
+                    )
+                except ValueError:
+                    continue
             if candidate_tail_geometry is not None and any(
                 prior_kind == "dialogue"
                 and prior_tail is not None
