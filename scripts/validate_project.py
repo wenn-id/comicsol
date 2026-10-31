@@ -2392,6 +2392,53 @@ def _validate_handoff_batch_membership(
     return batch_membership
 
 
+def _validate_ready_handoff_job_inputs(
+    project_dir: Path,
+    job_path: str,
+    job: dict[str, object],
+    job_references: list[dict[str, object]],
+    issues: list[ValidationIssue],
+) -> None:
+    job_inputs: list[tuple[str, str, str, str]] = [
+        (
+            cast(str, job["prompt_path"]),
+            "prompt_path",
+            "prompt_sha256",
+            cast(str, job["prompt_sha256"]),
+        )
+    ]
+    job_inputs.extend(
+        (
+            cast(str, reference["path"]),
+            f"references[{index}].path",
+            f"references[{index}].sha256",
+            cast(str, reference["sha256"]),
+        )
+        for index, reference in enumerate(job_references)
+    )
+    for input_path, path_field, sha256_field, expected_sha256 in job_inputs:
+        try:
+            input_bytes = read_contained_bytes(
+                project_dir,
+                input_path,
+                max_bytes=MAX_READ_BYTES,
+            )
+        except FileNotFoundError:
+            _add(issues, job_path, path_field, "input file is missing")
+            continue
+        except (OSError, ValueError) as error:
+            _add(
+                issues,
+                job_path,
+                path_field,
+                f"cannot read input file: {type(error).__name__}",
+            )
+            continue
+        actual_sha256 = hashlib.sha256(input_bytes).hexdigest()
+        if actual_sha256 != expected_sha256:
+            _add(issues, job_path, sha256_field, "does not match input file")
+
+
 def _validate_handoff_binding(
     project_dir: Path,
     manifest: dict[str, object],
@@ -2475,44 +2522,13 @@ def _validate_handoff_binding(
                     expected_format="PNG",
                 )
             if handoff_job["status"] == "ready":
-                job_inputs: list[tuple[str, str, str, str]] = [
-                    (
-                        cast(str, job["prompt_path"]),
-                        "prompt_path",
-                        "prompt_sha256",
-                        cast(str, job["prompt_sha256"]),
-                    )
-                ]
-                job_inputs.extend(
-                    (
-                        cast(str, reference["path"]),
-                        f"references[{index}].path",
-                        f"references[{index}].sha256",
-                        cast(str, reference["sha256"]),
-                    )
-                    for index, reference in enumerate(job_references)
+                _validate_ready_handoff_job_inputs(
+                    project_dir,
+                    job_path,
+                    job,
+                    job_references,
+                    issues,
                 )
-                for input_path, path_field, sha256_field, expected_sha256 in job_inputs:
-                    try:
-                        input_bytes = read_contained_bytes(
-                            project_dir,
-                            input_path,
-                            max_bytes=MAX_READ_BYTES,
-                        )
-                    except FileNotFoundError:
-                        _add(issues, job_path, path_field, "input file is missing")
-                        continue
-                    except (OSError, ValueError) as error:
-                        _add(
-                            issues,
-                            job_path,
-                            path_field,
-                            f"cannot read input file: {type(error).__name__}",
-                        )
-                        continue
-                    actual_sha256 = hashlib.sha256(input_bytes).hexdigest()
-                    if actual_sha256 != expected_sha256:
-                        _add(issues, job_path, sha256_field, "does not match input file")
             if job["job_id"] != job_id:
                 _add(issues, job_path, "job_id", "does not match handoff manifest")
             membership = batch_membership.get(job_id)
