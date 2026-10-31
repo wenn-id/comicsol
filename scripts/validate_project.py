@@ -1139,6 +1139,132 @@ def _validate_storyboard_panel(
     return panel_id, text_ids, valid_rect
 
 
+def _validate_storyboard_page_panels(
+    panels: list[object],
+    page_index: int,
+    expected_rects: list[dict[str, int]],
+    panel_fields: set[str],
+    known_scenes: set[Any | None],
+    known_characters: set[str],
+    character_invariants: dict[Any | None, set[Any]],
+    scene_anchors: dict[Any | None, Any],
+    issues: list[ValidationIssue],
+    path: str,
+) -> tuple[list[str], list[str]]:
+    all_panel_ids: list[str] = []
+    all_text_ids: list[str] = []
+    page_rectangles: list[tuple[str, dict[str, int]]] = []
+    for panel_index, panel_value in enumerate(panels):
+        prefix = f"pages[{page_index}].panels[{panel_index}]"
+        panel = _object(panel_value, panel_fields, panel_fields, issues, path, prefix)
+        if panel is None:
+            continue
+        panel_id, text_ids, valid_rect = _validate_storyboard_panel(
+            panel,
+            page_index,
+            panel_index,
+            expected_rects,
+            known_scenes,
+            known_characters,
+            character_invariants,
+            scene_anchors,
+            issues,
+            path,
+            prefix,
+        )
+        if panel_id is not None:
+            all_panel_ids.append(panel_id)
+        all_text_ids.extend(text_ids)
+        if valid_rect is not None:
+            page_rectangles.append((prefix, valid_rect))
+    for first_index, (first_prefix, first) in enumerate(page_rectangles):
+        for second_prefix, second in page_rectangles[first_index + 1 :]:
+            if rectangles_overlap(first, second):
+                _add(issues, path, f"{first_prefix}.rect", f"overlaps {second_prefix}.rect")
+    return all_panel_ids, all_text_ids
+
+
+def _validate_storyboard_page(
+    value: object,
+    page_index: int,
+    page_fields: set[str],
+    panel_fields: set[str],
+    known_scenes: set[Any | None],
+    known_characters: set[str],
+    character_invariants: dict[Any | None, set[Any]],
+    scene_anchors: dict[Any | None, Any],
+    issues: list[ValidationIssue],
+    path: str,
+) -> tuple[list[str], list[str], int]:
+    page_prefix = f"pages[{page_index}]"
+    page = _object(value, page_fields, page_fields, issues, path, page_prefix)
+    if page is None:
+        return [], [], 0
+    page_number = page.get("number")
+    _integer(page_number, 1, 4, issues, path, f"{page_prefix}.number")
+    if page_number != page_index + 1:
+        _add(issues, path, f"{page_prefix}.number", "pages must be numbered contiguously from 1")
+    layout = page.get("layout")
+    if layout not in LAYOUTS:
+        _add(issues, path, f"{page_prefix}.layout", "unknown layout")
+    panels = page.get("panels")
+    if not isinstance(panels, list):
+        _add(issues, path, f"{page_prefix}.panels", "must be an array")
+        return [], [], 0
+    total_panels = len(panels)
+    if not 1 <= len(panels) <= 4:
+        _add(issues, path, f"{page_prefix}.panels", "must contain 1 to 4 panels")
+    expected_rects = layout_rects(layout) if layout in LAYOUTS else []
+    if expected_rects and len(panels) != len(expected_rects):
+        _add(issues, path, f"{page_prefix}.panels", "panel count must match the fixed layout")
+    panel_ids, text_ids = _validate_storyboard_page_panels(
+        panels,
+        page_index,
+        expected_rects,
+        panel_fields,
+        known_scenes,
+        known_characters,
+        character_invariants,
+        scene_anchors,
+        issues,
+        path,
+    )
+    return panel_ids, text_ids, total_panels
+
+
+def _validate_storyboard_pages(
+    pages: list[object],
+    page_fields: set[str],
+    panel_fields: set[str],
+    known_scenes: set[Any | None],
+    known_characters: set[str],
+    character_invariants: dict[Any | None, set[Any]],
+    scene_anchors: dict[Any | None, Any],
+    issues: list[ValidationIssue],
+    path: str,
+) -> tuple[list[str], list[str], int]:
+    all_panel_ids: list[str] = []
+    all_text_ids: list[str] = []
+    total_panels = 0
+    for page_index, value in enumerate(pages):
+        panel_ids, text_ids, page_total = _validate_storyboard_page(
+            value,
+            page_index,
+            page_fields,
+            panel_fields,
+            known_scenes,
+            known_characters,
+            character_invariants,
+            scene_anchors,
+            issues,
+            path,
+        )
+        all_panel_ids.extend(panel_ids)
+        all_text_ids.extend(text_ids)
+        total_panels += page_total
+    return all_panel_ids, all_text_ids, total_panels
+
+
 def validate_storyboard(
     data: dict[str, object],
     story: dict[str, object],
@@ -1200,61 +1326,17 @@ def validate_storyboard(
         "negative",
         "text",
     }
-    all_panel_ids: list[str] = []
-    all_text_ids: list[str] = []
-    total_panels = 0
-    for page_index, value in enumerate(pages):
-        page_prefix = f"pages[{page_index}]"
-        page = _object(value, page_fields, page_fields, issues, path, page_prefix)
-        if page is None:
-            continue
-        page_number = page.get("number")
-        _integer(page_number, 1, 4, issues, path, f"{page_prefix}.number")
-        if page_number != page_index + 1:
-            _add(
-                issues, path, f"{page_prefix}.number", "pages must be numbered contiguously from 1"
-            )
-        layout = page.get("layout")
-        if layout not in LAYOUTS:
-            _add(issues, path, f"{page_prefix}.layout", "unknown layout")
-        panels = page.get("panels")
-        if not isinstance(panels, list):
-            _add(issues, path, f"{page_prefix}.panels", "must be an array")
-            continue
-        total_panels += len(panels)
-        if not 1 <= len(panels) <= 4:
-            _add(issues, path, f"{page_prefix}.panels", "must contain 1 to 4 panels")
-        expected_rects = layout_rects(layout) if layout in LAYOUTS else []
-        if expected_rects and len(panels) != len(expected_rects):
-            _add(issues, path, f"{page_prefix}.panels", "panel count must match the fixed layout")
-        page_rectangles: list[tuple[str, dict[str, int]]] = []
-        for panel_index, panel_value in enumerate(panels):
-            prefix = f"{page_prefix}.panels[{panel_index}]"
-            panel = _object(panel_value, panel_fields, panel_fields, issues, path, prefix)
-            if panel is None:
-                continue
-            panel_id, text_ids, valid_rect = _validate_storyboard_panel(
-                panel,
-                page_index,
-                panel_index,
-                expected_rects,
-                known_scenes,
-                known_characters,
-                character_invariants,
-                scene_anchors,
-                issues,
-                path,
-                prefix,
-            )
-            if panel_id is not None:
-                all_panel_ids.append(panel_id)
-            all_text_ids.extend(text_ids)
-            if valid_rect is not None:
-                page_rectangles.append((prefix, valid_rect))
-        for first_index, (first_prefix, first) in enumerate(page_rectangles):
-            for second_prefix, second in page_rectangles[first_index + 1 :]:
-                if rectangles_overlap(first, second):
-                    _add(issues, path, f"{first_prefix}.rect", f"overlaps {second_prefix}.rect")
+    all_panel_ids, all_text_ids, total_panels = _validate_storyboard_pages(
+        pages,
+        page_fields,
+        panel_fields,
+        known_scenes,
+        known_characters,
+        character_invariants,
+        scene_anchors,
+        issues,
+        path,
+    )
     if total_panels > 12:
         _add(issues, path, "pages.panels", "project must contain at most 12 panels")
     if len(set(all_panel_ids)) != len(all_panel_ids):
