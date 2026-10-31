@@ -3477,35 +3477,15 @@ def _validate_handoff_binding(
             _add(issues, manifest_path, field, f"must match project.json {field}")
 
 
-def _validate_raster(
+def _validate_raster_contents(
     project_dir: Path,
-    relative_path: object,
+    relative_path: str,
     issue_path: str,
     field: str,
     issues: list[ValidationIssue],
-    expected_ratio: float | None = None,
-    *,
-    expected_format: str | None = None,
+    expected_ratio: float | None,
+    expected_format: str | None,
 ) -> tuple[int, int] | None:
-    """Validate raster artifact dimensions and decodability."""
-    local_issues: list[ValidationIssue] = []
-    if not _relative_path(relative_path, local_issues, issue_path, field):
-        issues.extend(local_issues)
-        return None
-    if not isinstance(relative_path, str):
-        _add(issues, issue_path, field, "must be a relative project path")
-        return None
-    try:
-        image_path = _contained_project_path(project_dir, relative_path)
-    except ValueError:
-        _add(issues, issue_path, field, "referenced image path escapes the project boundary")
-        return None
-    if image_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
-        _add(issues, issue_path, field, "must be PNG, JPEG, or WebP")
-        return None
-    if not image_path.is_file():
-        _add(issues, issue_path, field, "referenced image is missing")
-        return None
     try:
         image_path = contained_project_path(project_dir, relative_path, must_exist=True)
         payload = read_bytes_nofollow(
@@ -3557,6 +3537,46 @@ def _validate_raster(
     ) as error:
         _add(issues, issue_path, field, f"image is unreadable: {type(error).__name__}")
         return None
+
+
+def _validate_raster(
+    project_dir: Path,
+    relative_path: object,
+    issue_path: str,
+    field: str,
+    issues: list[ValidationIssue],
+    expected_ratio: float | None = None,
+    *,
+    expected_format: str | None = None,
+) -> tuple[int, int] | None:
+    """Validate raster artifact dimensions and decodability."""
+    local_issues: list[ValidationIssue] = []
+    if not _relative_path(relative_path, local_issues, issue_path, field):
+        issues.extend(local_issues)
+        return None
+    if not isinstance(relative_path, str):
+        _add(issues, issue_path, field, "must be a relative project path")
+        return None
+    try:
+        image_path = _contained_project_path(project_dir, relative_path)
+    except ValueError:
+        _add(issues, issue_path, field, "referenced image path escapes the project boundary")
+        return None
+    if image_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        _add(issues, issue_path, field, "must be PNG, JPEG, or WebP")
+        return None
+    if not image_path.is_file():
+        _add(issues, issue_path, field, "referenced image is missing")
+        return None
+    return _validate_raster_contents(
+        project_dir,
+        relative_path,
+        issue_path,
+        field,
+        issues,
+        expected_ratio,
+        expected_format,
+    )
 
 
 def _storyboard_panel_map(storyboard: dict[str, object]) -> dict[str, dict[str, object]]:
