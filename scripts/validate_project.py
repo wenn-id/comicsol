@@ -926,6 +926,185 @@ def _validate_panel_continuity(
             _add(issues, path, anchor_field, "must reuse the exact scene continuity anchor")
 
 
+def _validate_storyboard_panel_identity(
+    panel: dict[str, object],
+    page_index: int,
+    panel_index: int,
+    known_scenes: set[Any | None],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> str | None:
+    panel_id_for_uniqueness = None
+    panel_id = panel.get("id")
+    if not isinstance(panel_id, str) or PANEL_ID_PATTERN.fullmatch(panel_id) is None:
+        _add(issues, path, f"{prefix}.id", "must match pNN-NN")
+    else:
+        panel_id_for_uniqueness = panel_id
+        expected_id = f"p{page_index + 1:02d}-{panel_index + 1:02d}"
+        if panel_id != expected_id:
+            _add(issues, path, f"{prefix}.id", f"must equal {expected_id}")
+    if panel.get("order") != panel_index + 1:
+        _add(issues, path, f"{prefix}.order", "must match reading order")
+    if panel.get("scene_id") not in known_scenes:
+        _add(issues, path, f"{prefix}.scene_id", "must reference a story scene")
+    for field in ("beat", "shot", "composition", "action", "expression", "lighting"):
+        _nonempty_string(panel.get(field), issues, path, f"{prefix}.{field}")
+    return panel_id_for_uniqueness
+
+
+def _validate_storyboard_panel_references(
+    panel: dict[str, object],
+    known_characters: set[str],
+    known_scenes: set[Any | None],
+    character_invariants: dict[Any | None, set[Any]],
+    scene_anchors: dict[Any | None, Any],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> list[str]:
+    panel_characters = (
+        _string_list(panel.get("characters"), issues, path, f"{prefix}.characters") or []
+    )
+    for item_index, character_id in enumerate(panel_characters):
+        if character_id not in known_characters:
+            _add(
+                issues,
+                path,
+                f"{prefix}.characters[{item_index}]",
+                "must reference the character bible",
+            )
+    if len(set(panel_characters)) != len(panel_characters):
+        _add(issues, path, f"{prefix}.characters", "character IDs must be unique")
+    continuity = _string_list(panel.get("continuity"), issues, path, f"{prefix}.continuity") or []
+    if len(set(continuity)) != len(continuity):
+        _add(issues, path, f"{prefix}.continuity", "continuity anchors must be unique")
+    _validate_panel_continuity(
+        continuity,
+        known_characters,
+        known_scenes,
+        character_invariants,
+        scene_anchors,
+        issues,
+        path,
+        prefix,
+    )
+    _string_list(panel.get("negative"), issues, path, f"{prefix}.negative", minimum=1)
+    return panel_characters
+
+
+def _validate_storyboard_panel_geometry(
+    panel: dict[str, object],
+    panel_index: int,
+    expected_rects: list[dict[str, int]],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> dict[str, int] | None:
+    rect = _object(
+        panel.get("rect"),
+        {"x", "y", "width", "height"},
+        {"x", "y", "width", "height"},
+        issues,
+        path,
+        f"{prefix}.rect",
+    )
+    valid_rect: dict[str, int] | None = None
+    if rect is not None and all(
+        isinstance(rect.get(key), int) and not isinstance(rect.get(key), bool)
+        for key in ("x", "y", "width", "height")
+    ):
+        valid_rect = {key: int(cast(int, rect[key])) for key in ("x", "y", "width", "height")}
+        if (
+            valid_rect["width"] <= 0
+            or valid_rect["height"] <= 0
+            or valid_rect["x"] < MARGIN
+            or valid_rect["y"] < MARGIN
+            or valid_rect["x"] + valid_rect["width"] > PAGE_WIDTH - MARGIN
+            or valid_rect["y"] + valid_rect["height"] > PAGE_HEIGHT - MARGIN
+        ):
+            _add(
+                issues,
+                path,
+                f"{prefix}.rect",
+                "must stay inside the page margin with positive area",
+            )
+        if panel_index < len(expected_rects) and valid_rect != expected_rects[panel_index]:
+            _add(issues, path, f"{prefix}.rect", "must equal the fixed layout rectangle")
+    elif rect is not None:
+        _add(issues, path, f"{prefix}.rect", "rectangle values must be integers")
+    return valid_rect
+
+
+def _validate_storyboard_panel_text(
+    panel: dict[str, object],
+    panel_characters: list[str],
+    known_characters: set[str],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> list[str]:
+    text_ids_for_uniqueness: list[str] = []
+    text_items = panel.get("text")
+    if not isinstance(text_items, list):
+        _add(issues, path, f"{prefix}.text", "must be an array")
+    else:
+        if len(text_items) > 3:
+            _add(issues, path, f"{prefix}.text", "must contain 0 to 3 text items")
+        total_words = 0
+        for text_index, text_value in enumerate(text_items):
+            text_prefix = f"{prefix}.text[{text_index}]"
+            total_words += _validate_text_item(
+                text_value,
+                set(panel_characters),
+                known_characters,
+                issues,
+                path,
+                text_prefix,
+            )
+            if isinstance(text_value, dict) and isinstance(text_value.get("id"), str):
+                text_ids_for_uniqueness.append(text_value["id"])
+        if total_words > 45:
+            _add(issues, path, f"{prefix}.text", "panel text exceeds 45 total words")
+        _validate_panel_attribution(text_items, issues, path, prefix)
+    return text_ids_for_uniqueness
+
+
+def _validate_storyboard_panel(
+    panel: dict[str, object],
+    page_index: int,
+    panel_index: int,
+    expected_rects: list[dict[str, int]],
+    known_scenes: set[Any | None],
+    known_characters: set[str],
+    character_invariants: dict[Any | None, set[Any]],
+    scene_anchors: dict[Any | None, Any],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> tuple[str | None, list[str], dict[str, int] | None]:
+    panel_id = _validate_storyboard_panel_identity(
+        panel, page_index, panel_index, known_scenes, issues, path, prefix
+    )
+    panel_characters = _validate_storyboard_panel_references(
+        panel,
+        known_characters,
+        known_scenes,
+        character_invariants,
+        scene_anchors,
+        issues,
+        path,
+        prefix,
+    )
+    valid_rect = _validate_storyboard_panel_geometry(
+        panel, panel_index, expected_rects, issues, path, prefix
+    )
+    text_ids = _validate_storyboard_panel_text(
+        panel, panel_characters, known_characters, issues, path, prefix
+    )
+    return panel_id, text_ids, valid_rect
+
+
 def validate_storyboard(
     data: dict[str, object],
     story: dict[str, object],
@@ -1020,106 +1199,24 @@ def validate_storyboard(
             panel = _object(panel_value, panel_fields, panel_fields, issues, path, prefix)
             if panel is None:
                 continue
-            panel_id = panel.get("id")
-            if not isinstance(panel_id, str) or PANEL_ID_PATTERN.fullmatch(panel_id) is None:
-                _add(issues, path, f"{prefix}.id", "must match pNN-NN")
-            else:
-                all_panel_ids.append(panel_id)
-                expected_id = f"p{page_index + 1:02d}-{panel_index + 1:02d}"
-                if panel_id != expected_id:
-                    _add(issues, path, f"{prefix}.id", f"must equal {expected_id}")
-            if panel.get("order") != panel_index + 1:
-                _add(issues, path, f"{prefix}.order", "must match reading order")
-            if panel.get("scene_id") not in known_scenes:
-                _add(issues, path, f"{prefix}.scene_id", "must reference a story scene")
-            for field in ("beat", "shot", "composition", "action", "expression", "lighting"):
-                _nonempty_string(panel.get(field), issues, path, f"{prefix}.{field}")
-            panel_characters = (
-                _string_list(panel.get("characters"), issues, path, f"{prefix}.characters") or []
-            )
-            for item_index, character_id in enumerate(panel_characters):
-                if character_id not in known_characters:
-                    _add(
-                        issues,
-                        path,
-                        f"{prefix}.characters[{item_index}]",
-                        "must reference the character bible",
-                    )
-            if len(set(panel_characters)) != len(panel_characters):
-                _add(issues, path, f"{prefix}.characters", "character IDs must be unique")
-            continuity = (
-                _string_list(panel.get("continuity"), issues, path, f"{prefix}.continuity") or []
-            )
-            if len(set(continuity)) != len(continuity):
-                _add(issues, path, f"{prefix}.continuity", "continuity anchors must be unique")
-            _validate_panel_continuity(
-                continuity,
-                known_characters,
+            panel_id, text_ids, valid_rect = _validate_storyboard_panel(
+                panel,
+                page_index,
+                panel_index,
+                expected_rects,
                 known_scenes,
+                known_characters,
                 character_invariants,
                 scene_anchors,
                 issues,
                 path,
                 prefix,
             )
-            _string_list(panel.get("negative"), issues, path, f"{prefix}.negative", minimum=1)
-            rect = _object(
-                panel.get("rect"),
-                {"x", "y", "width", "height"},
-                {"x", "y", "width", "height"},
-                issues,
-                path,
-                f"{prefix}.rect",
-            )
-            valid_rect: dict[str, int] | None = None
-            if rect is not None and all(
-                isinstance(rect.get(key), int) and not isinstance(rect.get(key), bool)
-                for key in ("x", "y", "width", "height")
-            ):
-                valid_rect = {
-                    key: int(cast(int, rect[key])) for key in ("x", "y", "width", "height")
-                }
-                if (
-                    valid_rect["width"] <= 0
-                    or valid_rect["height"] <= 0
-                    or valid_rect["x"] < MARGIN
-                    or valid_rect["y"] < MARGIN
-                    or valid_rect["x"] + valid_rect["width"] > PAGE_WIDTH - MARGIN
-                    or valid_rect["y"] + valid_rect["height"] > PAGE_HEIGHT - MARGIN
-                ):
-                    _add(
-                        issues,
-                        path,
-                        f"{prefix}.rect",
-                        "must stay inside the page margin with positive area",
-                    )
-                if panel_index < len(expected_rects) and valid_rect != expected_rects[panel_index]:
-                    _add(issues, path, f"{prefix}.rect", "must equal the fixed layout rectangle")
+            if panel_id is not None:
+                all_panel_ids.append(panel_id)
+            all_text_ids.extend(text_ids)
+            if valid_rect is not None:
                 page_rectangles.append((prefix, valid_rect))
-            elif rect is not None:
-                _add(issues, path, f"{prefix}.rect", "rectangle values must be integers")
-            text_items = panel.get("text")
-            if not isinstance(text_items, list):
-                _add(issues, path, f"{prefix}.text", "must be an array")
-            else:
-                if len(text_items) > 3:
-                    _add(issues, path, f"{prefix}.text", "must contain 0 to 3 text items")
-                total_words = 0
-                for text_index, text_value in enumerate(text_items):
-                    text_prefix = f"{prefix}.text[{text_index}]"
-                    total_words += _validate_text_item(
-                        text_value,
-                        set(panel_characters),
-                        known_characters,
-                        issues,
-                        path,
-                        text_prefix,
-                    )
-                    if isinstance(text_value, dict) and isinstance(text_value.get("id"), str):
-                        all_text_ids.append(text_value["id"])
-                if total_words > 45:
-                    _add(issues, path, f"{prefix}.text", "panel text exceeds 45 total words")
-                _validate_panel_attribution(text_items, issues, path, prefix)
         for first_index, (first_prefix, first) in enumerate(page_rectangles):
             for second_prefix, second in page_rectangles[first_index + 1 :]:
                 if rectangles_overlap(first, second):
