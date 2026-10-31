@@ -3954,6 +3954,36 @@ def _collect_panel_record_outcomes(
     return panel_errors, panel_warnings
 
 
+def _validate_project_plan_and_storyboard(
+    project_dir: Path,
+    manifest: dict[str, object] | None,
+    needs_plan: bool,
+    needs_storyboard: bool,
+    issues: list[ValidationIssue],
+) -> tuple[
+    dict[str, object] | None,
+    dict[str, object] | None,
+    dict[str, object] | None,
+]:
+    story = None
+    characters = None
+    storyboard = None
+    if needs_plan:
+        story = _load_artifact(project_dir, "plan/story-plan.json", validate_story_plan, issues)
+        characters = _load_artifact(
+            project_dir, "plan/character-bible.json", validate_character_bible, issues
+        )
+        if story is not None and characters is not None:
+            issues.extend(validate_story_character_references(story, characters))
+    if needs_storyboard:
+        storyboard = _read_canonical_json(project_dir, "plan/storyboard.json", issues)
+        if storyboard is not None and story is not None and characters is not None:
+            issues.extend(validate_storyboard(storyboard, story, characters))
+        if storyboard is not None and manifest is not None:
+            _validate_storyboard_manifest_consistency(storyboard, manifest, issues)
+    return story, characters, storyboard
+
+
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
     """Validate all artifacts required for a project stage."""
     project_dir = Path(project_dir)
@@ -3985,24 +4015,11 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                     require_panel_acceptance=needs_panels,
                 )
     issues.extend(manifest_issues)
-    story = None
-    characters = None
-    storyboard = None
     panel_errors: list[tuple[str, str]] = []
     panel_warnings: list[tuple[str, str]] = []
-    if needs_plan:
-        story = _load_artifact(project_dir, "plan/story-plan.json", validate_story_plan, issues)
-        characters = _load_artifact(
-            project_dir, "plan/character-bible.json", validate_character_bible, issues
-        )
-        if story is not None and characters is not None:
-            issues.extend(validate_story_character_references(story, characters))
-    if needs_storyboard:
-        storyboard = _read_canonical_json(project_dir, "plan/storyboard.json", issues)
-        if storyboard is not None and story is not None and characters is not None:
-            issues.extend(validate_storyboard(storyboard, story, characters))
-        if storyboard is not None and manifest is not None:
-            _validate_storyboard_manifest_consistency(storyboard, manifest, issues)
+    story, characters, storyboard = _validate_project_plan_and_storyboard(
+        project_dir, manifest, needs_plan, needs_storyboard, issues
+    )
 
     if needs_panels and storyboard is not None:
         panel_map = _storyboard_panel_map(storyboard)
