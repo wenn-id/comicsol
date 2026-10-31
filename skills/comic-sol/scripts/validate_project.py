@@ -2675,6 +2675,36 @@ def _populated_handoff_binding(
     return manifest_path, locked_scope
 
 
+def _read_handoff_receipt_entry(
+    project_dir: Path,
+    entry: Path,
+    relative_dir: str,
+    issues: list[ValidationIssue],
+) -> tuple[str, dict[str, object]] | None:
+    """Validate one inventory entry and return its readable receipt."""
+    relative = f"{relative_dir}/{entry.name}"
+    if entry.is_symlink() or not entry.is_file() or entry.suffix != ".json":
+        _add(issues, relative, "file", "receipt must be a regular JSON file")
+        return None
+    receipt = _read_canonical_json(project_dir, relative, issues)
+    if receipt is None:
+        return None
+    contract_issues = validate_generation_receipt(receipt)
+    for contract_issue in contract_issues:
+        field, separator, message = contract_issue.partition(": ")
+        _add(
+            issues,
+            relative,
+            field,
+            message if separator else contract_issue,
+        )
+    if contract_issues:
+        return None
+    if entry.stem != receipt.get("attempt_id"):
+        _add(issues, relative, "attempt_id", "must match the receipt filename")
+    return relative, receipt
+
+
 def _handoff_receipt_inventory(
     project_dir: Path,
     issues: list[ValidationIssue],
@@ -2709,27 +2739,14 @@ def _handoff_receipt_inventory(
         )
         return []
     for entry in entries:
-        relative = f"{relative_dir}/{entry.name}"
-        if entry.is_symlink() or not entry.is_file() or entry.suffix != ".json":
-            _add(issues, relative, "file", "receipt must be a regular JSON file")
-            continue
-        receipt = _read_canonical_json(project_dir, relative, issues)
-        if receipt is None:
-            continue
-        contract_issues = validate_generation_receipt(receipt)
-        for contract_issue in contract_issues:
-            field, separator, message = contract_issue.partition(": ")
-            _add(
-                issues,
-                relative,
-                field,
-                message if separator else contract_issue,
-            )
-        if contract_issues:
-            continue
-        if entry.stem != receipt.get("attempt_id"):
-            _add(issues, relative, "attempt_id", "must match the receipt filename")
-        inventory.append((relative, receipt))
+        receipt_item = _read_handoff_receipt_entry(
+            project_dir,
+            entry,
+            relative_dir,
+            issues,
+        )
+        if receipt_item is not None:
+            inventory.append(receipt_item)
     return inventory
 
 
