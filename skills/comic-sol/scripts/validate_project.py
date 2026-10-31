@@ -1396,6 +1396,18 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
         _add(issues, path, "unresolved_warnings", "accepted warnings must be recorded")
     if decision == "accept" and unresolved:
         _add(issues, path, "unresolved_warnings", "accepted record cannot have warnings")
+    _validate_panel_record_v2_override_reason(root, checks, decision, unresolved, issues, path)
+    return _sorted(issues)
+
+
+def _validate_panel_record_v2_override_reason(
+    root: dict[str, object],
+    checks: object,
+    decision: object,
+    unresolved: list[str] | None,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
     override_reason = root.get("override_reason")
     if "override_reason" in root:
         _narrative_field(
@@ -1427,7 +1439,6 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
                 "override_reason",
                 "must also appear in unresolved_warnings",
             )
-    return _sorted(issues)
 
 
 def _validate_panel_override_consistency(
