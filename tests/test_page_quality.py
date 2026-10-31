@@ -921,6 +921,68 @@ class BalloonPlacementQualityTests(unittest.TestCase):
             check["regions"],
         )
 
+    def test_crossing_dialogue_tails_fail_text_overlap(self):
+        project = self._fresh_project()
+        first_box = {"x": 20, "y": 20, "width": 100, "height": 80}
+        second_box = {"x": 220, "y": 20, "width": 100, "height": 80}
+
+        def straight_tail(start_x, end_x, y):
+            delta = end_x - start_x
+            first_control_x = start_x + delta / 3
+            second_control_x = start_x + delta * 2 / 3
+            return {
+                "attachment": [start_x, y],
+                "base": [[start_x, y - 4], [start_x, y + 4]],
+                "control": [
+                    [[first_control_x, y - 4], [second_control_x, y - 4]],
+                    [[first_control_x, y + 4], [second_control_x, y + 4]],
+                ],
+                "source_gap": 1.0,
+                "speaker_anchor": [0.75, 0.7],
+                "tip": [end_x, y],
+                "voice_source": "human",
+            }
+
+        apply_balloon_layout(
+            project,
+            {
+                "panels": {
+                    "p01-02": {
+                        "replace": {
+                            "p01-02-t01": {
+                                "box": first_box,
+                                "tail_fields": straight_tail(120, 180, 60),
+                            }
+                        },
+                        "append": [
+                            {
+                                "box": second_box,
+                                "id": "p01-02-t02",
+                                "kind": "dialogue",
+                                "reading_order": 2,
+                                "tail": straight_tail(220, 160, 60),
+                            }
+                        ],
+                    }
+                }
+            },
+        )
+
+        check = self._checks(project)["text-overlap"]
+
+        self.assertEqual("fail", check["result"])
+        self.assertEqual(
+            [
+                {
+                    "items": ["p01-02-t01", "p01-02-t02"],
+                    "overlap_area": 0,
+                    "overlap_ratio": 0.0,
+                    "panel_id": "p01-02",
+                }
+            ],
+            check["regions"],
+        )
+
     def test_tail_geometry_is_verified_against_the_authored_speaker(self):
         cases = (
             ("bad-tail-points-away.json", "tail-does-not-point-at-speaker"),

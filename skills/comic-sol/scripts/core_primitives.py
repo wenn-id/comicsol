@@ -266,6 +266,123 @@ def _tail_intersects_ellipse(tail: object, rectangle: Rectangle) -> bool:
     return polygon is not None and _polygon_intersects_ellipse(polygon, rectangle)
 
 
+def _orientation(first: Point, second: Point, third: Point) -> float:
+    return (second[0] - first[0]) * (third[1] - first[1]) - (second[1] - first[1]) * (
+        third[0] - first[0]
+    )
+
+
+def _orientation_sign(first: Point, second: Point, third: Point) -> int:
+    value = _orientation(first, second, third)
+    scale = max(
+        1.0,
+        abs(first[0]),
+        abs(first[1]),
+        abs(second[0]),
+        abs(second[1]),
+        abs(third[0]),
+        abs(third[1]),
+    )
+    tolerance = 1e-9 * scale * max(1.0, math.hypot(second[0] - first[0], second[1] - first[1]))
+    if value > tolerance:
+        return 1
+    if value < -tolerance:
+        return -1
+    return 0
+
+
+def _point_on_segment(point: Point, start: Point, end: Point) -> bool:
+    tolerance = 1e-9 * max(
+        1.0, abs(point[0]), abs(point[1]), abs(start[0]), abs(start[1]), abs(end[0]), abs(end[1])
+    )
+    return (
+        _orientation_sign(start, end, point) == 0
+        and min(start[0], end[0]) - tolerance <= point[0] <= max(start[0], end[0]) + tolerance
+        and min(start[1], end[1]) - tolerance <= point[1] <= max(start[1], end[1]) + tolerance
+    )
+
+
+def _segments_intersect(
+    first_start: Point, first_end: Point, second_start: Point, second_end: Point
+) -> bool:
+    first_to_second_start = _orientation_sign(first_start, first_end, second_start)
+    first_to_second_end = _orientation_sign(first_start, first_end, second_end)
+    second_to_first_start = _orientation_sign(second_start, second_end, first_start)
+    second_to_first_end = _orientation_sign(second_start, second_end, first_end)
+    if (
+        first_to_second_start * first_to_second_end < 0
+        and second_to_first_start * second_to_first_end < 0
+    ):
+        return True
+    return (
+        (first_to_second_start == 0 and _point_on_segment(second_start, first_start, first_end))
+        or (first_to_second_end == 0 and _point_on_segment(second_end, first_start, first_end))
+        or (second_to_first_start == 0 and _point_on_segment(first_start, second_start, second_end))
+        or (second_to_first_end == 0 and _point_on_segment(first_end, second_start, second_end))
+    )
+
+
+def _polygon_contains_point(point: Point, polygon: Sequence[Point]) -> bool:
+    inside = False
+    previous = polygon[-1]
+    for current in polygon:
+        if _point_on_segment(point, previous, current):
+            return True
+        if (previous[1] > point[1]) != (current[1] > point[1]):
+            crossing_x = previous[0] + (current[0] - previous[0]) * (point[1] - previous[1]) / (
+                current[1] - previous[1]
+            )
+            if crossing_x > point[0]:
+                inside = not inside
+        previous = current
+    return inside
+
+
+def _polygons_intersect(first: Sequence[Point], second: Sequence[Point]) -> bool:
+    if (
+        len(first) < 3
+        or len(second) < 3
+        or any(not is_geometry_point(point) for point in (*first, *second))
+    ):
+        return False
+    first_left = min(point[0] for point in first)
+    first_right = max(point[0] for point in first)
+    first_top = min(point[1] for point in first)
+    first_bottom = max(point[1] for point in first)
+    second_left = min(point[0] for point in second)
+    second_right = max(point[0] for point in second)
+    second_top = min(point[1] for point in second)
+    second_bottom = max(point[1] for point in second)
+    if (
+        first_right < second_left
+        or second_right < first_left
+        or first_bottom < second_top
+        or second_bottom < first_top
+    ):
+        return False
+    first_edges = tuple(zip(first, (*first[1:], first[0]), strict=True))
+    second_edges = tuple(zip(second, (*second[1:], second[0]), strict=True))
+    if any(
+        _segments_intersect(first_start, first_end, second_start, second_end)
+        for first_start, first_end in first_edges
+        for second_start, second_end in second_edges
+    ):
+        return True
+    return _polygon_contains_point(first[0], second) or _polygon_contains_point(second[0], first)
+
+
+def _tail_intersects_tail(first_tail: object, second_tail: object) -> bool:
+    if not isinstance(first_tail, Mapping) or not isinstance(second_tail, Mapping):
+        return False
+    first_polygon = _tail_polygon(first_tail)
+    second_polygon = _tail_polygon(second_tail)
+    return (
+        first_polygon is not None
+        and second_polygon is not None
+        and _polygons_intersect(first_polygon, second_polygon)
+    )
+
+
 def rectangle_separation(first: Rectangle, second: Rectangle) -> float:
     """Return the shortest gap between two rectangles, zero when they touch."""
     ax, ay, aw, ah = _rectangle_values(first)

@@ -25,6 +25,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 from .comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json, sha256_file
 from .core_primitives import (
     _tail_intersects_ellipse,
+    _tail_intersects_tail,
     _tail_polygon,
     dialogue_attribution_conflicts,
     rectangles_overlap,
@@ -1087,6 +1088,7 @@ def letter_panel(
         font = None
         selected_anchor = None
         selected_tail_geometry = None
+        last_tail_error: ValueError | None = None
         for offset in range(len(ANCHORS)):
             candidate_anchor = ANCHORS[(start + offset) % len(ANCHORS)]
             candidate = _anchor_rect(candidate_anchor, panel_width, panel_height)
@@ -1115,13 +1117,21 @@ def letter_panel(
                         panel_height,
                         voice_source,
                     )
-                except ValueError:
+                except ValueError as error:
+                    last_tail_error = error
                     continue
             if candidate_tail_geometry is not None and any(
                 prior_kind == "dialogue"
                 and prior_tail is not None
                 and _tail_intersects_ellipse(candidate_tail_geometry, prior_box)
                 for prior_box, prior_kind, prior_tail in occupied
+            ):
+                continue
+            if candidate_tail_geometry is not None and any(
+                prior_kind == "dialogue"
+                and prior_tail is not None
+                and _tail_intersects_tail(candidate_tail_geometry, prior_tail)
+                for _, prior_kind, prior_tail in occupied
             ):
                 continue
             if item.get("kind") == "dialogue" and any(
@@ -1137,9 +1147,12 @@ def letter_panel(
             selected_tail_geometry = candidate_tail_geometry
             break
         if rect is None:
-            raise ValueError(
+            placement_error = ValueError(
                 f"text item {item.get('id', 'unknown')} has no non-overlapping placement"
             )
+            if last_tail_error is not None:
+                raise placement_error from last_tail_error
+            raise placement_error
         assert font is not None
         assert selected_anchor is not None
         render_text_item(draw, item, rect, font, character_bible, canvas=canvas)

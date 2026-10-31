@@ -22,6 +22,7 @@ from .core_primitives import (
     BALLOON_COVERAGE_WARNING_RATIO,
     TAIL_ATTACHMENT_TOLERANCE,
     _tail_intersects_ellipse,
+    _tail_intersects_tail,
     balloon_outline_deviation,
     balloon_separation_minimum,
     balloon_subject_clearance,
@@ -711,6 +712,8 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
                         tail_intersections.append(item_id)
                     if _tail_intersects_ellipse(prior_tail, box):
                         tail_intersections.append(prior_id)
+                    if _tail_intersects_tail(item.get("tail"), prior_tail):
+                        tail_intersections.extend((prior_id, item_id))
                 if shared <= 0 and not tail_intersections:
                     continue
                 smallest = min(
@@ -764,7 +767,7 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
         (
             "text-overlap",
             overlap_regions,
-            "No lettering boxes overlap and no dialogue tail crosses another dialogue balloon.",
+            "No lettering boxes overlap, and dialogue tails avoid other dialogue balloons and tails.",
         ),
         (
             "reading-order",
