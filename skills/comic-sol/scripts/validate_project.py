@@ -1691,29 +1691,11 @@ def _read_canonical_json(
     return data
 
 
-def validate_panel_provenance(
-    project_dir: Path,
-    record: dict[str, object],
-) -> tuple[ValidationIssue, ...]:
-    """Recompute schema-2.0 panel bindings and reject stale provenance."""
-    panel_id = record.get("subject_id")
-    record_path = f"qa/panels/{panel_id if isinstance(panel_id, str) else 'unknown'}.json"
-    issues: list[ValidationIssue] = []
-    bindings = record.get("bindings")
-
-    def stale(field: str, detail: str) -> None:
-        """Report whether a panel quality record is stale."""
-        _add(
-            issues,
-            record_path,
-            f"bindings.{field}",
-            f"quality-record-stale: {detail}",
-        )
-
-    if not isinstance(bindings, dict):
-        stale("bindings", "bindings object is missing")
-        return tuple(_sorted(issues))
-
+def _validate_panel_binding_requirements(
+    panel_id: object,
+    bindings: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
     required = {
         "raw_path",
         "raw_sha256",
@@ -1739,6 +1721,12 @@ def validate_panel_provenance(
             if bindings.get(field) != expected:
                 stale(field, "binding does not match the canonical panel path")
 
+
+def _resolve_panel_provenance_artifacts(
+    project_dir: Path,
+    bindings: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> dict[str, Path]:
     resolved: dict[str, Path] = {}
     for prefix in ("raw", "clean", "normalization"):
         path_field = f"{prefix}_path"
@@ -1763,7 +1751,14 @@ def validate_panel_provenance(
             stale(digest_field, "bound SHA-256 is invalid")
         elif sha256_file(path) != expected_digest:
             stale(digest_field, "bound SHA-256 does not match current bytes")
+    return resolved
 
+
+def _validate_panel_provenance_rasters(
+    bindings: dict[str, object],
+    resolved: dict[str, Path],
+    stale: Callable[[str, str], None],
+) -> None:
     for prefix in ("raw", "clean"):
         raster_path = resolved.get(prefix)
         if raster_path is None:
@@ -1790,49 +1785,109 @@ def validate_panel_provenance(
             if field in bindings and bindings.get(field) != actual:
                 stale(field, f"recorded {axis} does not match current raster")
 
-    normalization_path = resolved.get("normalization")
-    if normalization_path is not None:
-        try:
-            normalization = loads_bounded_json(
-                read_bytes_nofollow(normalization_path, max_bytes=MAX_JSON_BYTES),
-                source="normalization record",
+
+def _read_panel_normalization_record(
+    normalization_path: Path,
+    stale: Callable[[str, str], None],
+) -> dict[str, object] | None:
+    try:
+        normalization = loads_bounded_json(
+            read_bytes_nofollow(normalization_path, max_bytes=MAX_JSON_BYTES),
+            source="normalization record",
+        )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        stale("normalization_path", "normalization record is unreadable")
+        return None
+    if not isinstance(normalization, dict):
+        stale("normalization_path", "normalization record must be an object")
+        return None
+    return normalization
+
+
+def _validate_panel_normalization_sizes(
+    bindings: dict[str, object],
+    source: dict[str, object],
+    clean: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    for prefix, size in (
+        ("raw", source.get("size")),
+        ("clean", clean.get("size")),
+    ):
+        if not isinstance(size, list) or len(size) != 2:
+            stale(
+                "normalization_path",
+                f"normalization {prefix} size is invalid",
             )
-        except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
-            stale("normalization_path", "normalization record is unreadable")
-        else:
-            if not isinstance(normalization, dict):
-                stale("normalization_path", "normalization record must be an object")
-            else:
-                source = normalization.get("source")
-                clean = normalization.get("clean")
-                if not isinstance(source, dict) or not isinstance(clean, dict):
-                    stale("normalization_path", "normalization record structure is invalid")
-                else:
-                    for field, normalized_value in (
-                        ("raw_path", source.get("path")),
-                        ("raw_sha256", source.get("sha256")),
-                        ("clean_path", clean.get("path")),
-                        ("clean_sha256", clean.get("sha256")),
-                    ):
-                        if bindings.get(field) != normalized_value:
-                            stale(field, "binding disagrees with normalization record")
-                    for prefix, size in (
-                        ("raw", source.get("size")),
-                        ("clean", clean.get("size")),
-                    ):
-                        if not isinstance(size, list) or len(size) != 2:
-                            stale(
-                                "normalization_path",
-                                f"normalization {prefix} size is invalid",
-                            )
-                            continue
-                        for axis, actual in zip(("width", "height"), size):
-                            field = f"{prefix}_{axis}"
-                            if field in bindings and bindings.get(field) != actual:
-                                stale(
-                                    field,
-                                    "binding disagrees with normalization record",
-                                )
+            continue
+        for axis, actual in zip(("width", "height"), size):
+            field = f"{prefix}_{axis}"
+            if field in bindings and bindings.get(field) != actual:
+                stale(
+                    field,
+                    "binding disagrees with normalization record",
+                )
+
+
+def _validate_panel_normalization_structure(
+    bindings: dict[str, object],
+    normalization: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    source = normalization.get("source")
+    clean = normalization.get("clean")
+    if not isinstance(source, dict) or not isinstance(clean, dict):
+        stale("normalization_path", "normalization record structure is invalid")
+        return
+    for field, normalized_value in (
+        ("raw_path", source.get("path")),
+        ("raw_sha256", source.get("sha256")),
+        ("clean_path", clean.get("path")),
+        ("clean_sha256", clean.get("sha256")),
+    ):
+        if bindings.get(field) != normalized_value:
+            stale(field, "binding disagrees with normalization record")
+    _validate_panel_normalization_sizes(bindings, source, clean, stale)
+
+
+def _validate_panel_normalization_binding(
+    bindings: dict[str, object],
+    normalization_path: Path | None,
+    stale: Callable[[str, str], None],
+) -> None:
+    if normalization_path is None:
+        return
+    normalization = _read_panel_normalization_record(normalization_path, stale)
+    if normalization is not None:
+        _validate_panel_normalization_structure(bindings, normalization, stale)
+
+
+def validate_panel_provenance(
+    project_dir: Path,
+    record: dict[str, object],
+) -> tuple[ValidationIssue, ...]:
+    """Recompute schema-2.0 panel bindings and reject stale provenance."""
+    panel_id = record.get("subject_id")
+    record_path = f"qa/panels/{panel_id if isinstance(panel_id, str) else 'unknown'}.json"
+    issues: list[ValidationIssue] = []
+    bindings = record.get("bindings")
+
+    def stale(field: str, detail: str) -> None:
+        """Report whether a panel quality record is stale."""
+        _add(
+            issues,
+            record_path,
+            f"bindings.{field}",
+            f"quality-record-stale: {detail}",
+        )
+
+    if not isinstance(bindings, dict):
+        stale("bindings", "bindings object is missing")
+        return tuple(_sorted(issues))
+    _validate_panel_binding_requirements(panel_id, bindings, stale)
+    resolved = _resolve_panel_provenance_artifacts(project_dir, bindings, stale)
+    _validate_panel_provenance_rasters(bindings, resolved, stale)
+    _validate_panel_normalization_binding(bindings, resolved.get("normalization"), stale)
     return tuple(_sorted(issues))
 
 
