@@ -91,6 +91,54 @@ class TypographyPreflightTests(unittest.TestCase):
         self.assertIn("U+00C9", codepoints)
         self.assertNotIn("U+0301", codepoints)
 
+    def test_cyrillic_combining_acute_uses_base_face_for_dialogue_and_caption(self):
+        content = "Приве\u0301т"
+        for kind in ("dialogue", "caption"):
+            with self.subTest(kind=kind):
+                result = preflight_text_items([item(content, kind=kind)], FONT_POLICY)
+
+                self.assertEqual("pass", result["status"])
+                unaccented = preflight_text_items([item("Привет", kind=kind)], FONT_POLICY)
+                self.assertEqual("pass", unaccented["status"])
+                base_character = "Е" if kind == "dialogue" else "е"
+                base_font = next(
+                    entry["font_id"]
+                    for entry in result["glyphs"]
+                    if entry["character"] == base_character
+                )
+                mark_font = next(
+                    entry["font_id"] for entry in result["glyphs"] if entry["codepoint"] == "U+0301"
+                )
+                self.assertEqual("NotoSans-Regular.ttf", base_font)
+                self.assertEqual(base_font, mark_font)
+
+    def test_renderer_keeps_cyrillic_combining_mark_with_base_face(self):
+        content = "Приве\u0301т"
+        for kind in ("dialogue", "caption"):
+            with self.subTest(kind=kind):
+                displayed = typography.display_content(kind, content)
+                runs = letter_panels._font_runs(displayed, 32)
+                glyph_faces = [
+                    (character, Path(font.path).name) for text, font in runs for character in text
+                ]
+                base_character = "Е" if kind == "dialogue" else "е"
+                base_face = next(
+                    face for character, face in glyph_faces if character == base_character
+                )
+                mark_face = next(face for character, face in glyph_faces if character == "\u0301")
+                self.assertEqual("NotoSans-Regular.ttf", base_face)
+                self.assertEqual(base_face, mark_face)
+
+        regular = letter_panels._load_font(32)
+        styled_runs = letter_panels._styled_font_runs("е**\u0301**", regular)
+        styled_faces = [
+            (character, Path(font.path).name) for text, font in styled_runs for character in text
+        ]
+        self.assertEqual(
+            next(face for character, face in styled_faces if character == "е"),
+            next(face for character, face in styled_faces if character == "\u0301"),
+        )
+
     def test_whitespace_and_controls_have_explicit_non_glyph_policy(self):
         result = preflight_text_items([item("A\t B\nC\x00D", kind="caption")], FONT_POLICY)
 
