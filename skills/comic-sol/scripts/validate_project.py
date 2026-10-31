@@ -3525,77 +3525,7 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
 
     # Fail-closed artifact enumeration for terminal / export-ready stages.
     if stage in {"all", "final", "export-ready"} and manifest is not None:
-        settings = manifest.get("settings")
-        page_count_value = settings.get("page_count") if isinstance(settings, dict) else 0
-        page_count = (
-            page_count_value
-            if isinstance(page_count_value, int) and not isinstance(page_count_value, bool)
-            else 0
-        )
-        # An out-of-range page_count is already reported above. Enumerating it
-        # anyway would let a corrupt manifest drive unbounded filesystem work.
-        page_count = max(0, min(page_count, MAX_PAGES))
-        panels = manifest.get("panels", [])
-        if not isinstance(panels, list):
-            panels = []
-        panels = panels[:MAX_PANELS]
-
-        _validate_required_artifacts(
-            project_dir,
-            manifest,
-            page_count,
-            panels,
-            issues,
-            require_terminal=(stage != "export-ready"),
-        )
-
-        _validate_page_qa_artifacts(project_dir, page_count, issues)
-
-        # Lettered panels and their current typography/geometry provenance.
-        for panel_id in panels:
-            lettered_relative = f"panels/{panel_id}/lettered.png"
-            try:
-                lettered = contained_project_path(project_dir, lettered_relative)
-            except (OSError, ValueError):
-                _add(
-                    issues,
-                    lettered_relative,
-                    "",
-                    "lettered panel path escapes the project boundary",
-                )
-                continue
-            if not lettered.is_file():
-                _add(issues, f"panels/{panel_id}/lettered.png", "", "lettered panel is missing")
-            issues.extend(validate_lettering_provenance(project_dir, panel_id))
-
-        # export-ready does not require report, PDF, or export cache.
-        if stage != "export-ready":
-            report_path = project_dir / "qa/report.md"
-            if not report_path.is_file():
-                _add(issues, "qa/report.md", "", "QA report is missing")
-
-            project_id = manifest.get("project_id")
-            if isinstance(project_id, str) and project_id:
-                pdf_relative = f"exports/{project_id}.pdf"
-                try:
-                    pdf_path = contained_project_path(project_dir, pdf_relative)
-                except (OSError, ValueError):
-                    _add(
-                        issues,
-                        "project.json",
-                        "project_id",
-                        "exported PDF path escapes the project boundary",
-                    )
-                    pdf_path = None
-                if pdf_path is not None:
-                    if not pdf_path.is_file():
-                        _add(issues, f"exports/{project_id}.pdf", "", "exported PDF is missing")
-                    issues.extend(validate_pdf_verification(project_dir, project_id, page_count))
-
-        # Composition cache required.
-        comp_cache = project_dir / "cache/composition.json"
-        if not comp_cache.is_file():
-            _add(issues, "cache/composition.json", "", "composition stage cache is missing")
+        _validate_terminal_artifacts(project_dir, manifest, stage, issues)
 
     return _sorted(issues)
 
@@ -3634,6 +3564,103 @@ def _validate_required_artifacts(
         descriptor = artifacts.get(name)
         if isinstance(descriptor, dict) and descriptor.get("path") != expected:
             _add(issues, "project.json", f"artifacts.{name}.path", f"must equal {expected}")
+
+
+def _terminal_artifact_bounds(manifest: dict[str, object]) -> tuple[int, list[str]]:
+    settings = manifest.get("settings")
+    page_count_value = settings.get("page_count") if isinstance(settings, dict) else 0
+    page_count = (
+        page_count_value
+        if isinstance(page_count_value, int) and not isinstance(page_count_value, bool)
+        else 0
+    )
+    # An out-of-range page_count is already reported above. Enumerating it
+    # anyway would let a corrupt manifest drive unbounded filesystem work.
+    page_count = max(0, min(page_count, MAX_PAGES))
+    panels = manifest.get("panels", [])
+    if not isinstance(panels, list):
+        panels = []
+    panels = panels[:MAX_PANELS]
+    return page_count, panels
+
+
+def _validate_terminal_lettered_panels(
+    project_dir: Path,
+    panels: list[str],
+    issues: list[ValidationIssue],
+) -> None:
+    for panel_id in panels:
+        lettered_relative = f"panels/{panel_id}/lettered.png"
+        try:
+            lettered = contained_project_path(project_dir, lettered_relative)
+        except (OSError, ValueError):
+            _add(
+                issues,
+                lettered_relative,
+                "",
+                "lettered panel path escapes the project boundary",
+            )
+            continue
+        if not lettered.is_file():
+            _add(issues, f"panels/{panel_id}/lettered.png", "", "lettered panel is missing")
+        issues.extend(validate_lettering_provenance(project_dir, panel_id))
+
+
+def _validate_terminal_report_and_pdf(
+    project_dir: Path,
+    manifest: dict[str, object],
+    page_count: int,
+    stage: str,
+    issues: list[ValidationIssue],
+) -> None:
+    if stage != "export-ready":
+        report_path = project_dir / "qa/report.md"
+        if not report_path.is_file():
+            _add(issues, "qa/report.md", "", "QA report is missing")
+
+        project_id = manifest.get("project_id")
+        if isinstance(project_id, str) and project_id:
+            pdf_relative = f"exports/{project_id}.pdf"
+            try:
+                pdf_path = contained_project_path(project_dir, pdf_relative)
+            except (OSError, ValueError):
+                _add(
+                    issues,
+                    "project.json",
+                    "project_id",
+                    "exported PDF path escapes the project boundary",
+                )
+                pdf_path = None
+            if pdf_path is not None:
+                if not pdf_path.is_file():
+                    _add(issues, f"exports/{project_id}.pdf", "", "exported PDF is missing")
+                issues.extend(validate_pdf_verification(project_dir, project_id, page_count))
+
+
+def _validate_terminal_artifacts(
+    project_dir: Path,
+    manifest: dict[str, object],
+    stage: str,
+    issues: list[ValidationIssue],
+) -> None:
+    page_count, panels = _terminal_artifact_bounds(manifest)
+    _validate_required_artifacts(
+        project_dir,
+        manifest,
+        page_count,
+        panels,
+        issues,
+        require_terminal=(stage != "export-ready"),
+    )
+    _validate_page_qa_artifacts(project_dir, page_count, issues)
+    # Lettered panels and their current typography/geometry provenance.
+    _validate_terminal_lettered_panels(project_dir, panels, issues)
+    # export-ready does not require report, PDF, or export cache.
+    _validate_terminal_report_and_pdf(project_dir, manifest, page_count, stage, issues)
+    # Composition cache required.
+    comp_cache = project_dir / "cache/composition.json"
+    if not comp_cache.is_file():
+        _add(issues, "cache/composition.json", "", "composition stage cache is missing")
 
 
 class _ValidationArgumentParser(argparse.ArgumentParser):
