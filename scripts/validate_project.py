@@ -1418,35 +1418,11 @@ def _validate_panel_record_v2_bindings(
             _integer(bindings.get(name), 1, 100_000, issues, path, f"bindings.{name}")
 
 
-def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
-    """Validate a schema-v2 panel quality record."""
-    panel_name = data.get("subject_id") if isinstance(data, dict) else "unknown"
-    path = f"qa/panels/{panel_name}.json"
-    issues: list[ValidationIssue] = []
-    required_fields = {
-        "schema_version",
-        "kind",
-        "subject_id",
-        "bindings",
-        "checks",
-        "review",
-        "decision",
-        "unresolved_warnings",
-    }
-    fields = required_fields | {"override_reason"}
-    root = _object(data, fields, required_fields, issues, path, "")
-    if root is None:
-        return _sorted(issues)
-    if root.get("schema_version") != "2.0":
-        _add(issues, path, "schema_version", "must equal 2.0")
-    if root.get("kind") != "panel-qa":
-        _add(issues, path, "kind", "must equal panel-qa")
-    subject_id = root.get("subject_id")
-    if not isinstance(subject_id, str) or PANEL_ID_PATTERN.fullmatch(subject_id) is None:
-        _add(issues, path, "subject_id", "must match pNN-NN")
-
-    _validate_panel_record_v2_bindings(root, subject_id, issues, path)
-
+def _validate_panel_record_v2_checks(
+    root: dict[str, object],
+    issues: list[ValidationIssue],
+    path: str,
+) -> object:
     checks = root.get("checks")
     for category in validate_quality_checks(checks, PANEL_CHECK_IDS):
         _add(issues, path, f"checks.{category}", category)
@@ -1474,14 +1450,15 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
                 continue
             for category in validate_defect_regions(check):
                 _add(issues, path, f"checks.{check.get('id')}.{category}", category)
+    return checks
 
-    review_fields = {"method", "reviewer", "reviewed_at"}
-    review = _object(root.get("review"), review_fields, review_fields, issues, path, "review")
-    if review is not None:
-        _nonempty_string(review.get("method"), issues, path, "review.method")
-        _nonempty_string(review.get("reviewer"), issues, path, "review.reviewer")
-        _timestamp(review.get("reviewed_at"), issues, path, "review.reviewed_at")
 
+def _validate_panel_record_v2_decision(
+    root: dict[str, object],
+    checks: object,
+    issues: list[ValidationIssue],
+    path: str,
+) -> tuple[object, list[str] | None]:
     decision = root.get("decision")
     if decision not in {"accept", "accept-warning", "regenerate"}:
         _add(issues, path, "decision", "unknown quality decision")
@@ -1511,6 +1488,48 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
         _add(issues, path, "unresolved_warnings", "accepted warnings must be recorded")
     if decision == "accept" and unresolved:
         _add(issues, path, "unresolved_warnings", "accepted record cannot have warnings")
+    return decision, unresolved
+
+
+def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
+    """Validate a schema-v2 panel quality record."""
+    panel_name = data.get("subject_id") if isinstance(data, dict) else "unknown"
+    path = f"qa/panels/{panel_name}.json"
+    issues: list[ValidationIssue] = []
+    required_fields = {
+        "schema_version",
+        "kind",
+        "subject_id",
+        "bindings",
+        "checks",
+        "review",
+        "decision",
+        "unresolved_warnings",
+    }
+    fields = required_fields | {"override_reason"}
+    root = _object(data, fields, required_fields, issues, path, "")
+    if root is None:
+        return _sorted(issues)
+    if root.get("schema_version") != "2.0":
+        _add(issues, path, "schema_version", "must equal 2.0")
+    if root.get("kind") != "panel-qa":
+        _add(issues, path, "kind", "must equal panel-qa")
+    subject_id = root.get("subject_id")
+    if not isinstance(subject_id, str) or PANEL_ID_PATTERN.fullmatch(subject_id) is None:
+        _add(issues, path, "subject_id", "must match pNN-NN")
+
+    _validate_panel_record_v2_bindings(root, subject_id, issues, path)
+
+    checks = _validate_panel_record_v2_checks(root, issues, path)
+
+    review_fields = {"method", "reviewer", "reviewed_at"}
+    review = _object(root.get("review"), review_fields, review_fields, issues, path, "review")
+    if review is not None:
+        _nonempty_string(review.get("method"), issues, path, "review.method")
+        _nonempty_string(review.get("reviewer"), issues, path, "review.reviewer")
+        _timestamp(review.get("reviewed_at"), issues, path, "review.reviewed_at")
+
+    decision, unresolved = _validate_panel_record_v2_decision(root, checks, issues, path)
     _validate_panel_record_v2_override_reason(root, checks, decision, unresolved, issues, path)
     return _sorted(issues)
 
