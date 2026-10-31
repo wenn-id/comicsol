@@ -3567,6 +3567,95 @@ def _validate_legacy_panel_source_references(
             )
 
 
+def _validate_raster_hash_binding(
+    project_dir: Path,
+    relative_path: object,
+    expected_hash: object,
+    issue_path: str,
+    field: str,
+    message: str,
+    issues: list[ValidationIssue],
+) -> None:
+    if isinstance(relative_path, str) and isinstance(expected_hash, str):
+        try:
+            image_path = _contained_project_path(project_dir, relative_path)
+        except ValueError:
+            pass
+        else:
+            if image_path.is_file() and SHA256_PATTERN.fullmatch(expected_hash):
+                image_path = contained_project_path(project_dir, relative_path, must_exist=True)
+                if sha256_file(image_path) != expected_hash:
+                    _add(issues, issue_path, field, message)
+
+
+def _validate_panel_raster_bindings(
+    project_dir: Path,
+    panel: dict[str, object],
+    record_relative: str,
+    record: dict[str, object],
+    is_quality_v2: bool,
+    bindings: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    rect = panel.get("rect")
+    expected_ratio = None
+    if (
+        isinstance(rect, dict)
+        and isinstance(rect.get("width"), int)
+        and isinstance(rect.get("height"), int)
+        and rect["height"] > 0
+    ):
+        expected_ratio = rect["width"] / rect["height"]
+    raw_path = bindings.get("raw_path") if is_quality_v2 else record.get("raw_path")
+    clean_path = bindings.get("clean_path") if is_quality_v2 else record.get("clean_path")
+    raw_size = _validate_raster(
+        project_dir,
+        raw_path,
+        record_relative,
+        "bindings.raw_path" if is_quality_v2 else "raw_path",
+        issues,
+        expected_ratio,
+    )
+    _validate_raster(
+        project_dir,
+        clean_path,
+        record_relative,
+        "bindings.clean_path" if is_quality_v2 else "clean_path",
+        issues,
+        expected_ratio,
+    )
+    if raw_size is not None and not is_quality_v2:
+        dimensions = record.get("dimensions")
+        if (
+            isinstance(dimensions, dict)
+            and (dimensions.get("width"), dimensions.get("height")) != raw_size
+        ):
+            _add(issues, record_relative, "dimensions", "must match the raw image")
+    raw_hash = bindings.get("raw_sha256") if is_quality_v2 else record.get("raw_sha256")
+    _validate_raster_hash_binding(
+        project_dir,
+        raw_path,
+        raw_hash,
+        record_relative,
+        "bindings.raw_sha256" if is_quality_v2 else "raw_sha256",
+        "hash does not match the raw image",
+        issues,
+    )
+    clean_hash = bindings.get("clean_sha256") if is_quality_v2 else None
+    _validate_raster_hash_binding(
+        project_dir,
+        clean_path,
+        clean_hash,
+        record_relative,
+        "bindings.clean_sha256",
+        "hash does not match the clean image",
+        issues,
+    )
+    _validate_legacy_panel_source_references(
+        project_dir, record_relative, record, is_quality_v2, issues
+    )
+
+
 def _validate_storyboard_manifest_consistency(
     storyboard: dict[str, object],
     manifest: dict[str, object],
@@ -3721,77 +3810,14 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
             if record_panel_id != panel_id:
                 id_field = "subject_id" if is_quality_v2 else "panel_id"
                 _add(issues, record_relative, id_field, "must match its storyboard panel")
-            rect = panel.get("rect")
-            expected_ratio = None
-            if (
-                isinstance(rect, dict)
-                and isinstance(rect.get("width"), int)
-                and isinstance(rect.get("height"), int)
-                and rect["height"] > 0
-            ):
-                expected_ratio = rect["width"] / rect["height"]
-            raw_path = bindings.get("raw_path") if is_quality_v2 else record.get("raw_path")
-            clean_path = bindings.get("clean_path") if is_quality_v2 else record.get("clean_path")
-            raw_size = _validate_raster(
+            _validate_panel_raster_bindings(
                 project_dir,
-                raw_path,
+                panel,
                 record_relative,
-                "bindings.raw_path" if is_quality_v2 else "raw_path",
+                record,
+                is_quality_v2,
+                bindings,
                 issues,
-                expected_ratio,
-            )
-            _validate_raster(
-                project_dir,
-                clean_path,
-                record_relative,
-                "bindings.clean_path" if is_quality_v2 else "clean_path",
-                issues,
-                expected_ratio,
-            )
-            if raw_size is not None and not is_quality_v2:
-                dimensions = record.get("dimensions")
-                if (
-                    isinstance(dimensions, dict)
-                    and (dimensions.get("width"), dimensions.get("height")) != raw_size
-                ):
-                    _add(issues, record_relative, "dimensions", "must match the raw image")
-            raw_hash = bindings.get("raw_sha256") if is_quality_v2 else record.get("raw_sha256")
-            if isinstance(raw_path, str) and isinstance(raw_hash, str):
-                try:
-                    image_path = _contained_project_path(project_dir, raw_path)
-                except ValueError:
-                    pass
-                else:
-                    if image_path.is_file() and SHA256_PATTERN.fullmatch(raw_hash):
-                        image_path = contained_project_path(project_dir, raw_path, must_exist=True)
-                        if sha256_file(image_path) != raw_hash:
-                            hash_field = "bindings.raw_sha256" if is_quality_v2 else "raw_sha256"
-                            _add(
-                                issues,
-                                record_relative,
-                                hash_field,
-                                "hash does not match the raw image",
-                            )
-            clean_hash = bindings.get("clean_sha256") if is_quality_v2 else None
-            if is_quality_v2 and isinstance(clean_path, str) and isinstance(clean_hash, str):
-                try:
-                    clean_file = _contained_project_path(project_dir, clean_path)
-                except ValueError:
-                    pass
-                else:
-                    if clean_file.is_file() and SHA256_PATTERN.fullmatch(clean_hash):
-                        clean_file = contained_project_path(
-                            project_dir, clean_path, must_exist=True
-                        )
-                        if sha256_file(clean_file) != clean_hash:
-                            _add(
-                                issues,
-                                record_relative,
-                                "bindings.clean_sha256",
-                                "hash does not match the clean image",
-                            )
-            _validate_legacy_panel_source_references(
-                project_dir, record_relative, record, is_quality_v2, issues
             )
         if manifest is not None:
             _validate_manifest_source_binding(project_dir, manifest, issues)
