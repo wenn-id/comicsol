@@ -3492,6 +3492,44 @@ def _validate_manifest_source_binding(
                     )
 
 
+def _validate_legacy_panel_source_references(
+    project_dir: Path,
+    record_relative: str,
+    record: dict[str, object],
+    is_quality_v2: bool,
+    issues: list[ValidationIssue],
+) -> None:
+    prompt_path = None if is_quality_v2 else record.get("source_prompt_path")
+    if isinstance(prompt_path, str):
+        try:
+            prompt_file = _contained_project_path(project_dir, prompt_path)
+        except ValueError:
+            _add(
+                issues,
+                record_relative,
+                "source_prompt_path",
+                "referenced prompt path escapes the project boundary",
+            )
+        else:
+            if not prompt_file.is_file():
+                _add(
+                    issues,
+                    record_relative,
+                    "source_prompt_path",
+                    "referenced prompt is missing",
+                )
+    generation = None if is_quality_v2 else record.get("generation")
+    if isinstance(generation, dict):
+        for reference_index, reference_path in enumerate(generation.get("reference_paths", [])):
+            _validate_raster(
+                project_dir,
+                reference_path,
+                record_relative,
+                f"generation.reference_paths[{reference_index}]",
+                issues,
+            )
+
+
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
     """Validate all artifacts required for a project stage."""
     project_dir = Path(project_dir)
@@ -3707,37 +3745,9 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                                 "bindings.clean_sha256",
                                 "hash does not match the clean image",
                             )
-            prompt_path = None if is_quality_v2 else record.get("source_prompt_path")
-            if isinstance(prompt_path, str):
-                try:
-                    prompt_file = _contained_project_path(project_dir, prompt_path)
-                except ValueError:
-                    _add(
-                        issues,
-                        record_relative,
-                        "source_prompt_path",
-                        "referenced prompt path escapes the project boundary",
-                    )
-                else:
-                    if not prompt_file.is_file():
-                        _add(
-                            issues,
-                            record_relative,
-                            "source_prompt_path",
-                            "referenced prompt is missing",
-                        )
-            generation = None if is_quality_v2 else record.get("generation")
-            if isinstance(generation, dict):
-                for reference_index, reference_path in enumerate(
-                    generation.get("reference_paths", [])
-                ):
-                    _validate_raster(
-                        project_dir,
-                        reference_path,
-                        record_relative,
-                        f"generation.reference_paths[{reference_index}]",
-                        issues,
-                    )
+            _validate_legacy_panel_source_references(
+                project_dir, record_relative, record, is_quality_v2, issues
+            )
         if manifest is not None:
             _validate_manifest_source_binding(project_dir, manifest, issues)
 

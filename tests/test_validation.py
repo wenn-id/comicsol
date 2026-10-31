@@ -2025,6 +2025,33 @@ class ProjectValidationTests(unittest.TestCase):
         self.assertTrue(any("hash" in issue.message for issue in issues), issues)
         self.assertTrue(any("aspect" in issue.message for issue in issues), issues)
 
+    def test_panel_stage_reports_invalid_legacy_source_references(self):
+        self.add_panel_files()
+        record_path = self.project / "qa/panels/p01-01.json"
+        record = read_json(record_path)
+        record["source_prompt_path"] = "../outside.txt"
+        record["generation"]["reference_paths"] = ["references/characters/missing.png"]
+        atomic_write_json(record_path, record)
+
+        issues = validate_project(self.project, "panels")
+
+        self.assertIn(
+            ValidationIssue(
+                "qa/panels/p01-01.json",
+                "source_prompt_path",
+                "referenced prompt path escapes the project boundary",
+            ),
+            issues,
+        )
+        self.assertIn(
+            ValidationIssue(
+                "qa/panels/p01-01.json",
+                "generation.reference_paths[0]",
+                "referenced image is missing",
+            ),
+            issues,
+        )
+
     def test_schema_two_panel_record_clears_migration_issue(self):
         self.add_panel_files()
         canonical_clean = normalize_panel(
