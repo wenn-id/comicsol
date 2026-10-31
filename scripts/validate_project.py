@@ -15,7 +15,7 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable, Never, TypeGuard, cast
+from typing import Any, Callable, Iterable, Never, TypeGuard, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -891,6 +891,32 @@ def _validate_panel_attribution(
         )
 
 
+def _validate_panel_continuity(
+    continuity: list[str],
+    known_characters: set[str],
+    known_scenes: set[Any | None],
+    character_invariants: dict[Any | None, set[Any]],
+    scene_anchors: dict[Any | None, Any],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> None:
+    for continuity_index, anchor in enumerate(continuity):
+        anchor_field = f"{prefix}.continuity[{continuity_index}]"
+        owner, separator, fact = anchor.partition(":")
+        if not separator or not fact.strip() or owner not in known_characters | known_scenes:
+            _add(
+                issues,
+                path,
+                anchor_field,
+                "must reference a known character or scene anchor",
+            )
+        elif owner in character_invariants and fact.strip() not in character_invariants[owner]:
+            _add(issues, path, anchor_field, "must reuse an exact character invariant")
+        elif owner in scene_anchors and fact.strip() != scene_anchors[owner]:
+            _add(issues, path, anchor_field, "must reuse the exact scene continuity anchor")
+
+
 def validate_storyboard(
     data: dict[str, object],
     story: dict[str, object],
@@ -1017,27 +1043,16 @@ def validate_storyboard(
             )
             if len(set(continuity)) != len(continuity):
                 _add(issues, path, f"{prefix}.continuity", "continuity anchors must be unique")
-            for continuity_index, anchor in enumerate(continuity):
-                anchor_field = f"{prefix}.continuity[{continuity_index}]"
-                owner, separator, fact = anchor.partition(":")
-                if (
-                    not separator
-                    or not fact.strip()
-                    or owner not in known_characters | known_scenes
-                ):
-                    _add(
-                        issues,
-                        path,
-                        anchor_field,
-                        "must reference a known character or scene anchor",
-                    )
-                elif (
-                    owner in character_invariants
-                    and fact.strip() not in character_invariants[owner]
-                ):
-                    _add(issues, path, anchor_field, "must reuse an exact character invariant")
-                elif owner in scene_anchors and fact.strip() != scene_anchors[owner]:
-                    _add(issues, path, anchor_field, "must reuse the exact scene continuity anchor")
+            _validate_panel_continuity(
+                continuity,
+                known_characters,
+                known_scenes,
+                character_invariants,
+                scene_anchors,
+                issues,
+                path,
+                prefix,
+            )
             _string_list(panel.get("negative"), issues, path, f"{prefix}.negative", minimum=1)
             rect = _object(
                 panel.get("rect"),
