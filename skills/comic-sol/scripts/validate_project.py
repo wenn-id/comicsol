@@ -2323,32 +2323,11 @@ def _successful_panel_is_accepted(project_dir: Path, job: dict[str, object]) -> 
     )
 
 
-def _validate_handoff_binding(
+def _validate_handoff_required_artifacts(
     project_dir: Path,
-    manifest: dict[str, object],
+    handoff_manifest: dict[str, object],
     issues: list[ValidationIssue],
-    *,
-    require_panel_acceptance: bool = False,
-) -> None:
-    """Validate the populated project-to-handoff manifest binding."""
-    binding = _populated_handoff_binding(manifest)
-    if binding is None:
-        return
-    manifest_path, locked_scope = binding
-    handoff_manifest = _read_canonical_json(project_dir, manifest_path, issues)
-    if handoff_manifest is None:
-        return
-    contract_issues = validate_handoff_manifest(handoff_manifest)
-    for contract_issue in contract_issues:
-        field, separator, message = contract_issue.partition(": ")
-        _add(
-            issues,
-            manifest_path,
-            field,
-            message if separator else contract_issue,
-        )
-    if contract_issues:
-        return
+) -> set[str]:
     scope_reference_paths: set[str] = set()
     for required_artifact in cast(
         Iterable[dict[str, object]], handoff_manifest["required_artifacts"]
@@ -2376,6 +2355,14 @@ def _validate_handoff_binding(
         actual_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
         if actual_sha256 != required_artifact["sha256"]:
             _add(issues, artifact_path, "sha256", "does not match handoff manifest")
+    return scope_reference_paths
+
+
+def _validate_handoff_batch_membership(
+    project_dir: Path,
+    handoff_manifest: dict[str, object],
+    issues: list[ValidationIssue],
+) -> dict[str, tuple[str, str]] | None:
     batches = cast(dict[str, object], handoff_manifest["batches"])
     batches_path = cast(str, batches["path"])
     batch_map = _read_canonical_json(project_dir, batches_path, issues)
@@ -2402,6 +2389,45 @@ def _validate_handoff_binding(
             actual_sha256 = hashlib.sha256(canonical_artifact_bytes(batch_map)).hexdigest()
             if actual_sha256 != batches["sha256"]:
                 _add(issues, batches_path, "sha256", "does not match handoff manifest")
+    return batch_membership
+
+
+def _validate_handoff_binding(
+    project_dir: Path,
+    manifest: dict[str, object],
+    issues: list[ValidationIssue],
+    *,
+    require_panel_acceptance: bool = False,
+) -> None:
+    """Validate the populated project-to-handoff manifest binding."""
+    binding = _populated_handoff_binding(manifest)
+    if binding is None:
+        return
+    manifest_path, locked_scope = binding
+    handoff_manifest = _read_canonical_json(project_dir, manifest_path, issues)
+    if handoff_manifest is None:
+        return
+    contract_issues = validate_handoff_manifest(handoff_manifest)
+    for contract_issue in contract_issues:
+        field, separator, message = contract_issue.partition(": ")
+        _add(
+            issues,
+            manifest_path,
+            field,
+            message if separator else contract_issue,
+        )
+    if contract_issues:
+        return
+    scope_reference_paths = _validate_handoff_required_artifacts(
+        project_dir,
+        handoff_manifest,
+        issues,
+    )
+    batch_membership = _validate_handoff_batch_membership(
+        project_dir,
+        handoff_manifest,
+        issues,
+    )
     job_reference_paths: set[str] = set(scope_reference_paths)
     jobs_by_id: dict[str, dict[str, object]] = {}
     handoff_jobs = cast(list[dict[str, object]], handoff_manifest["jobs"])
