@@ -2164,6 +2164,26 @@ class ProjectValidationTests(unittest.TestCase):
             issues,
         )
 
+    def test_manifest_source_hash_mismatch_is_reported(self):
+        manifest_path = self.project / "project.json"
+        manifest = read_json(manifest_path)
+        source_path = self.project / "source/input.txt"
+        actual_hash = sha256_file(source_path)
+        wrong_hash = "0" * 64 if actual_hash != "0" * 64 else "1" * 64
+        manifest["input"]["source_sha256"] = wrong_hash
+        atomic_write_json(manifest_path, manifest)
+
+        issues = validate_project(self.project, "panels")
+
+        self.assertIn(
+            ValidationIssue(
+                "project.json",
+                "input.source_sha256",
+                "hash does not match the source",
+            ),
+            issues,
+        )
+
     def test_final_stage_rejects_safety_failure_despite_complete_manifest(self):
         self.add_panel_files()
         record_path = self.project / "qa/panels/p01-01.json"
