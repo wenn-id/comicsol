@@ -17,6 +17,8 @@ from scripts.core_primitives import (
     rectangles_overlap,
     subject_keepout_radius,
     tail_geometry_result,
+    _tail_intersects_ellipse,
+    _tail_intersects_tail,
 )
 
 
@@ -71,6 +73,49 @@ class BalloonGeometryPrimitiveTests(unittest.TestCase):
         self.assertEqual(
             4, rectangle_overlap_area(first, {"x": 8, "y": 8, "width": 5, "height": 5})
         )
+
+    def test_cubic_tail_hits_balloon_ellipse_without_bbox_false_positive(self):
+        tail = {
+            "base": [[0.0, 0.0], [1.0, -1.0]],
+            "control": [[[33.0, 33.0], [66.0, 66.0]], [[33.0, 32.0], [66.0, 65.0]]],
+            "tip": [100.0, 100.0],
+        }
+
+        self.assertTrue(
+            _tail_intersects_ellipse(tail, {"x": 90, "y": 90, "width": 20, "height": 20})
+        )
+        self.assertFalse(
+            _tail_intersects_ellipse(tail, {"x": 0, "y": 90, "width": 10, "height": 10})
+        )
+        self.assertFalse(
+            _tail_intersects_ellipse({"base": []}, {"x": 90, "y": 90, "width": 20, "height": 20})
+        )
+
+    def test_cubic_tails_intersect_on_crossing_touch_and_containment(self):
+        def straight_tail(start_x, end_x, y, half_width=4):
+            delta = end_x - start_x
+            first_control_x = start_x + delta / 3
+            second_control_x = start_x + delta * 2 / 3
+            return {
+                "base": [[start_x, y - half_width], [start_x, y + half_width]],
+                "control": [
+                    [[first_control_x, y - half_width], [second_control_x, y - half_width]],
+                    [[first_control_x, y + half_width], [second_control_x, y + half_width]],
+                ],
+                "tip": [end_x, y],
+            }
+
+        first = straight_tail(0, 100, 0, 8)
+        crossing = straight_tail(120, 80, 0, 4)
+        touching = straight_tail(100, 200, 8, 8)
+        contained = straight_tail(20, 80, 0, 2)
+        separated = straight_tail(120, 80, 30, 4)
+
+        self.assertTrue(_tail_intersects_tail(first, crossing))
+        self.assertTrue(_tail_intersects_tail(first, touching))
+        self.assertTrue(_tail_intersects_tail(first, contained))
+        self.assertFalse(_tail_intersects_tail(first, separated))
+        self.assertFalse(_tail_intersects_tail(first, {"base": []}))
 
     def test_separation_is_zero_when_rectangles_touch_or_overlap(self):
         first = {"x": 0, "y": 0, "width": 10, "height": 10}
