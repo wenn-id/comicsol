@@ -1778,6 +1778,339 @@ def _validate_sfx_provenance(
         )
 
 
+def _typography_check_is_complete(check: dict[str, object]) -> bool:
+    evidence = check.get("evidence")
+    return (
+        check.get("result") == "pass"
+        and check.get("severity") == "error"
+        and check.get("reviewer") == TYPOGRAPHY_CHECK_REVIEWER
+        and check.get("method") == TYPOGRAPHY_CHECK_METHOD
+        and isinstance(evidence, str)
+        and bool(evidence.strip())
+    )
+
+
+def _validate_typography_checks(
+    typography: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    if typography.get("status") != "pass" or typography.get("issues") != []:
+        stale("typography.status", "typography preflight is not a clean pass")
+    if typography.get("schema_version") != TYPOGRAPHY_SCHEMA_VERSION:
+        # The preflight record is fully derived from the storyboard text and
+        # the font policy, so an older record is re-lettered under the
+        # current script policy rather than migrated in place.
+        stale(
+            "typography.schema_version",
+            "typography preflight predates the script coverage policy and must be lettered again",
+        )
+    checks = typography.get("checks")
+    # IDs are confirmed to be strings before being compared, because an array
+    # or object arriving here from a hand-edited record would raise rather
+    # than be reported. The comparison is against a sorted list rather than a
+    # set so a duplicated entry cannot stand in for a distinct check.
+    if (
+        not isinstance(checks, list)
+        or any(not isinstance(check, dict) for check in checks)
+        or any(not isinstance(check.get("id"), str) for check in checks)
+    ):
+        stale("typography.checks", "typography preflight checks are missing")
+    else:
+        check_records = cast(list[dict[str, object]], checks)
+        if sorted(cast(str, check["id"]) for check in check_records) != sorted(PREFLIGHT_CHECKS):
+            stale(
+                "typography.checks",
+                "typography preflight check set does not match the current policy",
+            )
+        else:
+            # Every generated field is verified, so a record stripped down to
+            # passing IDs cannot pose as evidence that the checks ran.
+            for check in check_records:
+                if not _typography_check_is_complete(check):
+                    stale(
+                        "typography.checks",
+                        "typography preflight check is incomplete or did not pass",
+                    )
+                    break
+
+
+def _validate_typography_glyph(glyph: object, stale: Callable[[str, str], None]) -> bool:
+    if not isinstance(glyph, dict):
+        stale("glyphs", "typography glyph entry is invalid")
+        return False
+    font_id = glyph.get("font_id")
+    if (
+        not isinstance(font_id, str)
+        or not font_id
+        or font_id == ".notdef"
+        or "/" in font_id
+        or "\\" in font_id
+    ):
+        stale("glyphs.font_id", "glyph resolves to .notdef or a private path")
+        return False
+    if glyph.get("coverage") != "supported" or glyph.get("shaping") != "supported":
+        stale("glyphs", "glyph coverage or shaping is unsupported")
+        return False
+    # The script and shaping verdict are recomputed from the recorded
+    # codepoint rather than read back. A record that simply asserted
+    # them could label a Hebrew or Devanagari glyph as a linear
+    # script and carry that claim past this gate.
+    codepoint = glyph.get("codepoint")
+    if not isinstance(codepoint, str) or re.fullmatch(r"U\+[0-9A-F]{4,6}", codepoint) is None:
+        stale("glyphs.codepoint", "glyph codepoint is missing or malformed")
+        return False
+    value = int(codepoint[2:], 16)
+    character = glyph.get("character")
+    if not isinstance(character, str) or len(character) != 1 or ord(character) != value:
+        stale(
+            "glyphs.character",
+            "glyph character does not match its recorded codepoint",
+        )
+        return False
+    if glyph.get("script") != script_for_codepoint(value):
+        stale(
+            "glyphs.script",
+            "glyph script does not match its recorded codepoint",
+        )
+        return False
+    if shaping_policy(value)[0] != SHAPING_LINEAR:
+        stale(
+            "glyphs.shaping",
+            "glyph codepoint is not letterable under the current policy",
+        )
+        return False
+    return True
+
+
+def _validate_typography_glyphs(
+    typography: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    glyphs = typography.get("glyphs")
+    if not isinstance(glyphs, list):
+        stale("glyphs", "typography glyph list is missing")
+        return
+    for glyph in glyphs:
+        if not _validate_typography_glyph(glyph, stale):
+            break
+
+
+def _validate_lettering_typography_provenance(
+    typography: object,
+    stale: Callable[[str, str], None],
+) -> None:
+    if not isinstance(typography, dict):
+        return
+    _validate_typography_checks(typography, stale)
+    _validate_typography_glyphs(typography, stale)
+
+
+def _validate_lettering_artifact_bindings(
+    project_dir: Path,
+    geometry: dict[str, object],
+    typography: object,
+    stale: Callable[[str, str], None],
+) -> None:
+    bindings = geometry.get("bindings")
+    if not isinstance(bindings, dict):
+        stale("bindings", "geometry bindings are missing")
+        bindings = {}
+    for digest_field, path_field in (
+        ("clean_sha256", "clean_path"),
+        ("storyboard_sha256", "storyboard_path"),
+    ):
+        relative = bindings.get(path_field)
+        expected = bindings.get(digest_field)
+        try:
+            artifact = (
+                contained_project_path(project_dir, relative, must_exist=True)
+                if isinstance(relative, str)
+                else None
+            )
+        except (OSError, ValueError):
+            artifact = None
+        if artifact is None or not artifact.is_file():
+            stale(f"bindings.{path_field}", "bound artifact is missing")
+        elif not isinstance(expected, str) or sha256_file(artifact) != expected:
+            stale(f"bindings.{digest_field}", "bound artifact hash does not match")
+    if isinstance(typography, dict):
+        typography_hash = hashlib.sha256(canonical_artifact_bytes(typography)).hexdigest()
+        if bindings.get("typography_sha256") != typography_hash:
+            stale("typography.path", "typography record hash does not match")
+        if bindings.get("font_policy_sha256") != typography.get("font_policy_sha256"):
+            stale("bindings.font_policy_sha256", "font policy hash does not match preflight")
+
+
+def _validate_lettered_image(
+    project_dir: Path,
+    geometry: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    lettered = geometry.get("lettered")
+    if not isinstance(lettered, dict):
+        stale("lettered", "lettered artifact descriptor is missing")
+        return
+    relative = lettered.get("path")
+    try:
+        artifact = (
+            contained_project_path(project_dir, relative, must_exist=True)
+            if isinstance(relative, str)
+            else None
+        )
+    except (OSError, ValueError):
+        artifact = None
+    if artifact is None or not artifact.is_file():
+        stale("lettered.path", "lettered image is missing")
+    elif lettered.get("sha256") != sha256_file(artifact):
+        stale("lettered.sha256", "lettered image hash does not match")
+
+
+def _is_finite_lettering_point(value: object) -> bool:
+    """Report whether a value is a finite coordinate point."""
+    return (
+        isinstance(value, list)
+        and len(value) == 2
+        and all(
+            isinstance(coordinate, (int, float))
+            and not isinstance(coordinate, bool)
+            and math.isfinite(coordinate)
+            for coordinate in value
+        )
+    )
+
+
+def _lettering_tail_has_valid_fields(tail: dict[str, object]) -> bool:
+    expected_tail_fields = {
+        "attachment",
+        "base",
+        "control",
+        "length",
+        "policy_version",
+        "source_gap",
+        "speaker_anchor",
+        "tip",
+        "voice_source",
+        "width",
+    }
+    return (
+        set(tail) == expected_tail_fields
+        and tail.get("policy_version") == "organic-cubic-v1"
+        and tail.get("voice_source") in {"human", "device"}
+        and _is_finite_lettering_point(tail.get("speaker_anchor"))
+        and all(
+            0 <= coordinate <= 1
+            for coordinate in cast(list[int | float], tail.get("speaker_anchor", []))
+        )
+        and _is_finite_lettering_point(tail.get("attachment"))
+        and _is_finite_lettering_point(tail.get("tip"))
+    )
+
+
+def _lettering_tail_has_valid_points(tail: dict[str, object]) -> bool:
+    base = tail.get("base")
+    control = tail.get("control")
+    return (
+        isinstance(base, list)
+        and len(base) == 2
+        and all(_is_finite_lettering_point(point) for point in base)
+        and isinstance(control, list)
+        and len(control) == 2
+        and all(
+            isinstance(side, list)
+            and len(side) == 2
+            and all(_is_finite_lettering_point(point) for point in side)
+            for side in control
+        )
+    )
+
+
+def _lettering_tail_measurement_is_valid(tail: dict[str, object], field: str) -> bool:
+    measurement = tail.get(field)
+    return (
+        isinstance(measurement, (int, float))
+        and not isinstance(measurement, bool)
+        and math.isfinite(measurement)
+        and measurement > 0
+    )
+
+
+def _lettering_tail_has_valid_measurements(tail: dict[str, object]) -> bool:
+    return all(
+        _lettering_tail_measurement_is_valid(tail, field)
+        for field in ("length", "source_gap", "width")
+    )
+
+
+def _is_valid_lettering_tail(tail: object) -> bool:
+    if not isinstance(tail, dict):
+        return False
+    return (
+        _lettering_tail_has_valid_fields(tail)
+        and _lettering_tail_has_valid_points(tail)
+        and _lettering_tail_has_valid_measurements(tail)
+    )
+
+
+def _validate_lettering_tail(tail: object, stale: Callable[[str, str], None]) -> None:
+    if not _is_valid_lettering_tail(tail):
+        stale(
+            "items.tail",
+            "tail must be a finite organic-cubic-v1 semantic geometry record",
+        )
+
+
+def _lettering_box_is_valid(box: object) -> bool:
+    if not isinstance(box, dict):
+        return False
+    return not (
+        any(
+            not isinstance(box.get(key), int) or isinstance(box.get(key), bool)
+            for key in ("x", "y", "width", "height")
+        )
+        or box.get("width", 0) <= 0
+        or box.get("height", 0) <= 0
+    )
+
+
+def _validate_lettering_item(
+    entry: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> int | None:
+    order = entry.get("reading_order")
+    if not isinstance(order, int) or isinstance(order, bool) or order <= 0:
+        stale("items.reading_order", "reading order must be a positive integer")
+        valid_order = None
+    else:
+        valid_order = order
+    if not _lettering_box_is_valid(entry.get("box")):
+        stale("items.box", "item box is missing or non-positive")
+    _validate_placement_attribution(entry, stale)
+    tail = entry.get("tail")
+    if tail is not None:
+        _validate_lettering_tail(tail, stale)
+    return valid_order
+
+
+def _validate_lettering_items(
+    geometry: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    items = geometry.get("items")
+    if not isinstance(items, list):
+        stale("items", "geometry items must be an array")
+        return
+    orders: list[int] = []
+    for entry in items:
+        if not isinstance(entry, dict):
+            stale("items", "geometry item must be an object")
+            continue
+        order = _validate_lettering_item(entry, stale)
+        if order is not None:
+            orders.append(order)
+    if len(orders) != len(set(orders)):
+        stale("items.reading_order", "reading order values must be unique")
+
+
 def validate_lettering_provenance(
     project_dir: Path,
     panel_id: str,
@@ -1830,248 +2163,10 @@ def validate_lettering_provenance(
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         stale("typography.path", "typography preflight is missing or unreadable")
         typography = None
-    if isinstance(typography, dict):
-        if typography.get("status") != "pass" or typography.get("issues") != []:
-            stale("typography.status", "typography preflight is not a clean pass")
-        if typography.get("schema_version") != TYPOGRAPHY_SCHEMA_VERSION:
-            # The preflight record is fully derived from the storyboard text and
-            # the font policy, so an older record is re-lettered under the
-            # current script policy rather than migrated in place.
-            stale(
-                "typography.schema_version",
-                "typography preflight predates the script coverage policy "
-                "and must be lettered again",
-            )
-        checks = typography.get("checks")
-        # IDs are confirmed to be strings before being compared, because an array
-        # or object arriving here from a hand-edited record would raise rather
-        # than be reported. The comparison is against a sorted list rather than a
-        # set so a duplicated entry cannot stand in for a distinct check.
-        if (
-            not isinstance(checks, list)
-            or any(not isinstance(check, dict) for check in checks)
-            or any(not isinstance(check.get("id"), str) for check in checks)
-        ):
-            stale("typography.checks", "typography preflight checks are missing")
-        elif sorted(check["id"] for check in checks) != sorted(PREFLIGHT_CHECKS):
-            stale(
-                "typography.checks",
-                "typography preflight check set does not match the current policy",
-            )
-        else:
-            # Every generated field is verified, so a record stripped down to
-            # passing IDs cannot pose as evidence that the checks ran.
-            for check in checks:
-                evidence = check.get("evidence")
-                if (
-                    check.get("result") != "pass"
-                    or check.get("severity") != "error"
-                    or check.get("reviewer") != TYPOGRAPHY_CHECK_REVIEWER
-                    or check.get("method") != TYPOGRAPHY_CHECK_METHOD
-                    or not isinstance(evidence, str)
-                    or not evidence.strip()
-                ):
-                    stale(
-                        "typography.checks",
-                        "typography preflight check is incomplete or did not pass",
-                    )
-                    break
-        glyphs = typography.get("glyphs")
-        if not isinstance(glyphs, list):
-            stale("glyphs", "typography glyph list is missing")
-        else:
-            for glyph in glyphs:
-                if not isinstance(glyph, dict):
-                    stale("glyphs", "typography glyph entry is invalid")
-                    break
-                font_id = glyph.get("font_id")
-                if (
-                    not isinstance(font_id, str)
-                    or not font_id
-                    or font_id == ".notdef"
-                    or "/" in font_id
-                    or "\\" in font_id
-                ):
-                    stale("glyphs.font_id", "glyph resolves to .notdef or a private path")
-                    break
-                if glyph.get("coverage") != "supported" or glyph.get("shaping") != "supported":
-                    stale("glyphs", "glyph coverage or shaping is unsupported")
-                    break
-                # The script and shaping verdict are recomputed from the recorded
-                # codepoint rather than read back. A record that simply asserted
-                # them could label a Hebrew or Devanagari glyph as a linear
-                # script and carry that claim past this gate.
-                codepoint = glyph.get("codepoint")
-                if (
-                    not isinstance(codepoint, str)
-                    or re.fullmatch(r"U\+[0-9A-F]{4,6}", codepoint) is None
-                ):
-                    stale("glyphs.codepoint", "glyph codepoint is missing or malformed")
-                    break
-                value = int(codepoint[2:], 16)
-                character = glyph.get("character")
-                if not isinstance(character, str) or len(character) != 1 or ord(character) != value:
-                    stale(
-                        "glyphs.character",
-                        "glyph character does not match its recorded codepoint",
-                    )
-                    break
-                if glyph.get("script") != script_for_codepoint(value):
-                    stale(
-                        "glyphs.script",
-                        "glyph script does not match its recorded codepoint",
-                    )
-                    break
-                if shaping_policy(value)[0] != SHAPING_LINEAR:
-                    stale(
-                        "glyphs.shaping",
-                        "glyph codepoint is not letterable under the current policy",
-                    )
-                    break
-
-    bindings = geometry.get("bindings")
-    if not isinstance(bindings, dict):
-        stale("bindings", "geometry bindings are missing")
-        bindings = {}
-    for digest_field, path_field in (
-        ("clean_sha256", "clean_path"),
-        ("storyboard_sha256", "storyboard_path"),
-    ):
-        relative = bindings.get(path_field)
-        expected = bindings.get(digest_field)
-        try:
-            artifact = (
-                contained_project_path(project_dir, relative, must_exist=True)
-                if isinstance(relative, str)
-                else None
-            )
-        except (OSError, ValueError):
-            artifact = None
-        if artifact is None or not artifact.is_file():
-            stale(f"bindings.{path_field}", "bound artifact is missing")
-        elif not isinstance(expected, str) or sha256_file(artifact) != expected:
-            stale(f"bindings.{digest_field}", "bound artifact hash does not match")
-
-    if isinstance(typography, dict):
-        typography_hash = hashlib.sha256(canonical_artifact_bytes(typography)).hexdigest()
-        if bindings.get("typography_sha256") != typography_hash:
-            stale("typography.path", "typography record hash does not match")
-        if bindings.get("font_policy_sha256") != typography.get("font_policy_sha256"):
-            stale("bindings.font_policy_sha256", "font policy hash does not match preflight")
-
-    lettered = geometry.get("lettered")
-    if not isinstance(lettered, dict):
-        stale("lettered", "lettered artifact descriptor is missing")
-    else:
-        relative = lettered.get("path")
-        try:
-            artifact = (
-                contained_project_path(project_dir, relative, must_exist=True)
-                if isinstance(relative, str)
-                else None
-            )
-        except (OSError, ValueError):
-            artifact = None
-        if artifact is None or not artifact.is_file():
-            stale("lettered.path", "lettered image is missing")
-        elif lettered.get("sha256") != sha256_file(artifact):
-            stale("lettered.sha256", "lettered image hash does not match")
-
-    items = geometry.get("items")
-    if not isinstance(items, list):
-        stale("items", "geometry items must be an array")
-    else:
-        orders: list[int] = []
-        for entry in items:
-            if not isinstance(entry, dict):
-                stale("items", "geometry item must be an object")
-                continue
-            order = entry.get("reading_order")
-            if not isinstance(order, int) or isinstance(order, bool) or order <= 0:
-                stale("items.reading_order", "reading order must be a positive integer")
-            else:
-                orders.append(order)
-            box = entry.get("box")
-            if (
-                not isinstance(box, dict)
-                or any(
-                    not isinstance(box.get(key), int) or isinstance(box.get(key), bool)
-                    for key in ("x", "y", "width", "height")
-                )
-                or box.get("width", 0) <= 0
-                or box.get("height", 0) <= 0
-            ):
-                stale("items.box", "item box is missing or non-positive")
-            _validate_placement_attribution(entry, stale)
-            tail = entry.get("tail")
-            if tail is not None:
-                expected_tail_fields = {
-                    "attachment",
-                    "base",
-                    "control",
-                    "length",
-                    "policy_version",
-                    "source_gap",
-                    "speaker_anchor",
-                    "tip",
-                    "voice_source",
-                    "width",
-                }
-
-                def finite_point(value: object) -> bool:
-                    """Report whether a value is a finite coordinate point."""
-                    return (
-                        isinstance(value, list)
-                        and len(value) == 2
-                        and all(
-                            isinstance(coordinate, (int, float))
-                            and not isinstance(coordinate, bool)
-                            and math.isfinite(coordinate)
-                            for coordinate in value
-                        )
-                    )
-
-                valid_tail = (
-                    isinstance(tail, dict)
-                    and set(tail) == expected_tail_fields
-                    and tail.get("policy_version") == "organic-cubic-v1"
-                    and tail.get("voice_source") in {"human", "device"}
-                    and finite_point(tail.get("speaker_anchor"))
-                    and all(0 <= coordinate <= 1 for coordinate in tail.get("speaker_anchor", []))
-                    and finite_point(tail.get("attachment"))
-                    and finite_point(tail.get("tip"))
-                )
-                base = tail.get("base") if isinstance(tail, dict) else None
-                control = tail.get("control") if isinstance(tail, dict) else None
-                valid_tail = (
-                    valid_tail
-                    and isinstance(base, list)
-                    and len(base) == 2
-                    and all(finite_point(point) for point in base)
-                    and isinstance(control, list)
-                    and len(control) == 2
-                    and all(
-                        isinstance(side, list)
-                        and len(side) == 2
-                        and all(finite_point(point) for point in side)
-                        for side in control
-                    )
-                    and all(
-                        isinstance(tail.get(field), (int, float))
-                        and not isinstance(tail.get(field), bool)
-                        and math.isfinite(tail[field])
-                        and tail[field] > 0
-                        for field in ("length", "source_gap", "width")
-                    )
-                )
-                if not valid_tail:
-                    stale(
-                        "items.tail",
-                        "tail must be a finite organic-cubic-v1 semantic geometry record",
-                    )
-        if len(orders) != len(set(orders)):
-            stale("items.reading_order", "reading order values must be unique")
-
+    _validate_lettering_typography_provenance(typography, stale)
+    _validate_lettering_artifact_bindings(project_dir, geometry, typography, stale)
+    _validate_lettered_image(project_dir, geometry, stale)
+    _validate_lettering_items(geometry, stale)
     return tuple(_sorted(issues))
 
 
