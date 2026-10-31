@@ -1577,6 +1577,80 @@ def _validate_legacy_panel_checks(
     return checks
 
 
+def _validate_panel_generation_dimensions(
+    dimensions: object,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
+    if isinstance(dimensions, dict):
+        if (
+            not isinstance(dimensions.get("width"), int)
+            or cast(int, dimensions.get("width", 0)) <= 0
+        ):
+            _add(issues, path, "dimensions.width", "must be positive after generation")
+        if (
+            not isinstance(dimensions.get("height"), int)
+            or cast(int, dimensions.get("height", 0)) <= 0
+        ):
+            _add(issues, path, "dimensions.height", "must be positive after generation")
+
+
+def _validate_panel_generation_metadata(
+    generation: object,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
+    if isinstance(generation, dict):
+        if generation.get("capability_name") is None:
+            _add(issues, path, "generation.capability_name", "is required after generation")
+        if generation.get("completed_at") is None:
+            _add(issues, path, "generation.completed_at", "is required after generation")
+
+
+def _validate_panel_generation_requirements(
+    root: dict[str, object],
+    attempts: object,
+    dimensions: object,
+    generation: object,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
+    if isinstance(attempts, int) and not isinstance(attempts, bool) and attempts > 0:
+        for field in ("source_prompt_path", "raw_path", "clean_path"):
+            if root.get(field) is None:
+                _add(issues, path, field, "is required after generation")
+        if root.get("raw_sha256") is None:
+            _add(issues, path, "raw_sha256", "is required after generation")
+        _validate_panel_generation_dimensions(dimensions, issues, path)
+        _validate_panel_generation_metadata(generation, issues, path)
+
+
+def _validate_legacy_panel_generation(
+    root: dict[str, object],
+    issues: list[ValidationIssue],
+    path: str,
+) -> dict[str, object] | None:
+    generation_fields = {"capability_name", "reference_paths", "completed_at"}
+    generation = _object(
+        root.get("generation"), generation_fields, generation_fields, issues, path, "generation"
+    )
+    if generation is not None:
+        if generation.get("capability_name") is not None:
+            _nonempty_string(
+                generation.get("capability_name"), issues, path, "generation.capability_name"
+            )
+        references = generation.get("reference_paths")
+        if not isinstance(references, list):
+            _add(issues, path, "generation.reference_paths", "must be an array")
+        else:
+            for index, reference in enumerate(references):
+                _relative_path(reference, issues, path, f"generation.reference_paths[{index}]")
+        _timestamp(
+            generation.get("completed_at"), issues, path, "generation.completed_at", nullable=True
+        )
+    return generation
+
+
 def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
     """Validate a panel quality record from either supported schema."""
     if isinstance(data, dict) and data.get("schema_version") == "2.0":
@@ -1626,50 +1700,12 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
         _integer(dimensions.get("width"), 0, 100_000, issues, path, "dimensions.width")
         _integer(dimensions.get("height"), 0, 100_000, issues, path, "dimensions.height")
     _integer(root.get("attempts"), 0, 3, issues, path, "attempts")
-    generation_fields = {"capability_name", "reference_paths", "completed_at"}
-    generation = _object(
-        root.get("generation"), generation_fields, generation_fields, issues, path, "generation"
-    )
-    if generation is not None:
-        if generation.get("capability_name") is not None:
-            _nonempty_string(
-                generation.get("capability_name"), issues, path, "generation.capability_name"
-            )
-        references = generation.get("reference_paths")
-        if not isinstance(references, list):
-            _add(issues, path, "generation.reference_paths", "must be an array")
-        else:
-            for index, reference in enumerate(references):
-                _relative_path(reference, issues, path, f"generation.reference_paths[{index}]")
-        _timestamp(
-            generation.get("completed_at"), issues, path, "generation.completed_at", nullable=True
-        )
+    generation = _validate_legacy_panel_generation(root, issues, path)
     checks = _validate_legacy_panel_checks(root, issues, path)
     decision, has_warning = _validate_panel_decision_policy(root, checks, issues, path)
     _validate_panel_warning_metadata(root, checks, decision, has_warning, issues, path)
     attempts = root.get("attempts")
-    if isinstance(attempts, int) and not isinstance(attempts, bool) and attempts > 0:
-        for field in ("source_prompt_path", "raw_path", "clean_path"):
-            if root.get(field) is None:
-                _add(issues, path, field, "is required after generation")
-        if root.get("raw_sha256") is None:
-            _add(issues, path, "raw_sha256", "is required after generation")
-        if isinstance(dimensions, dict):
-            if (
-                not isinstance(dimensions.get("width"), int)
-                or cast(int, dimensions.get("width", 0)) <= 0
-            ):
-                _add(issues, path, "dimensions.width", "must be positive after generation")
-            if (
-                not isinstance(dimensions.get("height"), int)
-                or cast(int, dimensions.get("height", 0)) <= 0
-            ):
-                _add(issues, path, "dimensions.height", "must be positive after generation")
-        if isinstance(generation, dict):
-            if generation.get("capability_name") is None:
-                _add(issues, path, "generation.capability_name", "is required after generation")
-            if generation.get("completed_at") is None:
-                _add(issues, path, "generation.completed_at", "is required after generation")
+    _validate_panel_generation_requirements(root, attempts, dimensions, generation, issues, path)
     if decision in {"accept", "accept_with_warnings"} and attempts == 0:
         _add(issues, path, "attempts", "accepted panels require a generation attempt")
     return _sorted(issues)

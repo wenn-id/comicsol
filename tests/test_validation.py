@@ -776,6 +776,49 @@ class StrictSchemaValidationTests(unittest.TestCase):
         data.update({"decision": "regenerate", "retry_reason": "warning impairs readability"})
         self.assertEqual([], validate_panel_record(data))
 
+    def test_panel_record_requires_generation_artifacts_after_attempt(self):
+        data = valid_panel_record()
+        data.update(
+            {
+                "source_prompt_path": None,
+                "raw_path": None,
+                "clean_path": None,
+                "raw_sha256": None,
+                "dimensions": {"width": 0, "height": 0},
+            }
+        )
+        data["generation"].update({"capability_name": None, "completed_at": None})
+
+        issues = validate_panel_record(data)
+        expected = {
+            ("qa/panels/p01-01.json", "source_prompt_path", "is required after generation"),
+            ("qa/panels/p01-01.json", "raw_path", "is required after generation"),
+            ("qa/panels/p01-01.json", "clean_path", "is required after generation"),
+            ("qa/panels/p01-01.json", "raw_sha256", "is required after generation"),
+            (
+                "qa/panels/p01-01.json",
+                "dimensions.width",
+                "must be positive after generation",
+            ),
+            (
+                "qa/panels/p01-01.json",
+                "dimensions.height",
+                "must be positive after generation",
+            ),
+            (
+                "qa/panels/p01-01.json",
+                "generation.capability_name",
+                "is required after generation",
+            ),
+            (
+                "qa/panels/p01-01.json",
+                "generation.completed_at",
+                "is required after generation",
+            ),
+        }
+        self.assertEqual(len(expected), len(issues))
+        self.assertEqual(expected, {(issue.path, issue.field, issue.message) for issue in issues})
+
     def test_panel_record_v2_uses_shared_quality_contract(self):
         self.assertEqual([], validate_panel_record(valid_panel_record_v2()))
 
