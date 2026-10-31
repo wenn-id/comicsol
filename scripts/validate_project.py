@@ -713,6 +713,35 @@ def validate_character_bible(data: dict[str, object]) -> list[ValidationIssue]:
     return _sorted(issues)
 
 
+def _validate_story_plan_scenes(
+    scenes: list[object],
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
+    if not 2 <= len(scenes) <= 5:
+        _add(issues, path, "scenes", "must contain 2 to 5 scenes")
+    scene_fields = {"id", "purpose", "location", "time", "characters", "continuity_anchor"}
+    ids: list[str] = []
+    for index, value in enumerate(scenes):
+        prefix = f"scenes[{index}]"
+        scene = _object(value, scene_fields, scene_fields, issues, path, prefix)
+        if scene is None:
+            continue
+        scene_id = scene.get("id")
+        if _identifier(scene_id, issues, path, f"{prefix}.id"):
+            ids.append(scene_id)
+        for field in ("purpose", "location", "time", "continuity_anchor"):
+            _nonempty_string(scene.get(field), issues, path, f"{prefix}.{field}")
+        character_ids = _string_list(scene.get("characters"), issues, path, f"{prefix}.characters")
+        if character_ids is not None:
+            for item_index, character_id in enumerate(character_ids):
+                _identifier(character_id, issues, path, f"{prefix}.characters[{item_index}]")
+            if len(set(character_ids)) != len(character_ids):
+                _add(issues, path, f"{prefix}.characters", "character IDs must be unique")
+    if len(set(ids)) != len(ids):
+        _add(issues, path, "scenes", "scene IDs must be unique")
+
+
 def validate_story_plan(data: dict[str, object]) -> list[ValidationIssue]:
     """Validate the story-plan artifact."""
     path = "plan/story-plan.json"
@@ -745,28 +774,7 @@ def validate_story_plan(data: dict[str, object]) -> list[ValidationIssue]:
     if not isinstance(scenes, list):
         _add(issues, path, "scenes", "must be an array")
         return _sorted(issues)
-    if not 2 <= len(scenes) <= 5:
-        _add(issues, path, "scenes", "must contain 2 to 5 scenes")
-    scene_fields = {"id", "purpose", "location", "time", "characters", "continuity_anchor"}
-    ids: list[str] = []
-    for index, value in enumerate(scenes):
-        prefix = f"scenes[{index}]"
-        scene = _object(value, scene_fields, scene_fields, issues, path, prefix)
-        if scene is None:
-            continue
-        scene_id = scene.get("id")
-        if _identifier(scene_id, issues, path, f"{prefix}.id"):
-            ids.append(scene_id)
-        for field in ("purpose", "location", "time", "continuity_anchor"):
-            _nonempty_string(scene.get(field), issues, path, f"{prefix}.{field}")
-        character_ids = _string_list(scene.get("characters"), issues, path, f"{prefix}.characters")
-        if character_ids is not None:
-            for item_index, character_id in enumerate(character_ids):
-                _identifier(character_id, issues, path, f"{prefix}.characters[{item_index}]")
-            if len(set(character_ids)) != len(character_ids):
-                _add(issues, path, f"{prefix}.characters", "character IDs must be unique")
-    if len(set(ids)) != len(ids):
-        _add(issues, path, "scenes", "scene IDs must be unique")
+    _validate_story_plan_scenes(scenes, issues, path)
     return _sorted(issues)
 
 
