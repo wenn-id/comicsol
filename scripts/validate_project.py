@@ -2439,6 +2439,45 @@ def _validate_ready_handoff_job_inputs(
             _add(issues, job_path, sha256_field, "does not match input file")
 
 
+def _validate_handoff_locked_scope(
+    project_dir: Path,
+    manifest_path: str,
+    locked_scope: str,
+    reference_paths: set[str],
+    issues: list[ValidationIssue],
+) -> bool:
+    scope_stale = False
+    try:
+        assert_current_locked_scope(
+            project_dir,
+            locked_scope,
+            reference_paths=sorted(reference_paths),
+        )
+    except FileNotFoundError as error:
+        _add(
+            issues,
+            manifest_path,
+            "locked_scope_sha256",
+            f"cannot recompute current project scope: {error}",
+        )
+    except StaleLockedScopeError:
+        scope_stale = True
+        _add(
+            issues,
+            manifest_path,
+            "locked_scope_sha256",
+            "does not match current project scope",
+        )
+    except (HandoffContractError, OSError, ValueError) as error:
+        _add(
+            issues,
+            manifest_path,
+            "locked_scope_sha256",
+            f"cannot recompute current project scope: {type(error).__name__}",
+        )
+    return scope_stale
+
+
 def _validate_handoff_binding(
     project_dir: Path,
     manifest: dict[str, object],
@@ -2546,35 +2585,13 @@ def _validate_handoff_binding(
             actual_sha256 = hashlib.sha256(canonical_artifact_bytes(job)).hexdigest()
             if actual_sha256 != handoff_job["sha256"]:
                 _add(issues, job_path, "sha256", "does not match handoff manifest")
-    scope_stale = False
-    try:
-        assert_current_locked_scope(
-            project_dir,
-            locked_scope,
-            reference_paths=sorted(job_reference_paths),
-        )
-    except FileNotFoundError as error:
-        _add(
-            issues,
-            manifest_path,
-            "locked_scope_sha256",
-            f"cannot recompute current project scope: {error}",
-        )
-    except StaleLockedScopeError:
-        scope_stale = True
-        _add(
-            issues,
-            manifest_path,
-            "locked_scope_sha256",
-            "does not match current project scope",
-        )
-    except (HandoffContractError, OSError, ValueError) as error:
-        _add(
-            issues,
-            manifest_path,
-            "locked_scope_sha256",
-            f"cannot recompute current project scope: {type(error).__name__}",
-        )
+    scope_stale = _validate_handoff_locked_scope(
+        project_dir,
+        manifest_path,
+        locked_scope,
+        job_reference_paths,
+        issues,
+    )
     receipt_inventory = _handoff_receipt_inventory(project_dir, issues)
     receipts_by_job: dict[str, list[tuple[str, dict[str, object]]]] = {
         job_id: [] for job_id in jobs_by_id
