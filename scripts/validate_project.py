@@ -1778,6 +1778,339 @@ def _validate_sfx_provenance(
         )
 
 
+def _typography_check_is_complete(check: dict[str, object]) -> bool:
+    evidence = check.get("evidence")
+    return (
+        check.get("result") == "pass"
+        and check.get("severity") == "error"
+        and check.get("reviewer") == TYPOGRAPHY_CHECK_REVIEWER
+        and check.get("method") == TYPOGRAPHY_CHECK_METHOD
+        and isinstance(evidence, str)
+        and bool(evidence.strip())
+    )
+
+
+def _validate_typography_checks(
+    typography: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    if typography.get("status") != "pass" or typography.get("issues") != []:
+        stale("typography.status", "typography preflight is not a clean pass")
+    if typography.get("schema_version") != TYPOGRAPHY_SCHEMA_VERSION:
+        # The preflight record is fully derived from the storyboard text and
+        # the font policy, so an older record is re-lettered under the
+        # current script policy rather than migrated in place.
+        stale(
+            "typography.schema_version",
+            "typography preflight predates the script coverage policy and must be lettered again",
+        )
+    checks = typography.get("checks")
+    # IDs are confirmed to be strings before being compared, because an array
+    # or object arriving here from a hand-edited record would raise rather
+    # than be reported. The comparison is against a sorted list rather than a
+    # set so a duplicated entry cannot stand in for a distinct check.
+    if (
+        not isinstance(checks, list)
+        or any(not isinstance(check, dict) for check in checks)
+        or any(not isinstance(check.get("id"), str) for check in checks)
+    ):
+        stale("typography.checks", "typography preflight checks are missing")
+    else:
+        check_records = cast(list[dict[str, object]], checks)
+        if sorted(cast(str, check["id"]) for check in check_records) != sorted(PREFLIGHT_CHECKS):
+            stale(
+                "typography.checks",
+                "typography preflight check set does not match the current policy",
+            )
+        else:
+            # Every generated field is verified, so a record stripped down to
+            # passing IDs cannot pose as evidence that the checks ran.
+            for check in check_records:
+                if not _typography_check_is_complete(check):
+                    stale(
+                        "typography.checks",
+                        "typography preflight check is incomplete or did not pass",
+                    )
+                    break
+
+
+def _validate_typography_glyph(glyph: object, stale: Callable[[str, str], None]) -> bool:
+    if not isinstance(glyph, dict):
+        stale("glyphs", "typography glyph entry is invalid")
+        return False
+    font_id = glyph.get("font_id")
+    if (
+        not isinstance(font_id, str)
+        or not font_id
+        or font_id == ".notdef"
+        or "/" in font_id
+        or "\\" in font_id
+    ):
+        stale("glyphs.font_id", "glyph resolves to .notdef or a private path")
+        return False
+    if glyph.get("coverage") != "supported" or glyph.get("shaping") != "supported":
+        stale("glyphs", "glyph coverage or shaping is unsupported")
+        return False
+    # The script and shaping verdict are recomputed from the recorded
+    # codepoint rather than read back. A record that simply asserted
+    # them could label a Hebrew or Devanagari glyph as a linear
+    # script and carry that claim past this gate.
+    codepoint = glyph.get("codepoint")
+    if not isinstance(codepoint, str) or re.fullmatch(r"U\+[0-9A-F]{4,6}", codepoint) is None:
+        stale("glyphs.codepoint", "glyph codepoint is missing or malformed")
+        return False
+    value = int(codepoint[2:], 16)
+    character = glyph.get("character")
+    if not isinstance(character, str) or len(character) != 1 or ord(character) != value:
+        stale(
+            "glyphs.character",
+            "glyph character does not match its recorded codepoint",
+        )
+        return False
+    if glyph.get("script") != script_for_codepoint(value):
+        stale(
+            "glyphs.script",
+            "glyph script does not match its recorded codepoint",
+        )
+        return False
+    if shaping_policy(value)[0] != SHAPING_LINEAR:
+        stale(
+            "glyphs.shaping",
+            "glyph codepoint is not letterable under the current policy",
+        )
+        return False
+    return True
+
+
+def _validate_typography_glyphs(
+    typography: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    glyphs = typography.get("glyphs")
+    if not isinstance(glyphs, list):
+        stale("glyphs", "typography glyph list is missing")
+        return
+    for glyph in glyphs:
+        if not _validate_typography_glyph(glyph, stale):
+            break
+
+
+def _validate_lettering_typography_provenance(
+    typography: object,
+    stale: Callable[[str, str], None],
+) -> None:
+    if not isinstance(typography, dict):
+        return
+    _validate_typography_checks(typography, stale)
+    _validate_typography_glyphs(typography, stale)
+
+
+def _validate_lettering_artifact_bindings(
+    project_dir: Path,
+    geometry: dict[str, object],
+    typography: object,
+    stale: Callable[[str, str], None],
+) -> None:
+    bindings = geometry.get("bindings")
+    if not isinstance(bindings, dict):
+        stale("bindings", "geometry bindings are missing")
+        bindings = {}
+    for digest_field, path_field in (
+        ("clean_sha256", "clean_path"),
+        ("storyboard_sha256", "storyboard_path"),
+    ):
+        relative = bindings.get(path_field)
+        expected = bindings.get(digest_field)
+        try:
+            artifact = (
+                contained_project_path(project_dir, relative, must_exist=True)
+                if isinstance(relative, str)
+                else None
+            )
+        except (OSError, ValueError):
+            artifact = None
+        if artifact is None or not artifact.is_file():
+            stale(f"bindings.{path_field}", "bound artifact is missing")
+        elif not isinstance(expected, str) or sha256_file(artifact) != expected:
+            stale(f"bindings.{digest_field}", "bound artifact hash does not match")
+    if isinstance(typography, dict):
+        typography_hash = hashlib.sha256(canonical_artifact_bytes(typography)).hexdigest()
+        if bindings.get("typography_sha256") != typography_hash:
+            stale("typography.path", "typography record hash does not match")
+        if bindings.get("font_policy_sha256") != typography.get("font_policy_sha256"):
+            stale("bindings.font_policy_sha256", "font policy hash does not match preflight")
+
+
+def _validate_lettered_image(
+    project_dir: Path,
+    geometry: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    lettered = geometry.get("lettered")
+    if not isinstance(lettered, dict):
+        stale("lettered", "lettered artifact descriptor is missing")
+        return
+    relative = lettered.get("path")
+    try:
+        artifact = (
+            contained_project_path(project_dir, relative, must_exist=True)
+            if isinstance(relative, str)
+            else None
+        )
+    except (OSError, ValueError):
+        artifact = None
+    if artifact is None or not artifact.is_file():
+        stale("lettered.path", "lettered image is missing")
+    elif lettered.get("sha256") != sha256_file(artifact):
+        stale("lettered.sha256", "lettered image hash does not match")
+
+
+def _is_finite_lettering_point(value: object) -> bool:
+    """Report whether a value is a finite coordinate point."""
+    return (
+        isinstance(value, list)
+        and len(value) == 2
+        and all(
+            isinstance(coordinate, (int, float))
+            and not isinstance(coordinate, bool)
+            and math.isfinite(coordinate)
+            for coordinate in value
+        )
+    )
+
+
+def _lettering_tail_has_valid_fields(tail: dict[str, object]) -> bool:
+    expected_tail_fields = {
+        "attachment",
+        "base",
+        "control",
+        "length",
+        "policy_version",
+        "source_gap",
+        "speaker_anchor",
+        "tip",
+        "voice_source",
+        "width",
+    }
+    return (
+        set(tail) == expected_tail_fields
+        and tail.get("policy_version") == "organic-cubic-v1"
+        and tail.get("voice_source") in {"human", "device"}
+        and _is_finite_lettering_point(tail.get("speaker_anchor"))
+        and all(
+            0 <= coordinate <= 1
+            for coordinate in cast(list[int | float], tail.get("speaker_anchor", []))
+        )
+        and _is_finite_lettering_point(tail.get("attachment"))
+        and _is_finite_lettering_point(tail.get("tip"))
+    )
+
+
+def _lettering_tail_has_valid_points(tail: dict[str, object]) -> bool:
+    base = tail.get("base")
+    control = tail.get("control")
+    return (
+        isinstance(base, list)
+        and len(base) == 2
+        and all(_is_finite_lettering_point(point) for point in base)
+        and isinstance(control, list)
+        and len(control) == 2
+        and all(
+            isinstance(side, list)
+            and len(side) == 2
+            and all(_is_finite_lettering_point(point) for point in side)
+            for side in control
+        )
+    )
+
+
+def _lettering_tail_measurement_is_valid(tail: dict[str, object], field: str) -> bool:
+    measurement = tail.get(field)
+    return (
+        isinstance(measurement, (int, float))
+        and not isinstance(measurement, bool)
+        and math.isfinite(measurement)
+        and measurement > 0
+    )
+
+
+def _lettering_tail_has_valid_measurements(tail: dict[str, object]) -> bool:
+    return all(
+        _lettering_tail_measurement_is_valid(tail, field)
+        for field in ("length", "source_gap", "width")
+    )
+
+
+def _is_valid_lettering_tail(tail: object) -> bool:
+    if not isinstance(tail, dict):
+        return False
+    return (
+        _lettering_tail_has_valid_fields(tail)
+        and _lettering_tail_has_valid_points(tail)
+        and _lettering_tail_has_valid_measurements(tail)
+    )
+
+
+def _validate_lettering_tail(tail: object, stale: Callable[[str, str], None]) -> None:
+    if not _is_valid_lettering_tail(tail):
+        stale(
+            "items.tail",
+            "tail must be a finite organic-cubic-v1 semantic geometry record",
+        )
+
+
+def _lettering_box_is_valid(box: object) -> bool:
+    if not isinstance(box, dict):
+        return False
+    return not (
+        any(
+            not isinstance(box.get(key), int) or isinstance(box.get(key), bool)
+            for key in ("x", "y", "width", "height")
+        )
+        or box.get("width", 0) <= 0
+        or box.get("height", 0) <= 0
+    )
+
+
+def _validate_lettering_item(
+    entry: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> int | None:
+    order = entry.get("reading_order")
+    if not isinstance(order, int) or isinstance(order, bool) or order <= 0:
+        stale("items.reading_order", "reading order must be a positive integer")
+        valid_order = None
+    else:
+        valid_order = order
+    if not _lettering_box_is_valid(entry.get("box")):
+        stale("items.box", "item box is missing or non-positive")
+    _validate_placement_attribution(entry, stale)
+    tail = entry.get("tail")
+    if tail is not None:
+        _validate_lettering_tail(tail, stale)
+    return valid_order
+
+
+def _validate_lettering_items(
+    geometry: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    items = geometry.get("items")
+    if not isinstance(items, list):
+        stale("items", "geometry items must be an array")
+        return
+    orders: list[int] = []
+    for entry in items:
+        if not isinstance(entry, dict):
+            stale("items", "geometry item must be an object")
+            continue
+        order = _validate_lettering_item(entry, stale)
+        if order is not None:
+            orders.append(order)
+    if len(orders) != len(set(orders)):
+        stale("items.reading_order", "reading order values must be unique")
+
+
 def validate_lettering_provenance(
     project_dir: Path,
     panel_id: str,
@@ -1830,248 +2163,10 @@ def validate_lettering_provenance(
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         stale("typography.path", "typography preflight is missing or unreadable")
         typography = None
-    if isinstance(typography, dict):
-        if typography.get("status") != "pass" or typography.get("issues") != []:
-            stale("typography.status", "typography preflight is not a clean pass")
-        if typography.get("schema_version") != TYPOGRAPHY_SCHEMA_VERSION:
-            # The preflight record is fully derived from the storyboard text and
-            # the font policy, so an older record is re-lettered under the
-            # current script policy rather than migrated in place.
-            stale(
-                "typography.schema_version",
-                "typography preflight predates the script coverage policy "
-                "and must be lettered again",
-            )
-        checks = typography.get("checks")
-        # IDs are confirmed to be strings before being compared, because an array
-        # or object arriving here from a hand-edited record would raise rather
-        # than be reported. The comparison is against a sorted list rather than a
-        # set so a duplicated entry cannot stand in for a distinct check.
-        if (
-            not isinstance(checks, list)
-            or any(not isinstance(check, dict) for check in checks)
-            or any(not isinstance(check.get("id"), str) for check in checks)
-        ):
-            stale("typography.checks", "typography preflight checks are missing")
-        elif sorted(check["id"] for check in checks) != sorted(PREFLIGHT_CHECKS):
-            stale(
-                "typography.checks",
-                "typography preflight check set does not match the current policy",
-            )
-        else:
-            # Every generated field is verified, so a record stripped down to
-            # passing IDs cannot pose as evidence that the checks ran.
-            for check in checks:
-                evidence = check.get("evidence")
-                if (
-                    check.get("result") != "pass"
-                    or check.get("severity") != "error"
-                    or check.get("reviewer") != TYPOGRAPHY_CHECK_REVIEWER
-                    or check.get("method") != TYPOGRAPHY_CHECK_METHOD
-                    or not isinstance(evidence, str)
-                    or not evidence.strip()
-                ):
-                    stale(
-                        "typography.checks",
-                        "typography preflight check is incomplete or did not pass",
-                    )
-                    break
-        glyphs = typography.get("glyphs")
-        if not isinstance(glyphs, list):
-            stale("glyphs", "typography glyph list is missing")
-        else:
-            for glyph in glyphs:
-                if not isinstance(glyph, dict):
-                    stale("glyphs", "typography glyph entry is invalid")
-                    break
-                font_id = glyph.get("font_id")
-                if (
-                    not isinstance(font_id, str)
-                    or not font_id
-                    or font_id == ".notdef"
-                    or "/" in font_id
-                    or "\\" in font_id
-                ):
-                    stale("glyphs.font_id", "glyph resolves to .notdef or a private path")
-                    break
-                if glyph.get("coverage") != "supported" or glyph.get("shaping") != "supported":
-                    stale("glyphs", "glyph coverage or shaping is unsupported")
-                    break
-                # The script and shaping verdict are recomputed from the recorded
-                # codepoint rather than read back. A record that simply asserted
-                # them could label a Hebrew or Devanagari glyph as a linear
-                # script and carry that claim past this gate.
-                codepoint = glyph.get("codepoint")
-                if (
-                    not isinstance(codepoint, str)
-                    or re.fullmatch(r"U\+[0-9A-F]{4,6}", codepoint) is None
-                ):
-                    stale("glyphs.codepoint", "glyph codepoint is missing or malformed")
-                    break
-                value = int(codepoint[2:], 16)
-                character = glyph.get("character")
-                if not isinstance(character, str) or len(character) != 1 or ord(character) != value:
-                    stale(
-                        "glyphs.character",
-                        "glyph character does not match its recorded codepoint",
-                    )
-                    break
-                if glyph.get("script") != script_for_codepoint(value):
-                    stale(
-                        "glyphs.script",
-                        "glyph script does not match its recorded codepoint",
-                    )
-                    break
-                if shaping_policy(value)[0] != SHAPING_LINEAR:
-                    stale(
-                        "glyphs.shaping",
-                        "glyph codepoint is not letterable under the current policy",
-                    )
-                    break
-
-    bindings = geometry.get("bindings")
-    if not isinstance(bindings, dict):
-        stale("bindings", "geometry bindings are missing")
-        bindings = {}
-    for digest_field, path_field in (
-        ("clean_sha256", "clean_path"),
-        ("storyboard_sha256", "storyboard_path"),
-    ):
-        relative = bindings.get(path_field)
-        expected = bindings.get(digest_field)
-        try:
-            artifact = (
-                contained_project_path(project_dir, relative, must_exist=True)
-                if isinstance(relative, str)
-                else None
-            )
-        except (OSError, ValueError):
-            artifact = None
-        if artifact is None or not artifact.is_file():
-            stale(f"bindings.{path_field}", "bound artifact is missing")
-        elif not isinstance(expected, str) or sha256_file(artifact) != expected:
-            stale(f"bindings.{digest_field}", "bound artifact hash does not match")
-
-    if isinstance(typography, dict):
-        typography_hash = hashlib.sha256(canonical_artifact_bytes(typography)).hexdigest()
-        if bindings.get("typography_sha256") != typography_hash:
-            stale("typography.path", "typography record hash does not match")
-        if bindings.get("font_policy_sha256") != typography.get("font_policy_sha256"):
-            stale("bindings.font_policy_sha256", "font policy hash does not match preflight")
-
-    lettered = geometry.get("lettered")
-    if not isinstance(lettered, dict):
-        stale("lettered", "lettered artifact descriptor is missing")
-    else:
-        relative = lettered.get("path")
-        try:
-            artifact = (
-                contained_project_path(project_dir, relative, must_exist=True)
-                if isinstance(relative, str)
-                else None
-            )
-        except (OSError, ValueError):
-            artifact = None
-        if artifact is None or not artifact.is_file():
-            stale("lettered.path", "lettered image is missing")
-        elif lettered.get("sha256") != sha256_file(artifact):
-            stale("lettered.sha256", "lettered image hash does not match")
-
-    items = geometry.get("items")
-    if not isinstance(items, list):
-        stale("items", "geometry items must be an array")
-    else:
-        orders: list[int] = []
-        for entry in items:
-            if not isinstance(entry, dict):
-                stale("items", "geometry item must be an object")
-                continue
-            order = entry.get("reading_order")
-            if not isinstance(order, int) or isinstance(order, bool) or order <= 0:
-                stale("items.reading_order", "reading order must be a positive integer")
-            else:
-                orders.append(order)
-            box = entry.get("box")
-            if (
-                not isinstance(box, dict)
-                or any(
-                    not isinstance(box.get(key), int) or isinstance(box.get(key), bool)
-                    for key in ("x", "y", "width", "height")
-                )
-                or box.get("width", 0) <= 0
-                or box.get("height", 0) <= 0
-            ):
-                stale("items.box", "item box is missing or non-positive")
-            _validate_placement_attribution(entry, stale)
-            tail = entry.get("tail")
-            if tail is not None:
-                expected_tail_fields = {
-                    "attachment",
-                    "base",
-                    "control",
-                    "length",
-                    "policy_version",
-                    "source_gap",
-                    "speaker_anchor",
-                    "tip",
-                    "voice_source",
-                    "width",
-                }
-
-                def finite_point(value: object) -> bool:
-                    """Report whether a value is a finite coordinate point."""
-                    return (
-                        isinstance(value, list)
-                        and len(value) == 2
-                        and all(
-                            isinstance(coordinate, (int, float))
-                            and not isinstance(coordinate, bool)
-                            and math.isfinite(coordinate)
-                            for coordinate in value
-                        )
-                    )
-
-                valid_tail = (
-                    isinstance(tail, dict)
-                    and set(tail) == expected_tail_fields
-                    and tail.get("policy_version") == "organic-cubic-v1"
-                    and tail.get("voice_source") in {"human", "device"}
-                    and finite_point(tail.get("speaker_anchor"))
-                    and all(0 <= coordinate <= 1 for coordinate in tail.get("speaker_anchor", []))
-                    and finite_point(tail.get("attachment"))
-                    and finite_point(tail.get("tip"))
-                )
-                base = tail.get("base") if isinstance(tail, dict) else None
-                control = tail.get("control") if isinstance(tail, dict) else None
-                valid_tail = (
-                    valid_tail
-                    and isinstance(base, list)
-                    and len(base) == 2
-                    and all(finite_point(point) for point in base)
-                    and isinstance(control, list)
-                    and len(control) == 2
-                    and all(
-                        isinstance(side, list)
-                        and len(side) == 2
-                        and all(finite_point(point) for point in side)
-                        for side in control
-                    )
-                    and all(
-                        isinstance(tail.get(field), (int, float))
-                        and not isinstance(tail.get(field), bool)
-                        and math.isfinite(tail[field])
-                        and tail[field] > 0
-                        for field in ("length", "source_gap", "width")
-                    )
-                )
-                if not valid_tail:
-                    stale(
-                        "items.tail",
-                        "tail must be a finite organic-cubic-v1 semantic geometry record",
-                    )
-        if len(orders) != len(set(orders)):
-            stale("items.reading_order", "reading order values must be unique")
-
+    _validate_lettering_typography_provenance(typography, stale)
+    _validate_lettering_artifact_bindings(project_dir, geometry, typography, stale)
+    _validate_lettered_image(project_dir, geometry, stale)
+    _validate_lettering_items(geometry, stale)
     return tuple(_sorted(issues))
 
 
@@ -2323,32 +2418,11 @@ def _successful_panel_is_accepted(project_dir: Path, job: dict[str, object]) -> 
     )
 
 
-def _validate_handoff_binding(
+def _validate_handoff_required_artifacts(
     project_dir: Path,
-    manifest: dict[str, object],
+    handoff_manifest: dict[str, object],
     issues: list[ValidationIssue],
-    *,
-    require_panel_acceptance: bool = False,
-) -> None:
-    """Validate the populated project-to-handoff manifest binding."""
-    binding = _populated_handoff_binding(manifest)
-    if binding is None:
-        return
-    manifest_path, locked_scope = binding
-    handoff_manifest = _read_canonical_json(project_dir, manifest_path, issues)
-    if handoff_manifest is None:
-        return
-    contract_issues = validate_handoff_manifest(handoff_manifest)
-    for contract_issue in contract_issues:
-        field, separator, message = contract_issue.partition(": ")
-        _add(
-            issues,
-            manifest_path,
-            field,
-            message if separator else contract_issue,
-        )
-    if contract_issues:
-        return
+) -> set[str]:
     scope_reference_paths: set[str] = set()
     for required_artifact in cast(
         Iterable[dict[str, object]], handoff_manifest["required_artifacts"]
@@ -2376,6 +2450,14 @@ def _validate_handoff_binding(
         actual_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
         if actual_sha256 != required_artifact["sha256"]:
             _add(issues, artifact_path, "sha256", "does not match handoff manifest")
+    return scope_reference_paths
+
+
+def _validate_handoff_batch_membership(
+    project_dir: Path,
+    handoff_manifest: dict[str, object],
+    issues: list[ValidationIssue],
+) -> dict[str, tuple[str, str]] | None:
     batches = cast(dict[str, object], handoff_manifest["batches"])
     batches_path = cast(str, batches["path"])
     batch_map = _read_canonical_json(project_dir, batches_path, issues)
@@ -2402,114 +2484,69 @@ def _validate_handoff_binding(
             actual_sha256 = hashlib.sha256(canonical_artifact_bytes(batch_map)).hexdigest()
             if actual_sha256 != batches["sha256"]:
                 _add(issues, batches_path, "sha256", "does not match handoff manifest")
-    job_reference_paths: set[str] = set(scope_reference_paths)
-    jobs_by_id: dict[str, dict[str, object]] = {}
-    handoff_jobs = cast(list[dict[str, object]], handoff_manifest["jobs"])
-    descriptor_indices: dict[str, int] = {
-        cast(str, descriptor["job_id"]): index for index, descriptor in enumerate(handoff_jobs)
-    }
-    if batch_membership is not None:
-        manifest_job_ids = {cast(str, job["job_id"]) for job in handoff_jobs}
-        if manifest_job_ids != set(batch_membership):
+    return batch_membership
+
+
+def _validate_ready_handoff_job_inputs(
+    project_dir: Path,
+    job_path: str,
+    job: dict[str, object],
+    job_references: list[dict[str, object]],
+    issues: list[ValidationIssue],
+) -> None:
+    job_inputs: list[tuple[str, str, str, str]] = [
+        (
+            cast(str, job["prompt_path"]),
+            "prompt_path",
+            "prompt_sha256",
+            cast(str, job["prompt_sha256"]),
+        )
+    ]
+    job_inputs.extend(
+        (
+            cast(str, reference["path"]),
+            f"references[{index}].path",
+            f"references[{index}].sha256",
+            cast(str, reference["sha256"]),
+        )
+        for index, reference in enumerate(job_references)
+    )
+    for input_path, path_field, sha256_field, expected_sha256 in job_inputs:
+        try:
+            input_bytes = read_contained_bytes(
+                project_dir,
+                input_path,
+                max_bytes=MAX_READ_BYTES,
+            )
+        except FileNotFoundError:
+            _add(issues, job_path, path_field, "input file is missing")
+            continue
+        except (OSError, ValueError) as error:
             _add(
                 issues,
-                manifest_path,
-                "jobs",
-                "job IDs must exactly match generation/batches.json",
+                job_path,
+                path_field,
+                f"cannot read input file: {type(error).__name__}",
             )
-        for handoff_job in handoff_jobs:
-            if handoff_job["status"] == "missing":
-                continue
-            job_path = cast(str, handoff_job["path"])
-            job = _read_canonical_json(project_dir, job_path, issues)
-            if job is None:
-                continue
-            job_issues = validate_generation_job(job)
-            for job_issue in job_issues:
-                field, separator, message = job_issue.partition(": ")
-                _add(
-                    issues,
-                    job_path,
-                    field,
-                    message if separator else job_issue,
-                )
-            if job_issues:
-                continue
-            job_references = cast(list[dict[str, object]], job["references"])
-            job_reference_paths.update(cast(str, reference["path"]) for reference in job_references)
-            job_id = cast(str, handoff_job["job_id"])
-            jobs_by_id[job_id] = job
-            for reference_index, reference in enumerate(job_references):
-                _validate_raster(
-                    project_dir,
-                    cast(str, reference["path"]),
-                    job_path,
-                    f"references[{reference_index}].path",
-                    issues,
-                    expected_format="PNG",
-                )
-            if handoff_job["status"] == "ready":
-                job_inputs: list[tuple[str, str, str, str]] = [
-                    (
-                        cast(str, job["prompt_path"]),
-                        "prompt_path",
-                        "prompt_sha256",
-                        cast(str, job["prompt_sha256"]),
-                    )
-                ]
-                job_inputs.extend(
-                    (
-                        cast(str, reference["path"]),
-                        f"references[{index}].path",
-                        f"references[{index}].sha256",
-                        cast(str, reference["sha256"]),
-                    )
-                    for index, reference in enumerate(job_references)
-                )
-                for input_path, path_field, sha256_field, expected_sha256 in job_inputs:
-                    try:
-                        input_bytes = read_contained_bytes(
-                            project_dir,
-                            input_path,
-                            max_bytes=MAX_READ_BYTES,
-                        )
-                    except FileNotFoundError:
-                        _add(issues, job_path, path_field, "input file is missing")
-                        continue
-                    except (OSError, ValueError) as error:
-                        _add(
-                            issues,
-                            job_path,
-                            path_field,
-                            f"cannot read input file: {type(error).__name__}",
-                        )
-                        continue
-                    actual_sha256 = hashlib.sha256(input_bytes).hexdigest()
-                    if actual_sha256 != expected_sha256:
-                        _add(issues, job_path, sha256_field, "does not match input file")
-            if job["job_id"] != job_id:
-                _add(issues, job_path, "job_id", "does not match handoff manifest")
-            membership = batch_membership.get(job_id)
-            if membership is not None:
-                expected_batch_id, expected_kind = membership
-                if job["batch_id"] != expected_batch_id:
-                    _add(issues, job_path, "batch_id", "does not match generation/batches.json")
-                if job["subject_kind"] != expected_kind:
-                    _add(
-                        issues,
-                        job_path,
-                        "subject_kind",
-                        "does not match generation/batches.json",
-                    )
-            actual_sha256 = hashlib.sha256(canonical_artifact_bytes(job)).hexdigest()
-            if actual_sha256 != handoff_job["sha256"]:
-                _add(issues, job_path, "sha256", "does not match handoff manifest")
+            continue
+        actual_sha256 = hashlib.sha256(input_bytes).hexdigest()
+        if actual_sha256 != expected_sha256:
+            _add(issues, job_path, sha256_field, "does not match input file")
+
+
+def _validate_handoff_locked_scope(
+    project_dir: Path,
+    manifest_path: str,
+    locked_scope: str,
+    reference_paths: set[str],
+    issues: list[ValidationIssue],
+) -> bool:
     scope_stale = False
     try:
         assert_current_locked_scope(
             project_dir,
             locked_scope,
-            reference_paths=sorted(job_reference_paths),
+            reference_paths=sorted(reference_paths),
         )
     except FileNotFoundError as error:
         _add(
@@ -2533,6 +2570,317 @@ def _validate_handoff_binding(
             "locked_scope_sha256",
             f"cannot recompute current project scope: {type(error).__name__}",
         )
+    return scope_stale
+
+
+def _read_validate_handoff_job(
+    project_dir: Path,
+    handoff_job: dict[str, object],
+    issues: list[ValidationIssue],
+) -> tuple[str, dict[str, object] | None, set[str]]:
+    job_path = cast(str, handoff_job["path"])
+    job = _read_canonical_json(project_dir, job_path, issues)
+    if job is None:
+        return job_path, None, set()
+    job_issues = validate_generation_job(job)
+    for job_issue in job_issues:
+        field, separator, message = job_issue.partition(": ")
+        _add(
+            issues,
+            job_path,
+            field,
+            message if separator else job_issue,
+        )
+    if job_issues:
+        return job_path, None, set()
+    job_references = cast(list[dict[str, object]], job["references"])
+    job_reference_paths = {cast(str, reference["path"]) for reference in job_references}
+    for reference_index, reference in enumerate(job_references):
+        _validate_raster(
+            project_dir,
+            cast(str, reference["path"]),
+            job_path,
+            f"references[{reference_index}].path",
+            issues,
+            expected_format="PNG",
+        )
+    if handoff_job["status"] == "ready":
+        _validate_ready_handoff_job_inputs(
+            project_dir,
+            job_path,
+            job,
+            job_references,
+            issues,
+        )
+    return job_path, job, job_reference_paths
+
+
+def _validate_handoff_job_bindings(
+    job_path: str,
+    handoff_job: dict[str, object],
+    job: dict[str, object],
+    batch_membership: dict[str, tuple[str, str]],
+    issues: list[ValidationIssue],
+) -> None:
+    job_id = cast(str, handoff_job["job_id"])
+    if job["job_id"] != job_id:
+        _add(issues, job_path, "job_id", "does not match handoff manifest")
+    membership = batch_membership.get(job_id)
+    if membership is not None:
+        expected_batch_id, expected_kind = membership
+        if job["batch_id"] != expected_batch_id:
+            _add(issues, job_path, "batch_id", "does not match generation/batches.json")
+        if job["subject_kind"] != expected_kind:
+            _add(
+                issues,
+                job_path,
+                "subject_kind",
+                "does not match generation/batches.json",
+            )
+    actual_sha256 = hashlib.sha256(canonical_artifact_bytes(job)).hexdigest()
+    if actual_sha256 != handoff_job["sha256"]:
+        _add(issues, job_path, "sha256", "does not match handoff manifest")
+
+
+def _validate_handoff_jobs(
+    project_dir: Path,
+    manifest_path: str,
+    handoff_manifest: dict[str, object],
+    batch_membership: dict[str, tuple[str, str]] | None,
+    reference_paths: set[str],
+    issues: list[ValidationIssue],
+) -> tuple[set[str], dict[str, dict[str, object]], list[dict[str, object]]]:
+    job_reference_paths = set(reference_paths)
+    jobs_by_id: dict[str, dict[str, object]] = {}
+    handoff_jobs = cast(list[dict[str, object]], handoff_manifest["jobs"])
+    if batch_membership is not None:
+        manifest_job_ids = {cast(str, job["job_id"]) for job in handoff_jobs}
+        if manifest_job_ids != set(batch_membership):
+            _add(
+                issues,
+                manifest_path,
+                "jobs",
+                "job IDs must exactly match generation/batches.json",
+            )
+        for handoff_job in handoff_jobs:
+            if handoff_job["status"] == "missing":
+                continue
+            job_path, job, references = _read_validate_handoff_job(
+                project_dir,
+                handoff_job,
+                issues,
+            )
+            job_reference_paths.update(references)
+            if job is None:
+                continue
+            job_id = cast(str, handoff_job["job_id"])
+            jobs_by_id[job_id] = job
+            _validate_handoff_job_bindings(
+                job_path,
+                handoff_job,
+                job,
+                batch_membership,
+                issues,
+            )
+    return job_reference_paths, jobs_by_id, handoff_jobs
+
+
+def _validate_handoff_successful_raster_dimensions(
+    project_dir: Path,
+    raster_path: str,
+    job: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    if not raster_path.endswith(".png"):
+        return
+    raster_dimensions = _validate_raster(
+        project_dir,
+        raster_path,
+        raster_path,
+        "file",
+        issues,
+        expected_format="PNG",
+    )
+    if raster_dimensions is None:
+        return
+    width, height = raster_dimensions
+    requested_dimensions = job.get("requested_dimensions")
+    if isinstance(requested_dimensions, dict) and (width, height) != (
+        requested_dimensions.get("width"),
+        requested_dimensions.get("height"),
+    ):
+        _add(
+            issues,
+            raster_path,
+            "dimensions",
+            "successful receipt raster does not match generation job dimensions",
+        )
+    requested_ratio = job.get("requested_aspect_ratio")
+    if isinstance(requested_ratio, str):
+        ratio_width, ratio_height = map(int, requested_ratio.split(":"))
+        if width * ratio_height != height * ratio_width:
+            _add(
+                issues,
+                raster_path,
+                "aspect_ratio",
+                "successful receipt raster does not match generation job aspect ratio",
+            )
+
+
+def _validate_handoff_successful_raster(
+    project_dir: Path,
+    receipt_path: str,
+    receipt: dict[str, object],
+    job: dict[str, object],
+    issues: list[ValidationIssue],
+) -> tuple[str, bytes] | None:
+    raster_path = receipt.get("raster_path")
+    raster_sha256 = receipt.get("raster_sha256")
+    if raster_path != job.get("target_path"):
+        _add(
+            issues,
+            receipt_path,
+            "raster_path",
+            "successful receipt must match the generation job target_path",
+        )
+        return None
+    if not isinstance(raster_path, str) or not isinstance(raster_sha256, str):
+        return None
+    try:
+        raster_bytes = read_contained_bytes(
+            project_dir,
+            raster_path,
+            max_bytes=MAX_ENCODED_RASTER_BYTES,
+        )
+    except FileNotFoundError:
+        _add(
+            issues,
+            raster_path,
+            "file",
+            "successful receipt retained raster is missing",
+        )
+        return None
+    except (OSError, ValueError) as error:
+        _add(
+            issues,
+            raster_path,
+            "file",
+            f"cannot read successful receipt raster: {type(error).__name__}",
+        )
+        return None
+    if hashlib.sha256(raster_bytes).hexdigest() != raster_sha256:
+        _add(
+            issues,
+            raster_path,
+            "sha256",
+            "does not match successful receipt raster digest",
+        )
+    _validate_handoff_successful_raster_dimensions(project_dir, raster_path, job, issues)
+    return raster_path, raster_bytes
+
+
+def _validate_handoff_successful_reference(
+    project_dir: Path,
+    receipt_path: str,
+    raster_bytes: bytes,
+    job: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    if job.get("subject_kind") != "reference":
+        return
+    canonical_path = _successful_reference_path(project_dir, job.get("subject_id"))
+    if canonical_path is None:
+        _add(
+            issues,
+            receipt_path,
+            "raster_path",
+            (
+                "successful reference receipt subject must resolve to exactly one "
+                "canonical character or scene activation path"
+            ),
+        )
+        return
+    try:
+        canonical_bytes = read_contained_bytes(
+            project_dir,
+            canonical_path,
+            max_bytes=MAX_ENCODED_RASTER_BYTES,
+        )
+    except FileNotFoundError:
+        _add(
+            issues,
+            canonical_path,
+            "file",
+            "successful reference receipt activated canonical raster is missing",
+        )
+    except (OSError, ValueError) as error:
+        _add(
+            issues,
+            canonical_path,
+            "file",
+            (f"cannot read successful reference receipt activation: {type(error).__name__}"),
+        )
+    else:
+        if canonical_bytes != raster_bytes:
+            _add(
+                issues,
+                canonical_path,
+                "sha256",
+                "activated canonical raster does not match successful reference receipt",
+            )
+
+
+def _validate_handoff_successful_receipt(
+    project_dir: Path,
+    receipt_path: str,
+    receipt: dict[str, object],
+    job: dict[str, object],
+    require_panel_acceptance: bool,
+    issues: list[ValidationIssue],
+) -> None:
+    raster = _validate_handoff_successful_raster(
+        project_dir,
+        receipt_path,
+        receipt,
+        job,
+        issues,
+    )
+    if raster is None:
+        return
+    _, raster_bytes = raster
+    _validate_handoff_successful_reference(
+        project_dir,
+        receipt_path,
+        raster_bytes,
+        job,
+        issues,
+    )
+    if (
+        require_panel_acceptance
+        and job.get("subject_kind") == "panel"
+        and not _successful_panel_is_accepted(project_dir, job)
+    ):
+        panel_id = job.get("subject_id")
+        _add(
+            issues,
+            receipt_path,
+            "raster_path",
+            (
+                f"successful panel receipt must be promoted to "
+                f"panels/raw/{panel_id}.png and accepted by matching visual QA"
+            ),
+        )
+
+
+def _validate_handoff_receipts(
+    project_dir: Path,
+    manifest_path: str,
+    handoff_jobs: list[dict[str, object]],
+    jobs_by_id: dict[str, dict[str, object]],
+    scope_stale: bool,
+    require_panel_acceptance: bool,
+    issues: list[ValidationIssue],
+) -> None:
     receipt_inventory = _handoff_receipt_inventory(project_dir, issues)
     receipts_by_job: dict[str, list[tuple[str, dict[str, object]]]] = {
         job_id: [] for job_id in jobs_by_id
@@ -2555,6 +2903,9 @@ def _validate_handoff_binding(
             continue
         receipts_by_job[receipt_job_id].append((receipt_path, receipt))
 
+    descriptor_indices = {
+        cast(str, descriptor["job_id"]): index for index, descriptor in enumerate(handoff_jobs)
+    }
     for descriptor in handoff_jobs:
         job_id = cast(str, descriptor["job_id"])
         job = jobs_by_id.get(job_id)
@@ -2594,146 +2945,76 @@ def _validate_handoff_binding(
         for receipt_path, receipt in paired_receipts:
             if receipt.get("outcome") != "success":
                 continue
-            raster_path = receipt.get("raster_path")
-            raster_sha256 = receipt.get("raster_sha256")
-            if raster_path != job.get("target_path"):
-                _add(
-                    issues,
-                    receipt_path,
-                    "raster_path",
-                    "successful receipt must match the generation job target_path",
-                )
-                continue
-            if not isinstance(raster_path, str) or not isinstance(raster_sha256, str):
-                continue
-            try:
-                raster_bytes = read_contained_bytes(
-                    project_dir,
-                    raster_path,
-                    max_bytes=MAX_ENCODED_RASTER_BYTES,
-                )
-            except FileNotFoundError:
-                _add(
-                    issues,
-                    raster_path,
-                    "file",
-                    "successful receipt retained raster is missing",
-                )
-                continue
-            except (OSError, ValueError) as error:
-                _add(
-                    issues,
-                    raster_path,
-                    "file",
-                    f"cannot read successful receipt raster: {type(error).__name__}",
-                )
-                continue
-            if hashlib.sha256(raster_bytes).hexdigest() != raster_sha256:
-                _add(
-                    issues,
-                    raster_path,
-                    "sha256",
-                    "does not match successful receipt raster digest",
-                )
-            raster_dimensions = None
-            if raster_path.endswith(".png"):
-                raster_dimensions = _validate_raster(
-                    project_dir,
-                    raster_path,
-                    raster_path,
-                    "file",
-                    issues,
-                    expected_format="PNG",
-                )
-            if raster_dimensions is not None:
-                width, height = raster_dimensions
-                requested_dimensions = job.get("requested_dimensions")
-                if isinstance(requested_dimensions, dict) and (width, height) != (
-                    requested_dimensions.get("width"),
-                    requested_dimensions.get("height"),
-                ):
-                    _add(
-                        issues,
-                        raster_path,
-                        "dimensions",
-                        "successful receipt raster does not match generation job dimensions",
-                    )
-                requested_ratio = job.get("requested_aspect_ratio")
-                if isinstance(requested_ratio, str):
-                    ratio_width, ratio_height = map(int, requested_ratio.split(":"))
-                    if width * ratio_height != height * ratio_width:
-                        _add(
-                            issues,
-                            raster_path,
-                            "aspect_ratio",
-                            "successful receipt raster does not match generation job aspect ratio",
-                        )
-            if job.get("subject_kind") == "reference":
-                canonical_path = _successful_reference_path(
-                    project_dir,
-                    job.get("subject_id"),
-                )
-                if canonical_path is None:
-                    _add(
-                        issues,
-                        receipt_path,
-                        "raster_path",
-                        (
-                            "successful reference receipt subject must resolve to exactly one "
-                            "canonical character or scene activation path"
-                        ),
-                    )
-                else:
-                    try:
-                        canonical_bytes = read_contained_bytes(
-                            project_dir,
-                            canonical_path,
-                            max_bytes=MAX_ENCODED_RASTER_BYTES,
-                        )
-                    except FileNotFoundError:
-                        _add(
-                            issues,
-                            canonical_path,
-                            "file",
-                            "successful reference receipt activated canonical raster is missing",
-                        )
-                    except (OSError, ValueError) as error:
-                        _add(
-                            issues,
-                            canonical_path,
-                            "file",
-                            (
-                                "cannot read successful reference receipt activation: "
-                                f"{type(error).__name__}"
-                            ),
-                        )
-                    else:
-                        if canonical_bytes != raster_bytes:
-                            _add(
-                                issues,
-                                canonical_path,
-                                "sha256",
-                                (
-                                    "activated canonical raster does not match successful "
-                                    "reference receipt"
-                                ),
-                            )
-            if (
-                require_panel_acceptance
-                and job.get("subject_kind") == "panel"
-                and not _successful_panel_is_accepted(project_dir, job)
-            ):
-                panel_id = job.get("subject_id")
-                _add(
-                    issues,
-                    receipt_path,
-                    "raster_path",
-                    (
-                        f"successful panel receipt must be promoted to "
-                        f"panels/raw/{panel_id}.png and accepted by matching visual QA"
-                    ),
-                )
+            _validate_handoff_successful_receipt(
+                project_dir,
+                receipt_path,
+                receipt,
+                job,
+                require_panel_acceptance,
+                issues,
+            )
 
+
+def _validate_handoff_binding(
+    project_dir: Path,
+    manifest: dict[str, object],
+    issues: list[ValidationIssue],
+    *,
+    require_panel_acceptance: bool = False,
+) -> None:
+    """Validate the populated project-to-handoff manifest binding."""
+    binding = _populated_handoff_binding(manifest)
+    if binding is None:
+        return
+    manifest_path, locked_scope = binding
+    handoff_manifest = _read_canonical_json(project_dir, manifest_path, issues)
+    if handoff_manifest is None:
+        return
+    contract_issues = validate_handoff_manifest(handoff_manifest)
+    for contract_issue in contract_issues:
+        field, separator, message = contract_issue.partition(": ")
+        _add(
+            issues,
+            manifest_path,
+            field,
+            message if separator else contract_issue,
+        )
+    if contract_issues:
+        return
+    scope_reference_paths = _validate_handoff_required_artifacts(
+        project_dir,
+        handoff_manifest,
+        issues,
+    )
+    batch_membership = _validate_handoff_batch_membership(
+        project_dir,
+        handoff_manifest,
+        issues,
+    )
+    job_reference_paths, jobs_by_id, handoff_jobs = _validate_handoff_jobs(
+        project_dir,
+        manifest_path,
+        handoff_manifest,
+        batch_membership,
+        scope_reference_paths,
+        issues,
+    )
+    scope_stale = _validate_handoff_locked_scope(
+        project_dir,
+        manifest_path,
+        locked_scope,
+        job_reference_paths,
+        issues,
+    )
+    _validate_handoff_receipts(
+        project_dir,
+        manifest_path,
+        handoff_jobs,
+        jobs_by_id,
+        scope_stale,
+        require_panel_acceptance,
+        issues,
+    )
     expected = {
         "locked_scope_sha256": locked_scope,
         "project_id": manifest.get("project_id"),
@@ -2964,6 +3245,325 @@ def validate_pdf_verification(
     ]
 
 
+def _validate_legacy_page_qa_bindings(
+    page_qa: dict[str, object],
+    page_number: int,
+    page_qa_relative: str,
+    expected_page: str,
+    issues: list[ValidationIssue],
+) -> None:
+    issues.extend(validate_page_qa_record(page_qa))
+    _add(
+        issues,
+        page_qa_relative,
+        "schema_version",
+        "quality-migration-required: schema 1.0 page QA must be migrated",
+    )
+    if page_qa.get("page") != page_number:
+        _add(issues, page_qa_relative, "page", "must match the canonical page number")
+    if page_qa.get("page_path") != expected_page:
+        _add(
+            issues,
+            page_qa_relative,
+            "page_path",
+            "must match the canonical page path",
+        )
+
+
+def _validate_page_qa_record(
+    project_dir: Path,
+    page_number: int,
+    issues: list[ValidationIssue],
+) -> tuple[dict[str, object] | None, bool]:
+    page_qa_relative = f"qa/pages/page-{page_number:03d}.json"
+    page_qa = _read_canonical_json(project_dir, page_qa_relative, issues)
+    if page_qa is None:
+        return None, False
+
+    expected_page = f"pages/page-{page_number:03d}.png"
+    page_qa_version = page_qa.get("schema_version")
+    is_current_page_qa = page_qa_version == CURRENT_PAGE_QA_SCHEMA_VERSION
+    # Schema 1.0 is the only flat legacy record; unknown versions stay unsupported.
+    # JSON may contain an unhashable version, so guard the migration-set lookup.
+    is_migratable_page_qa = (
+        isinstance(page_qa_version, str) and page_qa_version in PAGE_QA_MIGRATION_SOURCES
+    )
+    is_legacy_flat = page_qa_version == LEGACY_PAGE_QA_SCHEMA_VERSION
+    if is_current_page_qa:
+        for issue in validate_page_quality(project_dir, page_number):
+            _add(issues, issue.path, issue.field, issue.message)
+    elif is_migratable_page_qa:
+        _add(
+            issues,
+            page_qa_relative,
+            "schema_version",
+            f"quality-migration-required: schema {page_qa_version} page QA "
+            f"must be migrated to {CURRENT_PAGE_QA_SCHEMA_VERSION}",
+        )
+    elif is_legacy_flat:
+        _validate_legacy_page_qa_bindings(
+            page_qa,
+            page_number,
+            page_qa_relative,
+            expected_page,
+            issues,
+        )
+    else:
+        _add(
+            issues,
+            page_qa_relative,
+            "schema_version",
+            "quality-migration-required: unsupported page QA schema; no "
+            f"migration path to {CURRENT_PAGE_QA_SCHEMA_VERSION} is registered",
+        )
+    return page_qa, is_legacy_flat
+
+
+def _validate_composed_page_artifact(
+    project_dir: Path,
+    page_number: int,
+    page_qa: dict[str, object] | None,
+    is_legacy_flat: bool,
+    issues: list[ValidationIssue],
+) -> None:
+    expected_page = f"pages/page-{page_number:03d}.png"
+    page_path = project_dir / expected_page
+    if not page_path.is_file():
+        _add(issues, expected_page, "", "composed page is missing")
+    elif is_legacy_flat:
+        page_hash = sha256_file(page_path)
+        legacy_page_qa = cast(dict[str, object], page_qa)
+        if isinstance(legacy_page_qa.get("page_sha256"), str):
+            if legacy_page_qa["page_sha256"] != page_hash:
+                page_qa_relative = f"qa/pages/page-{page_number:03d}.json"
+                _add(
+                    issues,
+                    page_qa_relative,
+                    "page_sha256",
+                    "hash does not match the page image",
+                )
+
+
+def _validate_page_qa_artifacts(
+    project_dir: Path,
+    page_count: int,
+    issues: list[ValidationIssue],
+) -> None:
+    for page_number in range(1, page_count + 1):
+        page_qa, is_legacy_flat = _validate_page_qa_record(project_dir, page_number, issues)
+        _validate_composed_page_artifact(
+            project_dir,
+            page_number,
+            page_qa,
+            is_legacy_flat,
+            issues,
+        )
+
+
+def _validate_terminal_panel_outcomes(
+    manifest: dict[str, object],
+    panel_errors: list[tuple[str, str]],
+    panel_warnings: list[tuple[str, str]],
+    issues: list[ValidationIssue],
+) -> None:
+    for record_path, reason in panel_errors:
+        _add(
+            issues,
+            record_path,
+            "decision",
+            f"unresolved panel error blocks final validation: {reason}",
+        )
+    manifest_warnings = manifest.get("warnings")
+    recorded_warnings = (
+        {warning for warning in manifest_warnings if isinstance(warning, str)}
+        if isinstance(manifest_warnings, list)
+        else set()
+    )
+    for _, warning in panel_warnings:
+        if warning not in recorded_warnings:
+            _add(
+                issues,
+                "project.json",
+                "warnings",
+                f"must include unresolved panel warning: {warning}",
+            )
+    status = manifest.get("status")
+    if panel_errors and status in {"COMPLETE", "COMPLETE_WITH_WARNINGS"}:
+        _add(
+            issues,
+            "project.json",
+            "status",
+            "cannot be terminal success while unresolved panel errors remain",
+        )
+    if panel_warnings and status == "COMPLETE":
+        _add(
+            issues,
+            "project.json",
+            "status",
+            "must be COMPLETE_WITH_WARNINGS while panel warnings remain",
+        )
+
+
+def _validate_manifest_artifact_bindings(
+    project_dir: Path,
+    manifest: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    artifacts = manifest.get("artifacts")
+    if isinstance(artifacts, dict):
+        for name, descriptor in artifacts.items():
+            if not isinstance(descriptor, dict):
+                continue
+            relative_path = descriptor.get("path")
+            expected_hash = descriptor.get("sha256")
+            if isinstance(relative_path, str) and isinstance(expected_hash, str):
+                try:
+                    artifact = _contained_project_path(project_dir, relative_path)
+                except ValueError:
+                    _add(
+                        issues,
+                        "project.json",
+                        f"artifacts.{name}.path",
+                        "referenced artifact path escapes the project boundary",
+                    )
+                else:
+                    if not artifact.is_file():
+                        _add(
+                            issues,
+                            "project.json",
+                            f"artifacts.{name}.path",
+                            "referenced artifact is missing",
+                        )
+                    elif SHA256_PATTERN.fullmatch(expected_hash):
+                        artifact = contained_project_path(
+                            project_dir, relative_path, must_exist=True
+                        )
+                        if sha256_file(artifact) != expected_hash:
+                            _add(
+                                issues,
+                                "project.json",
+                                f"artifacts.{name}.sha256",
+                                "hash does not match the artifact",
+                            )
+
+
+def _validate_manifest_source_binding(
+    project_dir: Path,
+    manifest: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    input_data = manifest.get("input")
+    source_path = (
+        cast(dict[str, object], input_data).get("source_path")
+        if isinstance(input_data, dict)
+        else None
+    )
+    source_hash = (
+        cast(dict[str, object], input_data).get("source_sha256")
+        if isinstance(input_data, dict)
+        else None
+    )
+    if isinstance(source_path, str) and isinstance(source_hash, str):
+        try:
+            source_file = _contained_project_path(project_dir, source_path)
+        except ValueError:
+            _add(
+                issues,
+                "project.json",
+                "input.source_path",
+                "referenced source path escapes the project boundary",
+            )
+        else:
+            if not source_file.is_file():
+                _add(
+                    issues,
+                    "project.json",
+                    "input.source_path",
+                    "referenced source is missing",
+                )
+            elif SHA256_PATTERN.fullmatch(source_hash):
+                source_file = contained_project_path(project_dir, source_path, must_exist=True)
+                if sha256_file(source_file) != source_hash:
+                    _add(
+                        issues,
+                        "project.json",
+                        "input.source_sha256",
+                        "hash does not match the source",
+                    )
+
+
+def _validate_legacy_panel_source_references(
+    project_dir: Path,
+    record_relative: str,
+    record: dict[str, object],
+    is_quality_v2: bool,
+    issues: list[ValidationIssue],
+) -> None:
+    prompt_path = None if is_quality_v2 else record.get("source_prompt_path")
+    if isinstance(prompt_path, str):
+        try:
+            prompt_file = _contained_project_path(project_dir, prompt_path)
+        except ValueError:
+            _add(
+                issues,
+                record_relative,
+                "source_prompt_path",
+                "referenced prompt path escapes the project boundary",
+            )
+        else:
+            if not prompt_file.is_file():
+                _add(
+                    issues,
+                    record_relative,
+                    "source_prompt_path",
+                    "referenced prompt is missing",
+                )
+    generation = None if is_quality_v2 else record.get("generation")
+    if isinstance(generation, dict):
+        for reference_index, reference_path in enumerate(generation.get("reference_paths", [])):
+            _validate_raster(
+                project_dir,
+                reference_path,
+                record_relative,
+                f"generation.reference_paths[{reference_index}]",
+                issues,
+            )
+
+
+def _validate_storyboard_manifest_consistency(
+    storyboard: dict[str, object],
+    manifest: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    pages = storyboard.get("pages")
+    settings = manifest.get("settings")
+    if isinstance(pages, list) and isinstance(settings, dict):
+        actual_pages = len(pages)
+        actual_panels = sum(
+            len(page.get("panels", []))
+            for page in pages
+            if isinstance(page, dict) and isinstance(page.get("panels"), list)
+        )
+        if settings.get("page_count") != actual_pages:
+            _add(
+                issues,
+                "project.json",
+                "settings.page_count",
+                "must match the storyboard page count",
+            )
+        if settings.get("panel_count") != actual_panels:
+            _add(
+                issues,
+                "project.json",
+                "settings.panel_count",
+                "must match the storyboard panel count",
+            )
+    panel_map = _storyboard_panel_map(storyboard)
+    manifest_panels = manifest.get("panels", [])
+    if isinstance(manifest_panels, list) and manifest_panels != list(panel_map):
+        _add(issues, "project.json", "panels", "must match storyboard panel order")
+
+
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
     """Validate all artifacts required for a project stage."""
     project_dir = Path(project_dir)
@@ -3012,33 +3612,7 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
         if storyboard is not None and story is not None and characters is not None:
             issues.extend(validate_storyboard(storyboard, story, characters))
         if storyboard is not None and manifest is not None:
-            pages = storyboard.get("pages")
-            settings = manifest.get("settings")
-            if isinstance(pages, list) and isinstance(settings, dict):
-                actual_pages = len(pages)
-                actual_panels = sum(
-                    len(page.get("panels", []))
-                    for page in pages
-                    if isinstance(page, dict) and isinstance(page.get("panels"), list)
-                )
-                if settings.get("page_count") != actual_pages:
-                    _add(
-                        issues,
-                        "project.json",
-                        "settings.page_count",
-                        "must match the storyboard page count",
-                    )
-                if settings.get("panel_count") != actual_panels:
-                    _add(
-                        issues,
-                        "project.json",
-                        "settings.panel_count",
-                        "must match the storyboard panel count",
-                    )
-            panel_map = _storyboard_panel_map(storyboard)
-            manifest_panels = manifest.get("panels", [])
-            if isinstance(manifest_panels, list) and manifest_panels != list(panel_map):
-                _add(issues, "project.json", "panels", "must match storyboard panel order")
+            _validate_storyboard_manifest_consistency(storyboard, manifest, issues)
 
     if needs_panels and storyboard is not None:
         panel_map = _storyboard_panel_map(storyboard)
@@ -3179,294 +3753,19 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                                 "bindings.clean_sha256",
                                 "hash does not match the clean image",
                             )
-            prompt_path = None if is_quality_v2 else record.get("source_prompt_path")
-            if isinstance(prompt_path, str):
-                try:
-                    prompt_file = _contained_project_path(project_dir, prompt_path)
-                except ValueError:
-                    _add(
-                        issues,
-                        record_relative,
-                        "source_prompt_path",
-                        "referenced prompt path escapes the project boundary",
-                    )
-                else:
-                    if not prompt_file.is_file():
-                        _add(
-                            issues,
-                            record_relative,
-                            "source_prompt_path",
-                            "referenced prompt is missing",
-                        )
-            generation = None if is_quality_v2 else record.get("generation")
-            if isinstance(generation, dict):
-                for reference_index, reference_path in enumerate(
-                    generation.get("reference_paths", [])
-                ):
-                    _validate_raster(
-                        project_dir,
-                        reference_path,
-                        record_relative,
-                        f"generation.reference_paths[{reference_index}]",
-                        issues,
-                    )
+            _validate_legacy_panel_source_references(
+                project_dir, record_relative, record, is_quality_v2, issues
+            )
         if manifest is not None:
-            source_path = (
-                cast(dict[str, object], manifest.get("input", {})).get("source_path")
-                if isinstance(manifest.get("input"), dict)
-                else None
-            )
-            source_hash = (
-                cast(dict[str, object], manifest.get("input", {})).get("source_sha256")
-                if isinstance(manifest.get("input"), dict)
-                else None
-            )
-            if isinstance(source_path, str) and isinstance(source_hash, str):
-                try:
-                    source_file = _contained_project_path(project_dir, source_path)
-                except ValueError:
-                    _add(
-                        issues,
-                        "project.json",
-                        "input.source_path",
-                        "referenced source path escapes the project boundary",
-                    )
-                else:
-                    if not source_file.is_file():
-                        _add(
-                            issues,
-                            "project.json",
-                            "input.source_path",
-                            "referenced source is missing",
-                        )
-                    elif SHA256_PATTERN.fullmatch(source_hash):
-                        source_file = contained_project_path(
-                            project_dir, source_path, must_exist=True
-                        )
-                        if sha256_file(source_file) != source_hash:
-                            _add(
-                                issues,
-                                "project.json",
-                                "input.source_sha256",
-                                "hash does not match the source",
-                            )
+            _validate_manifest_source_binding(project_dir, manifest, issues)
 
     if stage in {"all", "final", "export-ready"} and manifest is not None:
-        for record_path, reason in panel_errors:
-            _add(
-                issues,
-                record_path,
-                "decision",
-                f"unresolved panel error blocks final validation: {reason}",
-            )
-        manifest_warnings = manifest.get("warnings")
-        recorded_warnings = (
-            {warning for warning in manifest_warnings if isinstance(warning, str)}
-            if isinstance(manifest_warnings, list)
-            else set()
-        )
-        for _, warning in panel_warnings:
-            if warning not in recorded_warnings:
-                _add(
-                    issues,
-                    "project.json",
-                    "warnings",
-                    f"must include unresolved panel warning: {warning}",
-                )
-        status = manifest.get("status")
-        if panel_errors and status in {"COMPLETE", "COMPLETE_WITH_WARNINGS"}:
-            _add(
-                issues,
-                "project.json",
-                "status",
-                "cannot be terminal success while unresolved panel errors remain",
-            )
-        if panel_warnings and status == "COMPLETE":
-            _add(
-                issues,
-                "project.json",
-                "status",
-                "must be COMPLETE_WITH_WARNINGS while panel warnings remain",
-            )
-        artifacts = manifest.get("artifacts")
-        if isinstance(artifacts, dict):
-            for name, descriptor in artifacts.items():
-                if not isinstance(descriptor, dict):
-                    continue
-                relative_path = descriptor.get("path")
-                expected_hash = descriptor.get("sha256")
-                if isinstance(relative_path, str) and isinstance(expected_hash, str):
-                    try:
-                        artifact = _contained_project_path(project_dir, relative_path)
-                    except ValueError:
-                        _add(
-                            issues,
-                            "project.json",
-                            f"artifacts.{name}.path",
-                            "referenced artifact path escapes the project boundary",
-                        )
-                    else:
-                        if not artifact.is_file():
-                            _add(
-                                issues,
-                                "project.json",
-                                f"artifacts.{name}.path",
-                                "referenced artifact is missing",
-                            )
-                        elif SHA256_PATTERN.fullmatch(expected_hash):
-                            artifact = contained_project_path(
-                                project_dir, relative_path, must_exist=True
-                            )
-                            if sha256_file(artifact) != expected_hash:
-                                _add(
-                                    issues,
-                                    "project.json",
-                                    f"artifacts.{name}.sha256",
-                                    "hash does not match the artifact",
-                                )
+        _validate_terminal_panel_outcomes(manifest, panel_errors, panel_warnings, issues)
+        _validate_manifest_artifact_bindings(project_dir, manifest, issues)
 
     # Fail-closed artifact enumeration for terminal / export-ready stages.
     if stage in {"all", "final", "export-ready"} and manifest is not None:
-        settings = manifest.get("settings")
-        page_count_value = settings.get("page_count") if isinstance(settings, dict) else 0
-        page_count = (
-            page_count_value
-            if isinstance(page_count_value, int) and not isinstance(page_count_value, bool)
-            else 0
-        )
-        # An out-of-range page_count is already reported above. Enumerating it
-        # anyway would let a corrupt manifest drive unbounded filesystem work.
-        page_count = max(0, min(page_count, MAX_PAGES))
-        panels = manifest.get("panels", [])
-        if not isinstance(panels, list):
-            panels = []
-        panels = panels[:MAX_PANELS]
-
-        _validate_required_artifacts(
-            project_dir,
-            manifest,
-            page_count,
-            panels,
-            issues,
-            require_terminal=(stage != "export-ready"),
-        )
-
-        # Page-QA records.
-        for page_number in range(1, page_count + 1):
-            page_qa_relative = f"qa/pages/page-{page_number:03d}.json"
-            page_qa = _read_canonical_json(project_dir, page_qa_relative, issues)
-            expected_page = f"pages/page-{page_number:03d}.png"
-            page_qa_version = page_qa.get("schema_version") if page_qa is not None else None
-            # Each version is diagnosed as what it actually is. A record with a
-            # registered migration needs migrating; only a declared schema-1.0
-            # record is a flat five-field record, so only it goes through that
-            # validator; anything else is unsupported rather than a broken 1.0
-            # record. The isinstance guard keeps a corrupt non-string version
-            # from failing the set lookup.
-            is_current_page_qa = page_qa_version == CURRENT_PAGE_QA_SCHEMA_VERSION
-            is_migratable_page_qa = (
-                isinstance(page_qa_version, str) and page_qa_version in PAGE_QA_MIGRATION_SOURCES
-            )
-            is_legacy_flat = page_qa_version == LEGACY_PAGE_QA_SCHEMA_VERSION
-            if page_qa is not None:
-                if is_current_page_qa:
-                    for issue in validate_page_quality(project_dir, page_number):
-                        _add(issues, issue.path, issue.field, issue.message)
-                elif is_migratable_page_qa:
-                    _add(
-                        issues,
-                        page_qa_relative,
-                        "schema_version",
-                        f"quality-migration-required: schema {page_qa_version} page QA "
-                        f"must be migrated to {CURRENT_PAGE_QA_SCHEMA_VERSION}",
-                    )
-                elif is_legacy_flat:
-                    issues.extend(validate_page_qa_record(page_qa))
-                    _add(
-                        issues,
-                        page_qa_relative,
-                        "schema_version",
-                        "quality-migration-required: schema 1.0 page QA must be migrated",
-                    )
-                    if page_qa.get("page") != page_number:
-                        _add(
-                            issues, page_qa_relative, "page", "must match the canonical page number"
-                        )
-                    if page_qa.get("page_path") != expected_page:
-                        _add(
-                            issues,
-                            page_qa_relative,
-                            "page_path",
-                            "must match the canonical page path",
-                        )
-                else:
-                    _add(
-                        issues,
-                        page_qa_relative,
-                        "schema_version",
-                        "quality-migration-required: unsupported page QA schema; no "
-                        f"migration path to {CURRENT_PAGE_QA_SCHEMA_VERSION} is registered",
-                    )
-            page_path = project_dir / expected_page
-            if not page_path.is_file():
-                _add(issues, expected_page, "", "composed page is missing")
-            elif is_legacy_flat:
-                page_hash = sha256_file(page_path)
-                legacy_page_qa = cast(dict[str, object], page_qa)
-                if isinstance(legacy_page_qa.get("page_sha256"), str):
-                    if legacy_page_qa["page_sha256"] != page_hash:
-                        _add(
-                            issues,
-                            page_qa_relative,
-                            "page_sha256",
-                            "hash does not match the page image",
-                        )
-
-        # Lettered panels and their current typography/geometry provenance.
-        for panel_id in panels:
-            lettered_relative = f"panels/{panel_id}/lettered.png"
-            try:
-                lettered = contained_project_path(project_dir, lettered_relative)
-            except (OSError, ValueError):
-                _add(
-                    issues,
-                    lettered_relative,
-                    "",
-                    "lettered panel path escapes the project boundary",
-                )
-                continue
-            if not lettered.is_file():
-                _add(issues, f"panels/{panel_id}/lettered.png", "", "lettered panel is missing")
-            issues.extend(validate_lettering_provenance(project_dir, panel_id))
-
-        # export-ready does not require report, PDF, or export cache.
-        if stage != "export-ready":
-            report_path = project_dir / "qa/report.md"
-            if not report_path.is_file():
-                _add(issues, "qa/report.md", "", "QA report is missing")
-
-            project_id = manifest.get("project_id")
-            if isinstance(project_id, str) and project_id:
-                pdf_relative = f"exports/{project_id}.pdf"
-                try:
-                    pdf_path = contained_project_path(project_dir, pdf_relative)
-                except (OSError, ValueError):
-                    _add(
-                        issues,
-                        "project.json",
-                        "project_id",
-                        "exported PDF path escapes the project boundary",
-                    )
-                    pdf_path = None
-                if pdf_path is not None:
-                    if not pdf_path.is_file():
-                        _add(issues, f"exports/{project_id}.pdf", "", "exported PDF is missing")
-                    issues.extend(validate_pdf_verification(project_dir, project_id, page_count))
-
-        # Composition cache required.
-        comp_cache = project_dir / "cache/composition.json"
-        if not comp_cache.is_file():
-            _add(issues, "cache/composition.json", "", "composition stage cache is missing")
+        _validate_terminal_artifacts(project_dir, manifest, stage, issues)
 
     return _sorted(issues)
 
@@ -3505,6 +3804,103 @@ def _validate_required_artifacts(
         descriptor = artifacts.get(name)
         if isinstance(descriptor, dict) and descriptor.get("path") != expected:
             _add(issues, "project.json", f"artifacts.{name}.path", f"must equal {expected}")
+
+
+def _terminal_artifact_bounds(manifest: dict[str, object]) -> tuple[int, list[str]]:
+    settings = manifest.get("settings")
+    page_count_value = settings.get("page_count") if isinstance(settings, dict) else 0
+    page_count = (
+        page_count_value
+        if isinstance(page_count_value, int) and not isinstance(page_count_value, bool)
+        else 0
+    )
+    # An out-of-range page_count is already reported above. Enumerating it
+    # anyway would let a corrupt manifest drive unbounded filesystem work.
+    page_count = max(0, min(page_count, MAX_PAGES))
+    panels = manifest.get("panels", [])
+    if not isinstance(panels, list):
+        panels = []
+    panels = panels[:MAX_PANELS]
+    return page_count, panels
+
+
+def _validate_terminal_lettered_panels(
+    project_dir: Path,
+    panels: list[str],
+    issues: list[ValidationIssue],
+) -> None:
+    for panel_id in panels:
+        lettered_relative = f"panels/{panel_id}/lettered.png"
+        try:
+            lettered = contained_project_path(project_dir, lettered_relative)
+        except (OSError, ValueError):
+            _add(
+                issues,
+                lettered_relative,
+                "",
+                "lettered panel path escapes the project boundary",
+            )
+            continue
+        if not lettered.is_file():
+            _add(issues, f"panels/{panel_id}/lettered.png", "", "lettered panel is missing")
+        issues.extend(validate_lettering_provenance(project_dir, panel_id))
+
+
+def _validate_terminal_report_and_pdf(
+    project_dir: Path,
+    manifest: dict[str, object],
+    page_count: int,
+    stage: str,
+    issues: list[ValidationIssue],
+) -> None:
+    if stage != "export-ready":
+        report_path = project_dir / "qa/report.md"
+        if not report_path.is_file():
+            _add(issues, "qa/report.md", "", "QA report is missing")
+
+        project_id = manifest.get("project_id")
+        if isinstance(project_id, str) and project_id:
+            pdf_relative = f"exports/{project_id}.pdf"
+            try:
+                pdf_path = contained_project_path(project_dir, pdf_relative)
+            except (OSError, ValueError):
+                _add(
+                    issues,
+                    "project.json",
+                    "project_id",
+                    "exported PDF path escapes the project boundary",
+                )
+                pdf_path = None
+            if pdf_path is not None:
+                if not pdf_path.is_file():
+                    _add(issues, f"exports/{project_id}.pdf", "", "exported PDF is missing")
+                issues.extend(validate_pdf_verification(project_dir, project_id, page_count))
+
+
+def _validate_terminal_artifacts(
+    project_dir: Path,
+    manifest: dict[str, object],
+    stage: str,
+    issues: list[ValidationIssue],
+) -> None:
+    page_count, panels = _terminal_artifact_bounds(manifest)
+    _validate_required_artifacts(
+        project_dir,
+        manifest,
+        page_count,
+        panels,
+        issues,
+        require_terminal=(stage != "export-ready"),
+    )
+    _validate_page_qa_artifacts(project_dir, page_count, issues)
+    # Lettered panels and their current typography/geometry provenance.
+    _validate_terminal_lettered_panels(project_dir, panels, issues)
+    # export-ready does not require report, PDF, or export cache.
+    _validate_terminal_report_and_pdf(project_dir, manifest, page_count, stage, issues)
+    # Composition cache required.
+    comp_cache = project_dir / "cache/composition.json"
+    if not comp_cache.is_file():
+        _add(issues, "cache/composition.json", "", "composition stage cache is missing")
 
 
 class _ValidationArgumentParser(argparse.ArgumentParser):

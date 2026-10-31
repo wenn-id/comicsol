@@ -112,6 +112,8 @@ from .handoff import (
     build_generation_receipt,
     build_handoff_manifest,
     generation_job_sha256,
+    _handoff_job_counts,
+    _handoff_next_action,
     locked_scope_sha256_from_content,
     reconcile_job_receipts,
     validate_generation_batches,
@@ -2340,17 +2342,6 @@ def _prepared_handoff_snapshot(
     }
 
 
-def _handoff_next_action(phase: str, jobs: Sequence[Mapping[str, object]]) -> str:
-    statuses = {job.get("status") for job in jobs}
-    if "stale" in statuses:
-        return "invalidate"
-    if "failed" in statuses:
-        return "retry-exhausted"
-    if phase == "reference":
-        return "prepare" if statuses == {"completed"} else "render-references"
-    return "visual-qa" if statuses == {"completed"} else "render-panels"
-
-
 def inspect_handoff(project_dir: Path) -> dict[str, object]:
     """Inspect effective handoff state without migration or project-artifact writes."""
     project_dir = Path(project_dir)
@@ -3246,15 +3237,6 @@ def prepare_handoff(project_dir: Path) -> dict[str, object]:
         "phase": phase,
         "project_id": project_manifest["project_id"],
     }
-
-
-def _handoff_job_counts(jobs: Sequence[Mapping[str, object]]) -> dict[str, int]:
-    counts = {status: 0 for status in ("missing", "ready", "completed", "failed", "stale")}
-    for job in jobs:
-        status = job.get("status")
-        if isinstance(status, str) and status in counts:
-            counts[status] += 1
-    return counts
 
 
 def _handoff_job_state(
