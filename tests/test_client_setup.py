@@ -325,6 +325,33 @@ class ClientSetupTests(unittest.TestCase):
             client_setup._atomic_write(config, b"stale", expected=snapshot)
         self.assertEqual(concurrent, config.read_bytes())
 
+    def test_atomic_write_replace_failure_preserves_existing_config(self):
+        config = self.home / "atomic-config.json"
+        original = b"original"
+        config.write_bytes(original)
+
+        with mock.patch.object(client_setup.os, "replace", side_effect=OSError("publish failed")):
+            with self.assertRaisesRegex(OSError, "publish failed"):
+                client_setup._atomic_write(config, b"candidate")
+
+        self.assertEqual(original, config.read_bytes())
+        self.assertEqual([], list(config.parent.glob(f".{config.name}.*.tmp")))
+
+    def test_directory_relative_replace_failure_preserves_existing_config(self):
+        config = self.home / "directory-config.json"
+        original = b"original"
+        config.write_bytes(original)
+
+        with client_setup._ConfigDirectory(config.parent) as directory:
+            with mock.patch.object(
+                client_setup.os, "replace", side_effect=OSError("publish failed")
+            ):
+                with self.assertRaisesRegex(OSError, "publish failed"):
+                    client_setup._atomic_write(config, b"candidate", directory=directory)
+
+        self.assertEqual(original, config.read_bytes())
+        self.assertEqual([], list(config.parent.glob(f".{config.name}.*.tmp")))
+
     @unittest.skipIf(
         os.name == "nt" or sys.platform == "darwin",
         "Windows and macOS have platform-specific publication paths",

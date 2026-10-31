@@ -262,6 +262,27 @@ class SkillInstallTests(unittest.TestCase):
         repeat = self.uninstall("antigravity", "project")
         self.assertEqual("not-installed", repeat.status)
 
+    def test_uninstall_detach_replace_failure_preserves_complete_install(self):
+        installed = self.install("claude", "user")
+        destination = Path(installed.destination)
+        original = {
+            path.relative_to(destination).as_posix(): path.read_bytes()
+            for path in destination.rglob("*")
+            if path.is_file()
+        }
+
+        with mock.patch.object(skill_install.os, "replace", side_effect=OSError("detach failed")):
+            with self.assertRaisesRegex(OSError, "detach failed"):
+                self.uninstall("claude", "user")
+
+        restored = {
+            path.relative_to(destination).as_posix(): path.read_bytes()
+            for path in destination.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(original, restored)
+        self.assertEqual([], list(destination.parent.glob(f".{destination.name}.uninstall-*")))
+
     def test_uninstall_preserves_unknown_and_modified_files(self):
         installed = self.install("zcode", "user")
         destination = Path(installed.destination)
@@ -435,6 +456,43 @@ class SkillInstallTests(unittest.TestCase):
                 self.install("claude", "user")
         self.assertFalse(destination.exists())
         self.assertEqual([], list(destination.parent.glob(".comic-sol.stage-*")))
+
+    def test_new_publication_os_replace_failure_leaves_no_destination_or_staging(self):
+        destination = self.home / ".claude/skills/comic-sol"
+        with mock.patch.object(skill_install.os, "replace", side_effect=OSError("publish failed")):
+            with self.assertRaisesRegex(OSError, "publish failed"):
+                self.install("claude", "user")
+
+        self.assertFalse(destination.exists())
+        self.assertEqual([], list(destination.parent.glob(".comic-sol.stage-*")))
+
+    def test_windows_exchange_fallback_rolls_back_after_second_rename_failure(self):
+        first = self.root / "staging"
+        second = self.root / "destination"
+        first.mkdir()
+        second.mkdir()
+        (first / "payload.txt").write_text("new tree", encoding="utf-8")
+        (second / "payload.txt").write_text("original tree", encoding="utf-8")
+        real_replace = skill_install.os.replace
+        calls = 0
+
+        def fail_destination_publish(source, destination, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("destination publish failed")
+            return real_replace(source, destination, **kwargs)
+
+        with (
+            mock.patch.object(skill_install.os, "name", "nt"),
+            mock.patch.object(skill_install.os, "replace", side_effect=fail_destination_publish),
+        ):
+            with self.assertRaisesRegex(OSError, "destination publish failed"):
+                skill_install._exchange_paths(first, second)
+
+        self.assertEqual("new tree", (first / "payload.txt").read_text(encoding="utf-8"))
+        self.assertEqual("original tree", (second / "payload.txt").read_text(encoding="utf-8"))
+        self.assertEqual([], list(self.root.glob(".destination.rollback-*")))
 
     def test_exchange_failure_preserves_previous_install(self):
         installed = self.install("claude", "user")

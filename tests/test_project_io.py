@@ -318,6 +318,40 @@ class DurableWriteTests(unittest.TestCase):
             self.assertEqual(b"original", destination.read_bytes())
             self.assertEqual([destination], list(directory.iterdir()))
 
+    def test_external_write_replace_failure_cleans_temporary_and_preserves_destination(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            project.mkdir()
+            destination = root / "report.json"
+            destination.write_bytes(b"original")
+
+            with mock.patch.object(project_io.os, "replace", side_effect=OSError("replace failed")):
+                with self.assertRaisesRegex(OSError, "replace failed"):
+                    project_io.durable_external_write(
+                        destination, b"replacement", project_dir=project
+                    )
+
+            self.assertEqual(b"original", destination.read_bytes())
+            self.assertEqual({project, destination}, set(root.iterdir()))
+
+
+class ContainedReplacementTests(unittest.TestCase):
+    def test_replace_contained_failure_preserves_source_and_destination(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "staged.bin"
+            destination = root / "report.bin"
+            source.write_bytes(b"replacement")
+            destination.write_bytes(b"original")
+
+            with mock.patch.object(project_io.os, "replace", side_effect=OSError("replace failed")):
+                with self.assertRaisesRegex(OSError, "replace failed"):
+                    project_io.replace_contained(root, "staged.bin", "report.bin")
+
+            self.assertEqual(b"replacement", source.read_bytes())
+            self.assertEqual(b"original", destination.read_bytes())
+
 
 class DirectoryPublicationTests(unittest.TestCase):
     def test_atomically_moves_source_to_an_absent_destination(self):

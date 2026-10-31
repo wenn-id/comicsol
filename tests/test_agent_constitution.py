@@ -6,6 +6,52 @@ from pathlib import Path
 from scripts.stage_registry import RESUME_STAGES
 
 
+class _OSReplaceCallVisitor(ast.NodeVisitor):
+    def __init__(self, tree: ast.Module) -> None:
+        self.scope: list[str] = []
+        self.calls: dict[str, int] = {}
+        self.os_aliases = {"os"}
+        self.replace_aliases = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                self.os_aliases.update(
+                    alias.asname or alias.name for alias in node.names if alias.name == "os"
+                )
+            elif isinstance(node, ast.ImportFrom) and node.module == "os":
+                self.replace_aliases.update(
+                    alias.asname or alias.name for alias in node.names if alias.name == "replace"
+                )
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.scope.append(node.name)
+        self.generic_visit(node)
+        self.scope.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.scope.append(node.name)
+        self.generic_visit(node)
+        self.scope.pop()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.scope.append(node.name)
+        self.generic_visit(node)
+        self.scope.pop()
+
+    def visit_Call(self, node: ast.Call) -> None:
+        target = node.func
+        os_replace = (
+            isinstance(target, ast.Attribute)
+            and target.attr == "replace"
+            and isinstance(target.value, ast.Name)
+            and target.value.id in self.os_aliases
+        )
+        imported_replace = isinstance(target, ast.Name) and target.id in self.replace_aliases
+        if os_replace or imported_replace:
+            scope = ".".join(self.scope) or "<module>"
+            self.calls[scope] = self.calls.get(scope, 0) + 1
+        self.generic_visit(node)
+
+
 class AgentConstitutionTests(unittest.TestCase):
     """Guard the agent development contract documented in AGENTS.md."""
 
@@ -100,6 +146,100 @@ class AgentConstitutionTests(unittest.TestCase):
             "all-or-nothing",
         ):
             self.assertIn(phrase, self.collapsed)
+
+    def test_article_six_exceptions_are_scoped_and_behavior_tested(self):
+        article_six = self.collapsed.split(
+            "## Article 6 — Deterministic behavior and atomic writes", 1
+        )[1].split("## Article 7 —", 1)[0]
+        for phrase in (
+            "`project.json` lifecycle fields `created_at` and `updated_at` may record the UTC time",
+            "excluded from stage-cache identity",
+            "deterministic stage artifacts must remain byte-identical across those updates",
+            "In production code, direct `os.replace()` calls are allowed only in the tested",
+            "core helpers in `scripts/project_io.py`",
+            "durable_external_write()",
+            "replace_contained()",
+            "durable_atomic_write()",
+            "ProjectTransaction.commit()",
+            "ProjectTransaction.recover()",
+            "`uninstall_skill()` may detach the managed tree for removal",
+            "Every new direct call site requires a failure-path regression test",
+            "comic_sol_product/setup.py",
+            "comic_sol_product/skill_install.py",
+            "comic_sol_product/portable.py",
+        ):
+            self.assertIn(phrase, article_six)
+
+        expected_calls = {
+            "comic_sol_product/portable.py": {"create_portable_archive": 1},
+            "comic_sol_product/setup.py": {
+                "_ConfigDirectory.replace": 2,
+                "_atomic_write": 1,
+                "_publish_expected": 2,
+            },
+            "comic_sol_product/skill_install.py": {
+                "_publish_new": 1,
+                "_exchange_paths": 7,
+                "install_skill": 2,
+                "uninstall_skill": 1,
+            },
+            "scripts/project_io.py": {
+                "durable_external_write": 1,
+                "replace_contained": 2,
+                "durable_atomic_write": 1,
+                "ProjectTransaction.commit": 2,
+                "ProjectTransaction.recover": 1,
+            },
+        }
+        actual_calls = {}
+        source_roots = (self.root / "comic_sol_product", self.root / "scripts")
+        for source_root in source_roots:
+            for path in sorted(source_root.rglob("*.py")):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                visitor = _OSReplaceCallVisitor(tree)
+                visitor.visit(tree)
+                if visitor.calls:
+                    relative = path.relative_to(self.root).as_posix()
+                    actual_calls[relative] = visitor.calls
+        self.assertEqual(expected_calls, actual_calls)
+
+        required_tests = {
+            "tests/test_resume.py": {
+                "test_lifecycle_timestamps_do_not_change_artifact_bytes_or_cache_identity",
+            },
+            "tests/test_client_setup.py": {
+                "test_atomic_write_replace_failure_preserves_existing_config",
+                "test_directory_relative_replace_failure_preserves_existing_config",
+                "test_atomic_publish_rejects_concurrent_entry_and_preserves_it",
+            },
+            "tests/test_skill_install.py": {
+                "test_new_publication_os_replace_failure_leaves_no_destination_or_staging",
+                "test_windows_exchange_fallback_rolls_back_after_second_rename_failure",
+                "test_failed_post_publish_verification_rolls_back_upgrade",
+                "test_uninstall_detach_replace_failure_preserves_complete_install",
+            },
+            "tests/test_distribution.py": {
+                "test_portable_archive_publish_failure_preserves_existing_archive",
+            },
+            "tests/test_project_io.py": {
+                "test_orders_write_flush_file_fsync_replace_and_directory_fsync",
+                "test_replace_failure_cleans_temporary_and_preserves_destination",
+                "test_external_write_replace_failure_cleans_temporary_and_preserves_destination",
+                "test_replace_contained_failure_preserves_source_and_destination",
+                "test_second_publish_failure_restores_prior_set",
+                "test_recover_restores_interrupted_publishing_transaction",
+                "test_recover_restores_target_replaced_before_a_crash",
+            },
+        }
+        for relative, expected_methods in required_tests.items():
+            tree = ast.parse((self.root / relative).read_text(encoding="utf-8"))
+            actual_methods = {
+                node.name
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            missing = expected_methods - actual_methods
+            self.assertFalse(missing, f"{relative} is missing {sorted(missing)}")
 
     def test_resume_stage_names_match_the_stage_registry(self):
         for stage in RESUME_STAGES:

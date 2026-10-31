@@ -120,9 +120,13 @@ reimplement it.
 
 ## Article 6 — Deterministic behavior and atomic writes
 
-- Identical inputs produce identical bytes. No wall-clock value, locale, random
-  seed, hash ordering, or filesystem iteration order may leak into an artifact.
-  Serialize through the canonical helpers in `scripts/core_primitives.py`.
+- Identical inputs produce identical bytes for deterministic artifacts. The
+  `project.json` lifecycle fields `created_at` and `updated_at` may record the UTC
+  time of their operation. They are excluded from stage-cache identity, and
+  deterministic stage artifacts must remain byte-identical across those updates.
+  Other wall-clock values, locale, random seeds, hash ordering, and filesystem
+  iteration order must not affect deterministic artifacts. Serialize through the
+  canonical helpers in `scripts/core_primitives.py`.
 - MCP sampling stays disabled, and deterministic stages never call a model.
 - Published files are written atomically: `durable_atomic_write()` for a single
   file, `ProjectTransaction` for a multi-file change. A partially written
@@ -134,6 +138,19 @@ reimplement it.
   lock or hand-roll a temp-file rename.
 - Installer and client-config writes follow the same rule: back up, write
   atomically, verify, and restore the original bytes when verification fails.
+- In production code, direct `os.replace()` calls are allowed only in the tested
+  core helpers in `scripts/project_io.py` (`durable_external_write()`,
+  `replace_contained()`, `durable_atomic_write()`, `ProjectTransaction.commit()`,
+  and `ProjectTransaction.recover()`) and these product paths:
+  `comic_sol_product/setup.py` (`_ConfigDirectory.replace()`, `_atomic_write()`,
+  and `_publish_expected()`), `comic_sol_product/skill_install.py`
+  (`_publish_new()`, `_exchange_paths()`, `install_skill()`, and
+  `uninstall_skill()`), and `comic_sol_product/portable.py`
+  (`create_portable_archive()`). `uninstall_skill()` may detach the managed tree
+  for removal; other product calls publish staged content, exchange managed
+  trees, or restore backups after failed verification. Every new direct call
+  site requires a failure-path regression test; general project artifacts must
+  use the project I/O helpers above.
 
 ## Article 7 — Resumability and public JSON compatibility survive
 
