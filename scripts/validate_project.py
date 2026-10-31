@@ -3530,6 +3530,40 @@ def _validate_legacy_panel_source_references(
             )
 
 
+def _validate_storyboard_manifest_consistency(
+    storyboard: dict[str, object],
+    manifest: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    pages = storyboard.get("pages")
+    settings = manifest.get("settings")
+    if isinstance(pages, list) and isinstance(settings, dict):
+        actual_pages = len(pages)
+        actual_panels = sum(
+            len(page.get("panels", []))
+            for page in pages
+            if isinstance(page, dict) and isinstance(page.get("panels"), list)
+        )
+        if settings.get("page_count") != actual_pages:
+            _add(
+                issues,
+                "project.json",
+                "settings.page_count",
+                "must match the storyboard page count",
+            )
+        if settings.get("panel_count") != actual_panels:
+            _add(
+                issues,
+                "project.json",
+                "settings.panel_count",
+                "must match the storyboard panel count",
+            )
+    panel_map = _storyboard_panel_map(storyboard)
+    manifest_panels = manifest.get("panels", [])
+    if isinstance(manifest_panels, list) and manifest_panels != list(panel_map):
+        _add(issues, "project.json", "panels", "must match storyboard panel order")
+
+
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
     """Validate all artifacts required for a project stage."""
     project_dir = Path(project_dir)
@@ -3578,33 +3612,7 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
         if storyboard is not None and story is not None and characters is not None:
             issues.extend(validate_storyboard(storyboard, story, characters))
         if storyboard is not None and manifest is not None:
-            pages = storyboard.get("pages")
-            settings = manifest.get("settings")
-            if isinstance(pages, list) and isinstance(settings, dict):
-                actual_pages = len(pages)
-                actual_panels = sum(
-                    len(page.get("panels", []))
-                    for page in pages
-                    if isinstance(page, dict) and isinstance(page.get("panels"), list)
-                )
-                if settings.get("page_count") != actual_pages:
-                    _add(
-                        issues,
-                        "project.json",
-                        "settings.page_count",
-                        "must match the storyboard page count",
-                    )
-                if settings.get("panel_count") != actual_panels:
-                    _add(
-                        issues,
-                        "project.json",
-                        "settings.panel_count",
-                        "must match the storyboard panel count",
-                    )
-            panel_map = _storyboard_panel_map(storyboard)
-            manifest_panels = manifest.get("panels", [])
-            if isinstance(manifest_panels, list) and manifest_panels != list(panel_map):
-                _add(issues, "project.json", "panels", "must match storyboard panel order")
+            _validate_storyboard_manifest_consistency(storyboard, manifest, issues)
 
     if needs_panels and storyboard is not None:
         panel_map = _storyboard_panel_map(storyboard)
