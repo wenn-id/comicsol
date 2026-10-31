@@ -311,11 +311,12 @@ def preflight_text_items(
                     continue
                 script = script_for_codepoint(ord(character))
                 shaping, reason = _shaping_decision(character)
-                # Resolution order is styled face, then the Unicode fallback,
-                # then the script's own extension face. The bundled comic face
-                # wins wherever it can so a Japanese page still letters its Latin
-                # interjections in the comic voice rather than in the CJK face.
-                candidates = (role, "fallback", script_role(script))
+                # Combining marks prefer their base face. Other glyphs try the
+                # styled face, Unicode fallback, then script extension.
+                candidate_roles: tuple[str, ...] = (role, "fallback", script_role(script))
+                if base_face is not None and is_combining(ord(character)):
+                    candidate_roles = (base_face[1], *candidate_roles)
+                candidates = tuple(dict.fromkeys(candidate_roles))
                 checked = tuple(
                     identifiers[candidate] for candidate in candidates if candidate in identifiers
                 )

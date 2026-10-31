@@ -50,7 +50,7 @@ from .typography import (
     preflight_text_items,
 )
 from .font_cmap import font_supports
-from .font_coverage import script_for_codepoint
+from .font_coverage import is_combining, script_for_codepoint
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -156,37 +156,54 @@ def _script_extension_font(size: int, character: str) -> ImageFont.FreeTypeFont 
         return None
 
 
+def _font_tokens(
+    text: str,
+    size: int,
+    bold: bool = False,
+    primary: ImageFont.FreeTypeFont | None = None,
+    base_font: ImageFont.FreeTypeFont | None = None,
+) -> tuple[list[tuple[str, ImageFont.FreeTypeFont]], ImageFont.FreeTypeFont | None]:
+    primary = primary or _load_font(size, bold)
+    fallback = _load_font_path(str(FONT_PATH_FALLBACK), size)
+    primary_path = _font_path(primary)
+    fallback_path = _font_path(fallback)
+    tokens: list[tuple[str, ImageFont.FreeTypeFont]] = []
+    for character in text:
+        combining = is_combining(ord(character))
+        if character == "\n":
+            selected = primary
+        elif (
+            combining and base_font is not None and _font_supports(_font_path(base_font), character)
+        ):
+            selected = base_font
+        elif _font_supports(primary_path, character):
+            selected = primary
+        elif _font_supports(fallback_path, character):
+            selected = fallback
+        else:
+            selected = _script_extension_font(size, character) or fallback
+        tokens.append((character, selected))
+        if character == "\n" or character.isspace():
+            base_font = None
+        elif not combining:
+            base_font = selected
+    return tokens, base_font
+
+
 def _font_runs(
     text: str,
     size: int,
     bold: bool = False,
     primary: ImageFont.FreeTypeFont | None = None,
 ) -> tuple[tuple[str, ImageFont.FreeTypeFont], ...]:
-    """Group text into adjacent runs using exact per-character font fallback.
+    """Group text into adjacent runs using preflight-compatible font selection.
 
-    Faces are tried in the same order typography preflight authorized them:
-    styled face, Unicode fallback, then the character's script extension. When no
-    extension is configured the Unicode fallback remains the last stop and keeps
-    drawing its own `.notdef` box, so an uncovered character stays visible instead
-    of vanishing.
+    Combining marks prefer their base face; other glyphs try the styled face,
+    Unicode fallback, then script extension. Uncovered glyphs remain visible as
+    the fallback face's `.notdef` box.
     """
-    primary = primary or _load_font(size, bold)
-    fallback = _load_font_path(str(FONT_PATH_FALLBACK), size)
-    primary_path = _font_path(primary)
-    fallback_path = _font_path(fallback)
-    runs: list[tuple[str, ImageFont.FreeTypeFont]] = []
-    for character in text:
-        if character == "\n" or _font_supports(primary_path, character):
-            selected = primary
-        elif _font_supports(fallback_path, character):
-            selected = fallback
-        else:
-            selected = _script_extension_font(size, character) or fallback
-        if runs and _font_path(runs[-1][1]) == _font_path(selected):
-            runs[-1] = (runs[-1][0] + character, selected)
-        else:
-            runs.append((character, selected))
-    return tuple(runs)
+    tokens, _ = _font_tokens(text, size, bold, primary)
+    return _merge_font_tokens(tokens)
 
 
 def _styled_font_runs(
@@ -195,10 +212,12 @@ def _styled_font_runs(
 ) -> tuple[tuple[str, ImageFont.FreeTypeFont], ...]:
     """Compose emphasis chunks and per-character fallback into drawable runs."""
     runs: list[tuple[str, ImageFont.FreeTypeFont]] = []
+    base_font = None
     for chunk, bold in _parse_emphasis(text):
         size = _font_size(regular_font)
         primary = _load_font(size, True) if bold else regular_font
-        for run_text, run_font in _font_runs(chunk, size, bold, primary):
+        tokens, base_font = _font_tokens(chunk, size, bold, primary, base_font)
+        for run_text, run_font in _merge_font_tokens(tokens):
             if runs and _font_path(runs[-1][1]) == _font_path(run_font):
                 runs[-1] = (runs[-1][0] + run_text, run_font)
             else:
