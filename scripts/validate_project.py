@@ -3915,6 +3915,45 @@ def _validate_storyboard_manifest_consistency(
         _add(issues, "project.json", "panels", "must match storyboard panel order")
 
 
+def _collect_panel_record_outcomes(
+    record: dict[str, object],
+    record_relative: str,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    panel_errors: list[tuple[str, str]] = []
+    panel_warnings: list[tuple[str, str]] = []
+    checks = record.get("checks")
+    has_error_failure = isinstance(checks, list) and any(
+        isinstance(check, dict)
+        and check.get("result") == "fail"
+        and check.get("severity") == "error"
+        for check in checks
+    )
+    hard_failure = record.get("failure_category") in {
+        "corrupt",
+        "corrupt_image",
+        "safety",
+        "safety_refusal",
+    }
+    if record.get("decision") == "regenerate" or has_error_failure or hard_failure:
+        reason = record.get("retry_reason")
+        panel_errors.append(
+            (
+                record_relative,
+                reason
+                if isinstance(reason, str) and reason.strip()
+                else "panel has an unresolved error",
+            )
+        )
+    unresolved = record.get("unresolved_warnings")
+    if isinstance(unresolved, list):
+        panel_warnings.extend(
+            (record_relative, warning)
+            for warning in unresolved
+            if isinstance(warning, str) and warning.strip()
+        )
+    return panel_errors, panel_warnings
+
+
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
     """Validate all artifacts required for a project stage."""
     project_dir = Path(project_dir)
@@ -4001,36 +4040,11 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                         f"quality-record-stale: {detail}",
                     )
             if stage in {"all", "final", "export-ready"}:
-                checks = record.get("checks")
-                has_error_failure = isinstance(checks, list) and any(
-                    isinstance(check, dict)
-                    and check.get("result") == "fail"
-                    and check.get("severity") == "error"
-                    for check in checks
+                record_errors, record_warnings = _collect_panel_record_outcomes(
+                    record, record_relative
                 )
-                hard_failure = record.get("failure_category") in {
-                    "corrupt",
-                    "corrupt_image",
-                    "safety",
-                    "safety_refusal",
-                }
-                if record.get("decision") == "regenerate" or has_error_failure or hard_failure:
-                    reason = record.get("retry_reason")
-                    panel_errors.append(
-                        (
-                            record_relative,
-                            reason
-                            if isinstance(reason, str) and reason.strip()
-                            else "panel has an unresolved error",
-                        )
-                    )
-                unresolved = record.get("unresolved_warnings")
-                if isinstance(unresolved, list):
-                    panel_warnings.extend(
-                        (record_relative, warning)
-                        for warning in unresolved
-                        if isinstance(warning, str) and warning.strip()
-                    )
+                panel_errors.extend(record_errors)
+                panel_warnings.extend(record_warnings)
             record_panel_id = record.get("subject_id") if is_quality_v2 else record.get("panel_id")
             if record_panel_id != panel_id:
                 id_field = "subject_id" if is_quality_v2 else "panel_id"
