@@ -797,47 +797,33 @@ def validate_story_character_references(
     return _sorted(issues)
 
 
-def _validate_text_item(
-    value: object,
+def _validate_text_content(
+    content: str,
+    kind: object,
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> int:
+    word_count = len(content.split())
+    limits = {"dialogue": 32, "caption": 45, "sfx": 3}
+    if kind in limits and word_count > limits[kind]:
+        _add(issues, path, f"{prefix}.content", f"exceeds {limits[kind]}-word {kind} limit")
+    if unicodedata.normalize("NFC", content) != content:
+        _add(issues, path, f"{prefix}.content", "must be Unicode NFC-normalized")
+    if any(unicodedata.category(char) == "Cc" and char != "\n" for char in content):
+        _add(issues, path, f"{prefix}.content", "contains a disallowed control character")
+    return word_count
+
+
+def _validate_text_speaker(
+    speaker: object,
+    kind: object,
     panel_characters: set[str],
     known_characters: set[str],
     issues: list[ValidationIssue],
     path: str,
     prefix: str,
-) -> int:
-    """Validate one storyboard text item."""
-    base_fields = {"id", "kind", "speaker", "content", "anchor", "priority"}
-    dialogue_fields = {"voice_source", "speaker_anchor", "tail_target"}
-    sfx_fields = {"render_mode"}
-    item = _object(
-        value,
-        base_fields | dialogue_fields | sfx_fields,
-        base_fields,
-        issues,
-        path,
-        prefix,
-    )
-    if item is None:
-        return 0
-    _identifier(item.get("id"), issues, path, f"{prefix}.id")
-    kind = item.get("kind")
-    if kind not in {"dialogue", "caption", "sfx"}:
-        _add(issues, path, f"{prefix}.kind", "must be dialogue, caption, or sfx")
-    content = item.get("content")
-    word_count = 0
-    if _nonempty_string(content, issues, path, f"{prefix}.content"):
-        if not isinstance(content, str):
-            _add(issues, path, f"{prefix}.content", "must be a non-empty string")
-            return 0
-        word_count = len(content.split())
-        limits = {"dialogue": 32, "caption": 45, "sfx": 3}
-        if kind in limits and word_count > limits[kind]:
-            _add(issues, path, f"{prefix}.content", f"exceeds {limits[kind]}-word {kind} limit")
-        if unicodedata.normalize("NFC", content) != content:
-            _add(issues, path, f"{prefix}.content", "must be Unicode NFC-normalized")
-        if any(unicodedata.category(char) == "Cc" and char != "\n" for char in content):
-            _add(issues, path, f"{prefix}.content", "contains a disallowed control character")
-    speaker = item.get("speaker")
+) -> None:
     if kind == "dialogue":
         if not _identifier(speaker, issues, path, f"{prefix}.speaker"):
             pass
@@ -847,8 +833,15 @@ def _validate_text_item(
             )
     elif speaker is not None:
         _add(issues, path, f"{prefix}.speaker", "must be null for caption and sfx")
-    if item.get("anchor") not in ANCHORS:
-        _add(issues, path, f"{prefix}.anchor", "unknown text anchor")
+
+
+def _validate_text_voice_fields(
+    item: dict[str, object],
+    kind: object,
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> None:
     has_legacy_tail = "tail_target" in item
     has_voice_source = "voice_source" in item
     has_speaker_anchor = "speaker_anchor" in item
@@ -888,6 +881,46 @@ def _validate_text_item(
             _add(issues, path, f"{prefix}.voice_source", "must be omitted for caption and sfx")
         if has_speaker_anchor:
             _add(issues, path, f"{prefix}.speaker_anchor", "must be omitted for caption and sfx")
+
+
+def _validate_text_item(
+    value: object,
+    panel_characters: set[str],
+    known_characters: set[str],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> int:
+    """Validate one storyboard text item."""
+    base_fields = {"id", "kind", "speaker", "content", "anchor", "priority"}
+    dialogue_fields = {"voice_source", "speaker_anchor", "tail_target"}
+    sfx_fields = {"render_mode"}
+    item = _object(
+        value,
+        base_fields | dialogue_fields | sfx_fields,
+        base_fields,
+        issues,
+        path,
+        prefix,
+    )
+    if item is None:
+        return 0
+    _identifier(item.get("id"), issues, path, f"{prefix}.id")
+    kind = item.get("kind")
+    if kind not in {"dialogue", "caption", "sfx"}:
+        _add(issues, path, f"{prefix}.kind", "must be dialogue, caption, or sfx")
+    content = item.get("content")
+    word_count = 0
+    if _nonempty_string(content, issues, path, f"{prefix}.content"):
+        if not isinstance(content, str):
+            _add(issues, path, f"{prefix}.content", "must be a non-empty string")
+            return 0
+        word_count = _validate_text_content(content, kind, issues, path, prefix)
+    speaker = item.get("speaker")
+    _validate_text_speaker(speaker, kind, panel_characters, known_characters, issues, path, prefix)
+    if item.get("anchor") not in ANCHORS:
+        _add(issues, path, f"{prefix}.anchor", "unknown text anchor")
+    _validate_text_voice_fields(item, kind, issues, path, prefix)
     # `render_mode` is SFX-only: dialogue and captions have no generated variant,
     # so accepting the field on them would imply a choice that does not exist.
     render_mode_issue = render_mode_problem(item)
