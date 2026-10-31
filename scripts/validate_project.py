@@ -3123,6 +3123,49 @@ def _validate_terminal_panel_outcomes(
         )
 
 
+def _validate_manifest_artifact_bindings(
+    project_dir: Path,
+    manifest: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    artifacts = manifest.get("artifacts")
+    if isinstance(artifacts, dict):
+        for name, descriptor in artifacts.items():
+            if not isinstance(descriptor, dict):
+                continue
+            relative_path = descriptor.get("path")
+            expected_hash = descriptor.get("sha256")
+            if isinstance(relative_path, str) and isinstance(expected_hash, str):
+                try:
+                    artifact = _contained_project_path(project_dir, relative_path)
+                except ValueError:
+                    _add(
+                        issues,
+                        "project.json",
+                        f"artifacts.{name}.path",
+                        "referenced artifact path escapes the project boundary",
+                    )
+                else:
+                    if not artifact.is_file():
+                        _add(
+                            issues,
+                            "project.json",
+                            f"artifacts.{name}.path",
+                            "referenced artifact is missing",
+                        )
+                    elif SHA256_PATTERN.fullmatch(expected_hash):
+                        artifact = contained_project_path(
+                            project_dir, relative_path, must_exist=True
+                        )
+                        if sha256_file(artifact) != expected_hash:
+                            _add(
+                                issues,
+                                "project.json",
+                                f"artifacts.{name}.sha256",
+                                "hash does not match the artifact",
+                            )
+
+
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
     """Validate all artifacts required for a project stage."""
     project_dir = Path(project_dir)
@@ -3412,42 +3455,7 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
 
     if stage in {"all", "final", "export-ready"} and manifest is not None:
         _validate_terminal_panel_outcomes(manifest, panel_errors, panel_warnings, issues)
-        artifacts = manifest.get("artifacts")
-        if isinstance(artifacts, dict):
-            for name, descriptor in artifacts.items():
-                if not isinstance(descriptor, dict):
-                    continue
-                relative_path = descriptor.get("path")
-                expected_hash = descriptor.get("sha256")
-                if isinstance(relative_path, str) and isinstance(expected_hash, str):
-                    try:
-                        artifact = _contained_project_path(project_dir, relative_path)
-                    except ValueError:
-                        _add(
-                            issues,
-                            "project.json",
-                            f"artifacts.{name}.path",
-                            "referenced artifact path escapes the project boundary",
-                        )
-                    else:
-                        if not artifact.is_file():
-                            _add(
-                                issues,
-                                "project.json",
-                                f"artifacts.{name}.path",
-                                "referenced artifact is missing",
-                            )
-                        elif SHA256_PATTERN.fullmatch(expected_hash):
-                            artifact = contained_project_path(
-                                project_dir, relative_path, must_exist=True
-                            )
-                            if sha256_file(artifact) != expected_hash:
-                                _add(
-                                    issues,
-                                    "project.json",
-                                    f"artifacts.{name}.sha256",
-                                    "hash does not match the artifact",
-                                )
+        _validate_manifest_artifact_bindings(project_dir, manifest, issues)
 
     # Fail-closed artifact enumeration for terminal / export-ready stages.
     if stage in {"all", "final", "export-ready"} and manifest is not None:
