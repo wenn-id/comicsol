@@ -1538,6 +1538,34 @@ def _validate_panel_warning_metadata(
     _validate_panel_override_consistency(root, checks, decision, unresolved, issues, path)
 
 
+def _validate_legacy_panel_checks(
+    root: dict[str, object],
+    issues: list[ValidationIssue],
+    path: str,
+) -> object:
+    checks = root.get("checks")
+    if not isinstance(checks, list):
+        _add(issues, path, "checks", "must be an array")
+    else:
+        actual_ids = [check.get("id") if isinstance(check, dict) else None for check in checks]
+        if tuple(actual_ids) != PANEL_CHECK_IDS:
+            _add(
+                issues, path, "checks", "must contain the seven required checks in normative order"
+            )
+        check_fields = {"id", "result", "severity", "evidence"}
+        for index, value in enumerate(checks):
+            prefix = f"checks[{index}]"
+            check = _object(value, check_fields, check_fields, issues, path, prefix)
+            if check is None:
+                continue
+            if check.get("result") not in {"pass", "fail", "warning"}:
+                _add(issues, path, f"{prefix}.result", "unknown check result")
+            if check.get("severity") not in {"error", "warning"}:
+                _add(issues, path, f"{prefix}.severity", "unknown check severity")
+            _nonempty_string(check.get("evidence"), issues, path, f"{prefix}.evidence")
+    return checks
+
+
 def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
     """Validate a panel quality record from either supported schema."""
     if isinstance(data, dict) and data.get("schema_version") == "2.0":
@@ -1605,26 +1633,7 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
         _timestamp(
             generation.get("completed_at"), issues, path, "generation.completed_at", nullable=True
         )
-    checks = root.get("checks")
-    if not isinstance(checks, list):
-        _add(issues, path, "checks", "must be an array")
-    else:
-        actual_ids = [check.get("id") if isinstance(check, dict) else None for check in checks]
-        if tuple(actual_ids) != PANEL_CHECK_IDS:
-            _add(
-                issues, path, "checks", "must contain the seven required checks in normative order"
-            )
-        check_fields = {"id", "result", "severity", "evidence"}
-        for index, value in enumerate(checks):
-            prefix = f"checks[{index}]"
-            check = _object(value, check_fields, check_fields, issues, path, prefix)
-            if check is None:
-                continue
-            if check.get("result") not in {"pass", "fail", "warning"}:
-                _add(issues, path, f"{prefix}.result", "unknown check result")
-            if check.get("severity") not in {"error", "warning"}:
-                _add(issues, path, f"{prefix}.severity", "unknown check severity")
-            _nonempty_string(check.get("evidence"), issues, path, f"{prefix}.evidence")
+    checks = _validate_legacy_panel_checks(root, issues, path)
     decision, has_warning = _validate_panel_decision_policy(root, checks, issues, path)
     _validate_panel_warning_metadata(root, checks, decision, has_warning, issues, path)
     attempts = root.get("attempts")
