@@ -537,6 +537,227 @@ class LetteringTests(unittest.TestCase):
             letter_panel(str(self.panel), 800, 1000, items, self.characters)
         self.assertEqual(["FIRST", "SECOND"], seen)
 
+    def test_anchor_search_rejects_dialogue_tail_collisions_in_both_directions(self):
+        first_box = {"x": 20, "y": 20, "width": 100, "height": 80}
+        collision_box = {"x": 150, "y": 20, "width": 100, "height": 80}
+        fallback_box = {"x": 600, "y": 700, "width": 100, "height": 80}
+        maximum = {"x": 0, "y": 0, "width": 336, "height": 300}
+
+        def straight_tail(start_x, end_x, y):
+            delta = end_x - start_x
+            first_control_x = start_x + delta / 3
+            second_control_x = start_x + delta * 2 / 3
+            return {
+                "attachment": [start_x, y],
+                "base": [[start_x, y - 4], [start_x, y + 4]],
+                "control": [
+                    [[first_control_x, y - 4], [second_control_x, y - 4]],
+                    [[first_control_x, y + 4], [second_control_x, y + 4]],
+                ],
+                "source_gap": 1.0,
+                "speaker_anchor": [0.75, 0.7],
+                "tip": [end_x, y],
+                "voice_source": "human",
+            }
+
+        for collision_side in ("candidate", "prior"):
+            with self.subTest(collision_side=collision_side):
+
+                def fitted(_draw, item, _maximum, _font):
+                    boxes = {
+                        ("dialogue-1", "top-left"): first_box,
+                        ("dialogue-2", "top-left"): collision_box,
+                        ("dialogue-2", "top-center"): fallback_box,
+                    }
+                    return boxes[(item["id"], item["anchor"])]
+
+                def tail_for(
+                    rect, _anchor, _width, _height, _voice_source, collision_side=collision_side
+                ):
+                    if rect == first_box:
+                        tip_x = 170 if collision_side == "prior" else 130
+                        return straight_tail(120, tip_x, 60)
+                    if rect == collision_box:
+                        tip_x = 100 if collision_side == "candidate" else 130
+                        return straight_tail(150, tip_x, 60)
+                    return straight_tail(600, 500, 740)
+
+                output = self.root / f"{collision_side}-collision.png"
+                with (
+                    mock.patch("scripts.letter_panels._anchor_rect", return_value=maximum),
+                    mock.patch("scripts.letter_panels._fitted_item_rect", side_effect=fitted),
+                    mock.patch(
+                        "scripts.letter_panels._organic_tail_geometry", side_effect=tail_for
+                    ),
+                    mock.patch("scripts.letter_panels.render_text_item"),
+                ):
+                    result = letter_panel(
+                        str(output),
+                        800,
+                        1000,
+                        [dialogue("First", 1), dialogue("Second", 2)],
+                        self.characters,
+                        source_bytes=self.panel.read_bytes(),
+                    )
+
+                self.assertEqual(
+                    ["top-left", "top-center"],
+                    [placement["anchor"] for placement in result["placements"]],
+                )
+
+    def test_anchor_search_rejects_crossing_dialogue_tails(self):
+        first_box = {"x": 20, "y": 20, "width": 100, "height": 80}
+        collision_box = {"x": 220, "y": 20, "width": 100, "height": 80}
+        fallback_box = {"x": 600, "y": 700, "width": 100, "height": 80}
+        maximum = {"x": 0, "y": 0, "width": 336, "height": 300}
+
+        def straight_tail(start_x, end_x, y):
+            delta = end_x - start_x
+            first_control_x = start_x + delta / 3
+            second_control_x = start_x + delta * 2 / 3
+            return {
+                "attachment": [start_x, y],
+                "base": [[start_x, y - 4], [start_x, y + 4]],
+                "control": [
+                    [[first_control_x, y - 4], [second_control_x, y - 4]],
+                    [[first_control_x, y + 4], [second_control_x, y + 4]],
+                ],
+                "source_gap": 1.0,
+                "speaker_anchor": [0.75, 0.7],
+                "tip": [end_x, y],
+                "voice_source": "human",
+            }
+
+        def fitted(_draw, item, _maximum, _font):
+            boxes = {
+                ("dialogue-1", "top-left"): first_box,
+                ("dialogue-2", "top-left"): collision_box,
+                ("dialogue-2", "top-center"): fallback_box,
+            }
+            return boxes[(item["id"], item["anchor"])]
+
+        def tail_for(rect, _anchor, _width, _height, _voice_source):
+            if rect == first_box:
+                return straight_tail(120, 180, 60)
+            if rect == collision_box:
+                return straight_tail(220, 160, 60)
+            return straight_tail(600, 500, 740)
+
+        output = self.root / "crossing-tails.png"
+        with (
+            mock.patch("scripts.letter_panels._anchor_rect", return_value=maximum),
+            mock.patch("scripts.letter_panels._fitted_item_rect", side_effect=fitted),
+            mock.patch("scripts.letter_panels._organic_tail_geometry", side_effect=tail_for),
+            mock.patch("scripts.letter_panels.render_text_item"),
+        ):
+            result = letter_panel(
+                str(output),
+                800,
+                1000,
+                [dialogue("First", 1), dialogue("Second", 2)],
+                self.characters,
+                source_bytes=self.panel.read_bytes(),
+            )
+
+        self.assertEqual(
+            ["top-left", "top-center"],
+            [placement["anchor"] for placement in result["placements"]],
+        )
+
+    def test_anchor_search_tries_next_anchor_when_tail_geometry_fails(self):
+        boxes = {
+            "top-left": {"x": 20, "y": 20, "width": 100, "height": 80},
+            "top-center": {"x": 150, "y": 20, "width": 100, "height": 80},
+        }
+        maximum = {"x": 0, "y": 0, "width": 336, "height": 300}
+        tail_geometry = {"tip": [200.0, 100.0]}
+
+        def fitted(_draw, item, _maximum, _font):
+            return boxes[item["anchor"]]
+
+        output = self.root / "invalid-tail-fallback.png"
+        with (
+            mock.patch("scripts.letter_panels._anchor_rect", return_value=maximum),
+            mock.patch("scripts.letter_panels._fitted_item_rect", side_effect=fitted),
+            mock.patch(
+                "scripts.letter_panels._organic_tail_geometry",
+                side_effect=[ValueError("invalid tail geometry"), tail_geometry],
+            ) as tail_for,
+            mock.patch("scripts.letter_panels.render_text_item"),
+        ):
+            result = letter_panel(
+                str(output),
+                800,
+                1000,
+                [dialogue("Try again", 1)],
+                self.characters,
+                source_bytes=self.panel.read_bytes(),
+            )
+
+        self.assertEqual(
+            ["top-center"], [placement["anchor"] for placement in result["placements"]]
+        )
+        self.assertEqual(2, tail_for.call_count)
+
+    def test_anchor_search_chains_last_tail_error_when_all_candidates_fail(self):
+        maximum = {"x": 0, "y": 0, "width": 336, "height": 300}
+        box = {"x": 20, "y": 20, "width": 100, "height": 80}
+        tail_errors: list[ValueError] = []
+
+        def invalid_tail(*_args):
+            error = ValueError(f"tail failure {len(tail_errors) + 1}")
+            tail_errors.append(error)
+            raise error
+
+        output = self.root / "all-invalid-tails.png"
+        with (
+            mock.patch("scripts.letter_panels._anchor_rect", return_value=maximum),
+            mock.patch("scripts.letter_panels._fitted_item_rect", return_value=box),
+            mock.patch("scripts.letter_panels._organic_tail_geometry", side_effect=invalid_tail),
+            mock.patch("scripts.letter_panels.render_text_item"),
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "text item dialogue-1 has no non-overlapping placement"
+            ) as raised:
+                letter_panel(
+                    str(output),
+                    800,
+                    1000,
+                    [dialogue("No candidate", 1)],
+                    self.characters,
+                    source_bytes=self.panel.read_bytes(),
+                )
+
+        self.assertGreater(len(tail_errors), 1)
+        self.assertIs(raised.exception.__cause__, tail_errors[-1])
+
+    def test_anchor_search_keeps_generic_error_when_every_box_overlaps(self):
+        maximum = {"x": 0, "y": 0, "width": 336, "height": 300}
+        box = {"x": 20, "y": 20, "width": 100, "height": 80}
+        output = self.root / "all-overlapping-boxes.png"
+        with (
+            mock.patch("scripts.letter_panels._anchor_rect", return_value=maximum),
+            mock.patch("scripts.letter_panels._fitted_item_rect", return_value=box),
+            mock.patch(
+                "scripts.letter_panels._organic_tail_geometry",
+                return_value={"tip": [200.0, 100.0]},
+            ),
+            mock.patch("scripts.letter_panels.render_text_item"),
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "text item dialogue-2 has no non-overlapping placement"
+            ) as raised:
+                letter_panel(
+                    str(output),
+                    800,
+                    1000,
+                    [dialogue("First", 1), dialogue("Second", 2)],
+                    self.characters,
+                    source_bytes=self.panel.read_bytes(),
+                )
+
+        self.assertIsNone(raised.exception.__cause__)
+
     def test_dialogue_has_white_oval_dark_stroke_and_tail(self):
         letter_panel(str(self.panel), 800, 1000, [dialogue()], self.characters)
         image = Image.open(self.panel).convert("RGB")

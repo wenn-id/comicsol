@@ -30,6 +30,12 @@ from tests.support import make_symlink
 from tests.test_validation import valid_characters, valid_manifest, valid_story, valid_storyboard
 
 
+class HandoffSummaryFacadeTests(unittest.TestCase):
+    def test_domain_helpers_remain_available_on_comic_sol_facade(self):
+        self.assertIs(comic_sol._handoff_next_action, handoff._handoff_next_action)
+        self.assertIs(comic_sol._handoff_job_counts, handoff._handoff_job_counts)
+
+
 def _require_api(testcase, module, name):
     api = getattr(module, name, None)
     testcase.assertTrue(
