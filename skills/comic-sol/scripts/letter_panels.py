@@ -24,6 +24,9 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from .comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json, sha256_file
 from .core_primitives import (
+    _tail_intersects_ellipse,
+    _tail_intersects_tail,
+    _tail_polygon,
     dialogue_attribution_conflicts,
     rectangles_overlap,
     subject_keepout_radius,
@@ -780,42 +783,9 @@ def _draw_antialiased_balloon(
         return round((point[0] - left) * scale), round((point[1] - top) * scale)
 
     if tail is not None:
-        base = tail.get("base")
-        control = tail.get("control")
-        tip_value = tail.get("tip")
-        if (
-            not isinstance(base, list)
-            or not isinstance(control, list)
-            or not isinstance(tip_value, list)
-        ):
+        silhouette = _tail_polygon(tail)
+        if silhouette is None:
             raise ValueError("tail geometry has an invalid point record")
-        base_one, base_two = (tuple(point) for point in base)
-        first_control, second_control = (tuple(tuple(point) for point in side) for side in control)
-        tip = tuple(tip_value)
-
-        def cubic_points(start, controls, end):
-            first, second = controls
-            result = []
-            for index in range(25):
-                t = index / 24
-                inverse = 1 - t
-                result.append(
-                    (
-                        inverse**3 * start[0]
-                        + 3 * inverse**2 * t * first[0]
-                        + 3 * inverse * t**2 * second[0]
-                        + t**3 * end[0],
-                        inverse**3 * start[1]
-                        + 3 * inverse**2 * t * first[1]
-                        + 3 * inverse * t**2 * second[1]
-                        + t**3 * end[1],
-                    )
-                )
-            return result
-
-        first_side = cubic_points(base_one, first_control, tip)
-        second_side = cubic_points(base_two, second_control, tip)
-        silhouette = first_side + list(reversed(second_side))
         mask_draw.polygon(tuple(scaled_point(point) for point in silhouette), fill=255)
     mask_draw.ellipse(
         ((x0 - left) * scale, (y0 - top) * scale, (x1 - left) * scale, (y1 - top) * scale),
@@ -1110,13 +1080,15 @@ def letter_panel(
 
     canvas = base.copy()
     draw = ImageDraw.Draw(canvas, "RGBA")
-    occupied: list[dict[str, int]] = []
+    occupied: list[tuple[dict[str, int], object, dict[str, object] | None]] = []
     for reading_order, item in enumerate(renderable, 1):
         requested = item.get("anchor", "top-left")
         start = ANCHORS.index(requested)
         rect = None
         font = None
         selected_anchor = None
+        selected_tail_geometry = None
+        last_tail_error: ValueError | None = None
         for offset in range(len(ANCHORS)):
             candidate_anchor = ANCHORS[(start + offset) % len(ANCHORS)]
             candidate = _anchor_rect(candidate_anchor, panel_width, panel_height)
@@ -1124,15 +1096,63 @@ def letter_panel(
             candidate_item["anchor"] = candidate_anchor
             candidate_font = _item_font(draw, candidate_item, candidate)
             fitted = _fitted_item_rect(draw, candidate_item, candidate, candidate_font)
-            if not any(_overlap(fitted, prior) for prior in occupied):
-                rect = fitted
-                font = candidate_font
-                selected_anchor = candidate_anchor
-                break
+            if any(_overlap(fitted, prior_box) for prior_box, _, _ in occupied):
+                continue
+            candidate_tail_geometry = None
+            tail_anchor = item.get("speaker_anchor")
+            voice_source = item.get("voice_source")
+            if (
+                item.get("kind") == "dialogue"
+                and isinstance(tail_anchor, list)
+                and len(tail_anchor) == 2
+                and all(isinstance(value, (int, float)) for value in tail_anchor)
+            ):
+                if not isinstance(voice_source, str):
+                    raise ValueError("dialogue voice source must be human or device")
+                try:
+                    candidate_tail_geometry = _organic_tail_geometry(
+                        fitted,
+                        tail_anchor,
+                        panel_width,
+                        panel_height,
+                        voice_source,
+                    )
+                except ValueError as error:
+                    last_tail_error = error
+                    continue
+            if candidate_tail_geometry is not None and any(
+                prior_kind == "dialogue"
+                and prior_tail is not None
+                and _tail_intersects_ellipse(candidate_tail_geometry, prior_box)
+                for prior_box, prior_kind, prior_tail in occupied
+            ):
+                continue
+            if candidate_tail_geometry is not None and any(
+                prior_kind == "dialogue"
+                and prior_tail is not None
+                and _tail_intersects_tail(candidate_tail_geometry, prior_tail)
+                for _, prior_kind, prior_tail in occupied
+            ):
+                continue
+            if item.get("kind") == "dialogue" and any(
+                prior_kind == "dialogue"
+                and prior_tail is not None
+                and _tail_intersects_ellipse(prior_tail, fitted)
+                for prior_box, prior_kind, prior_tail in occupied
+            ):
+                continue
+            rect = fitted
+            font = candidate_font
+            selected_anchor = candidate_anchor
+            selected_tail_geometry = candidate_tail_geometry
+            break
         if rect is None:
-            raise ValueError(
+            placement_error = ValueError(
                 f"text item {item.get('id', 'unknown')} has no non-overlapping placement"
             )
+            if last_tail_error is not None:
+                raise placement_error from last_tail_error
+            raise placement_error
         assert font is not None
         assert selected_anchor is not None
         render_text_item(draw, item, rect, font, character_bible, canvas=canvas)
@@ -1153,24 +1173,7 @@ def letter_panel(
             }
             for run_text, run_font in drawn_runs
         ]
-        tail_geometry = None
-        tail = item.get("speaker_anchor")
-        voice_source = item.get("voice_source")
-        if (
-            item.get("kind") == "dialogue"
-            and isinstance(tail, list)
-            and len(tail) == 2
-            and all(isinstance(value, (int, float)) for value in tail)
-        ):
-            if not isinstance(voice_source, str):
-                raise ValueError("dialogue voice source must be human or device")
-            tail_geometry = _organic_tail_geometry(
-                rect,
-                tail,
-                panel_width,
-                panel_height,
-                voice_source,
-            )
+        tail_geometry = selected_tail_geometry
         item_id = item.get("id")
         attribution = attributions.get(item_id) if isinstance(item_id, str) else None
         placements.append(
@@ -1185,7 +1188,7 @@ def letter_panel(
                 "tail": tail_geometry,
             }
         )
-        occupied.append(rect)
+        occupied.append((rect, item.get("kind"), tail_geometry))
 
     encoded = io.BytesIO()
     canvas.convert("RGB").save(encoded, format="PNG", optimize=False, compress_level=9)

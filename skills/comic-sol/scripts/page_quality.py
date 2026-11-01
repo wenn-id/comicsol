@@ -21,6 +21,8 @@ from .input_limits import MAX_JSON_BYTES, loads_bounded_json
 from .core_primitives import (
     BALLOON_COVERAGE_WARNING_RATIO,
     TAIL_ATTACHMENT_TOLERANCE,
+    _tail_intersects_ellipse,
+    _tail_intersects_tail,
     balloon_outline_deviation,
     balloon_separation_minimum,
     balloon_subject_clearance,
@@ -698,22 +700,33 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
                 # defect. Do not let it trigger secondary overlap, obstruction, or
                 # crowding failures that would obscure the primary problem.
                 continue
-            for prior_id, prior_box, _ in boxes:
+            for prior_id, prior_box, prior_kind in boxes:
                 shared = rectangle_overlap_area(box, prior_box)
-                if shared <= 0:
+                prior_placement = placements.get(prior_id)
+                prior_tail = (
+                    prior_placement.get("tail") if isinstance(prior_placement, Mapping) else None
+                )
+                tail_intersections = []
+                if item.get("kind") == "dialogue" and prior_kind == "dialogue":
+                    if _tail_intersects_ellipse(item.get("tail"), prior_box):
+                        tail_intersections.append(item_id)
+                    if _tail_intersects_ellipse(prior_tail, box):
+                        tail_intersections.append(prior_id)
+                    if _tail_intersects_tail(item.get("tail"), prior_tail):
+                        tail_intersections.extend((prior_id, item_id))
+                if shared <= 0 and not tail_intersections:
                     continue
                 smallest = min(
                     width * height,
                     int(prior_box["width"]) * int(prior_box["height"]),
                 )
-                overlap_regions.append(
-                    {
-                        "items": [prior_id, item_id],
-                        "overlap_area": shared,
-                        "overlap_ratio": round(shared / smallest, 4) if smallest > 0 else 1.0,
-                        "panel_id": panel_id,
-                    }
-                )
+                region = {
+                    "items": [prior_id, item_id],
+                    "overlap_area": shared,
+                    "overlap_ratio": round(shared / smallest, 4) if smallest > 0 else 1.0,
+                    "panel_id": panel_id,
+                }
+                overlap_regions.append(region)
             boxes.append((item_id, box, item.get("kind")))
         if orders != list(range(1, len(items) + 1)):
             order_regions.append({"panel_id": panel_id, "observed": orders})
@@ -751,7 +764,11 @@ def _deterministic_checks(context: PageContext) -> list[dict[str, object]]:
             clipped_regions,
             "All lettering boxes remain inside their source panel bounds.",
         ),
-        ("text-overlap", overlap_regions, "No lettering boxes overlap within any source panel."),
+        (
+            "text-overlap",
+            overlap_regions,
+            "No lettering boxes overlap, and dialogue tails avoid other dialogue balloons and tails.",
+        ),
         (
             "reading-order",
             order_regions,
