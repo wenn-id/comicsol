@@ -522,6 +522,54 @@ class StrictSchemaValidationTests(unittest.TestCase):
                 self.assert_issue(validate_story_plan(data), field)
         self.assertEqual([], validate_story_plan(valid_story()))
 
+    def test_character_bible_reports_character_diagnostics_in_sorted_order(self):
+        data = valid_characters()
+        data["characters"].append(valid_characters()["characters"][0])
+        data["characters"][0]["name"] = ""
+        data["characters"][0]["reference_path"] = "references/characters/other.png"
+
+        self.assertEqual(
+            [
+                ValidationIssue(
+                    "plan/character-bible.json", "characters", "character IDs must be unique"
+                ),
+                ValidationIssue(
+                    "plan/character-bible.json",
+                    "characters[0].name",
+                    "must be a non-empty string",
+                ),
+                ValidationIssue(
+                    "plan/character-bible.json",
+                    "characters[0].reference_path",
+                    "must match the character ID",
+                ),
+            ],
+            validate_character_bible(data),
+        )
+
+    def test_story_plan_reports_scene_diagnostics_in_sorted_order(self):
+        data = valid_story()
+        data["scenes"][1]["id"] = data["scenes"][0]["id"]
+        data["scenes"][0]["characters"] = ["mira", "mira"]
+        data["scenes"][0]["purpose"] = ""
+
+        self.assertEqual(
+            [
+                ValidationIssue("plan/story-plan.json", "scenes", "scene IDs must be unique"),
+                ValidationIssue(
+                    "plan/story-plan.json",
+                    "scenes[0].characters",
+                    "character IDs must be unique",
+                ),
+                ValidationIssue(
+                    "plan/story-plan.json",
+                    "scenes[0].purpose",
+                    "must be a non-empty string",
+                ),
+            ],
+            validate_story_plan(data),
+        )
+
     def test_storyboard_rejects_references_text_and_geometry(self):
         story, characters = valid_story(), valid_characters()
         cases = []
@@ -775,6 +823,49 @@ class StrictSchemaValidationTests(unittest.TestCase):
         data["checks"][0].update({"result": "warning", "severity": "warning"})
         data.update({"decision": "regenerate", "retry_reason": "warning impairs readability"})
         self.assertEqual([], validate_panel_record(data))
+
+    def test_panel_record_requires_generation_artifacts_after_attempt(self):
+        data = valid_panel_record()
+        data.update(
+            {
+                "source_prompt_path": None,
+                "raw_path": None,
+                "clean_path": None,
+                "raw_sha256": None,
+                "dimensions": {"width": 0, "height": 0},
+            }
+        )
+        data["generation"].update({"capability_name": None, "completed_at": None})
+
+        issues = validate_panel_record(data)
+        expected = {
+            ("qa/panels/p01-01.json", "source_prompt_path", "is required after generation"),
+            ("qa/panels/p01-01.json", "raw_path", "is required after generation"),
+            ("qa/panels/p01-01.json", "clean_path", "is required after generation"),
+            ("qa/panels/p01-01.json", "raw_sha256", "is required after generation"),
+            (
+                "qa/panels/p01-01.json",
+                "dimensions.width",
+                "must be positive after generation",
+            ),
+            (
+                "qa/panels/p01-01.json",
+                "dimensions.height",
+                "must be positive after generation",
+            ),
+            (
+                "qa/panels/p01-01.json",
+                "generation.capability_name",
+                "is required after generation",
+            ),
+            (
+                "qa/panels/p01-01.json",
+                "generation.completed_at",
+                "is required after generation",
+            ),
+        }
+        self.assertEqual(len(expected), len(issues))
+        self.assertEqual(expected, {(issue.path, issue.field, issue.message) for issue in issues})
 
     def test_panel_record_v2_uses_shared_quality_contract(self):
         self.assertEqual([], validate_panel_record(valid_panel_record_v2()))

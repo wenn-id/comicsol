@@ -15,7 +15,7 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable, Never, TypeGuard, cast
+from typing import Any, Callable, Iterable, Never, TypeGuard, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -350,49 +350,12 @@ def _string_list(
     return [item for item in value if isinstance(item, str)]
 
 
-def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
-    """Validate the project manifest structure and references."""
-    path = "project.json"
-    issues: list[ValidationIssue] = []
-    base_required_fields = {
-        "project_id",
-        "title",
-        "created_at",
-        "updated_at",
-        "status",
-        "input",
-        "settings",
-        "capability",
-        "artifacts",
-        "stage_versions",
-        "panels",
-        "warnings",
-    }
-    declared_version = data.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
-    is_legacy = declared_version == LEGACY_PROJECT_SCHEMA_VERSION
-    required_fields = set(base_required_fields)
-    fields = required_fields | {"schema_version", "blocked_from", "blocked_reason"}
-    if not is_legacy:
-        required_fields.add("handoff")
-        fields.add("handoff")
-    root = _object(data, fields, required_fields, issues, path, "")
-    if root is None:
-        return _sorted(issues)
-    schema_version = root.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
-    if (
-        not isinstance(schema_version, str)
-        or schema_version not in SUPPORTED_PROJECT_SCHEMA_VERSIONS
-    ):
-        _add(
-            issues,
-            path,
-            "schema_version",
-            (
-                f"unsupported project schema version {schema_version!r}; "
-                f"reader supports {MIN_READER_PROJECT_SCHEMA_VERSION} through "
-                f"{CURRENT_PROJECT_SCHEMA_VERSION}"
-            ),
-        )
+def _validate_manifest_handoff(
+    root: dict[str, object],
+    is_legacy: bool,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
     if not is_legacy:
         handoff_fields = {"contract_version", "locked_scope_sha256", "manifest_path"}
         handoff = _object(
@@ -436,6 +399,30 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
                     "handoff.manifest_path",
                     "must equal handoff/manifest.json when populated",
                 )
+
+
+def _validate_manifest_identity_and_status(
+    root: dict[str, object],
+    is_legacy: bool,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
+    schema_version = root.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
+    if (
+        not isinstance(schema_version, str)
+        or schema_version not in SUPPORTED_PROJECT_SCHEMA_VERSIONS
+    ):
+        _add(
+            issues,
+            path,
+            "schema_version",
+            (
+                f"unsupported project schema version {schema_version!r}; "
+                f"reader supports {MIN_READER_PROJECT_SCHEMA_VERSION} through "
+                f"{CURRENT_PROJECT_SCHEMA_VERSION}"
+            ),
+        )
+    _validate_manifest_handoff(root, is_legacy, issues, path)
     _identifier(root.get("project_id"), issues, path, "project_id")
     _narrative_field(root.get("title"), issues, path, "title", max_chars=MAX_TITLE_CHARS)
     _timestamp(root.get("created_at"), issues, path, "created_at")
@@ -451,6 +438,10 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
     elif root.get("blocked_from") is not None or root.get("blocked_reason") is not None:
         _add(issues, path, "status", "blocked fields must be null when not BLOCKED")
 
+
+def _validate_manifest_input(
+    root: dict[str, object], issues: list[ValidationIssue], path: str
+) -> None:
     input_fields = {"mode", "source_path", "source_sha256", "request_path", "language"}
     input_data = _object(root.get("input"), input_fields, input_fields, issues, path, "input")
     if input_data is not None:
@@ -465,6 +456,10 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         _sha256(input_data.get("source_sha256"), issues, path, "input.source_sha256")
         _nonempty_string(input_data.get("language"), issues, path, "input.language")
 
+
+def _validate_manifest_settings(
+    root: dict[str, object], issues: list[ValidationIssue], path: str
+) -> None:
     setting_fields = {
         "page_width",
         "page_height",
@@ -488,6 +483,10 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         _integer(settings.get("panel_count"), 0, MAX_PANELS, issues, path, "settings.panel_count")
         _nonempty_string(settings.get("style_anchor"), issues, path, "settings.style_anchor")
 
+
+def _validate_manifest_capability(
+    root: dict[str, object], issues: list[ValidationIssue], path: str
+) -> None:
     capability_fields = {
         "status",
         "name",
@@ -517,6 +516,10 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         ):
             _add(issues, path, "capability.detected_at", "is required after capability detection")
 
+
+def _validate_manifest_artifacts(
+    root: dict[str, object], issues: list[ValidationIssue], path: str
+) -> None:
     artifacts = _object(
         root.get("artifacts"),
         set(MANIFEST_ARTIFACT_KEYS),
@@ -539,6 +542,10 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
                 _relative_path(item.get("path"), issues, path, f"artifacts.{name}.path")
                 _sha256(item.get("sha256"), issues, path, f"artifacts.{name}.sha256")
 
+
+def _validate_manifest_stage_metadata(
+    root: dict[str, object], issues: list[ValidationIssue], path: str
+) -> None:
     version_fields = set(RESUME_STAGES)
     versions = _object(
         root.get("stage_versions"), version_fields, version_fields, issues, path, "stage_versions"
@@ -565,7 +572,113 @@ def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
         _add(issues, path, "status", "must be COMPLETE_WITH_WARNINGS while warnings remain")
     if root.get("status") == "COMPLETE_WITH_WARNINGS" and warnings == []:
         _add(issues, path, "warnings", "COMPLETE_WITH_WARNINGS requires an unresolved warning")
+
+
+def validate_manifest(data: dict[str, object]) -> list[ValidationIssue]:
+    """Validate the project manifest structure and references."""
+    path = "project.json"
+    issues: list[ValidationIssue] = []
+    base_required_fields = {
+        "project_id",
+        "title",
+        "created_at",
+        "updated_at",
+        "status",
+        "input",
+        "settings",
+        "capability",
+        "artifacts",
+        "stage_versions",
+        "panels",
+        "warnings",
+    }
+    declared_version = data.get("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
+    is_legacy = declared_version == LEGACY_PROJECT_SCHEMA_VERSION
+    required_fields = set(base_required_fields)
+    fields = required_fields | {"schema_version", "blocked_from", "blocked_reason"}
+    if not is_legacy:
+        required_fields.add("handoff")
+        fields.add("handoff")
+    root = _object(data, fields, required_fields, issues, path, "")
+    if root is None:
+        return _sorted(issues)
+    _validate_manifest_identity_and_status(root, is_legacy, issues, path)
+    _validate_manifest_input(root, issues, path)
+    _validate_manifest_settings(root, issues, path)
+    _validate_manifest_capability(root, issues, path)
+    _validate_manifest_artifacts(root, issues, path)
+    _validate_manifest_stage_metadata(root, issues, path)
     return _sorted(issues)
+
+
+def _validate_character_bible_character(
+    value: object,
+    index: int,
+    issues: list[ValidationIssue],
+    path: str,
+    character_fields: set[str],
+    fingerprint_fields: set[str],
+) -> str | None:
+    prefix = f"characters[{index}]"
+    character = _object(value, character_fields, character_fields, issues, path, prefix)
+    if character is None:
+        return None
+    character_id = character.get("id")
+    valid_character_id: str | None = None
+    if _identifier(character_id, issues, path, f"{prefix}.id"):
+        valid_character_id = character_id
+    for field in ("name", "role", "age_band", "pronouns", "motivation", "speech"):
+        _nonempty_string(character.get(field), issues, path, f"{prefix}.{field}")
+    _string_list(character.get("personality"), issues, path, f"{prefix}.personality", minimum=1)
+    _relative_path(character.get("reference_path"), issues, path, f"{prefix}.reference_path")
+    if (
+        isinstance(character.get("id"), str)
+        and character.get("reference_path") != f"references/characters/{character['id']}.png"
+    ):
+        _add(issues, path, f"{prefix}.reference_path", "must match the character ID")
+    fingerprint = _object(
+        character.get("visual_fingerprint"),
+        fingerprint_fields,
+        fingerprint_fields,
+        issues,
+        path,
+        f"{prefix}.visual_fingerprint",
+    )
+    if fingerprint is not None:
+        for field in ("silhouette", "face", "hair", "wardrobe"):
+            _nonempty_string(
+                fingerprint.get(field), issues, path, f"{prefix}.visual_fingerprint.{field}"
+            )
+        _string_list(
+            fingerprint.get("palette"),
+            issues,
+            path,
+            f"{prefix}.visual_fingerprint.palette",
+            minimum=1,
+        )
+        _string_list(
+            fingerprint.get("signature_props"),
+            issues,
+            path,
+            f"{prefix}.visual_fingerprint.signature_props",
+            minimum=1,
+        )
+        _string_list(
+            fingerprint.get("invariants"),
+            issues,
+            path,
+            f"{prefix}.visual_fingerprint.invariants",
+            minimum=2,
+            maximum=5,
+        )
+        _string_list(
+            fingerprint.get("avoid"),
+            issues,
+            path,
+            f"{prefix}.visual_fingerprint.avoid",
+            minimum=1,
+        )
+    return valid_character_id
 
 
 def validate_character_bible(data: dict[str, object]) -> list[ValidationIssue]:
@@ -607,67 +720,48 @@ def validate_character_bible(data: dict[str, object]) -> list[ValidationIssue]:
         "avoid",
     }
     for index, value in enumerate(characters):
-        prefix = f"characters[{index}]"
-        character = _object(value, character_fields, character_fields, issues, path, prefix)
-        if character is None:
-            continue
-        character_id = character.get("id")
-        if _identifier(character_id, issues, path, f"{prefix}.id"):
-            ids.append(character_id)
-        for field in ("name", "role", "age_band", "pronouns", "motivation", "speech"):
-            _nonempty_string(character.get(field), issues, path, f"{prefix}.{field}")
-        _string_list(character.get("personality"), issues, path, f"{prefix}.personality", minimum=1)
-        _relative_path(character.get("reference_path"), issues, path, f"{prefix}.reference_path")
-        if (
-            isinstance(character.get("id"), str)
-            and character.get("reference_path") != f"references/characters/{character['id']}.png"
-        ):
-            _add(issues, path, f"{prefix}.reference_path", "must match the character ID")
-        fingerprint = _object(
-            character.get("visual_fingerprint"),
-            fingerprint_fields,
-            fingerprint_fields,
+        character_id = _validate_character_bible_character(
+            value,
+            index,
             issues,
             path,
-            f"{prefix}.visual_fingerprint",
+            character_fields,
+            fingerprint_fields,
         )
-        if fingerprint is not None:
-            for field in ("silhouette", "face", "hair", "wardrobe"):
-                _nonempty_string(
-                    fingerprint.get(field), issues, path, f"{prefix}.visual_fingerprint.{field}"
-                )
-            _string_list(
-                fingerprint.get("palette"),
-                issues,
-                path,
-                f"{prefix}.visual_fingerprint.palette",
-                minimum=1,
-            )
-            _string_list(
-                fingerprint.get("signature_props"),
-                issues,
-                path,
-                f"{prefix}.visual_fingerprint.signature_props",
-                minimum=1,
-            )
-            _string_list(
-                fingerprint.get("invariants"),
-                issues,
-                path,
-                f"{prefix}.visual_fingerprint.invariants",
-                minimum=2,
-                maximum=5,
-            )
-            _string_list(
-                fingerprint.get("avoid"),
-                issues,
-                path,
-                f"{prefix}.visual_fingerprint.avoid",
-                minimum=1,
-            )
+        if character_id is not None:
+            ids.append(character_id)
     if len(set(ids)) != len(ids):
         _add(issues, path, "characters", "character IDs must be unique")
     return _sorted(issues)
+
+
+def _validate_story_plan_scenes(
+    scenes: list[object],
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
+    if not 2 <= len(scenes) <= 5:
+        _add(issues, path, "scenes", "must contain 2 to 5 scenes")
+    scene_fields = {"id", "purpose", "location", "time", "characters", "continuity_anchor"}
+    ids: list[str] = []
+    for index, value in enumerate(scenes):
+        prefix = f"scenes[{index}]"
+        scene = _object(value, scene_fields, scene_fields, issues, path, prefix)
+        if scene is None:
+            continue
+        scene_id = scene.get("id")
+        if _identifier(scene_id, issues, path, f"{prefix}.id"):
+            ids.append(scene_id)
+        for field in ("purpose", "location", "time", "continuity_anchor"):
+            _nonempty_string(scene.get(field), issues, path, f"{prefix}.{field}")
+        character_ids = _string_list(scene.get("characters"), issues, path, f"{prefix}.characters")
+        if character_ids is not None:
+            for item_index, character_id in enumerate(character_ids):
+                _identifier(character_id, issues, path, f"{prefix}.characters[{item_index}]")
+            if len(set(character_ids)) != len(character_ids):
+                _add(issues, path, f"{prefix}.characters", "character IDs must be unique")
+    if len(set(ids)) != len(ids):
+        _add(issues, path, "scenes", "scene IDs must be unique")
 
 
 def validate_story_plan(data: dict[str, object]) -> list[ValidationIssue]:
@@ -702,28 +796,7 @@ def validate_story_plan(data: dict[str, object]) -> list[ValidationIssue]:
     if not isinstance(scenes, list):
         _add(issues, path, "scenes", "must be an array")
         return _sorted(issues)
-    if not 2 <= len(scenes) <= 5:
-        _add(issues, path, "scenes", "must contain 2 to 5 scenes")
-    scene_fields = {"id", "purpose", "location", "time", "characters", "continuity_anchor"}
-    ids: list[str] = []
-    for index, value in enumerate(scenes):
-        prefix = f"scenes[{index}]"
-        scene = _object(value, scene_fields, scene_fields, issues, path, prefix)
-        if scene is None:
-            continue
-        scene_id = scene.get("id")
-        if _identifier(scene_id, issues, path, f"{prefix}.id"):
-            ids.append(scene_id)
-        for field in ("purpose", "location", "time", "continuity_anchor"):
-            _nonempty_string(scene.get(field), issues, path, f"{prefix}.{field}")
-        character_ids = _string_list(scene.get("characters"), issues, path, f"{prefix}.characters")
-        if character_ids is not None:
-            for item_index, character_id in enumerate(character_ids):
-                _identifier(character_id, issues, path, f"{prefix}.characters[{item_index}]")
-            if len(set(character_ids)) != len(character_ids):
-                _add(issues, path, f"{prefix}.characters", "character IDs must be unique")
-    if len(set(ids)) != len(ids):
-        _add(issues, path, "scenes", "scene IDs must be unique")
+    _validate_story_plan_scenes(scenes, issues, path)
     return _sorted(issues)
 
 
@@ -754,47 +827,33 @@ def validate_story_character_references(
     return _sorted(issues)
 
 
-def _validate_text_item(
-    value: object,
+def _validate_text_content(
+    content: str,
+    kind: object,
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> int:
+    word_count = len(content.split())
+    limits = {"dialogue": 32, "caption": 45, "sfx": 3}
+    if kind in limits and word_count > limits[kind]:
+        _add(issues, path, f"{prefix}.content", f"exceeds {limits[kind]}-word {kind} limit")
+    if unicodedata.normalize("NFC", content) != content:
+        _add(issues, path, f"{prefix}.content", "must be Unicode NFC-normalized")
+    if any(unicodedata.category(char) == "Cc" and char != "\n" for char in content):
+        _add(issues, path, f"{prefix}.content", "contains a disallowed control character")
+    return word_count
+
+
+def _validate_text_speaker(
+    speaker: object,
+    kind: object,
     panel_characters: set[str],
     known_characters: set[str],
     issues: list[ValidationIssue],
     path: str,
     prefix: str,
-) -> int:
-    """Validate one storyboard text item."""
-    base_fields = {"id", "kind", "speaker", "content", "anchor", "priority"}
-    dialogue_fields = {"voice_source", "speaker_anchor", "tail_target"}
-    sfx_fields = {"render_mode"}
-    item = _object(
-        value,
-        base_fields | dialogue_fields | sfx_fields,
-        base_fields,
-        issues,
-        path,
-        prefix,
-    )
-    if item is None:
-        return 0
-    _identifier(item.get("id"), issues, path, f"{prefix}.id")
-    kind = item.get("kind")
-    if kind not in {"dialogue", "caption", "sfx"}:
-        _add(issues, path, f"{prefix}.kind", "must be dialogue, caption, or sfx")
-    content = item.get("content")
-    word_count = 0
-    if _nonempty_string(content, issues, path, f"{prefix}.content"):
-        if not isinstance(content, str):
-            _add(issues, path, f"{prefix}.content", "must be a non-empty string")
-            return 0
-        word_count = len(content.split())
-        limits = {"dialogue": 32, "caption": 45, "sfx": 3}
-        if kind in limits and word_count > limits[kind]:
-            _add(issues, path, f"{prefix}.content", f"exceeds {limits[kind]}-word {kind} limit")
-        if unicodedata.normalize("NFC", content) != content:
-            _add(issues, path, f"{prefix}.content", "must be Unicode NFC-normalized")
-        if any(unicodedata.category(char) == "Cc" and char != "\n" for char in content):
-            _add(issues, path, f"{prefix}.content", "contains a disallowed control character")
-    speaker = item.get("speaker")
+) -> None:
     if kind == "dialogue":
         if not _identifier(speaker, issues, path, f"{prefix}.speaker"):
             pass
@@ -804,8 +863,15 @@ def _validate_text_item(
             )
     elif speaker is not None:
         _add(issues, path, f"{prefix}.speaker", "must be null for caption and sfx")
-    if item.get("anchor") not in ANCHORS:
-        _add(issues, path, f"{prefix}.anchor", "unknown text anchor")
+
+
+def _validate_text_voice_fields(
+    item: dict[str, object],
+    kind: object,
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> None:
     has_legacy_tail = "tail_target" in item
     has_voice_source = "voice_source" in item
     has_speaker_anchor = "speaker_anchor" in item
@@ -845,6 +911,46 @@ def _validate_text_item(
             _add(issues, path, f"{prefix}.voice_source", "must be omitted for caption and sfx")
         if has_speaker_anchor:
             _add(issues, path, f"{prefix}.speaker_anchor", "must be omitted for caption and sfx")
+
+
+def _validate_text_item(
+    value: object,
+    panel_characters: set[str],
+    known_characters: set[str],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> int:
+    """Validate one storyboard text item."""
+    base_fields = {"id", "kind", "speaker", "content", "anchor", "priority"}
+    dialogue_fields = {"voice_source", "speaker_anchor", "tail_target"}
+    sfx_fields = {"render_mode"}
+    item = _object(
+        value,
+        base_fields | dialogue_fields | sfx_fields,
+        base_fields,
+        issues,
+        path,
+        prefix,
+    )
+    if item is None:
+        return 0
+    _identifier(item.get("id"), issues, path, f"{prefix}.id")
+    kind = item.get("kind")
+    if kind not in {"dialogue", "caption", "sfx"}:
+        _add(issues, path, f"{prefix}.kind", "must be dialogue, caption, or sfx")
+    content = item.get("content")
+    word_count = 0
+    if _nonempty_string(content, issues, path, f"{prefix}.content"):
+        if not isinstance(content, str):
+            _add(issues, path, f"{prefix}.content", "must be a non-empty string")
+            return 0
+        word_count = _validate_text_content(content, kind, issues, path, prefix)
+    speaker = item.get("speaker")
+    _validate_text_speaker(speaker, kind, panel_characters, known_characters, issues, path, prefix)
+    if item.get("anchor") not in ANCHORS:
+        _add(issues, path, f"{prefix}.anchor", "unknown text anchor")
+    _validate_text_voice_fields(item, kind, issues, path, prefix)
     # `render_mode` is SFX-only: dialogue and captions have no generated variant,
     # so accepting the field on them would imply a choice that does not exist.
     render_mode_issue = render_mode_problem(item)
@@ -889,6 +995,337 @@ def _validate_panel_attribution(
             "dialogue-attribution-ambiguous: "
             f"{first} and {second} {ATTRIBUTION_CONFLICT_MESSAGES[reason]}",
         )
+
+
+def _validate_panel_continuity(
+    continuity: list[str],
+    known_characters: set[str],
+    known_scenes: set[Any | None],
+    character_invariants: dict[Any | None, set[Any]],
+    scene_anchors: dict[Any | None, Any],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> None:
+    for continuity_index, anchor in enumerate(continuity):
+        anchor_field = f"{prefix}.continuity[{continuity_index}]"
+        owner, separator, fact = anchor.partition(":")
+        if not separator or not fact.strip() or owner not in known_characters | known_scenes:
+            _add(
+                issues,
+                path,
+                anchor_field,
+                "must reference a known character or scene anchor",
+            )
+        elif owner in character_invariants and fact.strip() not in character_invariants[owner]:
+            _add(issues, path, anchor_field, "must reuse an exact character invariant")
+        elif owner in scene_anchors and fact.strip() != scene_anchors[owner]:
+            _add(issues, path, anchor_field, "must reuse the exact scene continuity anchor")
+
+
+def _validate_storyboard_panel_identity(
+    panel: dict[str, object],
+    page_index: int,
+    panel_index: int,
+    known_scenes: set[Any | None],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> str | None:
+    panel_id_for_uniqueness = None
+    panel_id = panel.get("id")
+    if not isinstance(panel_id, str) or PANEL_ID_PATTERN.fullmatch(panel_id) is None:
+        _add(issues, path, f"{prefix}.id", "must match pNN-NN")
+    else:
+        panel_id_for_uniqueness = panel_id
+        expected_id = f"p{page_index + 1:02d}-{panel_index + 1:02d}"
+        if panel_id != expected_id:
+            _add(issues, path, f"{prefix}.id", f"must equal {expected_id}")
+    if panel.get("order") != panel_index + 1:
+        _add(issues, path, f"{prefix}.order", "must match reading order")
+    if panel.get("scene_id") not in known_scenes:
+        _add(issues, path, f"{prefix}.scene_id", "must reference a story scene")
+    for field in ("beat", "shot", "composition", "action", "expression", "lighting"):
+        _nonempty_string(panel.get(field), issues, path, f"{prefix}.{field}")
+    return panel_id_for_uniqueness
+
+
+def _validate_storyboard_panel_references(
+    panel: dict[str, object],
+    known_characters: set[str],
+    known_scenes: set[Any | None],
+    character_invariants: dict[Any | None, set[Any]],
+    scene_anchors: dict[Any | None, Any],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> list[str]:
+    panel_characters = (
+        _string_list(panel.get("characters"), issues, path, f"{prefix}.characters") or []
+    )
+    for item_index, character_id in enumerate(panel_characters):
+        if character_id not in known_characters:
+            _add(
+                issues,
+                path,
+                f"{prefix}.characters[{item_index}]",
+                "must reference the character bible",
+            )
+    if len(set(panel_characters)) != len(panel_characters):
+        _add(issues, path, f"{prefix}.characters", "character IDs must be unique")
+    continuity = _string_list(panel.get("continuity"), issues, path, f"{prefix}.continuity") or []
+    if len(set(continuity)) != len(continuity):
+        _add(issues, path, f"{prefix}.continuity", "continuity anchors must be unique")
+    _validate_panel_continuity(
+        continuity,
+        known_characters,
+        known_scenes,
+        character_invariants,
+        scene_anchors,
+        issues,
+        path,
+        prefix,
+    )
+    _string_list(panel.get("negative"), issues, path, f"{prefix}.negative", minimum=1)
+    return panel_characters
+
+
+def _validate_storyboard_panel_geometry(
+    panel: dict[str, object],
+    panel_index: int,
+    expected_rects: list[dict[str, int]],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> dict[str, int] | None:
+    rect = _object(
+        panel.get("rect"),
+        {"x", "y", "width", "height"},
+        {"x", "y", "width", "height"},
+        issues,
+        path,
+        f"{prefix}.rect",
+    )
+    valid_rect: dict[str, int] | None = None
+    if rect is not None and all(
+        isinstance(rect.get(key), int) and not isinstance(rect.get(key), bool)
+        for key in ("x", "y", "width", "height")
+    ):
+        valid_rect = {key: int(cast(int, rect[key])) for key in ("x", "y", "width", "height")}
+        if (
+            valid_rect["width"] <= 0
+            or valid_rect["height"] <= 0
+            or valid_rect["x"] < MARGIN
+            or valid_rect["y"] < MARGIN
+            or valid_rect["x"] + valid_rect["width"] > PAGE_WIDTH - MARGIN
+            or valid_rect["y"] + valid_rect["height"] > PAGE_HEIGHT - MARGIN
+        ):
+            _add(
+                issues,
+                path,
+                f"{prefix}.rect",
+                "must stay inside the page margin with positive area",
+            )
+        if panel_index < len(expected_rects) and valid_rect != expected_rects[panel_index]:
+            _add(issues, path, f"{prefix}.rect", "must equal the fixed layout rectangle")
+    elif rect is not None:
+        _add(issues, path, f"{prefix}.rect", "rectangle values must be integers")
+    return valid_rect
+
+
+def _validate_storyboard_panel_text(
+    panel: dict[str, object],
+    panel_characters: list[str],
+    known_characters: set[str],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> list[str]:
+    text_ids_for_uniqueness: list[str] = []
+    text_items = panel.get("text")
+    if not isinstance(text_items, list):
+        _add(issues, path, f"{prefix}.text", "must be an array")
+    else:
+        if len(text_items) > 3:
+            _add(issues, path, f"{prefix}.text", "must contain 0 to 3 text items")
+        total_words = 0
+        for text_index, text_value in enumerate(text_items):
+            text_prefix = f"{prefix}.text[{text_index}]"
+            total_words += _validate_text_item(
+                text_value,
+                set(panel_characters),
+                known_characters,
+                issues,
+                path,
+                text_prefix,
+            )
+            if isinstance(text_value, dict) and isinstance(text_value.get("id"), str):
+                text_ids_for_uniqueness.append(text_value["id"])
+        if total_words > 45:
+            _add(issues, path, f"{prefix}.text", "panel text exceeds 45 total words")
+        _validate_panel_attribution(text_items, issues, path, prefix)
+    return text_ids_for_uniqueness
+
+
+def _validate_storyboard_panel(
+    panel: dict[str, object],
+    page_index: int,
+    panel_index: int,
+    expected_rects: list[dict[str, int]],
+    known_scenes: set[Any | None],
+    known_characters: set[str],
+    character_invariants: dict[Any | None, set[Any]],
+    scene_anchors: dict[Any | None, Any],
+    issues: list[ValidationIssue],
+    path: str,
+    prefix: str,
+) -> tuple[str | None, list[str], dict[str, int] | None]:
+    panel_id = _validate_storyboard_panel_identity(
+        panel, page_index, panel_index, known_scenes, issues, path, prefix
+    )
+    panel_characters = _validate_storyboard_panel_references(
+        panel,
+        known_characters,
+        known_scenes,
+        character_invariants,
+        scene_anchors,
+        issues,
+        path,
+        prefix,
+    )
+    valid_rect = _validate_storyboard_panel_geometry(
+        panel, panel_index, expected_rects, issues, path, prefix
+    )
+    text_ids = _validate_storyboard_panel_text(
+        panel, panel_characters, known_characters, issues, path, prefix
+    )
+    return panel_id, text_ids, valid_rect
+
+
+def _validate_storyboard_page_panels(
+    panels: list[object],
+    page_index: int,
+    expected_rects: list[dict[str, int]],
+    panel_fields: set[str],
+    known_scenes: set[Any | None],
+    known_characters: set[str],
+    character_invariants: dict[Any | None, set[Any]],
+    scene_anchors: dict[Any | None, Any],
+    issues: list[ValidationIssue],
+    path: str,
+) -> tuple[list[str], list[str]]:
+    all_panel_ids: list[str] = []
+    all_text_ids: list[str] = []
+    page_rectangles: list[tuple[str, dict[str, int]]] = []
+    for panel_index, panel_value in enumerate(panels):
+        prefix = f"pages[{page_index}].panels[{panel_index}]"
+        panel = _object(panel_value, panel_fields, panel_fields, issues, path, prefix)
+        if panel is None:
+            continue
+        panel_id, text_ids, valid_rect = _validate_storyboard_panel(
+            panel,
+            page_index,
+            panel_index,
+            expected_rects,
+            known_scenes,
+            known_characters,
+            character_invariants,
+            scene_anchors,
+            issues,
+            path,
+            prefix,
+        )
+        if panel_id is not None:
+            all_panel_ids.append(panel_id)
+        all_text_ids.extend(text_ids)
+        if valid_rect is not None:
+            page_rectangles.append((prefix, valid_rect))
+    for first_index, (first_prefix, first) in enumerate(page_rectangles):
+        for second_prefix, second in page_rectangles[first_index + 1 :]:
+            if rectangles_overlap(first, second):
+                _add(issues, path, f"{first_prefix}.rect", f"overlaps {second_prefix}.rect")
+    return all_panel_ids, all_text_ids
+
+
+def _validate_storyboard_page(
+    value: object,
+    page_index: int,
+    page_fields: set[str],
+    panel_fields: set[str],
+    known_scenes: set[Any | None],
+    known_characters: set[str],
+    character_invariants: dict[Any | None, set[Any]],
+    scene_anchors: dict[Any | None, Any],
+    issues: list[ValidationIssue],
+    path: str,
+) -> tuple[list[str], list[str], int]:
+    page_prefix = f"pages[{page_index}]"
+    page = _object(value, page_fields, page_fields, issues, path, page_prefix)
+    if page is None:
+        return [], [], 0
+    page_number = page.get("number")
+    _integer(page_number, 1, 4, issues, path, f"{page_prefix}.number")
+    if page_number != page_index + 1:
+        _add(issues, path, f"{page_prefix}.number", "pages must be numbered contiguously from 1")
+    layout = page.get("layout")
+    if layout not in LAYOUTS:
+        _add(issues, path, f"{page_prefix}.layout", "unknown layout")
+    panels = page.get("panels")
+    if not isinstance(panels, list):
+        _add(issues, path, f"{page_prefix}.panels", "must be an array")
+        return [], [], 0
+    total_panels = len(panels)
+    if not 1 <= len(panels) <= 4:
+        _add(issues, path, f"{page_prefix}.panels", "must contain 1 to 4 panels")
+    expected_rects = layout_rects(layout) if layout in LAYOUTS else []
+    if expected_rects and len(panels) != len(expected_rects):
+        _add(issues, path, f"{page_prefix}.panels", "panel count must match the fixed layout")
+    panel_ids, text_ids = _validate_storyboard_page_panels(
+        panels,
+        page_index,
+        expected_rects,
+        panel_fields,
+        known_scenes,
+        known_characters,
+        character_invariants,
+        scene_anchors,
+        issues,
+        path,
+    )
+    return panel_ids, text_ids, total_panels
+
+
+def _validate_storyboard_pages(
+    pages: list[object],
+    page_fields: set[str],
+    panel_fields: set[str],
+    known_scenes: set[Any | None],
+    known_characters: set[str],
+    character_invariants: dict[Any | None, set[Any]],
+    scene_anchors: dict[Any | None, Any],
+    issues: list[ValidationIssue],
+    path: str,
+) -> tuple[list[str], list[str], int]:
+    all_panel_ids: list[str] = []
+    all_text_ids: list[str] = []
+    total_panels = 0
+    for page_index, value in enumerate(pages):
+        panel_ids, text_ids, page_total = _validate_storyboard_page(
+            value,
+            page_index,
+            page_fields,
+            panel_fields,
+            known_scenes,
+            known_characters,
+            character_invariants,
+            scene_anchors,
+            issues,
+            path,
+        )
+        all_panel_ids.extend(panel_ids)
+        all_text_ids.extend(text_ids)
+        total_panels += page_total
+    return all_panel_ids, all_text_ids, total_panels
 
 
 def validate_storyboard(
@@ -952,154 +1389,17 @@ def validate_storyboard(
         "negative",
         "text",
     }
-    all_panel_ids: list[str] = []
-    all_text_ids: list[str] = []
-    total_panels = 0
-    for page_index, value in enumerate(pages):
-        page_prefix = f"pages[{page_index}]"
-        page = _object(value, page_fields, page_fields, issues, path, page_prefix)
-        if page is None:
-            continue
-        page_number = page.get("number")
-        _integer(page_number, 1, 4, issues, path, f"{page_prefix}.number")
-        if page_number != page_index + 1:
-            _add(
-                issues, path, f"{page_prefix}.number", "pages must be numbered contiguously from 1"
-            )
-        layout = page.get("layout")
-        if layout not in LAYOUTS:
-            _add(issues, path, f"{page_prefix}.layout", "unknown layout")
-        panels = page.get("panels")
-        if not isinstance(panels, list):
-            _add(issues, path, f"{page_prefix}.panels", "must be an array")
-            continue
-        total_panels += len(panels)
-        if not 1 <= len(panels) <= 4:
-            _add(issues, path, f"{page_prefix}.panels", "must contain 1 to 4 panels")
-        expected_rects = layout_rects(layout) if layout in LAYOUTS else []
-        if expected_rects and len(panels) != len(expected_rects):
-            _add(issues, path, f"{page_prefix}.panels", "panel count must match the fixed layout")
-        page_rectangles: list[tuple[str, dict[str, int]]] = []
-        for panel_index, panel_value in enumerate(panels):
-            prefix = f"{page_prefix}.panels[{panel_index}]"
-            panel = _object(panel_value, panel_fields, panel_fields, issues, path, prefix)
-            if panel is None:
-                continue
-            panel_id = panel.get("id")
-            if not isinstance(panel_id, str) or PANEL_ID_PATTERN.fullmatch(panel_id) is None:
-                _add(issues, path, f"{prefix}.id", "must match pNN-NN")
-            else:
-                all_panel_ids.append(panel_id)
-                expected_id = f"p{page_index + 1:02d}-{panel_index + 1:02d}"
-                if panel_id != expected_id:
-                    _add(issues, path, f"{prefix}.id", f"must equal {expected_id}")
-            if panel.get("order") != panel_index + 1:
-                _add(issues, path, f"{prefix}.order", "must match reading order")
-            if panel.get("scene_id") not in known_scenes:
-                _add(issues, path, f"{prefix}.scene_id", "must reference a story scene")
-            for field in ("beat", "shot", "composition", "action", "expression", "lighting"):
-                _nonempty_string(panel.get(field), issues, path, f"{prefix}.{field}")
-            panel_characters = (
-                _string_list(panel.get("characters"), issues, path, f"{prefix}.characters") or []
-            )
-            for item_index, character_id in enumerate(panel_characters):
-                if character_id not in known_characters:
-                    _add(
-                        issues,
-                        path,
-                        f"{prefix}.characters[{item_index}]",
-                        "must reference the character bible",
-                    )
-            if len(set(panel_characters)) != len(panel_characters):
-                _add(issues, path, f"{prefix}.characters", "character IDs must be unique")
-            continuity = (
-                _string_list(panel.get("continuity"), issues, path, f"{prefix}.continuity") or []
-            )
-            if len(set(continuity)) != len(continuity):
-                _add(issues, path, f"{prefix}.continuity", "continuity anchors must be unique")
-            for continuity_index, anchor in enumerate(continuity):
-                anchor_field = f"{prefix}.continuity[{continuity_index}]"
-                owner, separator, fact = anchor.partition(":")
-                if (
-                    not separator
-                    or not fact.strip()
-                    or owner not in known_characters | known_scenes
-                ):
-                    _add(
-                        issues,
-                        path,
-                        anchor_field,
-                        "must reference a known character or scene anchor",
-                    )
-                elif (
-                    owner in character_invariants
-                    and fact.strip() not in character_invariants[owner]
-                ):
-                    _add(issues, path, anchor_field, "must reuse an exact character invariant")
-                elif owner in scene_anchors and fact.strip() != scene_anchors[owner]:
-                    _add(issues, path, anchor_field, "must reuse the exact scene continuity anchor")
-            _string_list(panel.get("negative"), issues, path, f"{prefix}.negative", minimum=1)
-            rect = _object(
-                panel.get("rect"),
-                {"x", "y", "width", "height"},
-                {"x", "y", "width", "height"},
-                issues,
-                path,
-                f"{prefix}.rect",
-            )
-            valid_rect: dict[str, int] | None = None
-            if rect is not None and all(
-                isinstance(rect.get(key), int) and not isinstance(rect.get(key), bool)
-                for key in ("x", "y", "width", "height")
-            ):
-                valid_rect = {
-                    key: int(cast(int, rect[key])) for key in ("x", "y", "width", "height")
-                }
-                if (
-                    valid_rect["width"] <= 0
-                    or valid_rect["height"] <= 0
-                    or valid_rect["x"] < MARGIN
-                    or valid_rect["y"] < MARGIN
-                    or valid_rect["x"] + valid_rect["width"] > PAGE_WIDTH - MARGIN
-                    or valid_rect["y"] + valid_rect["height"] > PAGE_HEIGHT - MARGIN
-                ):
-                    _add(
-                        issues,
-                        path,
-                        f"{prefix}.rect",
-                        "must stay inside the page margin with positive area",
-                    )
-                if panel_index < len(expected_rects) and valid_rect != expected_rects[panel_index]:
-                    _add(issues, path, f"{prefix}.rect", "must equal the fixed layout rectangle")
-                page_rectangles.append((prefix, valid_rect))
-            elif rect is not None:
-                _add(issues, path, f"{prefix}.rect", "rectangle values must be integers")
-            text_items = panel.get("text")
-            if not isinstance(text_items, list):
-                _add(issues, path, f"{prefix}.text", "must be an array")
-            else:
-                if len(text_items) > 3:
-                    _add(issues, path, f"{prefix}.text", "must contain 0 to 3 text items")
-                total_words = 0
-                for text_index, text_value in enumerate(text_items):
-                    text_prefix = f"{prefix}.text[{text_index}]"
-                    total_words += _validate_text_item(
-                        text_value,
-                        set(panel_characters),
-                        known_characters,
-                        issues,
-                        path,
-                        text_prefix,
-                    )
-                    if isinstance(text_value, dict) and isinstance(text_value.get("id"), str):
-                        all_text_ids.append(text_value["id"])
-                if total_words > 45:
-                    _add(issues, path, f"{prefix}.text", "panel text exceeds 45 total words")
-                _validate_panel_attribution(text_items, issues, path, prefix)
-        for first_index, (first_prefix, first) in enumerate(page_rectangles):
-            for second_prefix, second in page_rectangles[first_index + 1 :]:
-                if rectangles_overlap(first, second):
-                    _add(issues, path, f"{first_prefix}.rect", f"overlaps {second_prefix}.rect")
+    all_panel_ids, all_text_ids, total_panels = _validate_storyboard_pages(
+        pages,
+        page_fields,
+        panel_fields,
+        known_scenes,
+        known_characters,
+        character_invariants,
+        scene_anchors,
+        issues,
+        path,
+    )
     if total_panels > 12:
         _add(issues, path, "pages.panels", "project must contain at most 12 panels")
     if len(set(all_panel_ids)) != len(all_panel_ids):
@@ -1109,33 +1409,12 @@ def validate_storyboard(
     return _sorted(issues)
 
 
-def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
-    """Validate a schema-v2 panel quality record."""
-    panel_name = data.get("subject_id") if isinstance(data, dict) else "unknown"
-    path = f"qa/panels/{panel_name}.json"
-    issues: list[ValidationIssue] = []
-    required_fields = {
-        "schema_version",
-        "kind",
-        "subject_id",
-        "bindings",
-        "checks",
-        "review",
-        "decision",
-        "unresolved_warnings",
-    }
-    fields = required_fields | {"override_reason"}
-    root = _object(data, fields, required_fields, issues, path, "")
-    if root is None:
-        return _sorted(issues)
-    if root.get("schema_version") != "2.0":
-        _add(issues, path, "schema_version", "must equal 2.0")
-    if root.get("kind") != "panel-qa":
-        _add(issues, path, "kind", "must equal panel-qa")
-    subject_id = root.get("subject_id")
-    if not isinstance(subject_id, str) or PANEL_ID_PATTERN.fullmatch(subject_id) is None:
-        _add(issues, path, "subject_id", "must match pNN-NN")
-
+def _validate_panel_record_v2_bindings(
+    root: dict[str, object],
+    subject_id: object,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
     binding_fields = {
         "raw_path",
         "raw_sha256",
@@ -1168,6 +1447,12 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
         for name in ("raw_width", "raw_height", "clean_width", "clean_height"):
             _integer(bindings.get(name), 1, 100_000, issues, path, f"bindings.{name}")
 
+
+def _validate_panel_record_v2_checks(
+    root: dict[str, object],
+    issues: list[ValidationIssue],
+    path: str,
+) -> object:
     checks = root.get("checks")
     for category in validate_quality_checks(checks, PANEL_CHECK_IDS):
         _add(issues, path, f"checks.{category}", category)
@@ -1195,14 +1480,15 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
                 continue
             for category in validate_defect_regions(check):
                 _add(issues, path, f"checks.{check.get('id')}.{category}", category)
+    return checks
 
-    review_fields = {"method", "reviewer", "reviewed_at"}
-    review = _object(root.get("review"), review_fields, review_fields, issues, path, "review")
-    if review is not None:
-        _nonempty_string(review.get("method"), issues, path, "review.method")
-        _nonempty_string(review.get("reviewer"), issues, path, "review.reviewer")
-        _timestamp(review.get("reviewed_at"), issues, path, "review.reviewed_at")
 
+def _validate_panel_record_v2_decision(
+    root: dict[str, object],
+    checks: object,
+    issues: list[ValidationIssue],
+    path: str,
+) -> tuple[object, list[str] | None]:
     decision = root.get("decision")
     if decision not in {"accept", "accept-warning", "regenerate"}:
         _add(issues, path, "decision", "unknown quality decision")
@@ -1232,6 +1518,60 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
         _add(issues, path, "unresolved_warnings", "accepted warnings must be recorded")
     if decision == "accept" and unresolved:
         _add(issues, path, "unresolved_warnings", "accepted record cannot have warnings")
+    return decision, unresolved
+
+
+def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
+    """Validate a schema-v2 panel quality record."""
+    panel_name = data.get("subject_id") if isinstance(data, dict) else "unknown"
+    path = f"qa/panels/{panel_name}.json"
+    issues: list[ValidationIssue] = []
+    required_fields = {
+        "schema_version",
+        "kind",
+        "subject_id",
+        "bindings",
+        "checks",
+        "review",
+        "decision",
+        "unresolved_warnings",
+    }
+    fields = required_fields | {"override_reason"}
+    root = _object(data, fields, required_fields, issues, path, "")
+    if root is None:
+        return _sorted(issues)
+    if root.get("schema_version") != "2.0":
+        _add(issues, path, "schema_version", "must equal 2.0")
+    if root.get("kind") != "panel-qa":
+        _add(issues, path, "kind", "must equal panel-qa")
+    subject_id = root.get("subject_id")
+    if not isinstance(subject_id, str) or PANEL_ID_PATTERN.fullmatch(subject_id) is None:
+        _add(issues, path, "subject_id", "must match pNN-NN")
+
+    _validate_panel_record_v2_bindings(root, subject_id, issues, path)
+
+    checks = _validate_panel_record_v2_checks(root, issues, path)
+
+    review_fields = {"method", "reviewer", "reviewed_at"}
+    review = _object(root.get("review"), review_fields, review_fields, issues, path, "review")
+    if review is not None:
+        _nonempty_string(review.get("method"), issues, path, "review.method")
+        _nonempty_string(review.get("reviewer"), issues, path, "review.reviewer")
+        _timestamp(review.get("reviewed_at"), issues, path, "review.reviewed_at")
+
+    decision, unresolved = _validate_panel_record_v2_decision(root, checks, issues, path)
+    _validate_panel_record_v2_override_reason(root, checks, decision, unresolved, issues, path)
+    return _sorted(issues)
+
+
+def _validate_panel_record_v2_override_reason(
+    root: dict[str, object],
+    checks: object,
+    decision: object,
+    unresolved: list[str] | None,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
     override_reason = root.get("override_reason")
     if "override_reason" in root:
         _narrative_field(
@@ -1263,7 +1603,216 @@ def _validate_panel_record_v2(data: dict[str, object]) -> list[ValidationIssue]:
                 "override_reason",
                 "must also appear in unresolved_warnings",
             )
-    return _sorted(issues)
+
+
+def _validate_panel_override_consistency(
+    root: dict[str, object],
+    checks: object,
+    decision: object,
+    unresolved: list[str] | None,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
+    failure_category = root.get("failure_category")
+    override_reason = root.get("override_reason")
+    if "override_reason" in root:
+        has_overridden_failure = isinstance(checks, list) and any(
+            isinstance(check, dict)
+            and check.get("result") == "fail"
+            and check.get("severity") == "warning"
+            for check in checks
+        )
+        if failure_category != "visual_qa":
+            _add(issues, path, "failure_category", "an override must record visual_qa")
+        if decision != "accept_with_warnings":
+            _add(issues, path, "override_reason", "is allowed only for accept_with_warnings")
+        if not has_overridden_failure:
+            _add(
+                issues,
+                path,
+                "override_reason",
+                "requires a failed check downgraded to warning severity",
+            )
+        if unresolved is not None and override_reason not in unresolved:
+            _add(issues, path, "override_reason", "must also appear in unresolved_warnings")
+
+
+def _validate_panel_decision_policy(
+    root: dict[str, object],
+    checks: object,
+    issues: list[ValidationIssue],
+    path: str,
+) -> tuple[object, bool]:
+    decision = root.get("decision")
+    if decision not in {"accept", "regenerate", "accept_with_warnings"}:
+        _add(issues, path, "decision", "unknown panel decision")
+    has_error_failure = isinstance(checks, list) and any(
+        isinstance(check, dict)
+        and check.get("result") == "fail"
+        and check.get("severity") == "error"
+        for check in checks
+    )
+    if has_error_failure and decision != "regenerate":
+        _add(issues, path, "decision", "error-level failed checks require regeneration")
+    has_warning = isinstance(checks, list) and any(
+        isinstance(check, dict)
+        and (
+            check.get("result") == "warning"
+            or (check.get("result") == "fail" and check.get("severity") == "warning")
+        )
+        for check in checks
+    )
+    if has_warning and decision not in {"accept_with_warnings", "regenerate"}:
+        _add(
+            issues, path, "decision", "warning checks require accept_with_warnings or regeneration"
+        )
+    retry_reason = root.get("retry_reason")
+    if decision == "regenerate":
+        _nonempty_string(retry_reason, issues, path, "retry_reason")
+    elif retry_reason is not None:
+        _add(issues, path, "retry_reason", "must be null unless regenerating")
+    return decision, has_warning
+
+
+def _validate_panel_warning_metadata(
+    root: dict[str, object],
+    checks: object,
+    decision: object,
+    has_warning: bool,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
+    failure_category = root.get("failure_category")
+    if failure_category is not None and (
+        not isinstance(failure_category, str) or CATEGORY.fullmatch(failure_category) is None
+    ):
+        _add(issues, path, "failure_category", "must be a sanitized category string or null")
+    override_reason = root.get("override_reason")
+    if "override_reason" in root:
+        _narrative_field(
+            override_reason,
+            issues,
+            path,
+            "override_reason",
+            max_chars=MAX_OVERRIDE_REASON_CHARS,
+        )
+    unresolved = _string_list(
+        root.get("unresolved_warnings"),
+        issues,
+        path,
+        "unresolved_warnings",
+        entry_max_chars=MAX_WARNING_CHARS,
+    )
+    if decision == "accept_with_warnings" and (not has_warning or not unresolved):
+        _add(
+            issues,
+            path,
+            "unresolved_warnings",
+            "accepted warnings require check evidence and user-visible impact",
+        )
+    _validate_panel_override_consistency(root, checks, decision, unresolved, issues, path)
+
+
+def _validate_legacy_panel_checks(
+    root: dict[str, object],
+    issues: list[ValidationIssue],
+    path: str,
+) -> object:
+    checks = root.get("checks")
+    if not isinstance(checks, list):
+        _add(issues, path, "checks", "must be an array")
+    else:
+        actual_ids = [check.get("id") if isinstance(check, dict) else None for check in checks]
+        if tuple(actual_ids) != PANEL_CHECK_IDS:
+            _add(
+                issues, path, "checks", "must contain the seven required checks in normative order"
+            )
+        check_fields = {"id", "result", "severity", "evidence"}
+        for index, value in enumerate(checks):
+            prefix = f"checks[{index}]"
+            check = _object(value, check_fields, check_fields, issues, path, prefix)
+            if check is None:
+                continue
+            if check.get("result") not in {"pass", "fail", "warning"}:
+                _add(issues, path, f"{prefix}.result", "unknown check result")
+            if check.get("severity") not in {"error", "warning"}:
+                _add(issues, path, f"{prefix}.severity", "unknown check severity")
+            _nonempty_string(check.get("evidence"), issues, path, f"{prefix}.evidence")
+    return checks
+
+
+def _validate_panel_generation_dimensions(
+    dimensions: object,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
+    if isinstance(dimensions, dict):
+        if (
+            not isinstance(dimensions.get("width"), int)
+            or cast(int, dimensions.get("width", 0)) <= 0
+        ):
+            _add(issues, path, "dimensions.width", "must be positive after generation")
+        if (
+            not isinstance(dimensions.get("height"), int)
+            or cast(int, dimensions.get("height", 0)) <= 0
+        ):
+            _add(issues, path, "dimensions.height", "must be positive after generation")
+
+
+def _validate_panel_generation_metadata(
+    generation: object,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
+    if isinstance(generation, dict):
+        if generation.get("capability_name") is None:
+            _add(issues, path, "generation.capability_name", "is required after generation")
+        if generation.get("completed_at") is None:
+            _add(issues, path, "generation.completed_at", "is required after generation")
+
+
+def _validate_panel_generation_requirements(
+    root: dict[str, object],
+    attempts: object,
+    dimensions: object,
+    generation: object,
+    issues: list[ValidationIssue],
+    path: str,
+) -> None:
+    if isinstance(attempts, int) and not isinstance(attempts, bool) and attempts > 0:
+        for field in ("source_prompt_path", "raw_path", "clean_path"):
+            if root.get(field) is None:
+                _add(issues, path, field, "is required after generation")
+        if root.get("raw_sha256") is None:
+            _add(issues, path, "raw_sha256", "is required after generation")
+        _validate_panel_generation_dimensions(dimensions, issues, path)
+        _validate_panel_generation_metadata(generation, issues, path)
+
+
+def _validate_legacy_panel_generation(
+    root: dict[str, object],
+    issues: list[ValidationIssue],
+    path: str,
+) -> dict[str, object] | None:
+    generation_fields = {"capability_name", "reference_paths", "completed_at"}
+    generation = _object(
+        root.get("generation"), generation_fields, generation_fields, issues, path, "generation"
+    )
+    if generation is not None:
+        if generation.get("capability_name") is not None:
+            _nonempty_string(
+                generation.get("capability_name"), issues, path, "generation.capability_name"
+            )
+        references = generation.get("reference_paths")
+        if not isinstance(references, list):
+            _add(issues, path, "generation.reference_paths", "must be an array")
+        else:
+            for index, reference in enumerate(references):
+                _relative_path(reference, issues, path, f"generation.reference_paths[{index}]")
+        _timestamp(
+            generation.get("completed_at"), issues, path, "generation.completed_at", nullable=True
+        )
+    return generation
 
 
 def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
@@ -1315,143 +1864,12 @@ def validate_panel_record(data: dict[str, object]) -> list[ValidationIssue]:
         _integer(dimensions.get("width"), 0, 100_000, issues, path, "dimensions.width")
         _integer(dimensions.get("height"), 0, 100_000, issues, path, "dimensions.height")
     _integer(root.get("attempts"), 0, 3, issues, path, "attempts")
-    generation_fields = {"capability_name", "reference_paths", "completed_at"}
-    generation = _object(
-        root.get("generation"), generation_fields, generation_fields, issues, path, "generation"
-    )
-    if generation is not None:
-        if generation.get("capability_name") is not None:
-            _nonempty_string(
-                generation.get("capability_name"), issues, path, "generation.capability_name"
-            )
-        references = generation.get("reference_paths")
-        if not isinstance(references, list):
-            _add(issues, path, "generation.reference_paths", "must be an array")
-        else:
-            for index, reference in enumerate(references):
-                _relative_path(reference, issues, path, f"generation.reference_paths[{index}]")
-        _timestamp(
-            generation.get("completed_at"), issues, path, "generation.completed_at", nullable=True
-        )
-    checks = root.get("checks")
-    if not isinstance(checks, list):
-        _add(issues, path, "checks", "must be an array")
-    else:
-        actual_ids = [check.get("id") if isinstance(check, dict) else None for check in checks]
-        if tuple(actual_ids) != PANEL_CHECK_IDS:
-            _add(
-                issues, path, "checks", "must contain the seven required checks in normative order"
-            )
-        check_fields = {"id", "result", "severity", "evidence"}
-        for index, value in enumerate(checks):
-            prefix = f"checks[{index}]"
-            check = _object(value, check_fields, check_fields, issues, path, prefix)
-            if check is None:
-                continue
-            if check.get("result") not in {"pass", "fail", "warning"}:
-                _add(issues, path, f"{prefix}.result", "unknown check result")
-            if check.get("severity") not in {"error", "warning"}:
-                _add(issues, path, f"{prefix}.severity", "unknown check severity")
-            _nonempty_string(check.get("evidence"), issues, path, f"{prefix}.evidence")
-    decision = root.get("decision")
-    if decision not in {"accept", "regenerate", "accept_with_warnings"}:
-        _add(issues, path, "decision", "unknown panel decision")
-    has_error_failure = isinstance(checks, list) and any(
-        isinstance(check, dict)
-        and check.get("result") == "fail"
-        and check.get("severity") == "error"
-        for check in checks
-    )
-    if has_error_failure and decision != "regenerate":
-        _add(issues, path, "decision", "error-level failed checks require regeneration")
-    has_warning = isinstance(checks, list) and any(
-        isinstance(check, dict)
-        and (
-            check.get("result") == "warning"
-            or (check.get("result") == "fail" and check.get("severity") == "warning")
-        )
-        for check in checks
-    )
-    if has_warning and decision not in {"accept_with_warnings", "regenerate"}:
-        _add(
-            issues, path, "decision", "warning checks require accept_with_warnings or regeneration"
-        )
-    retry_reason = root.get("retry_reason")
-    if decision == "regenerate":
-        _nonempty_string(retry_reason, issues, path, "retry_reason")
-    elif retry_reason is not None:
-        _add(issues, path, "retry_reason", "must be null unless regenerating")
-    failure_category = root.get("failure_category")
-    if failure_category is not None and (
-        not isinstance(failure_category, str) or CATEGORY.fullmatch(failure_category) is None
-    ):
-        _add(issues, path, "failure_category", "must be a sanitized category string or null")
-    override_reason = root.get("override_reason")
-    if "override_reason" in root:
-        _narrative_field(
-            override_reason,
-            issues,
-            path,
-            "override_reason",
-            max_chars=MAX_OVERRIDE_REASON_CHARS,
-        )
-    unresolved = _string_list(
-        root.get("unresolved_warnings"),
-        issues,
-        path,
-        "unresolved_warnings",
-        entry_max_chars=MAX_WARNING_CHARS,
-    )
-    if decision == "accept_with_warnings" and (not has_warning or not unresolved):
-        _add(
-            issues,
-            path,
-            "unresolved_warnings",
-            "accepted warnings require check evidence and user-visible impact",
-        )
-    if "override_reason" in root:
-        has_overridden_failure = isinstance(checks, list) and any(
-            isinstance(check, dict)
-            and check.get("result") == "fail"
-            and check.get("severity") == "warning"
-            for check in checks
-        )
-        if failure_category != "visual_qa":
-            _add(issues, path, "failure_category", "an override must record visual_qa")
-        if decision != "accept_with_warnings":
-            _add(issues, path, "override_reason", "is allowed only for accept_with_warnings")
-        if not has_overridden_failure:
-            _add(
-                issues,
-                path,
-                "override_reason",
-                "requires a failed check downgraded to warning severity",
-            )
-        if unresolved is not None and override_reason not in unresolved:
-            _add(issues, path, "override_reason", "must also appear in unresolved_warnings")
+    generation = _validate_legacy_panel_generation(root, issues, path)
+    checks = _validate_legacy_panel_checks(root, issues, path)
+    decision, has_warning = _validate_panel_decision_policy(root, checks, issues, path)
+    _validate_panel_warning_metadata(root, checks, decision, has_warning, issues, path)
     attempts = root.get("attempts")
-    if isinstance(attempts, int) and not isinstance(attempts, bool) and attempts > 0:
-        for field in ("source_prompt_path", "raw_path", "clean_path"):
-            if root.get(field) is None:
-                _add(issues, path, field, "is required after generation")
-        if root.get("raw_sha256") is None:
-            _add(issues, path, "raw_sha256", "is required after generation")
-        if isinstance(dimensions, dict):
-            if (
-                not isinstance(dimensions.get("width"), int)
-                or cast(int, dimensions.get("width", 0)) <= 0
-            ):
-                _add(issues, path, "dimensions.width", "must be positive after generation")
-            if (
-                not isinstance(dimensions.get("height"), int)
-                or cast(int, dimensions.get("height", 0)) <= 0
-            ):
-                _add(issues, path, "dimensions.height", "must be positive after generation")
-        if isinstance(generation, dict):
-            if generation.get("capability_name") is None:
-                _add(issues, path, "generation.capability_name", "is required after generation")
-            if generation.get("completed_at") is None:
-                _add(issues, path, "generation.completed_at", "is required after generation")
+    _validate_panel_generation_requirements(root, attempts, dimensions, generation, issues, path)
     if decision in {"accept", "accept_with_warnings"} and attempts == 0:
         _add(issues, path, "attempts", "accepted panels require a generation attempt")
     return _sorted(issues)
@@ -1502,29 +1920,11 @@ def _read_canonical_json(
     return data
 
 
-def validate_panel_provenance(
-    project_dir: Path,
-    record: dict[str, object],
-) -> tuple[ValidationIssue, ...]:
-    """Recompute schema-2.0 panel bindings and reject stale provenance."""
-    panel_id = record.get("subject_id")
-    record_path = f"qa/panels/{panel_id if isinstance(panel_id, str) else 'unknown'}.json"
-    issues: list[ValidationIssue] = []
-    bindings = record.get("bindings")
-
-    def stale(field: str, detail: str) -> None:
-        """Report whether a panel quality record is stale."""
-        _add(
-            issues,
-            record_path,
-            f"bindings.{field}",
-            f"quality-record-stale: {detail}",
-        )
-
-    if not isinstance(bindings, dict):
-        stale("bindings", "bindings object is missing")
-        return tuple(_sorted(issues))
-
+def _validate_panel_binding_requirements(
+    panel_id: object,
+    bindings: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
     required = {
         "raw_path",
         "raw_sha256",
@@ -1550,6 +1950,12 @@ def validate_panel_provenance(
             if bindings.get(field) != expected:
                 stale(field, "binding does not match the canonical panel path")
 
+
+def _resolve_panel_provenance_artifacts(
+    project_dir: Path,
+    bindings: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> dict[str, Path]:
     resolved: dict[str, Path] = {}
     for prefix in ("raw", "clean", "normalization"):
         path_field = f"{prefix}_path"
@@ -1574,7 +1980,14 @@ def validate_panel_provenance(
             stale(digest_field, "bound SHA-256 is invalid")
         elif sha256_file(path) != expected_digest:
             stale(digest_field, "bound SHA-256 does not match current bytes")
+    return resolved
 
+
+def _validate_panel_provenance_rasters(
+    bindings: dict[str, object],
+    resolved: dict[str, Path],
+    stale: Callable[[str, str], None],
+) -> None:
     for prefix in ("raw", "clean"):
         raster_path = resolved.get(prefix)
         if raster_path is None:
@@ -1601,49 +2014,109 @@ def validate_panel_provenance(
             if field in bindings and bindings.get(field) != actual:
                 stale(field, f"recorded {axis} does not match current raster")
 
-    normalization_path = resolved.get("normalization")
-    if normalization_path is not None:
-        try:
-            normalization = loads_bounded_json(
-                read_bytes_nofollow(normalization_path, max_bytes=MAX_JSON_BYTES),
-                source="normalization record",
+
+def _read_panel_normalization_record(
+    normalization_path: Path,
+    stale: Callable[[str, str], None],
+) -> dict[str, object] | None:
+    try:
+        normalization = loads_bounded_json(
+            read_bytes_nofollow(normalization_path, max_bytes=MAX_JSON_BYTES),
+            source="normalization record",
+        )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        stale("normalization_path", "normalization record is unreadable")
+        return None
+    if not isinstance(normalization, dict):
+        stale("normalization_path", "normalization record must be an object")
+        return None
+    return normalization
+
+
+def _validate_panel_normalization_sizes(
+    bindings: dict[str, object],
+    source: dict[str, object],
+    clean: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    for prefix, size in (
+        ("raw", source.get("size")),
+        ("clean", clean.get("size")),
+    ):
+        if not isinstance(size, list) or len(size) != 2:
+            stale(
+                "normalization_path",
+                f"normalization {prefix} size is invalid",
             )
-        except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
-            stale("normalization_path", "normalization record is unreadable")
-        else:
-            if not isinstance(normalization, dict):
-                stale("normalization_path", "normalization record must be an object")
-            else:
-                source = normalization.get("source")
-                clean = normalization.get("clean")
-                if not isinstance(source, dict) or not isinstance(clean, dict):
-                    stale("normalization_path", "normalization record structure is invalid")
-                else:
-                    for field, normalized_value in (
-                        ("raw_path", source.get("path")),
-                        ("raw_sha256", source.get("sha256")),
-                        ("clean_path", clean.get("path")),
-                        ("clean_sha256", clean.get("sha256")),
-                    ):
-                        if bindings.get(field) != normalized_value:
-                            stale(field, "binding disagrees with normalization record")
-                    for prefix, size in (
-                        ("raw", source.get("size")),
-                        ("clean", clean.get("size")),
-                    ):
-                        if not isinstance(size, list) or len(size) != 2:
-                            stale(
-                                "normalization_path",
-                                f"normalization {prefix} size is invalid",
-                            )
-                            continue
-                        for axis, actual in zip(("width", "height"), size):
-                            field = f"{prefix}_{axis}"
-                            if field in bindings and bindings.get(field) != actual:
-                                stale(
-                                    field,
-                                    "binding disagrees with normalization record",
-                                )
+            continue
+        for axis, actual in zip(("width", "height"), size):
+            field = f"{prefix}_{axis}"
+            if field in bindings and bindings.get(field) != actual:
+                stale(
+                    field,
+                    "binding disagrees with normalization record",
+                )
+
+
+def _validate_panel_normalization_structure(
+    bindings: dict[str, object],
+    normalization: dict[str, object],
+    stale: Callable[[str, str], None],
+) -> None:
+    source = normalization.get("source")
+    clean = normalization.get("clean")
+    if not isinstance(source, dict) or not isinstance(clean, dict):
+        stale("normalization_path", "normalization record structure is invalid")
+        return
+    for field, normalized_value in (
+        ("raw_path", source.get("path")),
+        ("raw_sha256", source.get("sha256")),
+        ("clean_path", clean.get("path")),
+        ("clean_sha256", clean.get("sha256")),
+    ):
+        if bindings.get(field) != normalized_value:
+            stale(field, "binding disagrees with normalization record")
+    _validate_panel_normalization_sizes(bindings, source, clean, stale)
+
+
+def _validate_panel_normalization_binding(
+    bindings: dict[str, object],
+    normalization_path: Path | None,
+    stale: Callable[[str, str], None],
+) -> None:
+    if normalization_path is None:
+        return
+    normalization = _read_panel_normalization_record(normalization_path, stale)
+    if normalization is not None:
+        _validate_panel_normalization_structure(bindings, normalization, stale)
+
+
+def validate_panel_provenance(
+    project_dir: Path,
+    record: dict[str, object],
+) -> tuple[ValidationIssue, ...]:
+    """Recompute schema-2.0 panel bindings and reject stale provenance."""
+    panel_id = record.get("subject_id")
+    record_path = f"qa/panels/{panel_id if isinstance(panel_id, str) else 'unknown'}.json"
+    issues: list[ValidationIssue] = []
+    bindings = record.get("bindings")
+
+    def stale(field: str, detail: str) -> None:
+        """Report whether a panel quality record is stale."""
+        _add(
+            issues,
+            record_path,
+            f"bindings.{field}",
+            f"quality-record-stale: {detail}",
+        )
+
+    if not isinstance(bindings, dict):
+        stale("bindings", "bindings object is missing")
+        return tuple(_sorted(issues))
+    _validate_panel_binding_requirements(panel_id, bindings, stale)
+    resolved = _resolve_panel_provenance_artifacts(project_dir, bindings, stale)
+    _validate_panel_provenance_rasters(bindings, resolved, stale)
+    _validate_panel_normalization_binding(bindings, resolved.get("normalization"), stale)
     return tuple(_sorted(issues))
 
 
@@ -2202,6 +2675,36 @@ def _populated_handoff_binding(
     return manifest_path, locked_scope
 
 
+def _read_handoff_receipt_entry(
+    project_dir: Path,
+    entry: Path,
+    relative_dir: str,
+    issues: list[ValidationIssue],
+) -> tuple[str, dict[str, object]] | None:
+    """Validate one inventory entry and return its readable receipt."""
+    relative = f"{relative_dir}/{entry.name}"
+    if entry.is_symlink() or not entry.is_file() or entry.suffix != ".json":
+        _add(issues, relative, "file", "receipt must be a regular JSON file")
+        return None
+    receipt = _read_canonical_json(project_dir, relative, issues)
+    if receipt is None:
+        return None
+    contract_issues = validate_generation_receipt(receipt)
+    for contract_issue in contract_issues:
+        field, separator, message = contract_issue.partition(": ")
+        _add(
+            issues,
+            relative,
+            field,
+            message if separator else contract_issue,
+        )
+    if contract_issues:
+        return None
+    if entry.stem != receipt.get("attempt_id"):
+        _add(issues, relative, "attempt_id", "must match the receipt filename")
+    return relative, receipt
+
+
 def _handoff_receipt_inventory(
     project_dir: Path,
     issues: list[ValidationIssue],
@@ -2236,28 +2739,46 @@ def _handoff_receipt_inventory(
         )
         return []
     for entry in entries:
-        relative = f"{relative_dir}/{entry.name}"
-        if entry.is_symlink() or not entry.is_file() or entry.suffix != ".json":
-            _add(issues, relative, "file", "receipt must be a regular JSON file")
-            continue
-        receipt = _read_canonical_json(project_dir, relative, issues)
-        if receipt is None:
-            continue
-        contract_issues = validate_generation_receipt(receipt)
-        for contract_issue in contract_issues:
-            field, separator, message = contract_issue.partition(": ")
-            _add(
-                issues,
-                relative,
-                field,
-                message if separator else contract_issue,
-            )
-        if contract_issues:
-            continue
-        if entry.stem != receipt.get("attempt_id"):
-            _add(issues, relative, "attempt_id", "must match the receipt filename")
-        inventory.append((relative, receipt))
+        receipt_item = _read_handoff_receipt_entry(
+            project_dir,
+            entry,
+            relative_dir,
+            issues,
+        )
+        if receipt_item is not None:
+            inventory.append(receipt_item)
     return inventory
+
+
+def _receipt_success_failure_location(
+    detail: str,
+    receipts: list[tuple[str, dict[str, object]]],
+    allowed: dict[str, int],
+    fallback: str,
+) -> tuple[str, str, str] | None:
+    if "multiple successful receipts" not in detail and "after successful receipt" not in detail:
+        return None
+    ordered = sorted(
+        (
+            (allowed[identifier], path, receipt)
+            for path, receipt in receipts
+            if isinstance((identifier := receipt.get("attempt_id")), str) and identifier in allowed
+        ),
+        key=lambda item: item[0],
+    )
+    successful = [item for item in ordered if item[2].get("outcome") == "success"]
+    if "multiple successful receipts" in detail and len(successful) > 1:
+        return successful[1][1], "attempt_id", "multiple successful receipts are not allowed"
+    if successful:
+        success_ordinal = successful[0][0]
+        later = next((item for item in ordered if item[0] > success_ordinal), None)
+        if later is not None:
+            return (
+                later[1],
+                "attempt_id",
+                f"receipt appears after successful receipt at attempt {success_ordinal}",
+            )
+    return fallback, "attempt_id", detail
 
 
 def _receipt_failure_location(
@@ -2297,29 +2818,9 @@ def _receipt_failure_location(
                     return path, "attempt_id", "conflicting duplicate receipt"
                 seen[identifier] = receipt
         return fallback, "attempt_id", detail
-    if "multiple successful receipts" in detail or "after successful receipt" in detail:
-        ordered = sorted(
-            (
-                (allowed[identifier], path, receipt)
-                for path, receipt in receipts
-                if isinstance((identifier := receipt.get("attempt_id")), str)
-                and identifier in allowed
-            ),
-            key=lambda item: item[0],
-        )
-        successful = [item for item in ordered if item[2].get("outcome") == "success"]
-        if "multiple successful receipts" in detail and len(successful) > 1:
-            return successful[1][1], "attempt_id", "multiple successful receipts are not allowed"
-        if successful:
-            success_ordinal = successful[0][0]
-            later = next((item for item in ordered if item[0] > success_ordinal), None)
-            if later is not None:
-                return (
-                    later[1],
-                    "attempt_id",
-                    f"receipt appears after successful receipt at attempt {success_ordinal}",
-                )
-        return fallback, "attempt_id", detail
+    success_failure = _receipt_success_failure_location(detail, receipts, allowed, fallback)
+    if success_failure is not None:
+        return success_failure
     if "contiguous" in detail:
         ordered_attempt_paths = sorted(
             (
@@ -3026,35 +3527,15 @@ def _validate_handoff_binding(
             _add(issues, manifest_path, field, f"must match project.json {field}")
 
 
-def _validate_raster(
+def _validate_raster_contents(
     project_dir: Path,
-    relative_path: object,
+    relative_path: str,
     issue_path: str,
     field: str,
     issues: list[ValidationIssue],
-    expected_ratio: float | None = None,
-    *,
-    expected_format: str | None = None,
+    expected_ratio: float | None,
+    expected_format: str | None,
 ) -> tuple[int, int] | None:
-    """Validate raster artifact dimensions and decodability."""
-    local_issues: list[ValidationIssue] = []
-    if not _relative_path(relative_path, local_issues, issue_path, field):
-        issues.extend(local_issues)
-        return None
-    if not isinstance(relative_path, str):
-        _add(issues, issue_path, field, "must be a relative project path")
-        return None
-    try:
-        image_path = _contained_project_path(project_dir, relative_path)
-    except ValueError:
-        _add(issues, issue_path, field, "referenced image path escapes the project boundary")
-        return None
-    if image_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
-        _add(issues, issue_path, field, "must be PNG, JPEG, or WebP")
-        return None
-    if not image_path.is_file():
-        _add(issues, issue_path, field, "referenced image is missing")
-        return None
     try:
         image_path = contained_project_path(project_dir, relative_path, must_exist=True)
         payload = read_bytes_nofollow(
@@ -3108,6 +3589,46 @@ def _validate_raster(
         return None
 
 
+def _validate_raster(
+    project_dir: Path,
+    relative_path: object,
+    issue_path: str,
+    field: str,
+    issues: list[ValidationIssue],
+    expected_ratio: float | None = None,
+    *,
+    expected_format: str | None = None,
+) -> tuple[int, int] | None:
+    """Validate raster artifact dimensions and decodability."""
+    local_issues: list[ValidationIssue] = []
+    if not _relative_path(relative_path, local_issues, issue_path, field):
+        issues.extend(local_issues)
+        return None
+    if not isinstance(relative_path, str):
+        _add(issues, issue_path, field, "must be a relative project path")
+        return None
+    try:
+        image_path = _contained_project_path(project_dir, relative_path)
+    except ValueError:
+        _add(issues, issue_path, field, "referenced image path escapes the project boundary")
+        return None
+    if image_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+        _add(issues, issue_path, field, "must be PNG, JPEG, or WebP")
+        return None
+    if not image_path.is_file():
+        _add(issues, issue_path, field, "referenced image is missing")
+        return None
+    return _validate_raster_contents(
+        project_dir,
+        relative_path,
+        issue_path,
+        field,
+        issues,
+        expected_ratio,
+        expected_format,
+    )
+
+
 def _storyboard_panel_map(storyboard: dict[str, object]) -> dict[str, dict[str, object]]:
     """Return storyboard panels keyed by canonical panel identifier."""
     result: dict[str, dict[str, object]] = {}
@@ -3148,6 +3669,59 @@ def require_valid_project(project_dir: Path, stage: str) -> None:
         raise ProjectValidationError(issues)
 
 
+def _pdf_source_page_stale_reasons(
+    project_dir: Path,
+    sources: object,
+    page_count: int,
+) -> list[str]:
+    stale_reasons: list[str] = []
+    if not isinstance(sources, list) or len(sources) != page_count:
+        stale_reasons.append("ordered source page bindings are incomplete")
+    else:
+        for page_number, source in enumerate(sources, 1):
+            expected_page = f"pages/page-{page_number:03d}.png"
+            expected_qa = f"qa/pages/page-{page_number:03d}.json"
+            if not isinstance(source, dict):
+                stale_reasons.append(f"page {page_number} binding is invalid")
+                continue
+            if source.get("path") != expected_page:
+                stale_reasons.append(f"page {page_number} path binding is stale")
+            if source.get("page_qa_path") != expected_qa:
+                stale_reasons.append(f"page {page_number} QA path binding is stale")
+            if source.get("dimensions") != [PAGE_WIDTH, PAGE_HEIGHT]:
+                stale_reasons.append(f"page {page_number} dimensions are stale")
+            for binding, relative_path in (
+                ("sha256", expected_page),
+                ("page_qa_sha256", expected_qa),
+            ):
+                expected_hash = source.get(binding)
+                try:
+                    current_path = contained_project_path(project_dir, relative_path)
+                except (OSError, ValueError):
+                    current_path = None
+                if (
+                    not isinstance(expected_hash, str)
+                    or not SHA256_PATTERN.fullmatch(expected_hash)
+                    or current_path is None
+                    or not current_path.is_file()
+                    or sha256_file(current_path) != expected_hash
+                ):
+                    stale_reasons.append(f"page {page_number} {binding} binding is stale")
+    return stale_reasons
+
+
+def _pdf_verification_metadata_stale_reasons(record: dict[str, object]) -> list[str]:
+    stale_reasons: list[str] = []
+    if record.get("schema_version") != "1.0":
+        stale_reasons.append("schema version is unsupported")
+    if record.get("kind") != "pdf-verification":
+        stale_reasons.append("record kind is invalid")
+    verified_at = record.get("verified_at")
+    if not isinstance(verified_at, str) or TIMESTAMP_PATTERN.fullmatch(verified_at) is None:
+        stale_reasons.append("verification timestamp is not ISO 8601 UTC")
+    return stale_reasons
+
+
 def validate_pdf_verification(
     project_dir: Path,
     project_id: str,
@@ -3172,13 +3746,7 @@ def validate_pdf_verification(
         stale_reasons.append("verification record is missing or unreadable")
 
     if isinstance(record, dict):
-        if record.get("schema_version") != "1.0":
-            stale_reasons.append("schema version is unsupported")
-        if record.get("kind") != "pdf-verification":
-            stale_reasons.append("record kind is invalid")
-        verified_at = record.get("verified_at")
-        if not isinstance(verified_at, str) or TIMESTAMP_PATTERN.fullmatch(verified_at) is None:
-            stale_reasons.append("verification timestamp is not ISO 8601 UTC")
+        stale_reasons.extend(_pdf_verification_metadata_stale_reasons(record))
         expected_pdf = f"exports/{project_id}.pdf"
         if record.get("pdf_path") != expected_pdf:
             stale_reasons.append("PDF path binding is stale")
@@ -3198,39 +3766,9 @@ def validate_pdf_verification(
         if record.get("page_count") != page_count:
             stale_reasons.append("page count binding is stale")
 
-        sources = record.get("source_pages")
-        if not isinstance(sources, list) or len(sources) != page_count:
-            stale_reasons.append("ordered source page bindings are incomplete")
-        else:
-            for page_number, source in enumerate(sources, 1):
-                expected_page = f"pages/page-{page_number:03d}.png"
-                expected_qa = f"qa/pages/page-{page_number:03d}.json"
-                if not isinstance(source, dict):
-                    stale_reasons.append(f"page {page_number} binding is invalid")
-                    continue
-                if source.get("path") != expected_page:
-                    stale_reasons.append(f"page {page_number} path binding is stale")
-                if source.get("page_qa_path") != expected_qa:
-                    stale_reasons.append(f"page {page_number} QA path binding is stale")
-                if source.get("dimensions") != [PAGE_WIDTH, PAGE_HEIGHT]:
-                    stale_reasons.append(f"page {page_number} dimensions are stale")
-                for binding, relative_path in (
-                    ("sha256", expected_page),
-                    ("page_qa_sha256", expected_qa),
-                ):
-                    expected_hash = source.get(binding)
-                    try:
-                        current_path = contained_project_path(project_dir, relative_path)
-                    except (OSError, ValueError):
-                        current_path = None
-                    if (
-                        not isinstance(expected_hash, str)
-                        or not SHA256_PATTERN.fullmatch(expected_hash)
-                        or current_path is None
-                        or not current_path.is_file()
-                        or sha256_file(current_path) != expected_hash
-                    ):
-                        stale_reasons.append(f"page {page_number} {binding} binding is stale")
+        stale_reasons.extend(
+            _pdf_source_page_stale_reasons(project_dir, record.get("source_pages"), page_count)
+        )
     elif not stale_reasons:
         stale_reasons.append("verification record must be an object")
 
@@ -3530,6 +4068,95 @@ def _validate_legacy_panel_source_references(
             )
 
 
+def _validate_raster_hash_binding(
+    project_dir: Path,
+    relative_path: object,
+    expected_hash: object,
+    issue_path: str,
+    field: str,
+    message: str,
+    issues: list[ValidationIssue],
+) -> None:
+    if isinstance(relative_path, str) and isinstance(expected_hash, str):
+        try:
+            image_path = _contained_project_path(project_dir, relative_path)
+        except ValueError:
+            pass
+        else:
+            if image_path.is_file() and SHA256_PATTERN.fullmatch(expected_hash):
+                image_path = contained_project_path(project_dir, relative_path, must_exist=True)
+                if sha256_file(image_path) != expected_hash:
+                    _add(issues, issue_path, field, message)
+
+
+def _validate_panel_raster_bindings(
+    project_dir: Path,
+    panel: dict[str, object],
+    record_relative: str,
+    record: dict[str, object],
+    is_quality_v2: bool,
+    bindings: dict[str, object],
+    issues: list[ValidationIssue],
+) -> None:
+    rect = panel.get("rect")
+    expected_ratio = None
+    if (
+        isinstance(rect, dict)
+        and isinstance(rect.get("width"), int)
+        and isinstance(rect.get("height"), int)
+        and rect["height"] > 0
+    ):
+        expected_ratio = rect["width"] / rect["height"]
+    raw_path = bindings.get("raw_path") if is_quality_v2 else record.get("raw_path")
+    clean_path = bindings.get("clean_path") if is_quality_v2 else record.get("clean_path")
+    raw_size = _validate_raster(
+        project_dir,
+        raw_path,
+        record_relative,
+        "bindings.raw_path" if is_quality_v2 else "raw_path",
+        issues,
+        expected_ratio,
+    )
+    _validate_raster(
+        project_dir,
+        clean_path,
+        record_relative,
+        "bindings.clean_path" if is_quality_v2 else "clean_path",
+        issues,
+        expected_ratio,
+    )
+    if raw_size is not None and not is_quality_v2:
+        dimensions = record.get("dimensions")
+        if (
+            isinstance(dimensions, dict)
+            and (dimensions.get("width"), dimensions.get("height")) != raw_size
+        ):
+            _add(issues, record_relative, "dimensions", "must match the raw image")
+    raw_hash = bindings.get("raw_sha256") if is_quality_v2 else record.get("raw_sha256")
+    _validate_raster_hash_binding(
+        project_dir,
+        raw_path,
+        raw_hash,
+        record_relative,
+        "bindings.raw_sha256" if is_quality_v2 else "raw_sha256",
+        "hash does not match the raw image",
+        issues,
+    )
+    clean_hash = bindings.get("clean_sha256") if is_quality_v2 else None
+    _validate_raster_hash_binding(
+        project_dir,
+        clean_path,
+        clean_hash,
+        record_relative,
+        "bindings.clean_sha256",
+        "hash does not match the clean image",
+        issues,
+    )
+    _validate_legacy_panel_source_references(
+        project_dir, record_relative, record, is_quality_v2, issues
+    )
+
+
 def _validate_storyboard_manifest_consistency(
     storyboard: dict[str, object],
     manifest: dict[str, object],
@@ -3564,6 +4191,171 @@ def _validate_storyboard_manifest_consistency(
         _add(issues, "project.json", "panels", "must match storyboard panel order")
 
 
+def _collect_panel_record_outcomes(
+    record: dict[str, object],
+    record_relative: str,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    panel_errors: list[tuple[str, str]] = []
+    panel_warnings: list[tuple[str, str]] = []
+    checks = record.get("checks")
+    has_error_failure = isinstance(checks, list) and any(
+        isinstance(check, dict)
+        and check.get("result") == "fail"
+        and check.get("severity") == "error"
+        for check in checks
+    )
+    hard_failure = record.get("failure_category") in {
+        "corrupt",
+        "corrupt_image",
+        "safety",
+        "safety_refusal",
+    }
+    if record.get("decision") == "regenerate" or has_error_failure or hard_failure:
+        reason = record.get("retry_reason")
+        panel_errors.append(
+            (
+                record_relative,
+                reason
+                if isinstance(reason, str) and reason.strip()
+                else "panel has an unresolved error",
+            )
+        )
+    unresolved = record.get("unresolved_warnings")
+    if isinstance(unresolved, list):
+        panel_warnings.extend(
+            (record_relative, warning)
+            for warning in unresolved
+            if isinstance(warning, str) and warning.strip()
+        )
+    return panel_errors, panel_warnings
+
+
+def _validate_project_plan_and_storyboard(
+    project_dir: Path,
+    manifest: dict[str, object] | None,
+    needs_plan: bool,
+    needs_storyboard: bool,
+    issues: list[ValidationIssue],
+) -> tuple[
+    dict[str, object] | None,
+    dict[str, object] | None,
+    dict[str, object] | None,
+]:
+    story = None
+    characters = None
+    storyboard = None
+    if needs_plan:
+        story = _load_artifact(project_dir, "plan/story-plan.json", validate_story_plan, issues)
+        characters = _load_artifact(
+            project_dir, "plan/character-bible.json", validate_character_bible, issues
+        )
+        if story is not None and characters is not None:
+            issues.extend(validate_story_character_references(story, characters))
+    if needs_storyboard:
+        storyboard = _read_canonical_json(project_dir, "plan/storyboard.json", issues)
+        if storyboard is not None and story is not None and characters is not None:
+            issues.extend(validate_storyboard(storyboard, story, characters))
+        if storyboard is not None and manifest is not None:
+            _validate_storyboard_manifest_consistency(storyboard, manifest, issues)
+    return story, characters, storyboard
+
+
+def _validate_project_panel_record_quality(
+    project_dir: Path,
+    record_relative: str,
+    record: dict[str, object],
+    is_quality_v2: bool,
+    issues: list[ValidationIssue],
+) -> None:
+    if not is_quality_v2:
+        _add(
+            issues,
+            record_relative,
+            "quality-migration-required",
+            "schema 1.0 quality record remains readable but must be reviewed as schema 2.0",
+        )
+    else:
+        issues.extend(validate_panel_provenance(project_dir, record))
+        for detail in validate_character_quality_provenance(project_dir, record):
+            _add(
+                issues,
+                record_relative,
+                "character-consistency-provenance",
+                f"quality-record-stale: {detail}",
+            )
+
+
+def _validate_project_panel_record(
+    project_dir: Path,
+    panel_id: str,
+    panel: dict[str, object],
+    stage: str,
+    panel_errors: list[tuple[str, str]],
+    panel_warnings: list[tuple[str, str]],
+    issues: list[ValidationIssue],
+) -> None:
+    record_relative = f"qa/panels/{panel_id}.json"
+    record = _read_canonical_json(project_dir, record_relative, issues)
+    if record is None:
+        return
+    issues.extend(validate_panel_record(record))
+    is_quality_v2 = record.get("schema_version") == "2.0"
+    bindings = record.get("bindings") if is_quality_v2 else None
+    if not isinstance(bindings, dict):
+        bindings = {}
+    _validate_project_panel_record_quality(
+        project_dir, record_relative, record, is_quality_v2, issues
+    )
+    if stage in {"all", "final", "export-ready"}:
+        record_errors, record_warnings = _collect_panel_record_outcomes(record, record_relative)
+        panel_errors.extend(record_errors)
+        panel_warnings.extend(record_warnings)
+    record_panel_id = record.get("subject_id") if is_quality_v2 else record.get("panel_id")
+    if record_panel_id != panel_id:
+        id_field = "subject_id" if is_quality_v2 else "panel_id"
+        _add(issues, record_relative, id_field, "must match its storyboard panel")
+    _validate_panel_raster_bindings(
+        project_dir,
+        panel,
+        record_relative,
+        record,
+        is_quality_v2,
+        bindings,
+        issues,
+    )
+
+
+def _validate_project_panels(
+    project_dir: Path,
+    storyboard: dict[str, object],
+    manifest: dict[str, object] | None,
+    stage: str,
+    panel_errors: list[tuple[str, str]],
+    panel_warnings: list[tuple[str, str]],
+    issues: list[ValidationIssue],
+) -> None:
+    panel_map = _storyboard_panel_map(storyboard)
+    # The repair plan is optional provenance: absent until a repair is
+    # planned, but re-derived and compared with the current reviews whenever
+    # it is present, so a plan can never outlive the record it describes.
+    if (project_dir / REPAIR_PLAN_PATH).is_file():
+        if _read_canonical_json(project_dir, REPAIR_PLAN_PATH, issues) is not None:
+            for category in validate_repair_plan(project_dir):
+                _add(issues, REPAIR_PLAN_PATH, category, category)
+    for panel_id, panel in panel_map.items():
+        _validate_project_panel_record(
+            project_dir,
+            panel_id,
+            panel,
+            stage,
+            panel_errors,
+            panel_warnings,
+            issues,
+        )
+    if manifest is not None:
+        _validate_manifest_source_binding(project_dir, manifest, issues)
+
+
 def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIssue]:
     """Validate all artifacts required for a project stage."""
     project_dir = Path(project_dir)
@@ -3595,169 +4387,22 @@ def validate_project(project_dir: Path, stage: str = "all") -> list[ValidationIs
                     require_panel_acceptance=needs_panels,
                 )
     issues.extend(manifest_issues)
-    story = None
-    characters = None
-    storyboard = None
     panel_errors: list[tuple[str, str]] = []
     panel_warnings: list[tuple[str, str]] = []
-    if needs_plan:
-        story = _load_artifact(project_dir, "plan/story-plan.json", validate_story_plan, issues)
-        characters = _load_artifact(
-            project_dir, "plan/character-bible.json", validate_character_bible, issues
-        )
-        if story is not None and characters is not None:
-            issues.extend(validate_story_character_references(story, characters))
-    if needs_storyboard:
-        storyboard = _read_canonical_json(project_dir, "plan/storyboard.json", issues)
-        if storyboard is not None and story is not None and characters is not None:
-            issues.extend(validate_storyboard(storyboard, story, characters))
-        if storyboard is not None and manifest is not None:
-            _validate_storyboard_manifest_consistency(storyboard, manifest, issues)
+    story, characters, storyboard = _validate_project_plan_and_storyboard(
+        project_dir, manifest, needs_plan, needs_storyboard, issues
+    )
 
     if needs_panels and storyboard is not None:
-        panel_map = _storyboard_panel_map(storyboard)
-        # The repair plan is optional provenance: absent until a repair is
-        # planned, but re-derived and compared with the current reviews whenever
-        # it is present, so a plan can never outlive the record it describes.
-        if (project_dir / REPAIR_PLAN_PATH).is_file():
-            if _read_canonical_json(project_dir, REPAIR_PLAN_PATH, issues) is not None:
-                for category in validate_repair_plan(project_dir):
-                    _add(issues, REPAIR_PLAN_PATH, category, category)
-        for panel_id, panel in panel_map.items():
-            record_relative = f"qa/panels/{panel_id}.json"
-            record = _read_canonical_json(project_dir, record_relative, issues)
-            if record is None:
-                continue
-            issues.extend(validate_panel_record(record))
-            is_quality_v2 = record.get("schema_version") == "2.0"
-            bindings = record.get("bindings") if is_quality_v2 else None
-            if not isinstance(bindings, dict):
-                bindings = {}
-            if not is_quality_v2:
-                _add(
-                    issues,
-                    record_relative,
-                    "quality-migration-required",
-                    "schema 1.0 quality record remains readable but must be reviewed as schema 2.0",
-                )
-            else:
-                issues.extend(validate_panel_provenance(project_dir, record))
-                for detail in validate_character_quality_provenance(project_dir, record):
-                    _add(
-                        issues,
-                        record_relative,
-                        "character-consistency-provenance",
-                        f"quality-record-stale: {detail}",
-                    )
-            if stage in {"all", "final", "export-ready"}:
-                checks = record.get("checks")
-                has_error_failure = isinstance(checks, list) and any(
-                    isinstance(check, dict)
-                    and check.get("result") == "fail"
-                    and check.get("severity") == "error"
-                    for check in checks
-                )
-                hard_failure = record.get("failure_category") in {
-                    "corrupt",
-                    "corrupt_image",
-                    "safety",
-                    "safety_refusal",
-                }
-                if record.get("decision") == "regenerate" or has_error_failure or hard_failure:
-                    reason = record.get("retry_reason")
-                    panel_errors.append(
-                        (
-                            record_relative,
-                            reason
-                            if isinstance(reason, str) and reason.strip()
-                            else "panel has an unresolved error",
-                        )
-                    )
-                unresolved = record.get("unresolved_warnings")
-                if isinstance(unresolved, list):
-                    panel_warnings.extend(
-                        (record_relative, warning)
-                        for warning in unresolved
-                        if isinstance(warning, str) and warning.strip()
-                    )
-            record_panel_id = record.get("subject_id") if is_quality_v2 else record.get("panel_id")
-            if record_panel_id != panel_id:
-                id_field = "subject_id" if is_quality_v2 else "panel_id"
-                _add(issues, record_relative, id_field, "must match its storyboard panel")
-            rect = panel.get("rect")
-            expected_ratio = None
-            if (
-                isinstance(rect, dict)
-                and isinstance(rect.get("width"), int)
-                and isinstance(rect.get("height"), int)
-                and rect["height"] > 0
-            ):
-                expected_ratio = rect["width"] / rect["height"]
-            raw_path = bindings.get("raw_path") if is_quality_v2 else record.get("raw_path")
-            clean_path = bindings.get("clean_path") if is_quality_v2 else record.get("clean_path")
-            raw_size = _validate_raster(
-                project_dir,
-                raw_path,
-                record_relative,
-                "bindings.raw_path" if is_quality_v2 else "raw_path",
-                issues,
-                expected_ratio,
-            )
-            _validate_raster(
-                project_dir,
-                clean_path,
-                record_relative,
-                "bindings.clean_path" if is_quality_v2 else "clean_path",
-                issues,
-                expected_ratio,
-            )
-            if raw_size is not None and not is_quality_v2:
-                dimensions = record.get("dimensions")
-                if (
-                    isinstance(dimensions, dict)
-                    and (dimensions.get("width"), dimensions.get("height")) != raw_size
-                ):
-                    _add(issues, record_relative, "dimensions", "must match the raw image")
-            raw_hash = bindings.get("raw_sha256") if is_quality_v2 else record.get("raw_sha256")
-            if isinstance(raw_path, str) and isinstance(raw_hash, str):
-                try:
-                    image_path = _contained_project_path(project_dir, raw_path)
-                except ValueError:
-                    pass
-                else:
-                    if image_path.is_file() and SHA256_PATTERN.fullmatch(raw_hash):
-                        image_path = contained_project_path(project_dir, raw_path, must_exist=True)
-                        if sha256_file(image_path) != raw_hash:
-                            hash_field = "bindings.raw_sha256" if is_quality_v2 else "raw_sha256"
-                            _add(
-                                issues,
-                                record_relative,
-                                hash_field,
-                                "hash does not match the raw image",
-                            )
-            clean_hash = bindings.get("clean_sha256") if is_quality_v2 else None
-            if is_quality_v2 and isinstance(clean_path, str) and isinstance(clean_hash, str):
-                try:
-                    clean_file = _contained_project_path(project_dir, clean_path)
-                except ValueError:
-                    pass
-                else:
-                    if clean_file.is_file() and SHA256_PATTERN.fullmatch(clean_hash):
-                        clean_file = contained_project_path(
-                            project_dir, clean_path, must_exist=True
-                        )
-                        if sha256_file(clean_file) != clean_hash:
-                            _add(
-                                issues,
-                                record_relative,
-                                "bindings.clean_sha256",
-                                "hash does not match the clean image",
-                            )
-            _validate_legacy_panel_source_references(
-                project_dir, record_relative, record, is_quality_v2, issues
-            )
-        if manifest is not None:
-            _validate_manifest_source_binding(project_dir, manifest, issues)
+        _validate_project_panels(
+            project_dir,
+            storyboard,
+            manifest,
+            stage,
+            panel_errors,
+            panel_warnings,
+            issues,
+        )
 
     if stage in {"all", "final", "export-ready"} and manifest is not None:
         _validate_terminal_panel_outcomes(manifest, panel_errors, panel_warnings, issues)
