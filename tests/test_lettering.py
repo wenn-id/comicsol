@@ -455,6 +455,41 @@ class LetteringTests(unittest.TestCase):
             )
         )
 
+    def test_styled_layout_does_not_start_wrapped_lines_with_kinsoku_characters(self):
+        from scripts.letter_panels import _CJK_NO_LINE_START, _layout_styled_text
+
+        image = Image.new("RGB", (600, 300), "white")
+        draw = ImageDraw.Draw(image)
+        regular = ImageFont.truetype(str(FONT), 32)
+        cases = (
+            ("뭐야?뭐", "뭐야"),
+            ("コーヒーコーヒー", "コーヒ"),
+            ("ちょっとちょっと", "ちょっ"),
+        )
+        expected_no_line_start = frozenset(
+            ".,!?:;…‥・ー々ゝゞヽヾ"
+            "ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶ"
+            "ㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿ"
+        )
+        self.assertTrue(expected_no_line_start.issubset(_CJK_NO_LINE_START))
+        for content, width_sample in cases:
+            maximum_width = draw.textlength(width_sample, font=regular)
+            with mock.patch(
+                "scripts.letter_panels._styled_font_runs",
+                return_value=((content, regular),),
+            ):
+                layout = _layout_styled_text(draw, content, regular, maximum_width)
+
+            self.assertIsNotNone(layout)
+            lines = ["".join(text for text, _ in line.runs) for line in layout.lines]
+            self.assertGreater(len(lines), 1)
+            self.assertEqual(content, "".join(lines))
+            self.assertTrue(
+                all(line and line[0] not in _CJK_NO_LINE_START for line in lines[1:]),
+                msg=f"Wrapped lines for {content!r} start with a kinsoku character: {lines!r}",
+            )
+            self.assertTrue(all(line.width <= maximum_width for line in layout.lines))
+
     def test_letter_panel_wraps_a_65_character_caption_on_720_by_1120_panel(self):
         source = self.root / "source-720x1120.png"
         Image.new("RGB", (720, 1120), "white").save(source)

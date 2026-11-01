@@ -422,7 +422,11 @@ def _grapheme_token_clusters(
     return clusters
 
 
-_CJK_NO_LINE_START = frozenset("、。，．！？：；｡､）］｝〉》」』】〕〗〙〛")
+_CJK_NO_LINE_START = frozenset(
+    "、。，．！？：；｡､）］｝〉》」』】〕〗〙〛"
+    ".,!?:;…‥・ー々ゝゞヽヾ"
+    "ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿ"
+)
 _CJK_NO_LINE_END = frozenset("（［｛〈《「『【〔〖〘〚")
 
 
