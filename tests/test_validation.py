@@ -1007,6 +1007,22 @@ class ProjectValidationTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
+    def test_canonical_json_permission_errors_do_not_disclose_absolute_paths(self):
+        project_json = self.project / "project.json"
+        issues = []
+        with patch.object(
+            validation,
+            "read_bytes_nofollow",
+            side_effect=PermissionError(13, "Permission denied", str(project_json)),
+        ):
+            result = validation._read_canonical_json(self.project, "project.json", issues)
+
+        self.assertIsNone(result)
+        self.assertEqual(1, len(issues))
+        self.assertEqual("project.json", issues[0].path)
+        self.assertEqual("cannot read JSON: PermissionError", issues[0].message)
+        self.assertNotIn(str(project_json), issues[0].message)
+
     def add_panel_files(self, mode="RGB"):
         (self.project / "prompts/panels/p01-01.txt").write_text(
             "original panel prompt", encoding="utf-8"
