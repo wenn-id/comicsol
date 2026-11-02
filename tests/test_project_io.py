@@ -680,6 +680,24 @@ class ProjectTransactionTests(unittest.TestCase):
         self.assertEqual(b"old-one", (self.project / "pages/page-001.png").read_bytes())
         self.assertEqual(b"old-two", (self.project / "pages/page-002.png").read_bytes())
 
+    def test_recover_removes_interrupted_staging_transaction(self):
+        transaction = project_io.ProjectTransaction(self.project, "composition")
+        transaction.__enter__()
+        try:
+            transaction.stage_bytes("pages/page-001.png", b"staged-one")
+            transaction_dir = transaction._dir
+            self.assertIsNotNone(transaction_dir)
+        finally:
+            if transaction._lock is not None:
+                transaction._lock.__exit__(None, None, None)
+                transaction._lock = None
+
+        project_io.ProjectTransaction.recover(self.project)
+
+        self.assertEqual(b"old-one", (self.project / "pages/page-001.png").read_bytes())
+        self.assertFalse(transaction_dir.exists())
+        self.assertEqual([], list((self.project / "logs/transactions").iterdir()))
+
     def test_recover_restores_interrupted_publishing_transaction(self):
         real_replace = project_io.os.replace
         calls = 0

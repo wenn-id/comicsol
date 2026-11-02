@@ -950,9 +950,17 @@ class ProjectTransaction:
             self._dir = base / str(self._id)
             self._dir.mkdir(parents=True)
             self._phase = "staging"
+            self._write_journal()
             return self
         except BaseException:
-            self._lock.__exit__(*sys.exc_info())
+            error = sys.exc_info()
+            try:
+                if self._dir is not None:
+                    self._cleanup()
+            except OSError:
+                pass
+            finally:
+                self._lock.__exit__(*error)
             raise
 
     def stage_bytes(self, relative: str, payload: bytes) -> None:
