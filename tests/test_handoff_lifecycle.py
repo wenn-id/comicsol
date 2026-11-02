@@ -3,12 +3,13 @@ import json
 import tempfile
 import unittest
 from copy import deepcopy
+from fractions import Fraction
 from pathlib import Path
 from unittest import mock
 
-from PIL import Image
+from PIL import Image, PngImagePlugin
 
-from scripts import comic_sol, handoff, schema
+from scripts import comic_sol, handoff, handoff_archive, schema
 from scripts.character_identity import IDENTITY_PACK_PATH, derive_identity_pack
 from scripts.core_primitives import canonical_artifact_bytes, canonical_json_bytes
 from scripts.handoff import (
@@ -1296,6 +1297,21 @@ class HandoffIntakeFailureTests(unittest.TestCase):
         return path.read_bytes()
 
     @staticmethod
+    def _write_raster_with_metadata(path, size, color):
+        image = Image.new("RGB", size, color)
+        pnginfo = PngImagePlugin.PngInfo()
+        pnginfo.add_text("PrivacyMarker", "private-location-fixture")
+        exif = Image.Exif()
+        exif[34853] = {
+            1: "N",
+            2: (Fraction(1), Fraction(2), Fraction(3)),
+            3: "E",
+            4: (Fraction(4), Fraction(5), Fraction(6)),
+        }
+        image.save(path, format="PNG", pnginfo=pnginfo, exif=exif)
+        return path.read_bytes()
+
+    @staticmethod
     def _receipt_path(project, job_id, attempt):
         identifier = handoff.attempt_id(job_id=job_id, attempt=attempt)
         return project / f"generation/receipts/{identifier}.json"
@@ -1354,11 +1370,17 @@ class HandoffIntakeFailureTests(unittest.TestCase):
         dimensions = panel_job["requested_dimensions"]
         self.assertEqual("46:71", panel_job["requested_aspect_ratio"])
         raster = root / "private-renderer-output.png"
-        raster_bytes = self._write_raster(
+        raster_bytes = self._write_raster_with_metadata(
             raster,
             (dimensions["width"], dimensions["height"]),
             (20, 30, 40),
         )
+        with Image.open(raster) as source_image:
+            source_image.load()
+            original_pixels = source_image.tobytes()
+            self.assertIn("PrivacyMarker", source_image.info)
+            self.assertIn(34853, source_image.getexif())
+        self.assertIn(b"private-location-fixture", raster_bytes)
         self.assertTrue(raster.is_absolute())
         self.assertNotEqual(project, raster.parent)
         before_events = (project / "logs/events.jsonl").read_bytes()
@@ -1368,7 +1390,9 @@ class HandoffIntakeFailureTests(unittest.TestCase):
         retained = project / panel_job["target_path"]
         receipt_path = self._receipt_path(project, panel_job["job_id"], 1)
         receipt = comic_sol.read_json(receipt_path)
-        self.assertEqual(raster_bytes, retained.read_bytes())
+        retained_bytes = retained.read_bytes()
+        self.assertNotEqual(raster_bytes, retained_bytes)
+        self.assertNotIn(b"private-location-fixture", retained_bytes)
         with Image.open(retained) as image:
             self.assertEqual("PNG", image.format)
             self.assertEqual(
@@ -1379,9 +1403,12 @@ class HandoffIntakeFailureTests(unittest.TestCase):
                 image.width * 71,
                 image.height * 46,
             )
+            self.assertEqual(original_pixels, image.tobytes())
+            self.assertNotIn("PrivacyMarker", image.info)
+            self.assertNotIn(34853, image.getexif())
         self.assertEqual([], validate_generation_receipt(receipt))
         self.assertEqual(panel_job["target_path"], receipt["raster_path"])
-        self.assertEqual(hashlib.sha256(raster_bytes).hexdigest(), receipt["raster_sha256"])
+        self.assertEqual(hashlib.sha256(retained_bytes).hexdigest(), receipt["raster_sha256"])
         self.assertNotIn(str(raster), json.dumps(receipt, sort_keys=True))
         self.assertNotIn(str(raster), json.dumps(result, sort_keys=True))
         self.assertNotIn(str(raster.parent), json.dumps(result, sort_keys=True))
@@ -1410,6 +1437,17 @@ class HandoffIntakeFailureTests(unittest.TestCase):
         source_locator = str(raster).encode("utf-8")
         for relative, payload in self._artifact_snapshot(project).items():
             self.assertNotIn(source_locator, payload, relative)
+
+        archive = root / f"{project.name}.comic-sol-handoff"
+        handoff_archive.export_handoff_archive(project, archive)
+        import_root = root / "metadata-stripped-imports"
+        import_root.mkdir()
+        handoff_archive.import_handoff_archive(archive, import_root)
+        imported_raster = import_root / project.name / panel_job["target_path"]
+        self.assertEqual(retained_bytes, imported_raster.read_bytes())
+        with Image.open(imported_raster) as archived_image:
+            self.assertNotIn("PrivacyMarker", archived_image.info)
+            self.assertNotIn(34853, archived_image.getexif())
 
     def test_relative_png_intake_is_absolutized_without_resolving_source(self):
         import os
