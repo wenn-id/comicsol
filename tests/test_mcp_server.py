@@ -143,6 +143,10 @@ class McpServerUnitTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
+    def assert_path_not_in_json(self, path: Path, payload: Any):
+        encoded_path = json.dumps(str(path))[1:-1]
+        self.assertNotIn(encoded_path, json.dumps(payload))
+
     def test_doctor_forwards_image_capability_with_cli_parity(self):
         capability = {
             "status": "available",
@@ -160,6 +164,43 @@ class McpServerUnitTests(unittest.TestCase):
         )
         self.assertTrue(result["ready"])
         self.assertTrue(result["healthy"])
+
+    def test_doctor_does_not_disclose_output_root_paths(self):
+        result = mcp_server.comic_doctor()
+        self.assert_path_not_in_json(self.root, result)
+
+        blocker = self.root.parent / "not-a-directory"
+        blocker.write_text("occupied", encoding="utf-8")
+        blocked_root = blocker / "output"
+        with mock.patch.object(mcp_server, "OUTPUT_ROOT", blocked_root):
+            result = mcp_server.comic_doctor()
+        output_check = next(check for check in result["checks"] if check["id"] == "output-root")
+        self.assertEqual("fail", output_check["status"])
+        self.assert_path_not_in_json(blocker, result)
+
+    def test_validate_does_not_disclose_absolute_paths_from_permission_errors(self):
+        from scripts import validate_project as validation
+
+        project_id = mcp_server.comic_init(
+            "Permission test",
+            "An input.",
+            {"mode": "short_prompt", "language": "en"},
+            page_count=1,
+        )
+        manifest_path = mcp_server._resolve_project(project_id) / "project.json"
+        read_bytes_nofollow = validation.read_bytes_nofollow
+
+        def deny_manifest(path, *args, **kwargs):
+            if Path(path) == manifest_path:
+                raise PermissionError(13, "Permission denied", str(manifest_path))
+            return read_bytes_nofollow(path, *args, **kwargs)
+
+        with mock.patch.object(validation, "read_bytes_nofollow", side_effect=deny_manifest):
+            issues = mcp_server.comic_validate(project_id)
+
+        manifest_issue = next(issue for issue in issues if issue["path"] == "project.json")
+        self.assertIn("PermissionError", manifest_issue["message"])
+        self.assert_path_not_in_json(manifest_path, issues)
 
     def test_root_must_be_absolute(self):
         with self.assertRaisesRegex(ValueError, "absolute"):

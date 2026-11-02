@@ -311,6 +311,40 @@ class DoctorDiagnosticContractTests(unittest.TestCase):
         self.assertEqual("warn", mcp_check["status"])
         self.assertIn("unusable", cast(str, mcp_check["message"]))
 
+    def test_doctor_redacts_exception_paths_from_runtime_diagnostics(self):
+        from scripts import font_coverage
+
+        with tempfile.TemporaryDirectory() as raw:
+            diagnostic_path = Path(raw) / "private-font.ttf"
+            original_import = __import__
+
+            def deny_pillow_import(name, *args, **kwargs):
+                if name == "PIL":
+                    raise PermissionError(13, "Permission denied", str(diagnostic_path))
+                return original_import(name, *args, **kwargs)
+
+            with (
+                mock.patch("builtins.__import__", side_effect=deny_pillow_import),
+                mock.patch.object(
+                    comic_sol.ImageFont,
+                    "truetype",
+                    side_effect=PermissionError(13, "Permission denied", str(diagnostic_path)),
+                ),
+                mock.patch.object(
+                    font_coverage,
+                    "missing_coverage_probes",
+                    side_effect=PermissionError(13, "Permission denied", str(diagnostic_path)),
+                ),
+            ):
+                report = comic_sol.doctor_report(Path(raw) / "output")
+
+        checks = {check["id"]: check for check in cast(list[dict[str, object]], report["checks"])}
+        encoded_path = json.dumps(str(diagnostic_path))[1:-1]
+        for check_id in ("pillow", "fonts", "typography"):
+            with self.subTest(check=check_id):
+                self.assertIn("PermissionError", json.dumps(checks[check_id]))
+                self.assertNotIn(encoded_path, json.dumps(checks[check_id]))
+
     def test_doctor_reports_broken_output_as_failed_actionable_check(self):
         with tempfile.TemporaryDirectory() as raw:
             output = Path(raw) / "not-a-directory"
