@@ -8,6 +8,7 @@ import io
 import json
 import math
 import re
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -311,9 +312,19 @@ def _page_context(
     # page separately from the decode lets a record bind one raster while the
     # pixel space its balloon verdicts were measured against came from another.
     page_payload, page_sha256 = artifacts.snapshot(page_path)
-    with Image.open(io.BytesIO(page_payload)) as image:
-        image.load()
-        page_width, page_height = image.size
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(page_payload)) as image:
+                image.load()
+                page_width, page_height = image.size
+    except (
+        OSError,
+        SyntaxError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as error:
+        raise ValueError("page image is unreadable or exceeds the decode limit") from error
 
     cache_relative = "cache/composition.json"
     cache_path = contained_project_path(project_dir, cache_relative, must_exist=True)

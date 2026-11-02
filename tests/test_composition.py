@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import tempfile
+import warnings
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -60,6 +61,20 @@ class CompositionTests(unittest.TestCase):
             self.assertEqual((1600, 2400), page.size)
             self.assertEqual("RGB", page.mode)
             self.assertEqual("PNG", page.format)
+
+    def test_decompression_warning_fails_closed_before_page_is_written(self):
+        original_open = Image.open
+
+        def open_with_warning(*args, **kwargs):
+            warnings.warn("unsafe dimensions", Image.DecompressionBombWarning, stacklevel=1)
+            return original_open(*args, **kwargs)
+
+        output = self.project / "pages/page-001.png"
+        with patch("scripts.compose_pages.Image.open", side_effect=open_with_warning):
+            with self.assertRaisesRegex(ValueError, "not a readable image"):
+                compose_page(self.project, 1, self.storyboard, self.settings, {})
+
+        self.assertFalse(output.exists())
 
     def test_compose_main_honors_explicit_all_flag(self):
         with patch("scripts.compose_pages.compose_all_pages", return_value=[]) as compose_all:

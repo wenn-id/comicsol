@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import sys
+import warnings
 from pathlib import Path
 from typing import cast
 
@@ -151,15 +152,22 @@ def _compose_to_bytes(
     for panel, _, source_payload in sources:
         x, y, width, height = _rect(panel)
         try:
-            with Image.open(io.BytesIO(source_payload)) as source:
-                source.load()
-                fitted = ImageOps.fit(
-                    source.convert("RGB"),
-                    (width, height),
-                    method=Image.Resampling.LANCZOS,
-                    centering=(0.5, 0.5),
-                )
-        except (OSError, SyntaxError) as error:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with Image.open(io.BytesIO(source_payload)) as source:
+                    source.load()
+                    fitted = ImageOps.fit(
+                        source.convert("RGB"),
+                        (width, height),
+                        method=Image.Resampling.LANCZOS,
+                        centering=(0.5, 0.5),
+                    )
+        except (
+            OSError,
+            SyntaxError,
+            Image.DecompressionBombError,
+            Image.DecompressionBombWarning,
+        ) as error:
             raise ValueError(f"panel {panel.get('id')} is not a readable image") from error
         canvas.paste(fitted, (x, y))
         draw.rectangle(

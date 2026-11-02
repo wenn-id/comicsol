@@ -3,6 +3,7 @@ import json
 import math
 import shutil
 import tempfile
+import warnings
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -120,6 +121,28 @@ class PageQualityTests(unittest.TestCase):
                 issue.field == "review.reviewed_at"
                 for issue in validate_page_quality(self.project, 1)
             )
+        )
+
+    def test_page_decode_warning_marks_page_quality_stale(self):
+        record = self._build_record()
+        write_page_quality_record(self.project, 1, record)
+        original_open = Image.open
+
+        def open_with_warning(*args, **kwargs):
+            warnings.warn("unsafe dimensions", Image.DecompressionBombWarning, stacklevel=1)
+            return original_open(*args, **kwargs)
+
+        with patch("scripts.page_quality.Image.open", side_effect=open_with_warning):
+            issues = validate_page_quality(self.project, 1)
+
+        self.assertTrue(
+            any(
+                issue.field == "bindings"
+                and issue.message
+                == "page-quality-stale: current page provenance is missing or unreadable"
+                for issue in issues
+            ),
+            issues,
         )
 
     def test_tail_warning_requires_failed_region_and_records_warning(self):
