@@ -1901,7 +1901,10 @@ def _read_canonical_json(
         if not isinstance(data, dict):
             raise ValueError("expected a JSON object")
     except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
-        _add(issues, relative_path, "file", f"cannot read JSON: {type(error).__name__}: {error}")
+        message = f"cannot read JSON: {type(error).__name__}"
+        if not isinstance(error, OSError):
+            message += f": {error}"
+        _add(issues, relative_path, "file", message)
         return None
     canonical = (json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
         "utf-8"

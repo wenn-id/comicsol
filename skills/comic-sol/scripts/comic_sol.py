@@ -4521,14 +4521,14 @@ def doctor_report(
         add_check(
             "output-root",
             "pass",
-            f"output root writable: {output_root.resolve()}",
+            "output root writable",
             "No action required.",
         )
     except OSError as error:
         add_check(
             "output-root",
             "fail",
-            f"Output root is not writable: {type(error).__name__}: {error}",
+            f"Output root is not writable: {type(error).__name__}",
             "Choose a writable project directory with --output-root or fix its permissions.",
         )
 
