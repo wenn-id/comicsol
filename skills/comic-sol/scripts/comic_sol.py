@@ -4203,8 +4203,14 @@ def _stage_override(
         record["retry_reason"] = None
     record["override_reason"] = normalized_reason
 
+    manifest_changed = False
     if normalized_reason not in manifest_warnings:
         manifest_warnings.append(normalized_reason)
+        manifest_changed = True
+    if manifest.get("status") == "COMPLETE" and manifest_warnings:
+        manifest["status"] = "COMPLETE_WITH_WARNINGS"
+        manifest_changed = True
+    if manifest_changed:
         manifest["updated_at"] = _utc_now()
 
     tx.stage_bytes(f"qa/panels/{panel_id}.json", canonical_artifact_bytes(record))
