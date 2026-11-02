@@ -8,7 +8,6 @@ import io
 import json
 import math
 import re
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -44,6 +43,7 @@ from .project_io import (
     read_bytes_nofollow,
 )
 from .quality_records import PAGE_CHECK_IDS, validate_quality_checks
+from .raster_limits import exceeds_decoded_pixel_limit
 from .schema import UnsupportedSchemaVersionError
 
 # The page-QA record carries its own artifact-level version, independent from the
@@ -313,11 +313,15 @@ def _page_context(
     # pixel space its balloon verdicts were measured against came from another.
     page_payload, page_sha256 = artifacts.snapshot(page_path)
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(io.BytesIO(page_payload)) as image:
-                image.load()
-                page_width, page_height = image.size
+        with Image.open(io.BytesIO(page_payload)) as image:
+            if exceeds_decoded_pixel_limit(
+                image.width,
+                image.height,
+                Image.MAX_IMAGE_PIXELS,
+            ):
+                raise Image.DecompressionBombError("raster exceeds decode limit")
+            image.load()
+            page_width, page_height = image.size
     except (
         OSError,
         SyntaxError,

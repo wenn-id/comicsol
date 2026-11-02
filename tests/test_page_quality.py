@@ -3,7 +3,6 @@ import json
 import math
 import shutil
 import tempfile
-import warnings
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -123,16 +122,18 @@ class PageQualityTests(unittest.TestCase):
             )
         )
 
-    def test_page_decode_warning_marks_page_quality_stale(self):
+    def test_page_decode_pixel_limit_marks_page_quality_stale(self):
         record = self._build_record()
         write_page_quality_record(self.project, 1, record)
-        original_open = Image.open
-
-        def open_with_warning(*args, **kwargs):
-            warnings.warn("unsafe dimensions", Image.DecompressionBombWarning, stacklevel=1)
-            return original_open(*args, **kwargs)
-
-        with patch("scripts.page_quality.Image.open", side_effect=open_with_warning):
+        pixel_count = 1600 * 2400
+        with (
+            patch("scripts.page_quality.Image.MAX_IMAGE_PIXELS", pixel_count - 1),
+            patch("scripts.raster_limits.MAX_DECODED_PIXELS", pixel_count + 1),
+            patch(
+                "warnings.catch_warnings",
+                side_effect=AssertionError("decode must not modify process-wide warning filters"),
+            ),
+        ):
             issues = validate_page_quality(self.project, 1)
 
         self.assertTrue(

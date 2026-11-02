@@ -2,7 +2,6 @@ import hashlib
 import io
 import json
 import tempfile
-import warnings
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -62,15 +61,17 @@ class CompositionTests(unittest.TestCase):
             self.assertEqual("RGB", page.mode)
             self.assertEqual("PNG", page.format)
 
-    def test_decompression_warning_fails_closed_before_page_is_written(self):
-        original_open = Image.open
-
-        def open_with_warning(*args, **kwargs):
-            warnings.warn("unsafe dimensions", Image.DecompressionBombWarning, stacklevel=1)
-            return original_open(*args, **kwargs)
-
+    def test_pixel_limit_fails_closed_before_page_is_written(self):
         output = self.project / "pages/page-001.png"
-        with patch("scripts.compose_pages.Image.open", side_effect=open_with_warning):
+        pixel_count = 800 * 800
+        with (
+            patch("scripts.compose_pages.Image.MAX_IMAGE_PIXELS", pixel_count + 1),
+            patch("scripts.raster_limits.MAX_DECODED_PIXELS", pixel_count - 1),
+            patch(
+                "warnings.catch_warnings",
+                side_effect=AssertionError("decode must not modify process-wide warning filters"),
+            ),
+        ):
             with self.assertRaisesRegex(ValueError, "not a readable image"):
                 compose_page(self.project, 1, self.storyboard, self.settings, {})
 
