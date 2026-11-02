@@ -3311,6 +3311,32 @@ def _validate_handoff_raster(
     return width, height
 
 
+def _sanitize_handoff_raster(payload: bytes) -> bytes:
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(payload)) as image:
+                image.load()
+                with image.copy() as sanitized_image:
+                    sanitized_image.info.clear()
+                    with io.BytesIO() as output:
+                        sanitized_image.save(output, format="PNG")
+                        sanitized_payload = output.getvalue()
+    except (
+        OSError,
+        SyntaxError,
+        ValueError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as error:
+        raise HandoffResultError(["result raster: could not be sanitized safely"]) from error
+    if len(sanitized_payload) > MAX_ENCODED_RASTER_BYTES:
+        raise InputResourceLimitError(
+            f"the encoded raster size limit of {MAX_ENCODED_RASTER_BYTES} bytes"
+        )
+    return sanitized_payload
+
+
 def _reference_canonical_path(project_dir: Path, subject_id: str) -> str:
     characters = _read_handoff_json(project_dir, "plan/character-bible.json").get("characters")
     character_ids = (
@@ -3462,6 +3488,7 @@ def accept_handoff_result(
                     ) from error
                 raise HandoffResultError(["result raster: cannot be read safely"]) from error
             _validate_handoff_raster(payload, job)
+            payload = _sanitize_handoff_raster(payload)
             raster_sha256 = hashlib.sha256(payload).hexdigest()
             try:
                 identifier = generation_attempt_id(job_id=job_id, attempt=attempt)
