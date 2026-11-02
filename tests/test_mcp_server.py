@@ -183,7 +183,7 @@ class McpServerUnitTests(unittest.TestCase):
             {"mode": "short_prompt", "language": "en"},
             page_count=1,
         )
-        manifest_path = self.root / project_id / "project.json"
+        manifest_path = mcp_server._resolve_project(project_id) / "project.json"
         read_bytes_nofollow = validation.read_bytes_nofollow
 
         def deny_manifest(path, *args, **kwargs):
