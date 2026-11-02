@@ -11,6 +11,7 @@ import math
 import re
 import sys
 import tempfile
+import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -287,6 +288,260 @@ def _measure_styled_line(
     )
 
 
+def _is_grapheme_extend(character: str) -> bool:
+    codepoint = ord(character)
+    return (
+        unicodedata.category(character).startswith("M")
+        or character in {"\u200c", "\ufe0e", "\ufe0f"}
+        or 0x1F3FB <= codepoint <= 0x1F3FF
+        or 0xE0020 <= codepoint <= 0xE007F
+    )
+
+
+def _is_regional_indicator(character: str) -> bool:
+    return 0x1F1E6 <= ord(character) <= 0x1F1FF
+
+
+def _is_grapheme_prepend(character: str) -> bool:
+    codepoint = ord(character)
+    return any(
+        start <= codepoint <= end
+        for start, end in (
+            (0x0600, 0x0605),
+            (0x06DD, 0x06DD),
+            (0x070F, 0x070F),
+            (0x0890, 0x0891),
+            (0x08E2, 0x08E2),
+            (0x0D4E, 0x0D4E),
+            (0x110BD, 0x110BD),
+            (0x110CD, 0x110CD),
+            (0x111C2, 0x111C3),
+            (0x1193F, 0x1193F),
+            (0x11941, 0x11941),
+            (0x11A3A, 0x11A3A),
+            (0x11A84, 0x11A89),
+            (0x11D46, 0x11D46),
+            (0x11F02, 0x11F02),
+        )
+    )
+
+
+def _hangul_break_type(character: str) -> str | None:
+    codepoint = ord(character)
+    if 0x1100 <= codepoint <= 0x115F or 0xA960 <= codepoint <= 0xA97C:
+        return "L"
+    if 0x1160 <= codepoint <= 0x11A7 or 0xD7B0 <= codepoint <= 0xD7C6:
+        return "V"
+    if 0x11A8 <= codepoint <= 0x11FF or 0xD7CB <= codepoint <= 0xD7FB:
+        return "T"
+    if 0xAC00 <= codepoint <= 0xD7A3:
+        return "LV" if (codepoint - 0xAC00) % 28 == 0 else "LVT"
+    return None
+
+
+def _hangul_graphemes_join(previous: str, current: str) -> bool:
+    previous_type = _hangul_break_type(previous)
+    current_type = _hangul_break_type(current)
+    return (
+        (previous_type == "L" and current_type in {"L", "V", "LV", "LVT"})
+        or (previous_type in {"LV", "V"} and current_type in {"V", "T"})
+        or (previous_type in {"LVT", "T"} and current_type == "T")
+    )
+
+
+def _ends_with_grapheme_linker(
+    cluster: list[tuple[str, ImageFont.FreeTypeFont]],
+) -> bool:
+    for character, _ in reversed(cluster):
+        if character == "\u200d":
+            continue
+        if _is_grapheme_extend(character):
+            if unicodedata.combining(character) == 9:
+                return True
+            continue
+        return False
+    return False
+
+
+def _grapheme_token_clusters(
+    tokens: list[tuple[str, ImageFont.FreeTypeFont]],
+) -> list[list[tuple[str, ImageFont.FreeTypeFont]]]:
+    """Keep common combining, emoji, flag, and decomposed Hangul sequences intact."""
+    clusters: list[list[tuple[str, ImageFont.FreeTypeFont]]] = []
+    current: list[tuple[str, ImageFont.FreeTypeFont]] = []
+    regional_indicators = 0
+    join_next = False
+    prepend_pending = False
+
+    for token in tokens:
+        character = token[0]
+        if not current:
+            current = [token]
+            regional_indicators = 1 if _is_regional_indicator(character) else 0
+            join_next = character == "\u200d"
+            prepend_pending = _is_grapheme_prepend(character)
+            continue
+
+        previous_base = next(
+            (
+                prior
+                for prior, _ in reversed(current)
+                if not _is_grapheme_extend(prior) and prior != "\u200d"
+            ),
+            "",
+        )
+        joins_cluster = (
+            _is_grapheme_extend(character)
+            or character == "\u200d"
+            or join_next
+            or prepend_pending
+            or _hangul_graphemes_join(previous_base, character)
+            or (_is_regional_indicator(character) and regional_indicators % 2 == 1)
+            or (
+                _ends_with_grapheme_linker(current)
+                and unicodedata.category(character).startswith("L")
+            )
+        )
+        if joins_cluster:
+            current.append(token)
+        else:
+            clusters.append(current)
+            current = [token]
+            regional_indicators = 0
+
+        if _is_regional_indicator(character):
+            regional_indicators += 1
+        elif not _is_grapheme_extend(character) and character != "\u200d":
+            regional_indicators = 0
+        join_next = character == "\u200d"
+        if not _is_grapheme_extend(character):
+            prepend_pending = _is_grapheme_prepend(character)
+
+    if current:
+        clusters.append(current)
+    return clusters
+
+
+_CJK_NO_LINE_START = frozenset(
+    "、。，．！？：；｡､）］｝〉》」』】〕〗〙〛"
+    ".,!?:;…‥・ー々ゝゞヽヾ"
+    "ぁぃぅぇぉっゃゅょゎゕゖァィゥェォッャュョヮヵヶㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿ"
+)
+_CJK_NO_LINE_END = frozenset("（［｛〈《「『【〔〖〘〚")
+
+
+def _cluster_base_character(cluster: list[tuple[str, ImageFont.FreeTypeFont]]) -> str:
+    return next(
+        (
+            character
+            for character, _ in cluster
+            if not _is_grapheme_extend(character) and character != "\u200d"
+        ),
+        cluster[0][0] if cluster else "",
+    )
+
+
+def _is_cjk_line_break_character(character: str) -> bool:
+    codepoint = ord(character)
+    if 0x3000 <= codepoint <= 0x303F:
+        return True
+    name = unicodedata.name(character, "")
+    return name.startswith(
+        (
+            "CJK UNIFIED IDEOGRAPH-",
+            "CJK COMPATIBILITY IDEOGRAPH-",
+            "HIRAGANA LETTER ",
+            "HIRAGANA DIGRAPH ",
+            "KATAKANA LETTER ",
+            "KATAKANA DIGRAPH ",
+            "KATAKANA-HIRAGANA ",
+            "HANGUL SYLLABLE ",
+            "HANGUL LETTER ",
+            "BOPOMOFO LETTER ",
+        )
+    )
+
+
+def _cjk_break_allowed(
+    previous: list[tuple[str, ImageFont.FreeTypeFont]],
+    current: list[tuple[str, ImageFont.FreeTypeFont]],
+) -> bool:
+    """Allow ideographic/kana boundaries without stranding opening or closing punctuation."""
+    previous_character = _cluster_base_character(previous)
+    current_character = _cluster_base_character(current)
+    if not previous_character or not current_character:
+        return False
+    if (
+        current_character in _CJK_NO_LINE_START
+        or unicodedata.category(current_character) in {"Pe", "Pf"}
+        or previous_character in _CJK_NO_LINE_END
+        or unicodedata.category(previous_character) in {"Ps", "Pi"}
+    ):
+        return False
+    return _is_cjk_line_break_character(previous_character) or _is_cjk_line_break_character(
+        current_character
+    )
+
+
+def _cjk_word_units(
+    clusters: list[list[tuple[str, ImageFont.FreeTypeFont]]],
+) -> list[list[tuple[str, ImageFont.FreeTypeFont]]]:
+    if not clusters:
+        return []
+    units: list[list[tuple[str, ImageFont.FreeTypeFont]]] = [list(clusters[0])]
+    for previous, current in zip(clusters, clusters[1:], strict=False):
+        if _cjk_break_allowed(previous, current):
+            units.append(list(current))
+        else:
+            units[-1].extend(current)
+    return units
+
+
+def _split_oversized_word_unit(
+    draw: ImageDraw.ImageDraw,
+    unit: list[tuple[str, ImageFont.FreeTypeFont]],
+    regular_font: ImageFont.FreeTypeFont,
+    maximum_width: float,
+) -> list[list[tuple[str, ImageFont.FreeTypeFont]]] | None:
+    clusters = _grapheme_token_clusters(unit)
+    if any(_is_cjk_line_break_character(_cluster_base_character(cluster)) for cluster in clusters):
+        return None
+
+    pieces: list[list[tuple[str, ImageFont.FreeTypeFont]]] = []
+    current: list[tuple[str, ImageFont.FreeTypeFont]] = []
+    for cluster in clusters:
+        candidate = current + cluster
+        if current and _measure_styled_line(draw, candidate, regular_font).width > maximum_width:
+            pieces.append(current)
+            current = list(cluster)
+        else:
+            current = candidate
+        if _measure_styled_line(draw, current, regular_font).width > maximum_width:
+            return None
+    if current:
+        pieces.append(current)
+    return pieces
+
+
+def _word_break_units(
+    draw: ImageDraw.ImageDraw,
+    word: list[tuple[str, ImageFont.FreeTypeFont]],
+    regular_font: ImageFont.FreeTypeFont,
+    maximum_width: float,
+) -> list[list[tuple[str, ImageFont.FreeTypeFont]]] | None:
+    clusters = _grapheme_token_clusters(word)
+    split_units: list[list[tuple[str, ImageFont.FreeTypeFont]]] = []
+    for unit in _cjk_word_units(clusters):
+        if _measure_styled_line(draw, unit, regular_font).width <= maximum_width:
+            split_units.append(unit)
+            continue
+        pieces = _split_oversized_word_unit(draw, unit, regular_font, maximum_width)
+        if pieces is None:
+            return None
+        split_units.extend(pieces)
+    return split_units
+
+
 def _layout_styled_text(
     draw: ImageDraw.ImageDraw,
     content: str,
@@ -338,22 +593,26 @@ def _layout_styled_text(
             lines.append(_measure_styled_line(draw, [], regular_font))
             continue
 
-        current = words[0][0] + words[0][1]
-        first_line = _measure_styled_line(draw, current, regular_font)
-        if first_line.width > maximum_width:
-            return None
-        for between, next_word in words[1:]:
-            candidate = current + between + next_word
-            candidate_line = _measure_styled_line(draw, candidate, regular_font)
-            if candidate_line.width <= maximum_width:
-                current = candidate
-                continue
-            lines.append(_measure_styled_line(draw, current, regular_font))
-            current = list(next_word)
-            next_line = _measure_styled_line(draw, current, regular_font)
-            if next_line.width > maximum_width:
+        current: list[tuple[str, ImageFont.FreeTypeFont]] = []
+        for between, next_word in words:
+            units = _word_break_units(draw, next_word, regular_font, maximum_width)
+            if units is None:
                 return None
-        lines.append(_measure_styled_line(draw, current, regular_font))
+            for index, unit in enumerate(units):
+                separator_tokens = between if index == 0 else []
+                candidate = current + separator_tokens + unit
+                candidate_line = _measure_styled_line(draw, candidate, regular_font)
+                if candidate_line.width <= maximum_width:
+                    current = candidate
+                    continue
+                if not current:
+                    return None
+                lines.append(_measure_styled_line(draw, current, regular_font))
+                current = list(unit)
+                if _measure_styled_line(draw, current, regular_font).width > maximum_width:
+                    return None
+        if current:
+            lines.append(_measure_styled_line(draw, current, regular_font))
 
     return _StyledLayout(tuple(lines), spacing)
 
