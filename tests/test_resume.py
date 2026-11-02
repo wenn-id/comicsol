@@ -42,11 +42,13 @@ from scripts.handoff import (  # noqa: E402
     HandoffContractError,
     HandoffResultError,
     StaleLockedScopeError,
+    build_handoff_manifest,
+    validate_handoff_manifest,
 )
 from scripts.input_limits import InputResourceLimitError  # noqa: E402
 from scripts.normalize_panels import normalize_panel  # noqa: E402
 from scripts.schema import UnsupportedSchemaVersionError  # noqa: E402
-from scripts.validate_project import validate_panel_record  # noqa: E402
+from scripts.validate_project import validate_manifest, validate_panel_record  # noqa: E402
 
 
 STAGES = ("planning", "storyboard", "generation", "lettering", "composition", "export")
@@ -1370,10 +1372,27 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual("regenerate", read_json(record_path)["decision"])
         self.assertEqual(original_manifest, manifest_path.read_bytes())
 
-    def test_override_downgrades_failure_and_preserves_pipeline_status(self):
+    def test_override_downgrades_failure_and_updates_terminal_status(self):
         record_path = self.project / "qa/panels/p01-01.json"
         atomic_write_json(record_path, self._failing_panel_record("visual_qa"))
-        before = read_json(self.project / "project.json")["status"]
+        manifest = read_json(self.project / "project.json")
+        handoff_manifest = build_handoff_manifest(
+            project_id=manifest["project_id"],
+            project_schema_version=manifest["schema_version"],
+            stage=manifest["status"],
+            locked_scope_sha256="a" * 64,
+            batches_path="generation/batches.json",
+            batches_sha256="b" * 64,
+            jobs=[],
+            required_artifacts=[],
+        )
+        manifest["handoff"] = {
+            "contract_version": handoff_manifest["schema_version"],
+            "locked_scope_sha256": handoff_manifest["locked_scope_sha256"],
+            "manifest_path": "handoff/manifest.json",
+        }
+        atomic_write_json(self.project / "project.json", manifest)
+        atomic_write_json(self.project / "handoff/manifest.json", handoff_manifest)
 
         record_override(self.project, "p01-01", "minor prop drift is acceptable")
 
@@ -1393,8 +1412,12 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual([], validate_panel_record(updated))
 
         manifest = read_json(self.project / "project.json")
-        self.assertEqual(before, manifest["status"])
+        self.assertEqual("COMPLETE_WITH_WARNINGS", manifest["status"])
         self.assertIn("minor prop drift is acceptable", manifest["warnings"])
+        self.assertEqual([], validate_manifest(manifest))
+        handoff_manifest = read_json(self.project / "handoff/manifest.json")
+        self.assertEqual("COMPLETE_WITH_WARNINGS", handoff_manifest["stage"])
+        self.assertEqual([], validate_handoff_manifest(handoff_manifest))
 
     def test_override_warning_selects_warning_terminal_at_final_transition(self):
         record_path = self.project / "qa/panels/p01-01.json"
