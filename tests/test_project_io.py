@@ -698,6 +698,79 @@ class ProjectTransactionTests(unittest.TestCase):
         self.assertFalse(transaction_dir.exists())
         self.assertEqual([], list((self.project / "logs/transactions").iterdir()))
 
+    def test_enter_does_not_clean_up_a_preexisting_transaction_directory(self):
+        transaction_dir = self.project / "logs/transactions/1"
+        transaction_dir.mkdir(parents=True)
+        marker = transaction_dir / "unrelated.txt"
+        marker.write_bytes(b"keep")
+        transaction = project_io.ProjectTransaction(self.project, "composition")
+
+        with mock.patch.object(project_io, "_find_transaction_dir", return_value=1):
+            with self.assertRaises(FileExistsError):
+                transaction.__enter__()
+
+        self.assertEqual(b"keep", marker.read_bytes())
+        self.assertIsNone(transaction._dir)
+
+    def test_cleanup_does_not_follow_symlink_transaction_directory(self):
+        outside = self.project.parent / "outside"
+        outside.mkdir()
+        marker = outside / "keep.txt"
+        marker.write_bytes(b"keep")
+        transaction_dir = self.project / "logs/transactions/1"
+        transaction_dir.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            transaction_dir.symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            if os.name != "nt":
+                raise
+            self.skipTest("creating directory symlinks requires Windows privileges")
+
+        transaction = project_io.ProjectTransaction(self.project, "composition")
+        transaction._dir = transaction_dir
+        transaction._cleanup()
+
+        self.assertTrue(transaction_dir.is_symlink())
+        self.assertEqual(b"keep", marker.read_bytes())
+
+    def test_recover_removes_empty_journal_less_transaction_directory(self):
+        transaction_dir = self.project / "logs/transactions/3"
+        transaction_dir.mkdir(parents=True)
+
+        project_io.ProjectTransaction.recover(self.project)
+
+        self.assertFalse(transaction_dir.exists())
+
+    def test_recover_preserves_nonempty_journal_less_transaction_directory(self):
+        transaction_dir = self.project / "logs/transactions/3"
+        transaction_dir.mkdir(parents=True)
+        marker = transaction_dir / "unrecognized.bin"
+        marker.write_bytes(b"keep")
+
+        project_io.ProjectTransaction.recover(self.project)
+
+        self.assertEqual(b"keep", marker.read_bytes())
+        self.assertTrue(transaction_dir.is_dir())
+
+    def test_recover_preserves_symlink_transaction_directory_without_journal(self):
+        outside = self.project.parent / "outside"
+        outside.mkdir()
+        marker = outside / "keep.txt"
+        marker.write_bytes(b"keep")
+        transaction_dir = self.project / "logs/transactions/3"
+        transaction_dir.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            transaction_dir.symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            if os.name != "nt":
+                raise
+            self.skipTest("creating directory symlinks requires Windows privileges")
+
+        project_io.ProjectTransaction.recover(self.project)
+
+        self.assertTrue(transaction_dir.is_symlink())
+        self.assertEqual(b"keep", marker.read_bytes())
+
     def test_recover_restores_interrupted_publishing_transaction(self):
         real_replace = project_io.os.replace
         calls = 0

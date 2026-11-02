@@ -947,8 +947,9 @@ class ProjectTransaction:
             base = contained_project_path(self.project_dir, "logs/transactions")
             base.mkdir(parents=True, exist_ok=True)
             self._id = _find_transaction_dir(base)
-            self._dir = base / str(self._id)
-            self._dir.mkdir(parents=True)
+            transaction_dir = base / str(self._id)
+            transaction_dir.mkdir(parents=True)
+            self._dir = transaction_dir
             self._phase = "staging"
             self._write_journal()
             return self
@@ -1206,7 +1207,17 @@ class ProjectTransaction:
 
     def _cleanup(self) -> None:
         """Remove completed transaction staging artifacts."""
-        if self._dir is None or not self._dir.is_dir():
+        if self._dir is None:
+            return
+        try:
+            metadata = self._dir.lstat()
+        except OSError:
+            return
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT
+        ):
             return
         for child in self._dir.iterdir():
             try:
@@ -1255,6 +1266,21 @@ class ProjectTransaction:
                 tx_dir = base / str(tid)
                 journal_path = tx_dir / "journal.json"
                 if not journal_path.is_file():
+                    try:
+                        metadata = tx_dir.lstat()
+                    except OSError:
+                        continue
+                    if (
+                        not stat.S_ISDIR(metadata.st_mode)
+                        or stat.S_ISLNK(metadata.st_mode)
+                        or getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT
+                    ):
+                        continue
+                    try:
+                        tx_dir.rmdir()
+                    except OSError:
+                        continue
+                    fsync_directory(base)
                     continue
                 try:
                     journal = loads_bounded_json(
