@@ -291,7 +291,7 @@ class ClientSetupTests(unittest.TestCase):
     def test_setup_preserves_preexisting_backup_files(self):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)
-        config.write_text("{}\n", encoding="utf-8")
+        config.write_bytes(b"{}\n")
         user_backups = {}
         for index in range(1, 7):
             backup = config.with_name(f"mcp.json.bak-2020{index:02d}01T000000000000Z")
