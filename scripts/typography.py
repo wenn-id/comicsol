@@ -186,9 +186,7 @@ def _combining_refusal(
         return "combining mark has no base glyph to attach to"
     base_character, base_role = base
     base_decomposition = unicodedata.normalize("NFD", base_character)
-    if is_combining(ord(base_character)) or any(
-        is_combining(ord(character)) for character in base_decomposition[1:]
-    ):
+    if any(unicodedata.category(part).startswith("M") for part in base_decomposition):
         return "stacked combining marks require anchor positioning"
     if base_role != role:
         return "combining mark and its base glyph resolve to different faces"

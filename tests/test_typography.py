@@ -76,6 +76,17 @@ class TypographyPreflightTests(unittest.TestCase):
                 self.assertEqual("U+0302", issue.codepoint)
                 self.assertIn("stacked combining marks", issue.reason)
 
+    def test_combining_mark_in_precomposed_kana_base_is_refused_as_stacked(self):
+        for kind in ("dialogue", "caption"):
+            with self.subTest(kind=kind):
+                with mock.patch("scripts.typography.font_supports", return_value=True):
+                    with self.assertRaises(TypographyPreflightError) as raised:
+                        preflight_text_items([item("\u304c\u0301", kind=kind)], FONT_POLICY)
+
+                issue = raised.exception.issues[0]
+                self.assertEqual("U+0301", issue.codepoint)
+                self.assertIn("stacked combining marks", issue.reason)
+
     def test_font_hashes_are_cached_by_path(self):
         """Reuse immutable font digests across separate preflight calls."""
         typography._hash_font_file.cache_clear()
