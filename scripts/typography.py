@@ -130,7 +130,8 @@ def normalize_content(text: str) -> str:
 def display_content(kind: object, text: str) -> str:
     """Return visible text while preserving the authored storyboard value."""
     normalized = normalize_content(text)
-    return normalized.upper() if kind == "dialogue" else normalized
+    displayed = normalized.upper() if kind == "dialogue" else normalized
+    return unicodedata.normalize("NFC", displayed)
 
 
 def _style_spans(text: str) -> tuple[tuple[str, str], ...]:
@@ -184,7 +185,10 @@ def _combining_refusal(
     if base is None:
         return "combining mark has no base glyph to attach to"
     base_character, base_role = base
-    if is_combining(ord(base_character)):
+    base_decomposition = unicodedata.normalize("NFD", base_character)
+    if is_combining(ord(base_character)) or any(
+        is_combining(ord(character)) for character in base_decomposition[1:]
+    ):
         return "stacked combining marks require anchor positioning"
     if base_role != role:
         return "combining mark and its base glyph resolve to different faces"

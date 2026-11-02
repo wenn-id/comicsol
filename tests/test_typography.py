@@ -55,6 +55,27 @@ class TypographyPreflightTests(unittest.TestCase):
         self.assertIn("STRASSE", displayed)
         self.assertNotIn("\u00df", displayed)
 
+    def test_dialogue_uppercase_is_renormalized_before_combining_mark_checks(self):
+        displayed = typography.display_content("dialogue", "\u0390")
+
+        self.assertEqual("\u03aa\u0301", displayed)
+        with self.assertRaises(TypographyPreflightError) as raised:
+            preflight_text_items([item("\u0390")], FONT_POLICY)
+
+        issue = raised.exception.issues[0]
+        self.assertEqual("U+0301", issue.codepoint)
+        self.assertIn("stacked combining marks", issue.reason)
+
+    def test_precomposed_base_plus_combining_mark_is_refused_as_stacked(self):
+        for kind in ("dialogue", "caption"):
+            with self.subTest(kind=kind):
+                with self.assertRaises(TypographyPreflightError) as raised:
+                    preflight_text_items([item("\u00e9\u0302", kind=kind)], FONT_POLICY)
+
+                issue = raised.exception.issues[0]
+                self.assertEqual("U+0302", issue.codepoint)
+                self.assertIn("stacked combining marks", issue.reason)
+
     def test_font_hashes_are_cached_by_path(self):
         """Reuse immutable font digests across separate preflight calls."""
         typography._hash_font_file.cache_clear()
