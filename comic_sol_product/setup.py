@@ -999,9 +999,21 @@ def _configure_one(
                 _write_backup(backup, snapshot.data)
                 backup_created = True
                 _assert_snapshot(path, snapshot)
+                if remove:
+                    unpublish = getattr(adapter, "unpublish", None)
+                    if callable(unpublish):
+                        candidate = unpublish(snapshot.data)
+                    else:
+                        candidate = adapter.dump(updated)
+                else:
+                    publish = getattr(adapter, "publish", None)
+                    if callable(publish):
+                        candidate = publish(snapshot.data, entry)
+                    else:
+                        candidate = adapter.dump(updated)
                 _atomic_write(
                     path,
-                    adapter.dump(updated),
+                    candidate,
                     snapshot.mode,
                     expected=snapshot,
                 )

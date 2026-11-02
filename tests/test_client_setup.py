@@ -107,6 +107,34 @@ class ClientSetupTests(unittest.TestCase):
             },
         )
 
+    def test_json_setup_and_uninstall_preserve_unowned_bytes(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = (
+            b"{\r\n"
+            b'  "large": 1e999,\r\n'
+            b'  "duplicate": 1,\r\n'
+            b'  "duplicate": 2,\r\n'
+            b'  "mcpServers": {"other":{"command":"other"}}\r\n'
+            b"}\r\n"
+        )
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        configured = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+        installed = config.read_bytes()
+
+        self.assertEqual("configured", configured.status)
+        self.assertIn(b'"large": 1e999', installed)
+        self.assertEqual(2, installed.count(b'"duplicate"'))
+        self.assertNotIn(b'"large": Infinity', installed)
+        self.assertIn("comic-sol", json.loads(installed)["mcpServers"])
+
+        removed = uninstall_clients(self.output, adapters=[adapter])[0]
+
+        self.assertEqual("removed", removed.status)
+        self.assertEqual(original, config.read_bytes())
+
     def test_bare_launcher_is_resolved_and_repeated_setup_is_unchanged(self):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)
@@ -1434,6 +1462,37 @@ class ClientSetupTests(unittest.TestCase):
         self.assertEqual(
             str(self.output.resolve()), json.loads(updated)["mcpServers"]["comic-sol"]["args"][2]
         )
+
+    def test_json_unpublish_removes_only_the_owned_member(self):
+        adapter = JsonClientAdapter("cursor", self.home / "mcp.json", "mcpServers")
+        cases = (
+            (
+                b'{"mcpServers":{"comic-sol":{},"first":1,"last":2}}',
+                b'{"mcpServers":{"first":1,"last":2}}',
+            ),
+            (
+                b'{"mcpServers":{"first":1,"comic-sol":{},"last":2}}',
+                b'{"mcpServers":{"first":1,"last":2}}',
+            ),
+            (
+                b'{"mcpServers":{"first":1,"comic-sol":{}}}',
+                b'{"mcpServers":{"first":1}}',
+            ),
+            (b'{"mcpServers":{"comic-sol":{}}}', b'{"mcpServers":{}}'),
+            (
+                b'{"metadata":{"comic-sol":true},"mcpServers":{"other":{}}}\n',
+                b'{"metadata":{"comic-sol":true},"mcpServers":{"other":{}}}\n',
+            ),
+        )
+
+        for original, expected in cases:
+            with self.subTest(original=original):
+                updated = adapter.unpublish(original)
+                self.assertEqual(expected, updated)
+                self.assertNotIn("comic-sol", json.loads(updated).get("mcpServers", {}))
+
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            adapter.unpublish(b'{"mcpServers":{"comic-sol":{},"comic-sol":{}}}')
 
     def test_json_publish_ignores_same_key_outside_servers_mapping(self):
         adapter = JsonClientAdapter("cursor", self.home / "mcp.json", "mcpServers")
