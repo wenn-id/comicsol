@@ -12,7 +12,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts.comic_sol import atomic_write_json, read_json  # noqa: E402
+from scripts.comic_sol import atomic_write_json, read_json, sha256_file  # noqa: E402
 from scripts.export_pdf import (  # noqa: E402
     PdfExportError,
     discover_pages,
@@ -22,6 +22,9 @@ from scripts.export_pdf import (  # noqa: E402
 )
 from scripts.compose_pages import compose_project  # noqa: E402
 from scripts.letter_panels import letter_project  # noqa: E402
+from scripts.project_io import ProjectLock  # noqa: E402
+from scripts.page_quality import publish_page_quality_record  # noqa: E402
+from tests.test_finalization import valid_page_reviewer_checks  # noqa: E402
 
 
 def pdf_frames(path):
@@ -186,6 +189,48 @@ class PdfExportTests(unittest.TestCase):
 
 
 class ExportFixtureIntegrationTests(unittest.TestCase):
+    def test_guarded_export_hashes_inputs_under_project_lock(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            shutil.copytree(ROOT / "tests/fixtures/valid-one-page", project)
+            letter_project(project)
+            compose_project(project)
+            publish_page_quality_record(
+                project,
+                1,
+                valid_page_reviewer_checks(project, 1),
+                reviewer="fixture-reviewer",
+                reviewed_at="2026-08-14T01:02:03Z",
+            )
+            manifest = read_json(project / "project.json")
+            manifest["artifacts"] = {
+                artifact: {
+                    "path": relative,
+                    "sha256": sha256_file(project / relative),
+                }
+                for artifact, relative in (
+                    ("character_bible", "plan/character-bible.json"),
+                    ("story_plan", "plan/story-plan.json"),
+                    ("storyboard", "plan/storyboard.json"),
+                    ("composition_cache", "cache/composition.json"),
+                )
+            }
+            atomic_write_json(project / "project.json", manifest)
+            from scripts import export_pdf as export_pdf_module
+
+            real_sha256_file = export_pdf_module.sha256_file
+            hashed_paths = []
+
+            def hash_file(path):
+                self.assertIn(project.resolve(), ProjectLock._held_locks())
+                hashed_paths.append(Path(path).relative_to(project.resolve()).as_posix())
+                return real_sha256_file(path)
+
+            with mock.patch("scripts.export_pdf.sha256_file", side_effect=hash_file):
+                guarded_export(project)
+
+            self.assertCountEqual(["pages/page-001.png", "qa/pages/page-001.json"], hashed_paths)
+
     def test_valid_fixture_exports_one_readable_page(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "project"
