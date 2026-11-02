@@ -4360,7 +4360,7 @@ def doctor_report(
         add_check(
             "pillow",
             "fail",
-            f"Pillow check failed: {type(error).__name__}: {error}",
+            f"Pillow check failed: {type(error).__name__}",
             "Install the Comic Sol runtime again so its bundled Pillow dependency is restored.",
         )
 
@@ -4376,7 +4376,7 @@ def doctor_report(
             ImageFont.truetype(str(path), 42)
             font_results.append((label, True, f"font {label} loads at 42px"))
         except Exception as error:
-            detail = f"font {label} at 42px: {type(error).__name__}: {error}"
+            detail = f"font {label} at 42px: {type(error).__name__}"
             font_failures.append(detail)
             font_results.append((label, False, detail))
     if font_failures:
@@ -4433,7 +4433,7 @@ def doctor_report(
         add_check(
             "typography",
             "fail",
-            f"Typography coverage inventory failed: {type(error).__name__}: {error}",
+            f"Typography coverage inventory failed: {type(error).__name__}",
             "Restore the bundled assets/fonts directory and rerun doctor.",
         )
 

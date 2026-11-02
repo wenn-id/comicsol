@@ -143,6 +143,10 @@ class McpServerUnitTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
+    def assert_path_not_in_json(self, path: Path, payload: Any):
+        encoded_path = json.dumps(str(path))[1:-1]
+        self.assertNotIn(encoded_path, json.dumps(payload))
+
     def test_doctor_forwards_image_capability_with_cli_parity(self):
         capability = {
             "status": "available",
@@ -163,7 +167,7 @@ class McpServerUnitTests(unittest.TestCase):
 
     def test_doctor_does_not_disclose_output_root_paths(self):
         result = mcp_server.comic_doctor()
-        self.assertNotIn(str(self.root), json.dumps(result))
+        self.assert_path_not_in_json(self.root, result)
 
         blocker = self.root.parent / "not-a-directory"
         blocker.write_text("occupied", encoding="utf-8")
@@ -172,7 +176,7 @@ class McpServerUnitTests(unittest.TestCase):
             result = mcp_server.comic_doctor()
         output_check = next(check for check in result["checks"] if check["id"] == "output-root")
         self.assertEqual("fail", output_check["status"])
-        self.assertNotIn(str(blocker), json.dumps(result))
+        self.assert_path_not_in_json(blocker, result)
 
     def test_validate_does_not_disclose_absolute_paths_from_permission_errors(self):
         from scripts import validate_project as validation
@@ -196,7 +200,7 @@ class McpServerUnitTests(unittest.TestCase):
 
         manifest_issue = next(issue for issue in issues if issue["path"] == "project.json")
         self.assertIn("PermissionError", manifest_issue["message"])
-        self.assertNotIn(str(manifest_path), json.dumps(issues))
+        self.assert_path_not_in_json(manifest_path, issues)
 
     def test_root_must_be_absolute(self):
         with self.assertRaisesRegex(ValueError, "absolute"):
