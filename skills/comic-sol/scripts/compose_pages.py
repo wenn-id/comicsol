@@ -33,6 +33,7 @@ from .project_io import (
     contained_project_path,
     read_contained_bytes,
 )
+from .raster_limits import exceeds_decoded_pixel_limit
 
 COMPOSITION_CACHE_PATH = "cache/composition.json"
 
@@ -152,6 +153,12 @@ def _compose_to_bytes(
         x, y, width, height = _rect(panel)
         try:
             with Image.open(io.BytesIO(source_payload)) as source:
+                if exceeds_decoded_pixel_limit(
+                    source.width,
+                    source.height,
+                    Image.MAX_IMAGE_PIXELS,
+                ):
+                    raise Image.DecompressionBombError("raster exceeds decode limit")
                 source.load()
                 fitted = ImageOps.fit(
                     source.convert("RGB"),
@@ -159,7 +166,12 @@ def _compose_to_bytes(
                     method=Image.Resampling.LANCZOS,
                     centering=(0.5, 0.5),
                 )
-        except (OSError, SyntaxError) as error:
+        except (
+            OSError,
+            SyntaxError,
+            Image.DecompressionBombError,
+            Image.DecompressionBombWarning,
+        ) as error:
             raise ValueError(f"panel {panel.get('id')} is not a readable image") from error
         canvas.paste(fitted, (x, y))
         draw.rectangle(

@@ -61,6 +61,22 @@ class CompositionTests(unittest.TestCase):
             self.assertEqual("RGB", page.mode)
             self.assertEqual("PNG", page.format)
 
+    def test_pixel_limit_fails_closed_before_page_is_written(self):
+        output = self.project / "pages/page-001.png"
+        pixel_count = 800 * 800
+        with (
+            patch("scripts.compose_pages.Image.MAX_IMAGE_PIXELS", pixel_count + 1),
+            patch("scripts.raster_limits.MAX_DECODED_PIXELS", pixel_count - 1),
+            patch(
+                "warnings.catch_warnings",
+                side_effect=AssertionError("decode must not modify process-wide warning filters"),
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "not a readable image"):
+                compose_page(self.project, 1, self.storyboard, self.settings, {})
+
+        self.assertFalse(output.exists())
+
     def test_compose_main_honors_explicit_all_flag(self):
         with patch("scripts.compose_pages.compose_all_pages", return_value=[]) as compose_all:
             self.assertEqual(0, compose_main([str(self.project), "--all"]))

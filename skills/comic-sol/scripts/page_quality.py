@@ -43,6 +43,7 @@ from .project_io import (
     read_bytes_nofollow,
 )
 from .quality_records import PAGE_CHECK_IDS, validate_quality_checks
+from .raster_limits import exceeds_decoded_pixel_limit
 from .schema import UnsupportedSchemaVersionError
 
 # The page-QA record carries its own artifact-level version, independent from the
@@ -311,9 +312,23 @@ def _page_context(
     # page separately from the decode lets a record bind one raster while the
     # pixel space its balloon verdicts were measured against came from another.
     page_payload, page_sha256 = artifacts.snapshot(page_path)
-    with Image.open(io.BytesIO(page_payload)) as image:
-        image.load()
-        page_width, page_height = image.size
+    try:
+        with Image.open(io.BytesIO(page_payload)) as image:
+            if exceeds_decoded_pixel_limit(
+                image.width,
+                image.height,
+                Image.MAX_IMAGE_PIXELS,
+            ):
+                raise Image.DecompressionBombError("raster exceeds decode limit")
+            image.load()
+            page_width, page_height = image.size
+    except (
+        OSError,
+        SyntaxError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as error:
+        raise ValueError("page image is unreadable or exceeds the decode limit") from error
 
     cache_relative = "cache/composition.json"
     cache_path = contained_project_path(project_dir, cache_relative, must_exist=True)

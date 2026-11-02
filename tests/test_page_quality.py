@@ -122,6 +122,30 @@ class PageQualityTests(unittest.TestCase):
             )
         )
 
+    def test_page_decode_pixel_limit_marks_page_quality_stale(self):
+        record = self._build_record()
+        write_page_quality_record(self.project, 1, record)
+        pixel_count = 1600 * 2400
+        with (
+            patch("scripts.page_quality.Image.MAX_IMAGE_PIXELS", pixel_count - 1),
+            patch("scripts.raster_limits.MAX_DECODED_PIXELS", pixel_count + 1),
+            patch(
+                "warnings.catch_warnings",
+                side_effect=AssertionError("decode must not modify process-wide warning filters"),
+            ),
+        ):
+            issues = validate_page_quality(self.project, 1)
+
+        self.assertTrue(
+            any(
+                issue.field == "bindings"
+                and issue.message
+                == "page-quality-stale: current page provenance is missing or unreadable"
+                for issue in issues
+            ),
+            issues,
+        )
+
     def test_tail_warning_requires_failed_region_and_records_warning(self):
         checks = reviewer_checks(self.project)
         tail = next(check for check in checks if check["id"] == "bubble-tail-direction")
