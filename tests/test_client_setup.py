@@ -288,27 +288,31 @@ class ClientSetupTests(unittest.TestCase):
         self.assertTrue(backup.is_symlink())
         self.assertIsNone(result.backup_path)
 
-    @unittest.skipIf(os.name == "nt", "POSIX mode semantics are unavailable on Windows")
-    def test_setup_prunes_old_backups_and_keeps_the_five_newest(self):
+    def test_setup_preserves_preexisting_backup_files(self):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)
         config.write_text("{}\n", encoding="utf-8")
-        for index in range(1, 6):
-            backup = config.with_name(f"mcp.json.bak-2026010100000{index}Z")
-            backup.write_bytes(f"old-{index}".encode())
-            backup.chmod(0o600)
-        oldest = config.with_name("mcp.json.bak-20260101000000Z")
-        oldest.write_bytes(b"oldest")
-        oldest.chmod(0o600)
+        user_backups = {}
+        for index in range(1, 7):
+            backup = config.with_name(f"mcp.json.bak-2020{index:02d}01T000000000000Z")
+            content = f"user-backup-{index}".encode()
+            backup.write_bytes(content)
+            user_backups[backup] = content
+        product_backup = config.with_name("mcp.json.bak-99991231T235959999999Z")
         adapter = JsonClientAdapter("cursor", config, "mcpServers")
 
-        result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+        with mock.patch.object(client_setup, "_backup_path", return_value=product_backup):
+            result = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
 
         self.assertEqual("configured", result.status)
-        backups = sorted(config.parent.glob("mcp.json.bak-*"))
-        self.assertEqual(5, len(backups))
-        self.assertNotIn(oldest, backups)
-        self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in backups))
+        self.assertEqual(str(product_backup), result.backup_path)
+        self.assertEqual(
+            set(user_backups) | {product_backup},
+            set(config.parent.glob("mcp.json.bak-*")),
+        )
+        self.assertEqual(b"{}\n", product_backup.read_bytes())
+        for backup, content in user_backups.items():
+            self.assertEqual(content, backup.read_bytes())
 
     def test_atomic_publish_rejects_concurrent_entry_and_preserves_it(self):
         config = self.home / "config.json"
