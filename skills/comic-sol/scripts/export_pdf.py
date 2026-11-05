@@ -294,7 +294,8 @@ def _guarded_export_locked(project_dir: Path, output_path: Path | None = None) -
         transaction.stage_bytes(pdf_relative, payload)
         transaction.stage_bytes("exports/pdf-verification.json", verification_payload)
         locked_manifest = read_project_manifest(
-            contained_project_path(project_dir, "project.json", must_exist=True)
+            contained_project_path(project_dir, "project.json", must_exist=True),
+            normalize_legacy=False,
         )
         existing_artifacts = locked_manifest.get("artifacts")
         artifacts = dict(existing_artifacts) if isinstance(existing_artifacts, dict) else {}
