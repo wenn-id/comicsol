@@ -133,7 +133,7 @@ class LockProvenanceTests(unittest.TestCase):
             for lock in lock_paths(family):
                 with self.subTest(lock=lock.name):
                     text = lock.read_text(encoding="utf-8")
-                    # pip-compile 7.6.1 writes this exact header line; keep the
+                    # pip-compile 7.6.2 writes this exact header line; keep the
                     # committed header identical to what regeneration produces.
                     # The scheduled refresh also passes --upgrade.
                     commands = (
