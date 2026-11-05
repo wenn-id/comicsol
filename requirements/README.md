@@ -26,7 +26,7 @@ auto-merged.
 
 ## Regeneration procedure
 
-Install `pip-tools==7.6.1` on the target platform, then compile that platform's
+Install `pip-tools==7.6.2` on the target platform, then compile that platform's
 locks from the repository root:
 
 ```bash
@@ -50,10 +50,10 @@ python -m piptools compile --allow-unsafe --generate-hashes \
   --output-file=requirements/locks/audit-python311.txt --strip-extras requirements/audit.in
 ```
 
-`--strip-extras` is required with pip-tools 7.6.1: without it the resolver emits
+`--strip-extras` is required with pip-tools 7.6.2: without it the resolver emits
 extras-qualified pins such as `pyjwt[crypto]==...` instead of the `pyjwt==...`
 form every committed lock uses. The flag order above is the order pip-compile
-7.6.1 itself writes into each lock header, so a regenerated header matches the
+7.6.2 itself writes into each lock header, so a regenerated header matches the
 committed one.
 
 ## Reviewing regeneration diffs
