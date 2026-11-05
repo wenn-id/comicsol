@@ -33,6 +33,8 @@ from .core_primitives import (
     subject_keepout_radius,
 )
 from .project_io import (
+    PROJECT_OPERATION_LOCK_TIMEOUT,
+    ProjectLock,
     ProjectTransaction,
     contained_project_path,
     open_path_nofollow,
@@ -1458,7 +1460,17 @@ def letter_panel(
 def _letter_project_with_summaries(
     project_dir: Path,
 ) -> tuple[list[Path], list[dict]]:
-    """Letter every accepted project panel and collect outputs plus summaries."""
+    """Letter a consistent project snapshot and collect outputs plus summaries."""
+    project_dir = Path(project_dir)
+    read_project_manifest(project_dir.resolve(strict=True) / "project.json")
+    with ProjectLock(project_dir, timeout=PROJECT_OPERATION_LOCK_TIMEOUT):
+        return _letter_project_with_summaries_locked(project_dir)
+
+
+def _letter_project_with_summaries_locked(
+    project_dir: Path,
+) -> tuple[list[Path], list[dict]]:
+    """Build and publish lettering artifacts while holding the project lock."""
     project_dir = Path(project_dir)
     read_project_manifest(project_dir.resolve(strict=True) / "project.json")
     storyboard = read_json(

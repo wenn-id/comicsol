@@ -33,7 +33,7 @@ from .project_io import (
     read_bytes_nofollow,
 )
 from .quality_records import PANEL_CHECK_IDS
-from .schema import read_project_manifest
+from .schema import LEGACY_PROJECT_SCHEMA_VERSION, read_project_manifest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -613,21 +613,23 @@ def _resume(project_dir: Path) -> str:
 def _render_report_locked(project_dir: Path, output_path: Path | None = None) -> Path:
     """Render structured QA sections and publish the default report atomically."""
     project_dir = Path(project_dir)
-    manifest = read_project_manifest(project_dir / "project.json")
+    manifest = read_project_manifest(project_dir / "project.json", normalize_legacy=False)
+    report_manifest = dict(manifest)
+    report_manifest.setdefault("schema_version", LEGACY_PROJECT_SCHEMA_VERSION)
     records = _load_records(project_dir)
     page_records = _load_page_records(project_dir)
-    summary = summarize_qa(manifest, records)
+    summary = summarize_qa(report_manifest, records)
     template = TEMPLATE_PATH.read_text("utf-8")
     replacements = {
-        "{{PROJECT_SUMMARY}}": _project_summary(manifest),
-        "{{CAPABILITY}}": _capability(manifest),
+        "{{PROJECT_SUMMARY}}": _project_summary(report_manifest),
+        "{{CAPABILITY}}": _capability(report_manifest),
         "{{COUNTS}}": _counts(summary),
         "{{EVIDENCE_PROVENANCE}}": _evidence_provenance(project_dir),
         "{{PANEL_TABLE}}": _panel_table(records),
         "{{NORMALIZATION_TABLE}}": _normalization_table(project_dir, records),
         "{{PAGE_QA_TABLE}}": _page_qa_table(page_records),
-        "{{WARNINGS}}": _warnings(manifest, records),
-        "{{INTEGRITY}}": _integrity(project_dir, manifest, records),
+        "{{WARNINGS}}": _warnings(report_manifest, records),
+        "{{INTEGRITY}}": _integrity(project_dir, report_manifest, records),
         "{{RESUME}}": _resume(project_dir),
     }
     if set(TOKEN_PATTERN.findall(template)) != set(replacements):
@@ -644,9 +646,8 @@ def _render_report_locked(project_dir: Path, output_path: Path | None = None) ->
 
     destination = project_dir / "qa/report.md"
     with ProjectTransaction(project_dir, "report-publish") as transaction:
-        artifacts = manifest.get("artifacts")
-        if not isinstance(artifacts, dict):
-            artifacts = {}
+        existing_artifacts = manifest.get("artifacts")
+        artifacts = dict(existing_artifacts) if isinstance(existing_artifacts, dict) else {}
         artifacts["qa_report"] = {
             "path": "qa/report.md",
             "sha256": hashlib.sha256(report_bytes).hexdigest(),

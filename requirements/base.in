@@ -1,5 +1,5 @@
 # Canonical input for requirements/locks/base-<platform>-x86_64.txt.
-# Regenerate with pip-tools==7.6.1 on the target platform (see requirements/README.md):
+# Regenerate with pip-tools==7.6.2 on the target platform (see requirements/README.md):
 # python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/base-linux-x86_64.txt --strip-extras requirements/base.in
 # python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/base-macos-x86_64.txt --strip-extras requirements/base.in
 # python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/base-windows-x86_64.txt --strip-extras requirements/base.in

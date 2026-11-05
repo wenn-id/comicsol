@@ -202,6 +202,20 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(text.endswith("\n"))
         self.assertFalse(text.endswith("\n\n"))
 
+    def test_report_publish_preserves_legacy_schema_omission(self):
+        manifest_path = self.project / "project.json"
+        manifest = read_json(manifest_path)
+        manifest.pop("schema_version")
+        manifest.pop("handoff", None)
+        atomic_write_json(manifest_path, manifest)
+
+        output = render_report(self.project)
+
+        self.assertTrue(output.is_file())
+        persisted = read_json(manifest_path)
+        self.assertNotIn("schema_version", persisted)
+        self.assertIn("qa_report", persisted["artifacts"])
+
     def test_report_preserves_double_braces_in_authored_evidence(self):
         self.records[0]["checks"][0]["evidence"] = "Observed {{sun gate}} intact."
         atomic_write_json(self.project / "qa/panels/p01-01.json", self.records[0])

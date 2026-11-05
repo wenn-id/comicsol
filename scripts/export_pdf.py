@@ -28,6 +28,8 @@ from .comic_sol import (
 )
 from .pdf_quality import PdfQualityError, verify_pdf_payload
 from .project_io import (
+    PROJECT_OPERATION_LOCK_TIMEOUT,
+    ProjectLock,
     ProjectTransaction,
     contained_project_path,
     durable_atomic_write,
@@ -208,6 +210,20 @@ def export_pdf(project_dir: Path, output_path: Path | None = None) -> Path:
 
 def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
     """Verify and transactionally publish PDF, provenance, and descriptors."""
+    caller_project_dir = Path(project_dir)
+    try:
+        resolved_project_dir = caller_project_dir.resolve(strict=True)
+        read_project_manifest(
+            contained_project_path(resolved_project_dir, "project.json", must_exist=True)
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise PdfExportError(f"invalid project manifest: {error}") from error
+    with ProjectLock(caller_project_dir, timeout=PROJECT_OPERATION_LOCK_TIMEOUT):
+        return _guarded_export_locked(caller_project_dir, output_path)
+
+
+def _guarded_export_locked(project_dir: Path, output_path: Path | None = None) -> Path:
+    """Verify and publish PDF artifacts while holding the project lock."""
     try:
         caller_project_dir = Path(project_dir)
         project_dir = caller_project_dir.resolve(strict=True)
@@ -278,7 +294,8 @@ def guarded_export(project_dir: Path, output_path: Path | None = None) -> Path:
         transaction.stage_bytes(pdf_relative, payload)
         transaction.stage_bytes("exports/pdf-verification.json", verification_payload)
         locked_manifest = read_project_manifest(
-            contained_project_path(project_dir, "project.json", must_exist=True)
+            contained_project_path(project_dir, "project.json", must_exist=True),
+            normalize_legacy=False,
         )
         existing_artifacts = locked_manifest.get("artifacts")
         artifacts = dict(existing_artifacts) if isinstance(existing_artifacts, dict) else {}
