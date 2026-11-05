@@ -2,5 +2,5 @@
 # Regenerate with pip-tools==7.6.2 (see requirements/README.md):
 # python -m piptools compile --allow-unsafe --generate-hashes --output-file=requirements/locks/quality-linux-x86_64.txt --strip-extras requirements/quality.in
 coverage==7.17.0
-mypy==2.4.0
-ruff==0.17.2
+mypy==2.4.1
+ruff==0.17.3
