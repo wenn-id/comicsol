@@ -2,7 +2,7 @@ import io
 import unittest
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -54,8 +54,9 @@ class PdfMetricTests(unittest.TestCase):
         source = synthetic_page((180, 20, 40))
         verification = verify_pdf_payload(pdf_payload([source]), [source])
 
-        self.assertEqual("1", PDF_TOLERANCE_VERSION)
+        self.assertEqual("2", PDF_TOLERANCE_VERSION)
         self.assertEqual(1, verification["page_count"])
+        self.assertEqual(64, verification["tolerance"]["grid_region_max_size_px"])
         metrics = verification["pages"][0]
         self.assertEqual([240, 360], metrics["dimensions"])
         self.assertEqual("RGB", metrics["mode"])
@@ -111,6 +112,24 @@ class PdfCorruptionTests(unittest.TestCase):
             self.assert_rejected([mutated, self.second], "content mismatch.*page 1")
         finally:
             mutated.close()
+
+    def test_small_missing_text_block_is_rejected(self):
+        source = Image.new("RGB", (1600, 2400), (248, 246, 240))
+        draw = ImageDraw.Draw(source)
+        font = ImageFont.load_default(size=16)
+        for row, line in enumerate(
+            ("Missing dialogue here.", "A line quietly vanishes.", "Some words are gone.")
+        ):
+            draw.text((5, 700 + row * 20), line, font=font, fill=(8, 8, 8))
+
+        missing = source.copy()
+        ImageDraw.Draw(missing).rectangle((0, 700, 199, 759), fill=(248, 246, 240))
+        try:
+            with self.assertRaisesRegex(PdfQualityError, "content mismatch.*page 1"):
+                verify_pdf_payload(pdf_payload([missing]), [source])
+        finally:
+            missing.close()
+            source.close()
 
     def test_swapped_duplicate_and_count_mismatch_are_rejected(self):
         self.assert_rejected([self.second, self.first], "content mismatch.*page 1")
