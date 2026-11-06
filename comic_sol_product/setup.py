@@ -881,11 +881,17 @@ def _verify_persisted(
 
 def default_adapters(home: Path | None = None) -> list[ClientAdapter]:
     """Return only adapters whose native formats and locations are verified."""
-    home = (home or Path.home()).expanduser()
-    adapters: list[ClientAdapter] = [CodexAdapter(home / ".codex" / "config.toml")]
+    explicit_home = home is not None
+    home = (home if home is not None else Path.home()).expanduser()
+    codex_home = Path(os.environ.get("CODEX_HOME", os.fspath(home / ".codex"))).expanduser()
+    adapters: list[ClientAdapter] = [CodexAdapter(codex_home / "config.toml")]
 
     if sys.platform == "win32":
-        roaming = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
+        roaming = (
+            home / "AppData" / "Roaming"
+            if explicit_home
+            else Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
+        )
         claude = roaming / "Claude" / "claude_desktop_config.json"
     elif sys.platform == "darwin":
         claude = home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"

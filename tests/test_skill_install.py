@@ -126,6 +126,7 @@ class SkillInstallTests(unittest.TestCase):
 
         self.assertEqual("upgraded", second.status)
         self.assertEqual("# Comic Sol v2\n", (destination / "SKILL.md").read_text())
+        self.assertEqual(b"\x00compiled", (compiled / "tool.cpython-311.pyc").read_bytes())
 
     def test_uninstall_preserves_host_generated_bytecode_caches(self):
         installed = self.install("claude", "user")
@@ -139,6 +140,26 @@ class SkillInstallTests(unittest.TestCase):
         self.assertEqual("preserved", result.status)
         self.assertTrue((compiled / "tool.cpython-311.pyc").is_file())
         self.assertFalse((destination / "SKILL.md").exists())
+
+    def test_reinstall_after_uninstall_preserves_host_generated_bytecode_caches(self):
+        installed = self.install("claude", "user")
+        destination = Path(installed.destination)
+        compiled = destination / "scripts/__pycache__"
+        compiled.mkdir(parents=True)
+        cache = compiled / "tool.cpython-311.pyc"
+        cache.write_bytes(b"\x00compiled")
+
+        removed = self.uninstall("claude", "user")
+        self.assertEqual("preserved", removed.status)
+        self.assertTrue(cache.is_file())
+        self.assertFalse((destination / "SKILL.md").exists())
+
+        reinstalled = self.install("claude", "user")
+
+        self.assertEqual("installed", reinstalled.status)
+        self.assertEqual(b"\x00compiled", cache.read_bytes())
+        self.assertTrue((destination / skill_install.MARKER_NAME).is_file())
+        self.assertEqual("unchanged", self.install("claude", "user").status)
 
     def test_binary_payload_survives_text_mode_hazards_verbatim(self):
         """Binary members must round-trip exactly, including CRLF and Ctrl-Z.
@@ -554,6 +575,17 @@ class SkillInstallTests(unittest.TestCase):
             result = self.uninstall("claude", "user")
             self.assertEqual("not-installed", result.status)
             self.assertEqual("not managed\n", protected.read_text())
+
+    def test_install_rejects_unmarked_directory_with_non_bytecode_data(self):
+        destination = self.home / ".claude/skills/comic-sol"
+        destination.mkdir(parents=True)
+        protected = destination / "notes.txt"
+        protected.write_text("keep this data\n")
+
+        with self.assertRaisesRegex(skill_install.InvalidSkillMarkerError, "marker is missing"):
+            self.install("claude", "user")
+
+        self.assertEqual("keep this data\n", protected.read_text())
 
     def test_preserved_uninstall_is_idempotent(self):
         installed = self.install("claude", "user")
