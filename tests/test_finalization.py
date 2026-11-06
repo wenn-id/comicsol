@@ -496,6 +496,22 @@ class GuardedOperationTests(unittest.TestCase):
         self.assertEqual("exports/pdf-verification.json", verification_desc["path"])
         self.assertEqual(sha256_file(verification_path), verification_desc["sha256"])
 
+    def test_guarded_export_preserves_legacy_schema_omission(self):
+        self._make_export_ready()
+        manifest_path = self.project / "project.json"
+        manifest = read_json(manifest_path)
+        manifest.pop("schema_version")
+        manifest.pop("handoff", None)
+        atomic_write_json(manifest_path, manifest)
+        from scripts.export_pdf import guarded_export
+
+        guarded_export(self.project)
+
+        persisted = read_json(manifest_path)
+        self.assertNotIn("schema_version", persisted)
+        self.assertIn("pdf", persisted["artifacts"])
+        self.assertIn("pdf_verification", persisted["artifacts"])
+
     def test_guarded_export_publish_failure_rolls_back_pdf_verification_and_manifest(self):
         self._make_export_ready()
         pdf = self.project / "exports/guard-test.pdf"

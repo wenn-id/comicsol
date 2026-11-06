@@ -41,7 +41,6 @@ SUPPORTED_CLIENT_NAMES = (
     "vscode",
     "windsurf",
 )
-MAX_CONFIG_BACKUPS = 5
 _REPARSE_POINT = 0x400
 
 
@@ -456,34 +455,6 @@ def _write_backup(path: Path, data: bytes, *, directory: _ConfigDirectory | None
             _fsync_directory(directory_descriptor)
         finally:
             os.close(directory_descriptor)
-
-
-def _prune_backups(path: Path, *, directory: _ConfigDirectory | None = None) -> None:
-    """Keep only newest private backups for one client config."""
-    backups = []
-    entries = (
-        os.scandir(directory.descriptor)
-        if directory and directory.descriptor
-        else os.scandir(path.parent)
-    )
-    with entries:
-        for entry in entries:
-            if not entry.name.startswith(f"{path.name}.bak-"):
-                continue
-            try:
-                metadata = entry.stat(follow_symlinks=False)
-            except OSError:
-                continue
-            if stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
-                backups.append(path.with_name(entry.name))
-    for candidate in sorted(backups, key=lambda item: item.name, reverse=True)[MAX_CONFIG_BACKUPS:]:
-        try:
-            if directory is None:
-                candidate.unlink()
-            else:
-                directory.unlink(candidate.name)
-        except OSError:
-            pass
 
 
 def _resolve_executable(
@@ -1026,7 +997,6 @@ def _configure_one(
                         snapshot.mode,
                         expected=published,
                     )
-                    _prune_backups(path)
                     return SetupResult(
                         adapter.name,
                         "rolled-back",
@@ -1035,7 +1005,6 @@ def _configure_one(
                         "verification failed; original restored",
                     )
                 _assert_snapshot(path, published)
-                _prune_backups(path)
             except Exception as error:
                 try:
                     if backup_created and published is not None:
@@ -1251,7 +1220,6 @@ def _repair_one(
                                 restored=False,
                                 rollback_failed=True,
                             )
-                        _prune_backups(path, directory=directory)
                         return _repair_failure(
                             adapter,
                             IntegrationRepairError("persisted repair verification failed"),
@@ -1295,7 +1263,6 @@ def _repair_one(
                         )
                 _assert_snapshot(path, persisted, directory=directory)
                 directory.assert_bound()
-                _prune_backups(path, directory=directory)
         except Exception as error:
             if not publish_attempted:
                 if snapshot is None:
