@@ -883,7 +883,8 @@ def default_adapters(home: Path | None = None) -> list[ClientAdapter]:
     """Return only adapters whose native formats and locations are verified."""
     explicit_home = home is not None
     home = (home if home is not None else Path.home()).expanduser()
-    codex_home = Path(os.environ.get("CODEX_HOME") or os.fspath(home / ".codex")).expanduser()
+    codex_home_value = os.environ.get("CODEX_HOME")
+    codex_home = Path(codex_home_value) if codex_home_value else home / ".codex"
     adapters: list[ClientAdapter] = [CodexAdapter(codex_home / "config.toml")]
 
     if sys.platform == "win32":

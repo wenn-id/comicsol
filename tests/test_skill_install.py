@@ -80,6 +80,21 @@ class SkillInstallTests(unittest.TestCase):
                 self.assertEqual("installed", result.status)
                 self.assertTrue((expected / "SKILL.md").is_file())
 
+    def test_empty_codex_home_uses_default_home_for_skill_install(self):
+        with mock.patch.dict(os.environ, {"CODEX_HOME": ""}, clear=True):
+            result = self.install("codex", "user", codex_home=None)
+
+        self.assertEqual(self.home / ".codex/skills/comic-sol", Path(result.destination))
+
+    def test_codex_home_environment_keeps_tilde_literal_for_skill_install(self):
+        with mock.patch.object(skill_install.Path, "cwd", return_value=self.root):
+            with mock.patch.dict(os.environ, {"CODEX_HOME": "~/.codex-work"}, clear=True):
+                result = self.install("codex", "user", codex_home=None)
+
+        expected = self.root / "~/.codex-work/skills/comic-sol"
+        self.assertEqual(expected, Path(result.destination))
+        self.assertTrue((expected / "SKILL.md").is_file())
+
     def test_bytecode_caches_never_affect_the_digest_or_the_payload(self):
         """Byte-compilation is environment-dependent, so it must never be managed.
 
@@ -586,6 +601,33 @@ class SkillInstallTests(unittest.TestCase):
             self.install("claude", "user")
 
         self.assertEqual("keep this data\n", protected.read_text())
+
+    def test_install_rejects_non_bytecode_file_inside_unmarked_pycache(self):
+        destination = self.home / ".claude/skills/comic-sol"
+        protected = destination / "scripts/__pycache__/notes.txt"
+        protected.parent.mkdir(parents=True)
+        protected.write_text("keep this data\n")
+
+        with self.assertRaisesRegex(skill_install.InvalidSkillMarkerError, "marker is missing"):
+            self.install("claude", "user")
+
+        self.assertEqual("keep this data\n", protected.read_text())
+        self.assertFalse((destination / skill_install.MARKER_NAME).exists())
+
+    def test_install_rejects_unrelated_empty_directory_with_unmarked_bytecode(self):
+        destination = self.home / ".claude/skills/comic-sol"
+        cache = destination / "scripts/__pycache__/tool.cpython-311.pyc"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(b"\x00compiled")
+        unrelated = destination / "user-data"
+        unrelated.mkdir()
+
+        with self.assertRaisesRegex(skill_install.InvalidSkillMarkerError, "marker is missing"):
+            self.install("claude", "user")
+
+        self.assertEqual(b"\x00compiled", cache.read_bytes())
+        self.assertTrue(unrelated.is_dir())
+        self.assertFalse((destination / skill_install.MARKER_NAME).exists())
 
     def test_preserved_uninstall_is_idempotent(self):
         installed = self.install("claude", "user")

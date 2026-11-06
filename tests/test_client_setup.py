@@ -93,6 +93,12 @@ class ClientSetupTests(unittest.TestCase):
 
         self.assertEqual(self.home / ".codex/config.toml", paths["codex"])
 
+    def test_codex_home_tilde_is_not_expanded(self):
+        with mock.patch.dict(os.environ, {"CODEX_HOME": "~/.codex-work"}, clear=True):
+            paths = self.adapter_paths("linux")
+
+        self.assertEqual(Path("~/.codex-work/config.toml"), paths["codex"])
+
     def test_windows_appdata_is_used_when_home_is_not_supplied(self):
         appdata = self.home / "redirected roaming"
         environment = {

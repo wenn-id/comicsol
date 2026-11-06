@@ -127,11 +127,11 @@ def _is_unmanaged(relative: str) -> bool:
     ) or relative.endswith(_UNMANAGED_SUFFIXES)
 
 
-def _lexical_path(value: Path, *, label: str) -> Path:
+def _lexical_path(value: Path, *, label: str, expanduser: bool = True) -> Path:
     raw = os.fspath(value)
     if not raw or _has_control(raw):
         raise UnsafeSkillPathError(f"{label} contains a control character")
-    raw_path = Path(raw).expanduser()
+    raw_path = Path(raw).expanduser() if expanduser else Path(raw)
     if any(part == ".." for part in raw_path.parts):
         raise UnsafeSkillPathError(f"{label} contains traversal or a path alias")
     if not raw_path.is_absolute():
@@ -632,8 +632,8 @@ def _exchange_paths(first: Path, second: Path) -> None:
     _fsync_directory(first.parent)
 
 
-def _installed_members(root: Path) -> set[str]:
-    """List every regular file under one verified install, marker excluded."""
+def _installed_members(root: Path, *, directories: set[str] | None = None) -> set[str]:
+    """List regular files under one install and optionally record directories."""
     members: set[str] = set()
     pending = [root]
     while pending:
@@ -645,6 +645,8 @@ def _installed_members(root: Path) -> set[str]:
                 if entry.is_symlink() or _is_reparse_point(metadata):
                     raise UnsafeSkillPathError("an installed member is a link")
                 if stat.S_ISDIR(metadata.st_mode):
+                    if directories is not None:
+                        directories.add(_validate_relative(relative))
                     pending.append(Path(entry.path))
                 elif stat.S_ISREG(metadata.st_mode):
                     if relative != MARKER_NAME:
@@ -652,6 +654,16 @@ def _installed_members(root: Path) -> set[str]:
                 else:
                     raise UnsafeSkillPathError("an installed member is not a regular file")
     return members
+
+
+def _member_parent_directories(members: set[str]) -> set[str]:
+    directories: set[str] = set()
+    for relative in members:
+        parent = Path(relative).parent
+        while parent != Path("."):
+            directories.add(parent.as_posix())
+            parent = parent.parent
+    return directories
 
 
 def _safe_remove_private_tree(path: Path) -> None:
@@ -678,9 +690,15 @@ def install_skill(
     """Install one verified canonical Skill payload at one explicit host location."""
     home_path = _lexical_path(home or Path.home(), label="home")
     configured_codex = codex_home
+    codex_home_from_environment = configured_codex is None
     if configured_codex is None:
-        configured_codex = Path(os.environ.get("CODEX_HOME", os.fspath(home_path / ".codex")))
-    codex_path = _lexical_path(configured_codex, label="CODEX_HOME")
+        codex_home_value = os.environ.get("CODEX_HOME")
+        configured_codex = Path(codex_home_value) if codex_home_value else home_path / ".codex"
+    codex_path = _lexical_path(
+        configured_codex,
+        label="CODEX_HOME",
+        expanduser=not codex_home_from_environment,
+    )
     if target == "auto":
         target = _auto_target(
             scope,
@@ -708,7 +726,8 @@ def install_skill(
     preserve_unmanaged: set[str] = set()
     if destination.exists():
         _assert_safe_tree(destination)
-        existing_members = _installed_members(destination)
+        existing_directories: set[str] = set()
+        existing_members = _installed_members(destination, directories=existing_directories)
         if (destination / MARKER_NAME).exists():
             marker = _read_marker(destination)
             existing_install = True
@@ -744,7 +763,12 @@ def install_skill(
             preserve_unmanaged = {
                 relative for relative in existing_members if _is_unmanaged(relative)
             }
-            if not preserve_unmanaged or preserve_unmanaged != existing_members:
+            if (
+                not preserve_unmanaged
+                or preserve_unmanaged != existing_members
+                or not all(relative.endswith(_UNMANAGED_SUFFIXES) for relative in existing_members)
+                or existing_directories != _member_parent_directories(preserve_unmanaged)
+            ):
                 raise InvalidSkillMarkerError(
                     "Comic Sol Skill marker is missing; no files were changed"
                 )
