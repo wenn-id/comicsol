@@ -139,6 +139,14 @@ def _lexical_path(value: Path, *, label: str, expanduser: bool = True) -> Path:
     return raw_path.absolute()
 
 
+def _resolve_codex_home(home: Path, codex_home: Path | None) -> Path:
+    if codex_home is not None:
+        return _lexical_path(codex_home, label="CODEX_HOME")
+    value = os.environ.get("CODEX_HOME")
+    configured = Path(value) if value else home / ".codex"
+    return _lexical_path(configured, label="CODEX_HOME", expanduser=False)
+
+
 def _is_reparse_point(metadata: os.stat_result) -> bool:
     return bool(getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT)
 
@@ -687,18 +695,9 @@ def install_skill(
     bundle_root: Path | None = None,
     version: str = __version__,
 ) -> SkillOperationResult:
-    """Install one verified canonical Skill payload at one explicit host location."""
+    """Install one verified canonical Comic Sol Skill bundle at one explicit host location."""
     home_path = _lexical_path(home or Path.home(), label="home")
-    configured_codex = codex_home
-    codex_home_from_environment = configured_codex is None
-    if configured_codex is None:
-        codex_home_value = os.environ.get("CODEX_HOME")
-        configured_codex = Path(codex_home_value) if codex_home_value else home_path / ".codex"
-    codex_path = _lexical_path(
-        configured_codex,
-        label="CODEX_HOME",
-        expanduser=not codex_home_from_environment,
-    )
+    codex_path = _resolve_codex_home(home_path, codex_home)
     if target == "auto":
         target = _auto_target(
             scope,
@@ -853,10 +852,7 @@ def uninstall_skill(
 ) -> SkillOperationResult:
     """Remove unchanged marker-listed files and preserve everything else."""
     home_path = _lexical_path(home or Path.home(), label="home")
-    configured_codex = codex_home
-    if configured_codex is None:
-        configured_codex = Path(os.environ.get("CODEX_HOME", os.fspath(home_path / ".codex")))
-    codex_path = _lexical_path(configured_codex, label="CODEX_HOME")
+    codex_path = _resolve_codex_home(home_path, codex_home)
     destination, _ = _destination_for(
         target,
         scope,

@@ -80,20 +80,26 @@ class SkillInstallTests(unittest.TestCase):
                 self.assertEqual("installed", result.status)
                 self.assertTrue((expected / "SKILL.md").is_file())
 
-    def test_empty_codex_home_uses_default_home_for_skill_install(self):
+    def test_empty_codex_home_uses_default_home_for_install_and_uninstall(self):
         with mock.patch.dict(os.environ, {"CODEX_HOME": ""}, clear=True):
             result = self.install("codex", "user", codex_home=None)
+            removed = self.uninstall("codex", "user", codex_home=None)
 
-        self.assertEqual(self.home / ".codex/skills/comic-sol", Path(result.destination))
+        expected = self.home / ".codex/skills/comic-sol"
+        self.assertEqual(expected, Path(result.destination))
+        self.assertEqual("uninstalled", removed.status)
+        self.assertFalse((expected / "SKILL.md").exists())
 
-    def test_codex_home_environment_keeps_tilde_literal_for_skill_install(self):
+    def test_codex_home_environment_keeps_tilde_literal_for_install_and_uninstall(self):
         with mock.patch.object(skill_install.Path, "cwd", return_value=self.root):
             with mock.patch.dict(os.environ, {"CODEX_HOME": "~/.codex-work"}, clear=True):
                 result = self.install("codex", "user", codex_home=None)
+                removed = self.uninstall("codex", "user", codex_home=None)
 
         expected = self.root / "~/.codex-work/skills/comic-sol"
         self.assertEqual(expected, Path(result.destination))
-        self.assertTrue((expected / "SKILL.md").is_file())
+        self.assertEqual("uninstalled", removed.status)
+        self.assertFalse((expected / "SKILL.md").exists())
 
     def test_bytecode_caches_never_affect_the_digest_or_the_payload(self):
         """Byte-compilation is environment-dependent, so it must never be managed.
