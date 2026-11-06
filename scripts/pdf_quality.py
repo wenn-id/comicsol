@@ -12,7 +12,7 @@ from typing import Sequence
 from PIL import Image, ImageChops
 from .raster_limits import MAX_DECODED_PIXELS
 
-PDF_TOLERANCE_VERSION = "1"
+PDF_TOLERANCE_VERSION = "2"
 PDF_EXPORTER_VERSION = "comic-sol-pillow-raster-v1"
 
 # Calibrated against Pillow 12.2 JPEG-in-PDF round trips containing flat color,
@@ -21,8 +21,7 @@ PDF_EXPORTER_VERSION = "comic-sol-pillow-raster-v1"
 MAX_MEAN_ABSOLUTE_CHANNEL_ERROR = 3.1
 HIGH_ERROR_CHANNEL_THRESHOLD = 24
 MAX_HIGH_ERROR_PIXEL_RATIO = 0.021
-GRID_COLUMNS = 8
-GRID_ROWS = 8
+MAX_GRID_REGION_SIZE_PX = 64
 MAX_GRID_REGION_ERROR = 16.0
 
 _PDF_STREAM_PATTERN = re.compile(rb"stream\r?\n(.*?)\r?\nendstream", re.DOTALL)
@@ -61,6 +60,8 @@ def compare_full_page(
     decoded_rgb = decoded.convert("RGB")
     try:
         width, height = source_rgb.size
+        grid_columns = max(1, (width - 1) // MAX_GRID_REGION_SIZE_PX + 1)
+        grid_rows = max(1, (height - 1) // MAX_GRID_REGION_SIZE_PX + 1)
         difference = ImageChops.difference(source_rgb, decoded_rgb)
         try:
             histogram = difference.histogram()
@@ -82,12 +83,12 @@ def compare_full_page(
                     mask.close()
 
             region_means: list[float] = []
-            for row in range(GRID_ROWS):
-                top = row * height // GRID_ROWS
-                bottom = (row + 1) * height // GRID_ROWS
-                for column in range(GRID_COLUMNS):
-                    left = column * width // GRID_COLUMNS
-                    right = (column + 1) * width // GRID_COLUMNS
+            for row in range(grid_rows):
+                top = row * height // grid_rows
+                bottom = (row + 1) * height // grid_rows
+                for column in range(grid_columns):
+                    left = column * width // grid_columns
+                    right = (column + 1) * width // grid_columns
                     region = difference.crop((left, top, right, bottom))
                     try:
                         region_histogram = region.histogram()
@@ -187,7 +188,7 @@ def verify_pdf_payload(
                 for page in metrics
             ],
             "tolerance": {
-                "grid": [GRID_COLUMNS, GRID_ROWS],
+                "grid_region_max_size_px": MAX_GRID_REGION_SIZE_PX,
                 "high_error_channel_threshold": HIGH_ERROR_CHANNEL_THRESHOLD,
                 "max_grid_region_error": MAX_GRID_REGION_ERROR,
                 "max_high_error_pixel_ratio": MAX_HIGH_ERROR_PIXEL_RATIO,
