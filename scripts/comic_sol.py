@@ -30,6 +30,7 @@ if __package__ in {None, ""}:
     __package__ = "scripts"
 
 from comic_sol_product.cli_command_spec import add_shared_command_parsers
+from comic_sol_product.errors import error_payload, safe_error_detail
 
 from PIL import Image, ImageFont
 
@@ -4993,6 +4994,30 @@ def _use_utf8_standard_streams() -> None:
             reconfigure(encoding="utf-8")
 
 
+def _emit_cli_error(error: Exception, arguments: argparse.Namespace) -> None:
+    """Write a structured failure envelope for JSON commands, otherwise stderr."""
+    command = arguments.command
+    if command == "handoff":
+        command = f"handoff.{arguments.handoff_command}"
+    elif command == "dogfood":
+        command = f"dogfood.{arguments.dogfood_command}"
+    as_json = bool(getattr(arguments, "as_json", False)) or command == "dogfood.validate"
+    if as_json:
+        detail = None if type(error).__name__ == "HandoffArchiveError" else safe_error_detail(error)
+        payload = {
+            "ok": False,
+            "command": command,
+            "data": None,
+            "error": error_payload(error, command=command, surface="cli", detail=detail),
+        }
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        return
+    print(
+        f"ERROR {type(error).__name__}: {_escape_cli_controls(error)}",
+        file=sys.stderr,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the deterministic Comic Sol lifecycle CLI."""
     _use_utf8_standard_streams()
@@ -5238,16 +5263,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{result['status']}: {result['pdf']} | {result['report']}")
         return 0
     except ValueError as error:
-        print(
-            f"ERROR {type(error).__name__}: {_escape_cli_controls(error)}",
-            file=sys.stderr,
-        )
+        _emit_cli_error(error, arguments)
         return 2 if arguments.command == "handoff" else 1
     except (OSError, TypeError, RuntimeError) as error:
-        print(
-            f"ERROR {type(error).__name__}: {_escape_cli_controls(error)}",
-            file=sys.stderr,
-        )
+        _emit_cli_error(error, arguments)
         return 1
 
 

@@ -1969,11 +1969,13 @@ class SourceHandoffArchiveCliTests(unittest.TestCase):
         )
 
         self.assertEqual(2, code)
-        self.assertEqual("", stdout)
-        self.assertEqual(
-            f"ERROR {type(error).__name__}: {error}\n",
-            stderr,
-        )
+        self.assertEqual("", stderr)
+        payload = json.loads(stdout)
+        self.assertEqual({"ok", "command", "data", "error"}, set(payload))
+        self.assertFalse(payload["ok"])
+        self.assertEqual("handoff.inspect", payload["command"])
+        self.assertEqual("CS-HANDOFF-002", payload["error"]["code"])
+        self.assertNotIn("checksum mismatch", json.dumps(payload))
 
 
 class HandoffArchiveDistributionInventoryTests(unittest.TestCase):
