@@ -135,6 +135,40 @@ class ClientSetupTests(unittest.TestCase):
         self.assertEqual("removed", removed.status)
         self.assertEqual(original, config.read_bytes())
 
+    def test_json_setup_and_uninstall_preserve_empty_mapping_whitespace(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = b'{"mcpServers":{  }}\n'
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        configured = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+        removed = uninstall_clients(self.output, adapters=[adapter])[0]
+
+        self.assertEqual("configured", configured.status)
+        self.assertEqual("removed", removed.status)
+        self.assertEqual(original, config.read_bytes())
+
+    def test_json_setup_preserves_root_suffix_when_adding_missing_mapping(self):
+        config = self.home / ".cursor" / "mcp.json"
+        config.parent.mkdir(parents=True)
+        original = b'{\r\n  "theme": "dark"\r\n}\r\n \t'
+        root_suffix = original[original.rfind(b"}") + 1 :]
+        config.write_bytes(original)
+        adapter = JsonClientAdapter("cursor", config, "mcpServers")
+
+        configured = setup_clients(self.output, adapters=[adapter], executable=self.launcher)[0]
+        installed = config.read_bytes()
+
+        self.assertEqual("configured", configured.status)
+        self.assertTrue(installed.endswith(root_suffix))
+        self.assertIn("comic-sol", json.loads(installed)["mcpServers"])
+
+        removed = uninstall_clients(self.output, adapters=[adapter])[0]
+        self.assertEqual("removed", removed.status)
+        self.assertTrue(config.read_bytes().endswith(root_suffix))
+        self.assertNotIn("comic-sol", json.loads(config.read_bytes())["mcpServers"])
+
     def test_bare_launcher_is_resolved_and_repeated_setup_is_unchanged(self):
         config = self.home / ".cursor" / "mcp.json"
         config.parent.mkdir(parents=True)
