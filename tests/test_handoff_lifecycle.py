@@ -1526,11 +1526,12 @@ class HandoffIntakeFailureTests(unittest.TestCase):
             )
 
         self.assertEqual(2, code)
-        self.assertEqual("", stdout.getvalue())
-        self.assertRegex(
-            stderr.getvalue(),
-            rf"^ERROR HandoffResultError: .*{error_pattern}.*\n$",
-        )
+        self.assertEqual("", stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual({"ok", "command", "data", "error"}, set(payload))
+        self.assertFalse(payload["ok"])
+        self.assertEqual("handoff.accept-result", payload["command"])
+        self.assertEqual("CS-HANDOFF-003", payload["error"]["code"])
         self.assertEqual(before, self._artifact_snapshot(project))
         self.assertEqual([], self._transaction_names(project))
         self.assertFalse((root / "result.png").exists())

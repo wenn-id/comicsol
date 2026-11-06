@@ -2976,6 +2976,15 @@ class SourceHandoffCliContractTests(unittest.TestCase):
         with patch("scripts.command_service.CommandService", return_value=service):
             return self.invoke(argv)
 
+    def assert_json_failure(self, stdout: str, command: str) -> dict[str, object]:
+        payload = json.loads(stdout)
+        self.assertEqual({"ok", "command", "data", "error"}, set(payload))
+        self.assertFalse(payload["ok"])
+        self.assertEqual(command, payload["command"])
+        self.assertIsNone(payload["data"])
+        self.assertEqual(command, payload["error"]["command"])
+        return payload
+
     def test_source_handoff_routes_are_nested_and_forward_exactly(self):
         project = Path("/shared/demo")
         raster = Path("renderer/result.png")
@@ -3184,6 +3193,19 @@ class SourceHandoffCliContractTests(unittest.TestCase):
                 self.assertEqual("", stdout)
                 self.assertTrue(stderr)
 
+    def test_source_resume_plan_json_failure_emits_envelope(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            missing_project = Path(temporary_directory) / "missing-project"
+            code, stdout, stderr = self.invoke(
+                ["resume-plan", os.fspath(missing_project), "--json"]
+            )
+
+        self.assertEqual(1, code)
+        self.assertEqual("", stderr)
+        payload = self.assert_json_failure(stdout, "resume-plan")
+        self.assertEqual("CS-PROJ-002", payload["error"]["code"])
+        self.assertNotIn(os.fspath(missing_project), stdout)
+
     def test_source_handoff_runtime_invalid_input_errors_exit_two(self):
         errors = (
             HandoffContractError(["contract_version: unsupported"]),
@@ -3206,10 +3228,10 @@ class SourceHandoffCliContractTests(unittest.TestCase):
                 )
 
                 self.assertEqual(2, code)
-                self.assertEqual("", stdout)
-                self.assertEqual(
-                    f"ERROR {type(error).__name__}: {error}\n",
-                    stderr,
+                self.assertEqual("", stderr)
+                self.assertIsInstance(
+                    self.assert_json_failure(stdout, "handoff.inspect")["error"]["code"],
+                    str,
                 )
 
     def test_source_handoff_unexpected_io_and_internal_errors_remain_exit_one(self):
@@ -3226,10 +3248,10 @@ class SourceHandoffCliContractTests(unittest.TestCase):
                 )
 
                 self.assertEqual(1, code)
-                self.assertEqual("", stdout)
-                self.assertEqual(
-                    f"ERROR {type(error).__name__}: {error}\n",
-                    stderr,
+                self.assertEqual("", stderr)
+                self.assertIsInstance(
+                    self.assert_json_failure(stdout, "handoff.inspect")["error"]["code"],
+                    str,
                 )
 
 
