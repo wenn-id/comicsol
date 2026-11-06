@@ -289,6 +289,13 @@ class AgentConstitutionTests(unittest.TestCase):
         ):
             self.assertIn(phrase, self.collapsed)
 
+    def test_codeql_scans_python_and_github_actions(self):
+        workflow = (self.root / ".github/workflows/codeql.yml").read_text(encoding="utf-8")
+        self.assertRegex(
+            workflow,
+            r"(?m)^\s*language:\s*\[\s*actions\s*,\s*python\s*\]\s*$",
+        )
+
     def test_reference_integrations_are_in_lint_and_coverage_gates(self):
         project = tomllib.loads((self.root / "pyproject.toml").read_text(encoding="utf-8"))
         self.assertIn("integrations", project["tool"]["coverage"]["run"]["source"])
