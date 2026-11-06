@@ -120,6 +120,40 @@ class QualityGateContractTests(unittest.TestCase):
         )
         self.assertNotIn("tests", coverage["run"]["source"])
 
+    def test_cross_platform_inputs_have_explicit_lf_checkout_rules(self):
+        """Require LF rules and LF checkouts for Windows-sensitive inputs."""
+        attributes: dict[str, set[str]] = {}
+        for raw_line in (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines():
+            line = raw_line.partition("#")[0].strip()
+            if not line:
+                continue
+            pattern, *values = line.split()
+            attributes[pattern] = set(values)
+
+        patterns = ("*.sh", "*.ps1", "*.tmpl", "Dockerfile", "*.toml", "*.in", "*.spec")
+        for pattern in patterns:
+            with self.subTest(pattern=pattern):
+                self.assertTrue({"text", "eol=lf"} <= attributes.get(pattern, set()))
+
+        paths = (
+            "Dockerfile",
+            "MANIFEST.in",
+            "installers/install.ps1",
+            "installers/install.sh",
+            "packaging/comic-sol.spec",
+            "pyproject.toml",
+            "requirements/audit.in",
+            "requirements/base.in",
+            "requirements/quality.in",
+            "requirements/release.in",
+            "requirements/runtime.in",
+            "skills/comic-sol/templates/qa-report.md.tmpl",
+            "templates/qa-report.md.tmpl",
+        )
+        for relative in paths:
+            with self.subTest(path=relative):
+                self.assertNotIn(b"\r\n", (ROOT / relative).read_bytes())
+
     def test_workflow_runs_blocking_quality_tools_and_publishes_coverage(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
