@@ -83,6 +83,7 @@ def smoke_mcp_import(python: Path, *, cwd: Path) -> None:
 
 
 def skill_payload_hashes(root: Path) -> dict[str, str]:
+    """Hash Skill files while excluding installer metadata and host bytecode."""
     return {
         path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in root.rglob("*")
@@ -94,6 +95,7 @@ def skill_payload_hashes(root: Path) -> dict[str, str]:
 
 
 def smoke_skill_install(python: Path, *, cwd: Path, root: Path, repository: Path) -> None:
+    """Install the wheel's Skill and compare it with the canonical bundle."""
     home = root / "skill-home"
     codex_home = home / ".codex"
     program = (

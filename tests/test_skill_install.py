@@ -253,6 +253,7 @@ class SkillInstallTests(unittest.TestCase):
         self.assertEqual(skill_install.bundle_digest(canonical), result.bundle_digest)
 
     def test_packaged_skill_reconstructs_shared_engine_and_font_files(self):
+        """Verify install reconstructs shared files from package copies."""
         repository = Path(__file__).resolve().parents[1]
         canonical = repository / "skills/comic-sol"
         package = self.root / "package"
@@ -281,6 +282,7 @@ class SkillInstallTests(unittest.TestCase):
         destination = Path(result.destination)
 
         def hashes(root: Path) -> dict[str, str]:
+            """Hash managed members for an exact bundle comparison."""
             return {
                 path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                 for path in root.rglob("*")

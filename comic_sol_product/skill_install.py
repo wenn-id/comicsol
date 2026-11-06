@@ -299,6 +299,7 @@ def _scan_shared_payload(managed: dict[str, str], shared_files: dict[str, Path],
 def _scan_payload(
     root: Path, *, shared_files: dict[str, Path] | None = None
 ) -> tuple[dict[str, str], str]:
+    """Validate the tree and return managed file hashes plus their aggregate."""
     root = _lexical_path(root, label="bundle root")
     _assert_directory(root, label="bundle root")
     managed: dict[str, str] = {}
@@ -336,6 +337,7 @@ def _scan_payload(
 
 
 def _packaged_shared_files(root: Path) -> dict[str, Path]:
+    """Map absent default-bundle members to their runtime package copies."""
     package_root = Path(__file__).resolve().parent
     shared: dict[str, Path] = {}
     for relative in sorted(SKILL_SHARED_FILES):
@@ -355,6 +357,7 @@ def _packaged_shared_files(root: Path) -> dict[str, Path]:
 
 
 def bundle_digest(bundle_root: Path | None = None) -> str:
+    """Digest the default packaged Skill or an explicitly supplied full bundle."""
     root = bundle_root or Path(__file__).resolve().parent / "skill"
     shared_files = _packaged_shared_files(root) if bundle_root is None else None
     return _scan_payload(root, shared_files=shared_files)[1]
@@ -471,6 +474,7 @@ def _copy_payload(
     *,
     shared_files: dict[str, Path] | None = None,
 ) -> None:
+    """Copy managed members, sourcing reconstructed files from package paths."""
     for relative in managed:
         source_file = (shared_files or {}).get(relative, source / relative)
         target = destination / relative

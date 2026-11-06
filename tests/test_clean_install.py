@@ -22,6 +22,7 @@ from scripts import clean_install_smoke
 
 class DistributionContractTests(unittest.TestCase):
     def test_required_wheel_members_cover_runtime_and_skill(self):
+        """Keep runtime modules and reconstructed shared files required in wheels."""
         self.assertIn("comic_sol_product/engine/comic_sol.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine_api.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/quality_records.py", REQUIRED_WHEEL_MEMBERS)
@@ -418,6 +419,7 @@ class PackagedSkillPayloadContractTests(unittest.TestCase):
         self.canonical = self.root / "skills/comic-sol"
 
     def test_required_wheel_inventory_covers_complete_synchronized_bundle(self):
+        """Compare required wheel members with the synchronized Skill contents."""
         from comic_sol_product.release import _is_generated_bytecode, canonical_skill_members
 
         # Running the suite byte-compiles the bundled scripts in place, so the
@@ -446,11 +448,13 @@ class PackagedSkillPayloadContractTests(unittest.TestCase):
         self.assertTrue(expected <= REQUIRED_WHEEL_MEMBERS)
 
     def test_wheel_payload_equality_is_verified_byte_for_byte(self):
+        """Compare reconstructed Skill bytes and reject altered archive members."""
         import zipfile
 
         from comic_sol_product.release import validate_wheel_skill_payload
 
         def add_payload(archive, *, tamper=False):
+            """Write shared sources and canonical Skill members to a test archive."""
             repository = self.canonical.parents[1]
             for relative in sorted(SKILL_SHARED_FILES):
                 source = repository / relative
