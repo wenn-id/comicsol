@@ -8,6 +8,7 @@ import io
 import json
 import math
 import re
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -313,15 +314,17 @@ def _page_context(
     # pixel space its balloon verdicts were measured against came from another.
     page_payload, page_sha256 = artifacts.snapshot(page_path)
     try:
-        with Image.open(io.BytesIO(page_payload)) as image:
-            if exceeds_decoded_pixel_limit(
-                image.width,
-                image.height,
-                Image.MAX_IMAGE_PIXELS,
-            ):
-                raise Image.DecompressionBombError("raster exceeds decode limit")
-            image.load()
-            page_width, page_height = image.size
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(page_payload)) as image:
+                if exceeds_decoded_pixel_limit(
+                    image.width,
+                    image.height,
+                    Image.MAX_IMAGE_PIXELS,
+                ):
+                    raise Image.DecompressionBombError("raster exceeds decode limit")
+                image.load()
+                page_width, page_height = image.size
     except (
         OSError,
         SyntaxError,

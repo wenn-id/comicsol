@@ -3,6 +3,7 @@ import io
 import json
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -64,17 +65,30 @@ class CompositionTests(unittest.TestCase):
     def test_pixel_limit_fails_closed_before_page_is_written(self):
         output = self.project / "pages/page-001.png"
         pixel_count = 800 * 800
+        warning_filters = list(warnings.filters)
         with (
             patch("scripts.compose_pages.Image.MAX_IMAGE_PIXELS", pixel_count + 1),
             patch("scripts.raster_limits.MAX_DECODED_PIXELS", pixel_count - 1),
-            patch(
-                "warnings.catch_warnings",
-                side_effect=AssertionError("decode must not modify process-wide warning filters"),
-            ),
         ):
             with self.assertRaisesRegex(ValueError, "not a readable image"):
                 compose_page(self.project, 1, self.storyboard, self.settings, {})
 
+        self.assertEqual(warning_filters, warnings.filters)
+        self.assertFalse(output.exists())
+
+    def test_decompression_warning_fails_closed_before_page_is_written(self):
+        output = self.project / "pages/page-001.png"
+        pixel_count = 800 * 800
+        warning_filters = list(warnings.filters)
+        with (
+            patch("scripts.compose_pages.Image.MAX_IMAGE_PIXELS", pixel_count - 1),
+            patch("scripts.raster_limits.MAX_DECODED_PIXELS", pixel_count + 1),
+        ):
+            with self.assertRaisesRegex(ValueError, "not a readable image") as raised:
+                compose_page(self.project, 1, self.storyboard, self.settings, {})
+
+        self.assertIsInstance(raised.exception.__cause__, Image.DecompressionBombWarning)
+        self.assertEqual(warning_filters, warnings.filters)
         self.assertFalse(output.exists())
 
     def test_compose_main_honors_explicit_all_flag(self):
