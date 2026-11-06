@@ -16,6 +16,7 @@ from comic_sol_product.release import (
     wheel_metadata_member,
 )
 from comic_sol_product.runtime_contract import RUNTIME_SCRIPTS
+from comic_sol_product.skill_payload import SKILL_SHARED_FILES, shared_package_path
 from scripts import clean_install_smoke
 
 
@@ -30,9 +31,16 @@ class DistributionContractTests(unittest.TestCase):
         self.assertIn("comic_sol_product/engine/page_quality.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/pdf_quality.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/quality_sample.py", REQUIRED_WHEEL_MEMBERS)
+        self.assertIn("comic_sol_product/skill_payload.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn(
             "comic_sol_product/assets/fonts/ComicNeue-Regular.ttf", REQUIRED_WHEEL_MEMBERS
         )
+        self.assertIn("comic_sol_product/assets/fonts/NotoSans-Regular.ttf", REQUIRED_WHEEL_MEMBERS)
+        for relative in SKILL_SHARED_FILES:
+            self.assertIn(
+                f"comic_sol_product/{shared_package_path(relative)}", REQUIRED_WHEEL_MEMBERS
+            )
+            self.assertNotIn(f"comic_sol_product/skill/{relative}", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/templates/manifest.json", REQUIRED_WHEEL_MEMBERS)
         starter_files = (
             "source/input.txt",
@@ -87,6 +95,14 @@ class DistributionContractTests(unittest.TestCase):
 
     def test_distribution_validation_accepts_complete_archive(self):
         validate_wheel_members(REQUIRED_WHEEL_MEMBERS | {"extra.txt"})
+
+    def test_distribution_rejects_plugin_only_wheel_assets(self):
+        with self.assertRaisesRegex(ValueError, "build-only members"):
+            validate_wheel_members(
+                REQUIRED_WHEEL_MEMBERS | {"comic_sol_product/assets/comic-sol-logo.png"}
+            )
+        with self.assertRaisesRegex(ValueError, "non-runtime assets"):
+            validate_wheel_members(REQUIRED_WHEEL_MEMBERS | {"comic_sol_product/assets/unused.png"})
 
     def test_distribution_rejects_scripts_outside_runtime_inventory(self):
         with self.assertRaisesRegex(ValueError, "outside the runtime inventory"):
@@ -415,6 +431,16 @@ class PackagedSkillPayloadContractTests(unittest.TestCase):
             )
             if not _is_generated_bytecode(relative)
         }
+        repository = self.canonical.parents[1]
+        for relative in SKILL_SHARED_FILES:
+            skill_file = self.canonical / relative
+            shared_file = repository / relative
+            if (
+                skill_file.is_file()
+                and shared_file.is_file()
+                and skill_file.read_bytes() == shared_file.read_bytes()
+            ):
+                expected.discard(f"comic_sol_product/skill/{relative}")
         self.assertIn("comic_sol_product/skill/SKILL.md", expected)
         self.assertEqual(expected, canonical_skill_members(self.canonical))
         self.assertTrue(expected <= REQUIRED_WHEEL_MEMBERS)
@@ -424,26 +450,53 @@ class PackagedSkillPayloadContractTests(unittest.TestCase):
 
         from comic_sol_product.release import validate_wheel_skill_payload
 
+        def add_payload(archive, *, tamper=False):
+            repository = self.canonical.parents[1]
+            for relative in sorted(SKILL_SHARED_FILES):
+                source = repository / relative
+                if source.is_file():
+                    archive.writestr(
+                        f"comic_sol_product/{shared_package_path(relative)}",
+                        source.read_bytes(),
+                    )
+            for source in sorted(self.canonical.rglob("*")):
+                if not source.is_file():
+                    continue
+                relative = source.relative_to(self.canonical).as_posix()
+                if relative in SKILL_SHARED_FILES:
+                    shared_source = repository / relative
+                    if (
+                        shared_source.is_file()
+                        and source.read_bytes() == shared_source.read_bytes()
+                    ):
+                        continue
+                payload = b"tampered" if tamper and relative == "SKILL.md" else source.read_bytes()
+                archive.writestr(f"comic_sol_product/skill/{relative}", payload)
+
         with tempfile.TemporaryDirectory() as raw:
             wheel = Path(raw) / "payload.whl"
             with zipfile.ZipFile(wheel, "w") as archive:
-                for source in sorted(self.canonical.rglob("*")):
-                    if source.is_file():
-                        relative = source.relative_to(self.canonical).as_posix()
-                        archive.writestr(f"comic_sol_product/skill/{relative}", source.read_bytes())
+                add_payload(archive)
             with zipfile.ZipFile(wheel) as archive:
                 validate_wheel_skill_payload(archive, canonical_root=self.canonical)
 
             tampered = Path(raw) / "tampered.whl"
             with zipfile.ZipFile(tampered, "w") as archive:
-                for source in sorted(self.canonical.rglob("*")):
-                    if not source.is_file():
-                        continue
-                    relative = source.relative_to(self.canonical).as_posix()
-                    payload = b"tampered" if relative == "SKILL.md" else source.read_bytes()
-                    archive.writestr(f"comic_sol_product/skill/{relative}", payload)
+                add_payload(archive, tamper=True)
             with zipfile.ZipFile(tampered) as archive:
                 with self.assertRaisesRegex(ValueError, "payload.*does not match"):
+                    validate_wheel_skill_payload(archive, canonical_root=self.canonical)
+
+            duplicate = Path(raw) / "duplicate.whl"
+            relative = "scripts/comic_sol.py"
+            with zipfile.ZipFile(duplicate, "w") as archive:
+                add_payload(archive)
+                archive.writestr(
+                    f"comic_sol_product/skill/{relative}",
+                    (self.canonical / relative).read_bytes(),
+                )
+            with zipfile.ZipFile(duplicate) as archive:
+                with self.assertRaisesRegex(ValueError, "duplicates shared Skill payload"):
                     validate_wheel_skill_payload(archive, canonical_root=self.canonical)
 
     def test_sdist_payload_equality_is_verified_byte_for_byte(self):

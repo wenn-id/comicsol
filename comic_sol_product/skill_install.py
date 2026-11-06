@@ -16,6 +16,7 @@ from typing import Any
 
 from . import __version__
 from .errors import CliUsageError, UnsupportedSkillPlacementError
+from .skill_payload import SKILL_SHARED_FILES, shared_package_path
 
 MARKER_NAME = ".comic-sol-install.json"
 MAX_MARKER_BYTES = 64 * 1024
@@ -279,7 +280,25 @@ def _aggregate_digest(managed_paths: dict[str, str]) -> str:
     return digest.hexdigest()
 
 
-def _scan_payload(root: Path) -> tuple[dict[str, str], str]:
+def _scan_shared_payload(managed: dict[str, str], shared_files: dict[str, Path], total: int) -> int:
+    """Add verified shared package members to the managed payload inventory."""
+    for relative, source in sorted(shared_files.items()):
+        normalized = _validate_relative(relative)
+        if normalized != relative or relative in managed:
+            raise SkillVerificationError("shared Skill payload paths must be unique and canonical")
+        data = _read_regular(source)
+        total += len(data)
+        if total > MAX_PAYLOAD_BYTES:
+            raise UnsafeSkillPathError("the canonical bundle exceeds the size limit")
+        managed[relative] = hashlib.sha256(data).hexdigest()
+        if len(managed) > MAX_MANAGED_FILES:
+            raise UnsafeSkillPathError("the canonical bundle contains too many files")
+    return total
+
+
+def _scan_payload(
+    root: Path, *, shared_files: dict[str, Path] | None = None
+) -> tuple[dict[str, str], str]:
     root = _lexical_path(root, label="bundle root")
     _assert_directory(root, label="bundle root")
     managed: dict[str, str] = {}
@@ -309,15 +328,36 @@ def _scan_payload(root: Path) -> tuple[dict[str, str], str]:
                 managed[relative] = hashlib.sha256(data).hexdigest()
                 if len(managed) > MAX_MANAGED_FILES:
                     raise UnsafeSkillPathError("the canonical bundle contains too many files")
+    _scan_shared_payload(managed, shared_files or {}, total)
     if "SKILL.md" not in managed:
         raise SkillVerificationError("canonical Skill payload is missing SKILL.md")
     managed = dict(sorted(managed.items()))
     return managed, _aggregate_digest(managed)
 
 
+def _packaged_shared_files(root: Path) -> dict[str, Path]:
+    package_root = Path(__file__).resolve().parent
+    shared: dict[str, Path] = {}
+    for relative in sorted(SKILL_SHARED_FILES):
+        skill_file = root / relative
+        try:
+            metadata = skill_file.lstat()
+        except FileNotFoundError:
+            shared[relative] = package_root / shared_package_path(relative)
+            continue
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or _is_reparse_point(metadata)
+            or not stat.S_ISREG(metadata.st_mode)
+        ):
+            raise UnsafeSkillPathError("a shared Skill member is not a regular file")
+    return shared
+
+
 def bundle_digest(bundle_root: Path | None = None) -> str:
     root = bundle_root or Path(__file__).resolve().parent / "skill"
-    return _scan_payload(root)[1]
+    shared_files = _packaged_shared_files(root) if bundle_root is None else None
+    return _scan_payload(root, shared_files=shared_files)[1]
 
 
 def _destination_for(
@@ -424,9 +464,15 @@ def _copy_file(source: Path, destination: Path) -> None:
             os.close(descriptor)
 
 
-def _copy_payload(source: Path, destination: Path, managed: dict[str, str]) -> None:
+def _copy_payload(
+    source: Path,
+    destination: Path,
+    managed: dict[str, str],
+    *,
+    shared_files: dict[str, Path] | None = None,
+) -> None:
     for relative in managed:
-        source_file = source / relative
+        source_file = (shared_files or {}).get(relative, source / relative)
         target = destination / relative
         _mkdir_verified(target.parent)
         _copy_file(source_file, target)
@@ -715,7 +761,8 @@ def install_skill(
     source = _lexical_path(
         bundle_root or Path(__file__).resolve().parent / "skill", label="bundle root"
     )
-    managed, digest = _scan_payload(source)
+    shared_files = _packaged_shared_files(source) if bundle_root is None else None
+    managed, digest = _scan_payload(source, shared_files=shared_files)
 
     if not authorized.exists():
         _mkdir_verified(authorized)
@@ -777,7 +824,7 @@ def install_skill(
     exchanged = False
     try:
         staging.mkdir(mode=0o700)
-        _copy_payload(source, staging, managed)
+        _copy_payload(source, staging, managed, shared_files=shared_files)
         for relative in sorted(preserve_unmanaged):
             retained_path = staging / relative
             _mkdir_verified(retained_path.parent)

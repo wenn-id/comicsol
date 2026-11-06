@@ -14,6 +14,9 @@ ROOT = Path(__file__).resolve().parent
 RUNTIME_SCRIPTS = runpy.run_path(ROOT / "comic_sol_product" / "runtime_contract.py")[
     "RUNTIME_SCRIPTS"
 ]
+SKILL_PAYLOAD = runpy.run_path(ROOT / "comic_sol_product" / "skill_payload.py")
+SKILL_SHARED_FILES = SKILL_PAYLOAD["SKILL_SHARED_FILES"]
+shared_package_path = SKILL_PAYLOAD["shared_package_path"]
 # Byte-compilation output is environment-generated and must never enter the
 # packaged Skill payload, or the packaged bundle stops matching its source.
 _IGNORE_GENERATED = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
@@ -43,11 +46,15 @@ class build_py(_build_py):
             )
         for name in sorted(RUNTIME_SCRIPTS):
             shutil.copy2(script_root / name, engine_root / name)
-        for directory in ("assets", "templates"):
-            destination = package_root / directory
-            if destination.exists():
-                shutil.rmtree(destination)
-            shutil.copytree(ROOT / directory, destination)
+
+        assets_root = package_root / "assets"
+        if assets_root.exists():
+            shutil.rmtree(assets_root)
+        shutil.copytree(ROOT / "assets" / "fonts", assets_root / "fonts")
+        templates_root = package_root / "templates"
+        if templates_root.exists():
+            shutil.rmtree(templates_root)
+        shutil.copytree(ROOT / "templates", templates_root)
 
         # The Skill payload is the one already-synchronized canonical bundle,
         # copied verbatim. Never reassemble a second payload from independently
@@ -61,6 +68,15 @@ class build_py(_build_py):
                 "canonical Agent Skill bundle is missing: skills/comic-sol/SKILL.md"
             )
         shutil.copytree(canonical_skill, skill_root, ignore=_IGNORE_GENERATED)
+        for relative in sorted(SKILL_SHARED_FILES):
+            skill_file = skill_root / relative
+            shared_file = package_root / shared_package_path(relative)
+            if (
+                skill_file.is_file()
+                and shared_file.is_file()
+                and skill_file.read_bytes() == shared_file.read_bytes()
+            ):
+                skill_file.unlink()
 
 
 class sdist(_sdist):
