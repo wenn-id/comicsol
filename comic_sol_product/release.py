@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .runtime_contract import RUNTIME_SCRIPTS
+from .skill_payload import SKILL_SHARED_FILES, shared_package_path
 
 
 _PACKAGED_STARTER_IDS = (
@@ -55,9 +56,16 @@ def _canonical_skill_files(canonical_root: Path | None = None) -> dict[str, byte
 
 
 def canonical_skill_members(canonical_root: Path | None = None) -> frozenset[str]:
-    """Return every wheel member name for the complete synchronized bundle."""
+    """Return physical wheel members after subtracting byte-identical shared files."""
+    root = canonical_root or CANONICAL_SKILL_ROOT
+    repository_root = root.parents[1]
+    canonical = _canonical_skill_files(root)
     return frozenset(
-        f"{PACKAGED_SKILL_PREFIX}{relative}" for relative in _canonical_skill_files(canonical_root)
+        f"{PACKAGED_SKILL_PREFIX}{relative}"
+        for relative, payload in canonical.items()
+        if relative not in SKILL_SHARED_FILES
+        or not (repository_root / relative).is_file()
+        or (repository_root / relative).read_bytes() != payload
     )
 
 
@@ -77,9 +85,13 @@ _RUNTIME_ENGINE_MEMBERS = frozenset(
 REQUIRED_WHEEL_MEMBERS = frozenset(
     {
         "comic_sol_product/runtime_contract.py",
+        "comic_sol_product/skill_payload.py",
         "comic_sol_product/engine_api.py",
         "comic_sol_product/assets/fonts/ComicNeue-Regular.ttf",
         "comic_sol_product/assets/fonts/ComicNeue-Bold.ttf",
+        "comic_sol_product/assets/fonts/NotoSans-Regular.ttf",
+        "comic_sol_product/assets/fonts/OFL-ComicNeue.txt",
+        "comic_sol_product/assets/fonts/OFL-NotoSans.txt",
         "comic_sol_product/templates/manifest.json",
         "comic_sol_product/skill/SKILL.md",
         "comic_sol_product/skill/references/workflow.md",
@@ -99,6 +111,7 @@ REQUIRED_SDIST_SUFFIXES = frozenset(
     {
         "/SKILL.md",
         "/comic_sol_product/runtime_contract.py",
+        "/comic_sol_product/skill_payload.py",
         "/assets/fonts/ComicNeue-Regular.ttf",
         "/templates/manifest.json",
         "/references/workflow.md",
@@ -113,7 +126,13 @@ REQUIRED_SDIST_SUFFIXES = frozenset(
     }
 )
 
-FORBIDDEN_WHEEL_DATA_MEMBERS = frozenset({"comic_sol_product/engine/quality-matrix/README.md"})
+FORBIDDEN_WHEEL_DATA_MEMBERS = frozenset(
+    {
+        "comic_sol_product/engine/quality-matrix/README.md",
+        "comic_sol_product/assets/comic-sol-logo.png",
+        "comic_sol_product/assets/comic-sol-thumbnail.png",
+    }
+)
 
 REQUIRED_PROJECT_URLS = frozenset(
     {
@@ -160,10 +179,11 @@ def _compare_payload(packaged: dict[str, bytes], canonical: dict[str, bytes], *,
 def validate_wheel_skill_payload(
     archive: zipfile.ZipFile, *, canonical_root: Path | None = None
 ) -> None:
-    """Prove the wheel carries exactly the synchronized bundle, byte for byte."""
+    """Prove the wheel reconstructs the synchronized bundle from shared files."""
     canonical = _canonical_skill_files(canonical_root)
     packaged: dict[str, bytes] = {}
-    for name in archive.namelist():
+    names = archive.namelist()
+    for name in names:
         if name.startswith(PACKAGED_SKILL_PREFIX) and not name.endswith("/"):
             relative = name[len(PACKAGED_SKILL_PREFIX) :]
             if _is_generated_bytecode(relative):
@@ -171,6 +191,16 @@ def validate_wheel_skill_payload(
             if relative in packaged:
                 raise ValueError(f"wheel Skill payload contains a duplicate member: {relative}")
             packaged[relative] = archive.read(name)
+    for relative in sorted(SKILL_SHARED_FILES):
+        source_member = f"comic_sol_product/{shared_package_path(relative)}"
+        if names.count(source_member) != 1:
+            raise ValueError(f"wheel must contain one shared Skill source: {source_member}")
+        source_payload = archive.read(source_member)
+        if relative in packaged:
+            if packaged[relative] == source_payload:
+                raise ValueError(f"wheel duplicates shared Skill payload: {relative}")
+            continue
+        packaged[relative] = source_payload
     _compare_payload(packaged, canonical, kind="wheel")
 
 
@@ -214,6 +244,14 @@ def validate_wheel_members(members: Iterable[str]) -> None:
     forbidden = sorted(FORBIDDEN_WHEEL_DATA_MEMBERS & member_set)
     if forbidden:
         raise ValueError("wheel contains build-only members: " + ", ".join(forbidden))
+    non_runtime_assets = sorted(
+        member
+        for member in member_set
+        if member.startswith("comic_sol_product/assets/")
+        and not member.startswith("comic_sol_product/assets/fonts/")
+    )
+    if non_runtime_assets:
+        raise ValueError("wheel contains non-runtime assets: " + ", ".join(non_runtime_assets))
 
 
 def validate_wheel_metadata(metadata_text: str) -> None:

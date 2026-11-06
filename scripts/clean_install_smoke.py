@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -81,6 +82,36 @@ def smoke_mcp_import(python: Path, *, cwd: Path) -> None:
     run([str(python), "-c", program], cwd=cwd)
 
 
+def skill_payload_hashes(root: Path) -> dict[str, str]:
+    """Hash Skill files while excluding installer metadata and host bytecode."""
+    return {
+        path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in root.rglob("*")
+        if path.is_file()
+        and path.name != ".comic-sol-install.json"
+        and "__pycache__" not in path.relative_to(root).parts
+        and not path.name.endswith((".pyc", ".pyo"))
+    }
+
+
+def smoke_skill_install(python: Path, *, cwd: Path, root: Path, repository: Path) -> None:
+    """Install the wheel's Skill and compare it with the canonical bundle."""
+    home = root / "skill-home"
+    codex_home = home / ".codex"
+    program = (
+        "from pathlib import Path\n"
+        "from comic_sol_product.skill_install import install_skill\n"
+        "install_skill('codex', 'user', "
+        f"home=Path({json.dumps(str(home))}), "
+        f"codex_home=Path({json.dumps(str(codex_home))}))\n"
+    )
+    run([str(python), "-c", program], cwd=cwd)
+    canonical = repository / "skills" / "comic-sol"
+    installed = codex_home / "skills" / "comic-sol"
+    if skill_payload_hashes(canonical) != skill_payload_hashes(installed):
+        raise RuntimeError("installed Skill differs from the canonical bundle")
+
+
 def read_codex_entry(config: Path, output_root: Path, executable: Path) -> _CodexEntry:
     """Read and validate the exact MCP entry produced for Codex."""
     record = tomllib.loads(config.read_text(encoding="utf-8"))
@@ -157,6 +188,7 @@ def main() -> int:
         venv.EnvBuilder(with_pip=True, clear=True).create(environment_root)
         python, executable = venv_paths(environment_root)
         install_locked_wheel(python, lock, wheel, cwd=root)
+        smoke_skill_install(python, cwd=root, root=root, repository=repository)
         smoke_engine_api(python, cwd=root)
         if arguments.mcp:
             smoke_mcp_import(python, cwd=root)

@@ -28,6 +28,7 @@ TYPED_FILES = [
     "comic_sol_product/distribution.py",
     "comic_sol_product/portable.py",
     "comic_sol_product/runtime_contract.py",
+    "comic_sol_product/skill_payload.py",
     "comic_sol_product/engine_api.py",
     "comic_sol_product/skill_install.py",
     "comic_sol_product/__init__.py",

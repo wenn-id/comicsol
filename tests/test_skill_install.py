@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ from unittest import mock
 from comic_sol_product import __version__
 from comic_sol_product import skill_install
 from comic_sol_product.errors import CliUsageError
+from comic_sol_product.skill_payload import SKILL_SHARED_FILES, shared_package_path
 
 
 class SkillInstallTests(unittest.TestCase):
@@ -249,6 +251,50 @@ class SkillInstallTests(unittest.TestCase):
         self.assertEqual(sorted(expected), sorted(actual))
         self.assertEqual(expected, actual)
         self.assertEqual(skill_install.bundle_digest(canonical), result.bundle_digest)
+
+    def test_packaged_skill_reconstructs_shared_engine_and_font_files(self):
+        """Verify install reconstructs shared files from package copies."""
+        repository = Path(__file__).resolve().parents[1]
+        canonical = repository / "skills/comic-sol"
+        package = self.root / "package"
+        bundle = package / "skill"
+        shutil.copytree(
+            canonical,
+            bundle,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
+        for relative in SKILL_SHARED_FILES:
+            source = repository / relative
+            packaged_source = package / shared_package_path(relative)
+            self.assertTrue(source.is_file(), relative)
+            packaged_source.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, packaged_source)
+            bundled_file = bundle / relative
+            if bundled_file.is_file() and bundled_file.read_bytes() == packaged_source.read_bytes():
+                bundled_file.unlink()
+
+        with mock.patch.object(skill_install, "__file__", str(package / "skill_install.py")):
+            digest = skill_install.bundle_digest()
+            result = skill_install.install_skill(
+                "claude", "user", home=self.home, codex_home=self.codex_home
+            )
+
+        destination = Path(result.destination)
+
+        def hashes(root: Path) -> dict[str, str]:
+            """Hash managed members for an exact bundle comparison."""
+            return {
+                path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in root.rglob("*")
+                if path.is_file()
+                and not skill_install._is_unmanaged(path.relative_to(root).as_posix())
+                and path.name != skill_install.MARKER_NAME
+            }
+
+        self.assertEqual("installed", result.status)
+        self.assertEqual(skill_install.bundle_digest(canonical), digest)
+        self.assertEqual(digest, result.bundle_digest)
+        self.assertEqual(hashes(canonical), hashes(destination))
 
     def test_marker_contains_only_bounded_contract_fields(self):
         result = self.install("codex", "user")
