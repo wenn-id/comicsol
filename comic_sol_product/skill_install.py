@@ -127,16 +127,24 @@ def _is_unmanaged(relative: str) -> bool:
     ) or relative.endswith(_UNMANAGED_SUFFIXES)
 
 
-def _lexical_path(value: Path, *, label: str) -> Path:
+def _lexical_path(value: Path, *, label: str, expanduser: bool = True) -> Path:
     raw = os.fspath(value)
     if not raw or _has_control(raw):
         raise UnsafeSkillPathError(f"{label} contains a control character")
-    raw_path = Path(raw).expanduser()
+    raw_path = Path(raw).expanduser() if expanduser else Path(raw)
     if any(part == ".." for part in raw_path.parts):
         raise UnsafeSkillPathError(f"{label} contains traversal or a path alias")
     if not raw_path.is_absolute():
         raw_path = Path.cwd() / raw_path
     return raw_path.absolute()
+
+
+def _resolve_codex_home(home: Path, codex_home: Path | None) -> Path:
+    if codex_home is not None:
+        return _lexical_path(codex_home, label="CODEX_HOME")
+    value = os.environ.get("CODEX_HOME")
+    configured = Path(value) if value else home / ".codex"
+    return _lexical_path(configured, label="CODEX_HOME", expanduser=False)
 
 
 def _is_reparse_point(metadata: os.stat_result) -> bool:
@@ -632,8 +640,8 @@ def _exchange_paths(first: Path, second: Path) -> None:
     _fsync_directory(first.parent)
 
 
-def _installed_members(root: Path) -> set[str]:
-    """List every regular file under one verified install, marker excluded."""
+def _installed_members(root: Path, *, directories: set[str] | None = None) -> set[str]:
+    """List regular files under one install and optionally record directories."""
     members: set[str] = set()
     pending = [root]
     while pending:
@@ -645,6 +653,8 @@ def _installed_members(root: Path) -> set[str]:
                 if entry.is_symlink() or _is_reparse_point(metadata):
                     raise UnsafeSkillPathError("an installed member is a link")
                 if stat.S_ISDIR(metadata.st_mode):
+                    if directories is not None:
+                        directories.add(_validate_relative(relative))
                     pending.append(Path(entry.path))
                 elif stat.S_ISREG(metadata.st_mode):
                     if relative != MARKER_NAME:
@@ -652,6 +662,16 @@ def _installed_members(root: Path) -> set[str]:
                 else:
                     raise UnsafeSkillPathError("an installed member is not a regular file")
     return members
+
+
+def _member_parent_directories(members: set[str]) -> set[str]:
+    directories: set[str] = set()
+    for relative in members:
+        parent = Path(relative).parent
+        while parent != Path("."):
+            directories.add(parent.as_posix())
+            parent = parent.parent
+    return directories
 
 
 def _safe_remove_private_tree(path: Path) -> None:
@@ -675,12 +695,9 @@ def install_skill(
     bundle_root: Path | None = None,
     version: str = __version__,
 ) -> SkillOperationResult:
-    """Install one verified canonical Skill payload at one explicit host location."""
+    """Install one verified canonical Comic Sol Skill bundle at one explicit host location."""
     home_path = _lexical_path(home or Path.home(), label="home")
-    configured_codex = codex_home
-    if configured_codex is None:
-        configured_codex = Path(os.environ.get("CODEX_HOME", os.fspath(home_path / ".codex")))
-    codex_path = _lexical_path(configured_codex, label="CODEX_HOME")
+    codex_path = _resolve_codex_home(home_path, codex_home)
     if target == "auto":
         target = _auto_target(
             scope,
@@ -704,34 +721,56 @@ def install_skill(
         _mkdir_verified(authorized)
     _mkdir_verified(destination.parent)
     _assert_safe_components(destination)
+    existing_install = False
+    preserve_unmanaged: set[str] = set()
     if destination.exists():
         _assert_safe_tree(destination)
-        marker = _read_marker(destination)
-        if marker["target"] != target or marker["scope"] != scope:
-            raise InvalidSkillMarkerError(
-                "existing Comic Sol Skill marker targets another host or scope; no files were changed"
-            )
-        installed = marker["managed_paths"]
-        if marker["bundle_digest"] == digest:
-            if installed != managed or not _verify_payload(
-                destination, managed, allow_unknown=True
-            ):
-                raise SkillVerificationError(
-                    "existing Skill claims this digest but its managed files do not match"
+        existing_directories: set[str] = set()
+        existing_members = _installed_members(destination, directories=existing_directories)
+        if (destination / MARKER_NAME).exists():
+            marker = _read_marker(destination)
+            existing_install = True
+            if marker["target"] != target or marker["scope"] != scope:
+                raise InvalidSkillMarkerError(
+                    "existing Comic Sol Skill marker targets another host or scope; no files were changed"
                 )
-            return SkillOperationResult(
-                target,
-                scope,
-                "unchanged",
-                os.fspath(destination),
-                digest,
-                len(managed),
-                "Skill already matches the packaged bundle.",
-            )
-        if not _verify_payload(destination, installed):
-            raise SkillVerificationError(
-                "existing managed Skill files were modified or contain unknown files; upgrade refused"
-            )
+            installed = marker["managed_paths"]
+            preserve_unmanaged = {
+                relative for relative in existing_members if _is_unmanaged(relative)
+            }
+            if marker["bundle_digest"] == digest:
+                if installed != managed or not _verify_payload(
+                    destination, managed, allow_unknown=True
+                ):
+                    raise SkillVerificationError(
+                        "existing Skill claims this digest but its managed files do not match"
+                    )
+                return SkillOperationResult(
+                    target,
+                    scope,
+                    "unchanged",
+                    os.fspath(destination),
+                    digest,
+                    len(managed),
+                    "Skill already matches the packaged bundle.",
+                )
+            if not _verify_payload(destination, installed):
+                raise SkillVerificationError(
+                    "existing managed Skill files were modified or contain unknown files; upgrade refused"
+                )
+        else:
+            preserve_unmanaged = {
+                relative for relative in existing_members if _is_unmanaged(relative)
+            }
+            if (
+                not preserve_unmanaged
+                or preserve_unmanaged != existing_members
+                or not all(relative.endswith(_UNMANAGED_SUFFIXES) for relative in existing_members)
+                or existing_directories != _member_parent_directories(preserve_unmanaged)
+            ):
+                raise InvalidSkillMarkerError(
+                    "Comic Sol Skill marker is missing; no files were changed"
+                )
 
     staging = destination.with_name(f".{destination.name}.stage-{secrets.token_hex(8)}")
     published = False
@@ -739,6 +778,11 @@ def install_skill(
     try:
         staging.mkdir(mode=0o700)
         _copy_payload(source, staging, managed)
+        for relative in sorted(preserve_unmanaged):
+            retained_path = staging / relative
+            _mkdir_verified(retained_path.parent)
+            _copy_file(destination / relative, retained_path)
+            _fsync_directory(retained_path.parent)
         if not _verify_payload(staging, managed):
             raise SkillVerificationError("staged Skill payload digest verification failed")
         _write_marker(
@@ -781,8 +825,10 @@ def install_skill(
                 _fsync_directory(destination.parent)
                 published = False
             raise SkillVerificationError("published Skill marker verification failed")
-        status = "upgraded" if exchanged else "installed"
-        message = "Skill bundle upgraded transactionally." if exchanged else "Skill installed."
+        status = "upgraded" if exchanged and existing_install else "installed"
+        message = (
+            "Skill bundle upgraded transactionally." if status == "upgraded" else "Skill installed."
+        )
         return SkillOperationResult(
             target,
             scope,
@@ -806,10 +852,7 @@ def uninstall_skill(
 ) -> SkillOperationResult:
     """Remove unchanged marker-listed files and preserve everything else."""
     home_path = _lexical_path(home or Path.home(), label="home")
-    configured_codex = codex_home
-    if configured_codex is None:
-        configured_codex = Path(os.environ.get("CODEX_HOME", os.fspath(home_path / ".codex")))
-    codex_path = _lexical_path(configured_codex, label="CODEX_HOME")
+    codex_path = _resolve_codex_home(home_path, codex_home)
     destination, _ = _destination_for(
         target,
         scope,

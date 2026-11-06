@@ -54,13 +54,20 @@ class ClientSetupTests(unittest.TestCase):
             }
 
     def test_default_adapter_paths_are_platform_native(self):
-        with mock.patch.dict(os.environ, {"APPDATA": str(self.home / "Roaming")}):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "APPDATA": str(self.home / "Roaming"),
+                "CODEX_HOME": str(self.home / ".codex"),
+            },
+            clear=True,
+        ):
             windows = self.adapter_paths("win32")
-        macos = self.adapter_paths("darwin")
-        linux = self.adapter_paths("linux")
+            macos = self.adapter_paths("darwin")
+            linux = self.adapter_paths("linux")
 
         self.assertEqual(
-            self.home / "Roaming/Claude/claude_desktop_config.json",
+            self.home / "AppData/Roaming/Claude/claude_desktop_config.json",
             windows["claude-desktop"],
         )
         self.assertEqual(
@@ -79,6 +86,61 @@ class ClientSetupTests(unittest.TestCase):
         for paths in (windows, macos, linux):
             for name, expected in shared.items():
                 self.assertEqual(expected, paths[name])
+
+    def test_empty_codex_home_falls_back_to_home_dot_codex(self):
+        with mock.patch.dict(os.environ, {"CODEX_HOME": ""}, clear=True):
+            paths = self.adapter_paths("linux")
+
+        self.assertEqual(self.home / ".codex/config.toml", paths["codex"])
+
+    def test_codex_home_tilde_is_not_expanded(self):
+        with mock.patch.dict(os.environ, {"CODEX_HOME": "~/.codex-work"}, clear=True):
+            paths = self.adapter_paths("linux")
+
+        self.assertEqual(Path("~/.codex-work/config.toml"), paths["codex"])
+
+    def test_windows_appdata_is_used_when_home_is_not_supplied(self):
+        appdata = self.home / "redirected roaming"
+        environment = {
+            "APPDATA": str(appdata),
+            "CODEX_HOME": str(self.home / ".codex"),
+        }
+        with mock.patch.object(client_setup.sys, "platform", "win32"):
+            with mock.patch.object(client_setup.Path, "home", return_value=self.home):
+                with mock.patch.dict(os.environ, environment, clear=True):
+                    paths = {
+                        adapter.name: adapter.config_path
+                        for adapter in client_setup.default_adapters()
+                    }
+
+        self.assertEqual(
+            appdata / "Claude/claude_desktop_config.json",
+            paths["claude-desktop"],
+        )
+
+    def test_setup_configures_codex_home_instead_of_home_dot_codex(self):
+        codex_home = self.home / "configured Codex home"
+        config = codex_home / "config.toml"
+        config.parent.mkdir(parents=True)
+        config.write_text('model = "gpt-5"\n', encoding="utf-8")
+        decoy = self.home / ".codex/config.toml"
+        decoy.parent.mkdir(parents=True)
+        decoy.write_text('model = "keep-this-file"\n', encoding="utf-8")
+        original_decoy = decoy.read_bytes()
+
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}, clear=True):
+            results = setup_clients(
+                self.output,
+                selected=["codex"],
+                home=self.home,
+                executable=self.launcher,
+            )
+
+        codex_result = next(result for result in results if result.client == "codex")
+        self.assertEqual("configured", codex_result.status)
+        self.assertEqual(config, Path(codex_result.config_path))
+        self.assertIn("comic-sol", tomllib.loads(config.read_text(encoding="utf-8"))["mcp_servers"])
+        self.assertEqual(original_decoy, decoy.read_bytes())
 
     def test_json_setup_creates_backup_and_exact_entry(self):
         config = self.home / ".cursor" / "mcp.json"

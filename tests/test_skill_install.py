@@ -80,6 +80,27 @@ class SkillInstallTests(unittest.TestCase):
                 self.assertEqual("installed", result.status)
                 self.assertTrue((expected / "SKILL.md").is_file())
 
+    def test_empty_codex_home_uses_default_home_for_install_and_uninstall(self):
+        with mock.patch.dict(os.environ, {"CODEX_HOME": ""}, clear=True):
+            result = self.install("codex", "user", codex_home=None)
+            removed = self.uninstall("codex", "user", codex_home=None)
+
+        expected = self.home / ".codex/skills/comic-sol"
+        self.assertEqual(expected, Path(result.destination))
+        self.assertEqual("uninstalled", removed.status)
+        self.assertFalse((expected / "SKILL.md").exists())
+
+    def test_codex_home_environment_keeps_tilde_literal_for_install_and_uninstall(self):
+        with mock.patch.object(skill_install.Path, "cwd", return_value=self.root):
+            with mock.patch.dict(os.environ, {"CODEX_HOME": "~/.codex-work"}, clear=True):
+                result = self.install("codex", "user", codex_home=None)
+                removed = self.uninstall("codex", "user", codex_home=None)
+
+        expected = self.root / "~/.codex-work/skills/comic-sol"
+        self.assertEqual(expected, Path(result.destination))
+        self.assertEqual("uninstalled", removed.status)
+        self.assertFalse((expected / "SKILL.md").exists())
+
     def test_bytecode_caches_never_affect_the_digest_or_the_payload(self):
         """Byte-compilation is environment-dependent, so it must never be managed.
 
@@ -126,6 +147,7 @@ class SkillInstallTests(unittest.TestCase):
 
         self.assertEqual("upgraded", second.status)
         self.assertEqual("# Comic Sol v2\n", (destination / "SKILL.md").read_text())
+        self.assertEqual(b"\x00compiled", (compiled / "tool.cpython-311.pyc").read_bytes())
 
     def test_uninstall_preserves_host_generated_bytecode_caches(self):
         installed = self.install("claude", "user")
@@ -139,6 +161,26 @@ class SkillInstallTests(unittest.TestCase):
         self.assertEqual("preserved", result.status)
         self.assertTrue((compiled / "tool.cpython-311.pyc").is_file())
         self.assertFalse((destination / "SKILL.md").exists())
+
+    def test_reinstall_after_uninstall_preserves_host_generated_bytecode_caches(self):
+        installed = self.install("claude", "user")
+        destination = Path(installed.destination)
+        compiled = destination / "scripts/__pycache__"
+        compiled.mkdir(parents=True)
+        cache = compiled / "tool.cpython-311.pyc"
+        cache.write_bytes(b"\x00compiled")
+
+        removed = self.uninstall("claude", "user")
+        self.assertEqual("preserved", removed.status)
+        self.assertTrue(cache.is_file())
+        self.assertFalse((destination / "SKILL.md").exists())
+
+        reinstalled = self.install("claude", "user")
+
+        self.assertEqual("installed", reinstalled.status)
+        self.assertEqual(b"\x00compiled", cache.read_bytes())
+        self.assertTrue((destination / skill_install.MARKER_NAME).is_file())
+        self.assertEqual("unchanged", self.install("claude", "user").status)
 
     def test_binary_payload_survives_text_mode_hazards_verbatim(self):
         """Binary members must round-trip exactly, including CRLF and Ctrl-Z.
@@ -554,6 +596,44 @@ class SkillInstallTests(unittest.TestCase):
             result = self.uninstall("claude", "user")
             self.assertEqual("not-installed", result.status)
             self.assertEqual("not managed\n", protected.read_text())
+
+    def test_install_rejects_unmarked_directory_with_non_bytecode_data(self):
+        destination = self.home / ".claude/skills/comic-sol"
+        destination.mkdir(parents=True)
+        protected = destination / "notes.txt"
+        protected.write_text("keep this data\n")
+
+        with self.assertRaisesRegex(skill_install.InvalidSkillMarkerError, "marker is missing"):
+            self.install("claude", "user")
+
+        self.assertEqual("keep this data\n", protected.read_text())
+
+    def test_install_rejects_non_bytecode_file_inside_unmarked_pycache(self):
+        destination = self.home / ".claude/skills/comic-sol"
+        protected = destination / "scripts/__pycache__/notes.txt"
+        protected.parent.mkdir(parents=True)
+        protected.write_text("keep this data\n")
+
+        with self.assertRaisesRegex(skill_install.InvalidSkillMarkerError, "marker is missing"):
+            self.install("claude", "user")
+
+        self.assertEqual("keep this data\n", protected.read_text())
+        self.assertFalse((destination / skill_install.MARKER_NAME).exists())
+
+    def test_install_rejects_unrelated_empty_directory_with_unmarked_bytecode(self):
+        destination = self.home / ".claude/skills/comic-sol"
+        cache = destination / "scripts/__pycache__/tool.cpython-311.pyc"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(b"\x00compiled")
+        unrelated = destination / "user-data"
+        unrelated.mkdir()
+
+        with self.assertRaisesRegex(skill_install.InvalidSkillMarkerError, "marker is missing"):
+            self.install("claude", "user")
+
+        self.assertEqual(b"\x00compiled", cache.read_bytes())
+        self.assertTrue(unrelated.is_dir())
+        self.assertFalse((destination / skill_install.MARKER_NAME).exists())
 
     def test_preserved_uninstall_is_idempotent(self):
         installed = self.install("claude", "user")
