@@ -9,6 +9,8 @@ and run wherever a Docker engine is available.
 
 import json
 import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -34,6 +36,29 @@ from scripts.container_sbom import (  # noqa: E402
 
 def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
+
+
+class ContainerSbomImportContractTests(unittest.TestCase):
+    def test_import_preserves_path_before_loading_mcp_server(self):
+        program = "\n".join(
+            (
+                "import importlib, importlib.util, sys",
+                "before = sys.path.copy()",
+                "importlib.import_module('scripts.container_sbom')",
+                "assert sys.path == before",
+                "if importlib.util.find_spec('mcp') is not None:",
+                "    from comic_sol_product.mcp import _load_server",
+                "    _load_server()",
+            )
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", program],
+            cwd=ROOT,
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
 
 
 class ComposeHardeningContractTests(unittest.TestCase):

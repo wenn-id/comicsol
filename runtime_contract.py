@@ -1,3 +1,6 @@
-"""Import-safe distribution inventory contracts."""
+"""Compatibility exports for the canonical package runtime inventory."""
 
-REQUIRED_RUNTIME_SCRIPTS = frozenset({"dogfood_report.py", "version.py"})
+from comic_sol_product.runtime_contract import (
+    REQUIRED_RUNTIME_SCRIPTS as REQUIRED_RUNTIME_SCRIPTS,
+    RUNTIME_SCRIPTS as RUNTIME_SCRIPTS,
+)

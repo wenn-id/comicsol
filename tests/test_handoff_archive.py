@@ -1990,11 +1990,14 @@ class HandoffArchiveDistributionInventoryTests(unittest.TestCase):
         self.assertIn("comic_sol_product/engine/handoff_archive.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("/scripts/handoff_archive.py", REQUIRED_SDIST_SUFFIXES)
 
-    def test_source_packaging_discovers_archive_module_without_build_only_exclusion(self):
+    def test_source_packaging_uses_the_canonical_runtime_inventory(self):
+        from comic_sol_product.runtime_contract import RUNTIME_SCRIPTS
+
         root = Path(__file__).resolve().parents[1]
         setup_text = (root / "setup.py").read_text(encoding="utf-8")
-        self.assertIn('(ROOT / "scripts").glob("*.py")', setup_text)
-        self.assertNotIn('"handoff_archive.py",', setup_text)
+        self.assertIn("RUNTIME_SCRIPTS", setup_text)
+        self.assertIn('ROOT / "comic_sol_product" / "runtime_contract.py"', setup_text)
+        self.assertIn("handoff_archive.py", RUNTIME_SCRIPTS)
         self.assertTrue((root / "scripts/handoff_archive.py").is_file())
 
 

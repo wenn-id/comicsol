@@ -512,12 +512,11 @@ class DogfoodSummaryContractTests(unittest.TestCase):
         self.assertEqual(EXPECTED_MARKDOWN, markdown_output.read_text(encoding="utf-8"))
         self.assertEqual("dogfood-summary-ok: 3 valid reports\n", stdout.getvalue())
 
-    def test_build_only_registration_excludes_runtime_and_skill_payloads(self) -> None:
-        setup = (ROOT / "setup.py").read_text(encoding="utf-8")
-        runtime_contract = (ROOT / "runtime_contract.py").read_text(encoding="utf-8")
+    def test_runtime_inventory_excludes_summary_and_skill_payloads(self) -> None:
+        from comic_sol_product.runtime_contract import RUNTIME_SCRIPTS
+
         plugin_bundle = (ROOT / "scripts/sync_plugin_bundle.py").read_text(encoding="utf-8")
-        self.assertIn('"dogfood_summary.py"', setup)
-        self.assertNotIn("dogfood_summary.py", runtime_contract)
+        self.assertNotIn("dogfood_summary.py", RUNTIME_SCRIPTS)
         self.assertNotIn("dogfood_summary.py", plugin_bundle)
         self.assertFalse((ROOT / "skills/comic-sol/scripts/dogfood_summary.py").exists())
 

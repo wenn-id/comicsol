@@ -9,6 +9,8 @@ from email.parser import HeaderParser
 from pathlib import Path
 from typing import Iterable
 
+from .runtime_contract import RUNTIME_SCRIPTS
+
 
 _PACKAGED_STARTER_IDS = (
     "minimal-one-page",
@@ -66,21 +68,16 @@ def _skill_inventory() -> frozenset[str]:
     return frozenset()
 
 
+_ENGINE_MODULE_PREFIX = "comic_sol_product/engine/"
+_RUNTIME_ENGINE_MEMBERS = frozenset(
+    {f"{_ENGINE_MODULE_PREFIX}{name}" for name in RUNTIME_SCRIPTS}
+    | {f"{_ENGINE_MODULE_PREFIX}__init__.py"}
+)
+
 REQUIRED_WHEEL_MEMBERS = frozenset(
     {
-        "comic_sol_product/engine/comic_sol.py",
+        "comic_sol_product/runtime_contract.py",
         "comic_sol_product/engine_api.py",
-        "comic_sol_product/engine/dogfood_report.py",
-        "comic_sol_product/engine/handoff.py",
-        "comic_sol_product/engine/handoff_archive.py",
-        "comic_sol_product/engine/quality_records.py",
-        "comic_sol_product/engine/normalize_panels.py",
-        "comic_sol_product/engine/typography.py",
-        "comic_sol_product/engine/layouts.py",
-        "comic_sol_product/engine/page_quality.py",
-        "comic_sol_product/engine/pdf_quality.py",
-        "comic_sol_product/engine/quality_sample.py",
-        "comic_sol_product/engine/starter_templates.py",
         "comic_sol_product/assets/fonts/ComicNeue-Regular.ttf",
         "comic_sol_product/assets/fonts/ComicNeue-Bold.ttf",
         "comic_sol_product/templates/manifest.json",
@@ -89,6 +86,7 @@ REQUIRED_WHEEL_MEMBERS = frozenset(
         "comic_sol_product/skill/references/visual-qa.md",
         "comic_sol_product/skill/references/starter-templates.md",
     }
+    | _RUNTIME_ENGINE_MEMBERS
     | {
         f"comic_sol_product/templates/starters/v1/{starter_id}/{relative}"
         for starter_id in _PACKAGED_STARTER_IDS
@@ -100,17 +98,14 @@ REQUIRED_WHEEL_MEMBERS = frozenset(
 REQUIRED_SDIST_SUFFIXES = frozenset(
     {
         "/SKILL.md",
-        "/scripts/comic_sol.py",
-        "/scripts/dogfood_report.py",
-        "/scripts/handoff.py",
-        "/scripts/handoff_archive.py",
-        "/scripts/starter_templates.py",
+        "/comic_sol_product/runtime_contract.py",
         "/assets/fonts/ComicNeue-Regular.ttf",
         "/templates/manifest.json",
         "/references/workflow.md",
         "/references/starter-templates.md",
         "/comic_sol_product/cli.py",
     }
+    | {f"/scripts/{name}" for name in RUNTIME_SCRIPTS}
     | {
         f"/templates/starters/v1/{starter_id}/{relative}"
         for starter_id in _PACKAGED_STARTER_IDS
@@ -118,20 +113,7 @@ REQUIRED_SDIST_SUFFIXES = frozenset(
     }
 )
 
-FORBIDDEN_WHEEL_MEMBERS = frozenset(
-    {
-        "comic_sol_product/engine/assemble_release.py",
-        "comic_sol_product/engine/benchmark.py",
-        "comic_sol_product/engine/benchmark_summary.py",
-        "comic_sol_product/engine/build_portable.py",
-        "comic_sol_product/engine/clean_install_smoke.py",
-        "comic_sol_product/engine/installed_mcp_smoke.py",
-        "comic_sol_product/engine/portable_release_smoke.py",
-        "comic_sol_product/engine/test_quality_matrix.py",
-        "comic_sol_product/engine/support.py",
-        "comic_sol_product/engine/quality-matrix/README.md",
-    }
-)
+FORBIDDEN_WHEEL_DATA_MEMBERS = frozenset({"comic_sol_product/engine/quality-matrix/README.md"})
 
 REQUIRED_PROJECT_URLS = frozenset(
     {
@@ -218,7 +200,17 @@ def validate_wheel_members(members: Iterable[str]) -> None:
     missing = sorted(REQUIRED_WHEEL_MEMBERS - member_set)
     if missing:
         raise ValueError("wheel is missing required members: " + ", ".join(missing))
-    forbidden = sorted(FORBIDDEN_WHEEL_MEMBERS & member_set)
+    engine_modules = {
+        member
+        for member in member_set
+        if member.startswith(_ENGINE_MODULE_PREFIX) and member.endswith(".py")
+    }
+    unexpected = sorted(engine_modules - _RUNTIME_ENGINE_MEMBERS)
+    if unexpected:
+        raise ValueError(
+            "wheel contains engine modules outside the runtime inventory: " + ", ".join(unexpected)
+        )
+    forbidden = sorted(FORBIDDEN_WHEEL_DATA_MEMBERS & member_set)
     if forbidden:
         raise ValueError("wheel contains build-only members: " + ", ".join(forbidden))
 

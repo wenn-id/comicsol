@@ -689,10 +689,9 @@ class DogfoodReportTests(unittest.TestCase):
 
     def test_release_inventory_requires_runtime_report_module(self):
         from comic_sol_product.release import REQUIRED_SDIST_SUFFIXES, REQUIRED_WHEEL_MEMBERS
+        from comic_sol_product.runtime_contract import RUNTIME_SCRIPTS
 
-        from runtime_contract import REQUIRED_RUNTIME_SCRIPTS
-
-        self.assertIn("dogfood_report.py", REQUIRED_RUNTIME_SCRIPTS)
+        self.assertIn("dogfood_report.py", RUNTIME_SCRIPTS)
         self.assertIn("comic_sol_product/engine/dogfood_report.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("/scripts/dogfood_report.py", REQUIRED_SDIST_SUFFIXES)
 
