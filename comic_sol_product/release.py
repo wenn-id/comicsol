@@ -196,6 +196,7 @@ def validate_sdist_skill_payload(
 
 
 def validate_wheel_members(members: Iterable[str]) -> None:
+    """Validate required members and reject engine modules outside the runtime inventory."""
     member_set = set(members)
     missing = sorted(REQUIRED_WHEEL_MEMBERS - member_set)
     if missing:

@@ -23,6 +23,7 @@ class build_py(_build_py):
     """Copy canonical engine modules and runtime assets into the wheel build tree."""
 
     def run(self) -> None:
+        """Rebuild the engine package from the canonical runtime inventory."""
         super().run()
         package_root = Path(self.build_lib) / "comic_sol_product"
         engine_root = package_root / "engine"

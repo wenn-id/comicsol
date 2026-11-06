@@ -56,6 +56,7 @@ class DistributionContractTests(unittest.TestCase):
         self.assertIn("comic_sol_product/engine/handoff_archive.py", REQUIRED_WHEEL_MEMBERS)
 
     def test_runtime_inventory_is_the_only_engine_module_source(self):
+        """Keep wheel and sdist requirements aligned with the runtime inventory."""
         for name in RUNTIME_SCRIPTS:
             self.assertIn(f"comic_sol_product/engine/{name}", REQUIRED_WHEEL_MEMBERS)
             self.assertIn(f"/scripts/{name}", REQUIRED_SDIST_SUFFIXES)

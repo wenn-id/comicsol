@@ -1033,6 +1033,7 @@ class NativeDistributionContractTests(unittest.TestCase):
             self.assertNotIn("def _cmap_glyph_id", text)
 
     def test_version_sources_and_quality_runtime_are_consistent(self):
+        """Ensure release metadata stays aligned with packaged runtime modules."""
         from comic_sol_product.runtime_contract import RUNTIME_SCRIPTS
 
         root = Path(__file__).resolve().parents[1]
