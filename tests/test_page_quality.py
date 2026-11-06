@@ -4,6 +4,7 @@ import math
 import shutil
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -126,16 +127,14 @@ class PageQualityTests(unittest.TestCase):
         record = self._build_record()
         write_page_quality_record(self.project, 1, record)
         pixel_count = 1600 * 2400
+        warning_filters = list(warnings.filters)
         with (
             patch("scripts.page_quality.Image.MAX_IMAGE_PIXELS", pixel_count - 1),
             patch("scripts.raster_limits.MAX_DECODED_PIXELS", pixel_count + 1),
-            patch(
-                "warnings.catch_warnings",
-                side_effect=AssertionError("decode must not modify process-wide warning filters"),
-            ),
         ):
             issues = validate_page_quality(self.project, 1)
 
+        self.assertEqual(warning_filters, warnings.filters)
         self.assertTrue(
             any(
                 issue.field == "bindings"
@@ -145,6 +144,22 @@ class PageQualityTests(unittest.TestCase):
             ),
             issues,
         )
+
+    def test_page_decompression_warning_rejects_page_quality_record(self):
+        pixel_count = 1600 * 2400
+        warning_filters = list(warnings.filters)
+        with (
+            patch("scripts.page_quality.Image.MAX_IMAGE_PIXELS", pixel_count - 1),
+            patch("scripts.raster_limits.MAX_DECODED_PIXELS", pixel_count + 1),
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "page image is unreadable or exceeds the decode limit",
+            ) as raised:
+                self._build_record()
+
+        self.assertIsInstance(raised.exception.__cause__, Image.DecompressionBombWarning)
+        self.assertEqual(warning_filters, warnings.filters)
 
     def test_tail_warning_requires_failed_region_and_records_warning(self):
         checks = reviewer_checks(self.project)

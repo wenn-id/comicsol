@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import sys
+import warnings
 from pathlib import Path
 from typing import cast
 
@@ -152,20 +153,22 @@ def _compose_to_bytes(
     for panel, _, source_payload in sources:
         x, y, width, height = _rect(panel)
         try:
-            with Image.open(io.BytesIO(source_payload)) as source:
-                if exceeds_decoded_pixel_limit(
-                    source.width,
-                    source.height,
-                    Image.MAX_IMAGE_PIXELS,
-                ):
-                    raise Image.DecompressionBombError("raster exceeds decode limit")
-                source.load()
-                fitted = ImageOps.fit(
-                    source.convert("RGB"),
-                    (width, height),
-                    method=Image.Resampling.LANCZOS,
-                    centering=(0.5, 0.5),
-                )
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with Image.open(io.BytesIO(source_payload)) as source:
+                    if exceeds_decoded_pixel_limit(
+                        source.width,
+                        source.height,
+                        Image.MAX_IMAGE_PIXELS,
+                    ):
+                        raise Image.DecompressionBombError("raster exceeds decode limit")
+                    source.load()
+                    fitted = ImageOps.fit(
+                        source.convert("RGB"),
+                        (width, height),
+                        method=Image.Resampling.LANCZOS,
+                        centering=(0.5, 0.5),
+                    )
         except (
             OSError,
             SyntaxError,
