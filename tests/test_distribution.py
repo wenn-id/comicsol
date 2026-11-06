@@ -1033,13 +1033,15 @@ class NativeDistributionContractTests(unittest.TestCase):
             self.assertNotIn("def _cmap_glyph_id", text)
 
     def test_version_sources_and_quality_runtime_are_consistent(self):
+        """Ensure release metadata stays aligned with packaged runtime modules."""
+        from comic_sol_product.runtime_contract import RUNTIME_SCRIPTS
+
         root = Path(__file__).resolve().parents[1]
         pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
         package = (root / "comic_sol_product/__init__.py").read_text(encoding="utf-8")
         distribution = (root / "comic_sol_product/distribution.py").read_text(encoding="utf-8")
         assembler = (root / "scripts/assemble_release.py").read_text(encoding="utf-8")
         compose = (root / "compose.yaml").read_text(encoding="utf-8")
-        release_contract = (root / "comic_sol_product/release.py").read_text(encoding="utf-8")
         version = (root / "comic_sol_product/version.py").read_text(encoding="utf-8")
         self.assertIn('dynamic = ["version"]', pyproject)
         self.assertIn("from .version import VERSION", package)
@@ -1055,7 +1057,7 @@ class NativeDistributionContractTests(unittest.TestCase):
             "pdf_quality.py",
             "quality_sample.py",
         ):
-            self.assertIn(module, release_contract)
+            self.assertIn(module, RUNTIME_SCRIPTS)
 
 
 if __name__ == "__main__":

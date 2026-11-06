@@ -70,6 +70,17 @@ def smoke_engine_api(python: Path, *, cwd: Path) -> None:
     run([str(python), "-c", program], cwd=cwd)
 
 
+def smoke_mcp_import(python: Path, *, cwd: Path) -> None:
+    program = (
+        "import importlib.util\n"
+        "assert importlib.util.find_spec('comic_sol_product.engine.container_sbom') is None\n"
+        "assert importlib.util.find_spec('comic_sol_product.engine.release_evidence') is None\n"
+        "from comic_sol_product.mcp import _load_server\n"
+        "_load_server()\n"
+    )
+    run([str(python), "-c", program], cwd=cwd)
+
+
 def read_codex_entry(config: Path, output_root: Path, executable: Path) -> _CodexEntry:
     """Read and validate the exact MCP entry produced for Codex."""
     record = tomllib.loads(config.read_text(encoding="utf-8"))
@@ -147,6 +158,8 @@ def main() -> int:
         python, executable = venv_paths(environment_root)
         install_locked_wheel(python, lock, wheel, cwd=root)
         smoke_engine_api(python, cwd=root)
+        if arguments.mcp:
+            smoke_mcp_import(python, cwd=root)
 
         output_root = root / "projects"
         doctor = json.loads(

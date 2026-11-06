@@ -4,11 +4,12 @@ import tomllib
 import unittest
 from pathlib import Path
 
+from comic_sol_product.runtime_contract import RUNTIME_SCRIPTS
+
 
 ROOT = Path(__file__).parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
 WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
-SETUP = ROOT / "setup.py"
 TYPED_FILES = [
     "scripts/project_io.py",
     "scripts/core_primitives.py",
@@ -26,6 +27,7 @@ TYPED_FILES = [
     "comic_sol_product/config.py",
     "comic_sol_product/distribution.py",
     "comic_sol_product/portable.py",
+    "comic_sol_product/runtime_contract.py",
     "comic_sol_product/engine_api.py",
     "comic_sol_product/skill_install.py",
     "comic_sol_product/__init__.py",
@@ -137,8 +139,8 @@ class QualityGateContractTests(unittest.TestCase):
         self.assertNotIn("blocking_quality", workflow)
         self.assertNotIn("continue-on-error", workflow)
         self.assertIn("quality-coverage", workflow)
-        self.assertIn('"check_coverage.py"', SETUP.read_text(encoding="utf-8"))
-        self.assertIn('"check_ruff_baseline.py"', SETUP.read_text(encoding="utf-8"))
+        self.assertNotIn("check_coverage.py", RUNTIME_SCRIPTS)
+        self.assertNotIn("check_ruff_baseline.py", RUNTIME_SCRIPTS)
 
     def test_release_caller_gates_the_exact_sha_without_a_relaxed_mode(self):
         release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")

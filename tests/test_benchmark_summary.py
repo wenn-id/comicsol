@@ -686,13 +686,14 @@ class SummaryCommandTests(TemporaryRootTestCase):
 
 class SummaryIntegrationTests(unittest.TestCase):
     def test_summary_tool_is_a_repository_gate_not_a_shipped_script(self):
-        from comic_sol_product.release import FORBIDDEN_WHEEL_MEMBERS
+        from comic_sol_product.release import REQUIRED_WHEEL_MEMBERS
+        from comic_sol_product.runtime_contract import RUNTIME_SCRIPTS
         from scripts.sync_plugin_bundle import BUNDLED_SCRIPTS
 
         self.assertNotIn("benchmark_summary.py", BUNDLED_SCRIPTS)
         self.assertFalse((ROOT / "skills/comic-sol/scripts/benchmark_summary.py").exists())
-        self.assertIn('"benchmark_summary.py"', (ROOT / "setup.py").read_text(encoding="utf-8"))
-        self.assertIn("comic_sol_product/engine/benchmark_summary.py", FORBIDDEN_WHEEL_MEMBERS)
+        self.assertNotIn("benchmark_summary.py", RUNTIME_SCRIPTS)
+        self.assertNotIn("comic_sol_product/engine/benchmark_summary.py", REQUIRED_WHEEL_MEMBERS)
 
     def test_gating_metrics_are_every_metric_except_the_repair_rate(self):
         self.assertEqual(set(METRIC_IDS) - {"repair_rate"}, set(GATING_METRIC_IDS))

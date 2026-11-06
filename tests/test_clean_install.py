@@ -8,7 +8,6 @@ from pathlib import Path
 from unittest import mock
 
 from comic_sol_product.release import (
-    FORBIDDEN_WHEEL_MEMBERS,
     REQUIRED_SDIST_SUFFIXES,
     REQUIRED_WHEEL_MEMBERS,
     validate_sdist_members,
@@ -16,6 +15,7 @@ from comic_sol_product.release import (
     validate_wheel_metadata,
     wheel_metadata_member,
 )
+from comic_sol_product.runtime_contract import RUNTIME_SCRIPTS
 from scripts import clean_install_smoke
 
 
@@ -55,6 +55,24 @@ class DistributionContractTests(unittest.TestCase):
         self.assertIn("comic_sol_product/engine/handoff.py", REQUIRED_WHEEL_MEMBERS)
         self.assertIn("comic_sol_product/engine/handoff_archive.py", REQUIRED_WHEEL_MEMBERS)
 
+    def test_runtime_inventory_is_the_only_engine_module_source(self):
+        """Keep wheel and sdist requirements aligned with the runtime inventory."""
+        for name in RUNTIME_SCRIPTS:
+            self.assertIn(f"comic_sol_product/engine/{name}", REQUIRED_WHEEL_MEMBERS)
+            self.assertIn(f"/scripts/{name}", REQUIRED_SDIST_SUFFIXES)
+        for name in (
+            "build_examples.py",
+            "container_runtime_audit.py",
+            "container_sbom.py",
+            "materialize_sample.py",
+            "release_evidence.py",
+            "release_qualification.py",
+            "release_visual_gate.py",
+            "sync_plugin_bundle.py",
+        ):
+            self.assertNotIn(name, RUNTIME_SCRIPTS)
+            self.assertNotIn(f"comic_sol_product/engine/{name}", REQUIRED_WHEEL_MEMBERS)
+
     def test_handoff_scripts_are_required_sdist_members(self):
         self.assertIn("/scripts/handoff.py", REQUIRED_SDIST_SUFFIXES)
         self.assertIn("/scripts/handoff_archive.py", REQUIRED_SDIST_SUFFIXES)
@@ -70,18 +88,23 @@ class DistributionContractTests(unittest.TestCase):
     def test_distribution_validation_accepts_complete_archive(self):
         validate_wheel_members(REQUIRED_WHEEL_MEMBERS | {"extra.txt"})
 
-    def test_distribution_rejects_build_only_scripts(self):
-        with self.assertRaisesRegex(ValueError, "build-only"):
-            validate_wheel_members(REQUIRED_WHEEL_MEMBERS | FORBIDDEN_WHEEL_MEMBERS)
+    def test_distribution_rejects_scripts_outside_runtime_inventory(self):
+        with self.assertRaisesRegex(ValueError, "outside the runtime inventory"):
+            validate_wheel_members(
+                REQUIRED_WHEEL_MEMBERS | {"comic_sol_product/engine/container_sbom.py"}
+            )
 
     def test_distribution_forbids_test_fixture_content_from_runtime(self):
-        forbidden = {
+        unlisted = {
             "comic_sol_product/engine/test_quality_matrix.py",
             "comic_sol_product/engine/support.py",
-            "comic_sol_product/engine/quality-matrix/README.md",
         }
+        with self.assertRaisesRegex(ValueError, "outside the runtime inventory"):
+            validate_wheel_members(REQUIRED_WHEEL_MEMBERS | unlisted)
         with self.assertRaisesRegex(ValueError, "build-only"):
-            validate_wheel_members(REQUIRED_WHEEL_MEMBERS | forbidden)
+            validate_wheel_members(
+                REQUIRED_WHEEL_MEMBERS | {"comic_sol_product/engine/quality-matrix/README.md"}
+            )
 
     def test_sdist_contract_covers_source_skill_and_runtime_assets(self):
         members = {f"comic-sol-2.0.0.dev0{suffix}" for suffix in REQUIRED_SDIST_SUFFIXES}
