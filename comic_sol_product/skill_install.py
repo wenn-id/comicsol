@@ -745,7 +745,9 @@ def install_skill(
                 relative for relative in existing_members if _is_unmanaged(relative)
             }
             if not preserve_unmanaged or preserve_unmanaged != existing_members:
-                _read_marker(destination)
+                raise InvalidSkillMarkerError(
+                    "Comic Sol Skill marker is missing; no files were changed"
+                )
 
     staging = destination.with_name(f".{destination.name}.stage-{secrets.token_hex(8)}")
     published = False

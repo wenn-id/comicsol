@@ -63,8 +63,8 @@ class ClientSetupTests(unittest.TestCase):
             clear=True,
         ):
             windows = self.adapter_paths("win32")
-        macos = self.adapter_paths("darwin")
-        linux = self.adapter_paths("linux")
+            macos = self.adapter_paths("darwin")
+            linux = self.adapter_paths("linux")
 
         self.assertEqual(
             self.home / "AppData/Roaming/Claude/claude_desktop_config.json",
@@ -86,6 +86,12 @@ class ClientSetupTests(unittest.TestCase):
         for paths in (windows, macos, linux):
             for name, expected in shared.items():
                 self.assertEqual(expected, paths[name])
+
+    def test_empty_codex_home_falls_back_to_home_dot_codex(self):
+        with mock.patch.dict(os.environ, {"CODEX_HOME": ""}, clear=True):
+            paths = self.adapter_paths("linux")
+
+        self.assertEqual(self.home / ".codex/config.toml", paths["codex"])
 
     def test_windows_appdata_is_used_when_home_is_not_supplied(self):
         appdata = self.home / "redirected roaming"
