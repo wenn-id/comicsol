@@ -19,6 +19,7 @@ from scripts.letter_panels import (  # noqa: E402
 )
 from scripts.comic_sol import atomic_write_json, read_json  # noqa: E402
 from scripts.schema import UnsupportedSchemaVersionError  # noqa: E402
+from scripts.project_io import ProjectLock  # noqa: E402
 
 FIXTURES = ROOT / "tests/fixtures"
 
@@ -1709,6 +1710,27 @@ class LetteringFixtureIntegrationTests(unittest.TestCase):
                 for path in sorted(project.rglob("*"))
             }
             self.assertEqual(before, after)
+
+    def test_storyboard_provenance_hash_is_read_under_project_lock(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            shutil.copytree(FIXTURES / "valid-one-page", project)
+            from scripts import letter_panels as letter_panels_module
+
+            real_sha256_file = letter_panels_module.sha256_file
+            storyboard_path = project.resolve() / "plan/storyboard.json"
+            hashed_paths = []
+
+            def hash_file(path):
+                if Path(path) == storyboard_path:
+                    self.assertIn(project.resolve(), ProjectLock._held_locks())
+                    hashed_paths.append(Path(path))
+                return real_sha256_file(path)
+
+            with mock.patch("scripts.letter_panels.sha256_file", side_effect=hash_file):
+                letter_project(project)
+
+            self.assertEqual([storyboard_path], hashed_paths)
 
     def test_valid_fixture_letters_three_panels_from_semantic_files(self):
         with tempfile.TemporaryDirectory() as temporary:

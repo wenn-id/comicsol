@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install pip-tools
-        run: python -m pip install --disable-pip-version-check 'pip-tools==7.6.1'
+        run: python -m pip install --disable-pip-version-check 'pip-tools==7.6.2'
       - name: Refresh platform-specific locks
         shell: bash
         run: |
@@ -99,7 +99,7 @@ jobs:
           body: |
             Refresh generated hash locks from their canonical `requirements/*.in` inputs.
 
-            The locks were compiled with `pip-tools==7.6.1` on native Linux, macOS, and Windows runners. Review the platform-specific diffs and required CI checks before merging.
+            The locks were compiled with `pip-tools==7.6.2` on native Linux, macOS, and Windows runners. Review the platform-specific diffs and required CI checks before merging.
 
             Related: #365.
   dispatch-tests:
