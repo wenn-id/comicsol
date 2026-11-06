@@ -103,6 +103,74 @@ def _end_of_value(text: str, offset: int) -> int:
     return end
 
 
+def _json_mapping_span(text: str, mapping_key: str) -> tuple[int, int] | None:
+    document = json.loads(text)
+    if not isinstance(document, dict):
+        raise ValueError("client config root must be an object")
+
+    decoder = json.JSONDecoder()
+    root_start = next(index for index, character in enumerate(text) if not character.isspace())
+    _, root_end = decoder.raw_decode(text, root_start)
+    mappings = [
+        member
+        for member in _json_member_spans(text, root_start + 1, root_end - 1)
+        if member[0] == mapping_key
+    ]
+    if not mappings:
+        return None
+    if len(mappings) != 1:
+        raise ValueError(f"{mapping_key} mapping is ambiguous")
+
+    _, mapping_start, mapping_end = mappings[0]
+    _, key_end = decoder.raw_decode(text, mapping_start)
+    value_start = key_end
+    while value_start < mapping_end and text[value_start].isspace():
+        value_start += 1
+    if value_start >= mapping_end or text[value_start] != ":":
+        raise ValueError(f"{mapping_key} mapping could not be located")
+    value_start += 1
+    while value_start < mapping_end and text[value_start].isspace():
+        value_start += 1
+    mapping, mapping_end = decoder.raw_decode(text, value_start)
+    if not isinstance(mapping, dict):
+        raise ValueError(f"{mapping_key} must be an object")
+    return value_start, mapping_end
+
+
+def _remove_json_member(
+    text: str, container_start: int, container_end: int, member_key: str
+) -> str | None:
+    members = _json_member_spans(text, container_start, container_end)
+    owned = [index for index, member in enumerate(members) if member[0] == member_key]
+    if not owned:
+        return None
+    if len(owned) != 1:
+        raise ValueError(f"{member_key} entry is ambiguous")
+
+    index = owned[0]
+    _, member_start, member_end = members[index]
+    if len(members) == 1:
+        _, key_end = json.JSONDecoder().raw_decode(text, member_start)
+        colon = key_end
+        while colon < container_end and text[colon] in " \t\r\n":
+            colon += 1
+        if colon >= container_end or text[colon] != ":":
+            raise ValueError(f"{member_key} entry separator could not be located")
+        value_end = _end_of_value(text, colon + 1)
+        return text[:container_start] + text[value_end:]
+    if index == 0:
+        comma = text.find(",", member_end, members[1][1])
+        if comma < 0:
+            raise ValueError(f"{member_key} entry separator could not be located")
+        return text[:container_start] + text[comma + 1 :]
+
+    previous_end = members[index - 1][2]
+    comma = text.find(",", previous_end, member_start)
+    if comma < 0:
+        raise ValueError(f"{member_key} entry separator could not be located")
+    return text[:previous_end] + text[member_end:]
+
+
 @runtime_checkable
 class ClientAdapter(Protocol):
     name: str
@@ -234,7 +302,10 @@ class JsonClientAdapter:
 
             mapping_indent_start = text.rfind("\n", 0, member_start) + 1
             mapping_indent = _indent_of(text[mapping_indent_start:])
-            mapping_body = text[value_start + 1 : servers_end - 1].rstrip()
+            mapping_body_start = value_start + 1
+            mapping_body_end = servers_end - 1
+            mapping_whitespace = text[mapping_body_start:mapping_body_end]
+            mapping_body = mapping_whitespace.rstrip()
             if mapping_body:
                 first_member = next(line for line in mapping_body.splitlines() if line.strip())
                 member_indent = _indent_of(first_member)
@@ -251,27 +322,41 @@ class JsonClientAdapter:
                     + text[servers_end - 1 :]
                 ).encode("utf-8")
             return (
-                text[: value_start + 1]
+                text[:mapping_body_start]
                 + "\n"
                 + member_indent
                 + padded
-                + "\n"
-                + text[servers_end - 1 :]
+                + mapping_whitespace
+                + text[mapping_body_end:]
             ).encode("utf-8")
 
         if servers is not None:
             raise ValueError(f"{self.servers_key} mapping could not be located")
-        stripped = text.rstrip()
-        if not stripped.endswith("}"):
-            raise ValueError("client config root object could not be located")
-        body = stripped[:-1].rstrip()
         member_indent = "  "
         member = f"{owned_key}: {entry_text}"
         padded = member.replace("\n", "\n" + member_indent * 2)
         addition = f"{member_indent}{json.dumps(self.servers_key)}: {{\n{member_indent * 2}{padded}\n{member_indent}}}"
-        if body.endswith("{"):
-            return (body + "\n" + addition + "\n}\n").encode("utf-8")
-        return (body + ",\n" + addition + "\n}\n").encode("utf-8")
+        if root_members:
+            insert_at = root_end - 1
+            while insert_at > root_start + 1 and text[insert_at - 1] in " \t\r\n":
+                insert_at -= 1
+            separator = ",\n"
+        else:
+            insert_at = root_start + 1
+            separator = "\n"
+        return (text[:insert_at] + separator + addition + text[insert_at:]).encode("utf-8")
+
+    def unpublish(self, raw: bytes) -> bytes:
+        """Return raw with the product-owned server entry removed."""
+        text = raw.decode("utf-8")
+        span = _json_mapping_span(text, self.servers_key)
+        if span is None:
+            return raw
+        value_start, mapping_end = span
+        updated = _remove_json_member(text, value_start + 1, mapping_end - 1, MCP_SERVER_NAME)
+        if updated is None:
+            return raw
+        return updated.encode("utf-8")
 
     def verify(self, expected: dict[str, Any] | None = None) -> bool:
         if self._verify_hook is not None:
