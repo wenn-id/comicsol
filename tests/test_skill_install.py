@@ -296,6 +296,26 @@ class SkillInstallTests(unittest.TestCase):
         self.assertEqual(digest, result.bundle_digest)
         self.assertEqual(hashes(canonical), hashes(destination))
 
+    def test_default_bundle_installs_from_source_checkout(self):
+        repository = Path(__file__).resolve().parents[1]
+        canonical = repository / "skills/comic-sol"
+        source_module = repository / "comic_sol_product/skill_install.py"
+        expected_digest = skill_install.bundle_digest(canonical)
+
+        with mock.patch.object(skill_install, "__file__", str(source_module)):
+            result = skill_install.install_skill(
+                "claude",
+                "user",
+                home=self.home,
+                codex_home=self.codex_home,
+            )
+            default_digest = skill_install.bundle_digest()
+
+        self.assertEqual("installed", result.status)
+        self.assertEqual(expected_digest, result.bundle_digest)
+        self.assertEqual(expected_digest, default_digest)
+        self.assertTrue((Path(result.destination) / "SKILL.md").is_file())
+
     def test_marker_contains_only_bounded_contract_fields(self):
         result = self.install("codex", "user")
         destination = Path(result.destination)
