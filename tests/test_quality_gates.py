@@ -161,7 +161,12 @@ class QualityGateContractTests(unittest.TestCase):
         self.assertIn("requirements/locks/quality-linux-x86_64.txt", workflow)
         self.assertIn("name: Quality gates", workflow)
         self.assertIn("python scripts/check_ruff_baseline.py", workflow)
+        self.assertIn("python -m ruff check .github/scripts", workflow)
         self.assertIn("python -m ruff format --check", workflow)
+        self.assertIn(
+            "python -m ruff format --check scripts comic_sol_product tests integrations .github/scripts",
+            workflow,
+        )
         self.assertIn("python -m mypy", workflow)
         self.assertIn("python -m mypy --platform win32 --show-error-codes", workflow)
         self.assertIn("python -m coverage run", workflow)

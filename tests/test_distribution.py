@@ -342,6 +342,12 @@ class NativeDistributionContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "portable runtime is missing"):
             validate_runtime_members({"comic-sol/comic-sol"})
 
+    def test_portable_runtime_requires_cpython_license(self):
+        python_license = "comic-sol/_internal/licenses/python/LICENSE.txt"
+        members = (REQUIRED_RUNTIME_SUFFIXES - {python_license}) | {"comic-sol/comic-sol"}
+        with self.assertRaisesRegex(ValueError, re.escape(python_license)):
+            validate_runtime_members(members)
+
     def test_portable_archive_contains_required_runtime(self):
         from comic_sol_product.portable import create_portable_archive
 
@@ -872,40 +878,38 @@ class NativeDistributionContractTests(unittest.TestCase):
                 else:
                     self.assertRegex(reference, r"^[^@]+@[0-9a-f]{40}$")
 
-    def test_release_native_matrix_pins_python_available_on_every_runner(self):
-        """Each native leg must pin a CPython that actually ships for its runner.
-
-        CPython 3.11 is in security-only maintenance, so actions/python-versions
-        stops publishing macOS and Windows binaries after 3.11.9 and continues
-        with Linux-only builds. One patch pin shared by all three legs therefore
-        fails setup-python on macOS and Windows, which skips the publish job and
-        produces a tag with no release.
-        """
+    def test_release_native_matrix_uses_supported_runtime_sources(self):
+        """Each native release leg must use its verified runtime source and pin."""
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
         native = workflow.split("\n  native:\n", 1)[1].split("\n  container:\n", 1)[0]
 
-        self.assertIn("python-version: ${{ matrix.python }}", native)
+        self.assertIn("python-version: ${{ matrix.bootstrap_python }}", native)
+        self.assertIn("if: matrix.runtime_source == 'standalone'", native)
+        self.assertIn(".github/scripts/install_standalone_python.py", native)
         self.assertNotRegex(
             native,
             r"python-version:[ \t]*'?\d+\.\d+\.\d+",
-            "native legs must resolve the interpreter per platform, not share one patch pin",
+            "native legs must resolve the bootstrap interpreter from the matrix",
         )
 
         legs = self._native_legs(native)
         self.assertEqual({"linux", "macos", "windows"}, set(legs), legs)
+        expected = {
+            "linux": ("3.11.15", "3.11.15", "actions"),
+            "macos": ("3.11.18", "3.11.9", "standalone"),
+            "windows": ("3.11.18", "3.11.9", "standalone"),
+        }
+        for platform, (runtime, bootstrap, source) in expected.items():
+            self.assertEqual(runtime, legs[platform]["python"], legs[platform])
+            self.assertEqual(bootstrap, legs[platform]["bootstrap_python"], legs[platform])
+            self.assertEqual(source, legs[platform]["runtime_source"], legs[platform])
 
-        # Newest 3.11 patch release carrying macOS and Windows binaries in
-        # actions/python-versions versions-manifest.json.
-        last_cross_platform_311 = (3, 11, 9)
-        for platform in ("macos", "windows"):
-            pinned = tuple(int(part) for part in legs[platform]["python"].split("."))
-            self.assertLessEqual(
-                pinned,
-                last_cross_platform_311,
-                f"{platform} pins Python {legs[platform]['python']}, "
-                f"which ships no {platform} binary",
-            )
+        tests_workflow = (root / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        self.assertIn("native-distribution-standalone-platform:", tests_workflow)
+        self.assertIn("python .github/scripts/install_standalone_python.py", tests_workflow)
+        self.assertIn("python scripts/clean_install_smoke.py", tests_workflow)
+        self.assertIn("python scripts/portable_release_smoke.py", tests_workflow)
 
     def test_release_publishes_macos_arm64_not_x86_64(self):
         """The macOS release must be arm64 at every stage that names an arch.
@@ -960,7 +964,7 @@ class NativeDistributionContractTests(unittest.TestCase):
         for chunk in native.split("- os:")[1:]:
             fields = dict(
                 re.findall(
-                    r"^[ \t]*(platform|arch|python):[ \t]*'?([^'\n]+?)'?[ \t]*$",
+                    r"^[ \t]*(platform|arch|python|bootstrap_python|runtime_source):[ \t]*'?([^'\n]+?)'?[ \t]*$",
                     chunk,
                     re.M,
                 )

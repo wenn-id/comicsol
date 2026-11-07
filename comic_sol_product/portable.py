@@ -24,6 +24,7 @@ REQUIRED_RUNTIME_SUFFIXES = frozenset(
         "comic-sol/_internal/comic_sol_product/skill/SKILL.md",
         "comic-sol/_internal/comic_sol_product/skill/references/workflow.md",
         "comic-sol/_internal/comic_sol_product/skill/references/starter-templates.md",
+        "comic-sol/_internal/licenses/python/LICENSE.txt",
     }
     | {
         f"comic-sol/_internal/comic_sol_product/templates/starters/v1/{starter_id}/{relative}"
