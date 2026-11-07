@@ -739,6 +739,70 @@ class ProjectTransactionTests(unittest.TestCase):
 
         self.assertFalse(transaction_dir.exists())
 
+    def _write_unpublished_journal_temp_file(self, transaction_dir: Path) -> Path:
+        """Leave the temporary filename used while publishing the initial journal."""
+        with tempfile.NamedTemporaryFile(
+            "wb",
+            dir=transaction_dir,
+            prefix=".journal.json.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(b'{"phase":"staging"')
+        return Path(handle.name)
+
+    def test_recover_removes_unpublished_journal_temp_file(self):
+        transaction_dir = self.project / "logs/transactions/3"
+        transaction_dir.mkdir(parents=True)
+        temporary = self._write_unpublished_journal_temp_file(transaction_dir)
+
+        project_io.ProjectTransaction.recover(self.project)
+
+        self.assertFalse(temporary.exists())
+        self.assertFalse(transaction_dir.exists())
+
+    def test_recover_preserves_journal_temp_when_unrecognized_data_is_present(self):
+        transaction_dir = self.project / "logs/transactions/3"
+        transaction_dir.mkdir(parents=True)
+        temporary = self._write_unpublished_journal_temp_file(transaction_dir)
+        marker = transaction_dir / "unrecognized.bin"
+        marker.write_bytes(b"keep")
+
+        project_io.ProjectTransaction.recover(self.project)
+
+        self.assertEqual(b'{"phase":"staging"', temporary.read_bytes())
+        self.assertEqual(b"keep", marker.read_bytes())
+        self.assertTrue(transaction_dir.is_dir())
+
+    def test_recover_preserves_symlink_with_journal_temp_name(self):
+        transaction_dir = self.project / "logs/transactions/3"
+        transaction_dir.mkdir(parents=True)
+        outside = self.project.parent / "outside.bin"
+        outside.write_bytes(b"keep")
+        temporary = transaction_dir / ".journal.json.abcd1234.tmp"
+        try:
+            temporary.symlink_to(outside)
+        except (OSError, NotImplementedError):
+            if os.name != "nt":
+                raise
+            self.skipTest("creating file symlinks requires Windows privileges")
+
+        project_io.ProjectTransaction.recover(self.project)
+
+        self.assertTrue(temporary.is_symlink())
+        self.assertEqual(b"keep", outside.read_bytes())
+
+    def test_recover_preserves_journal_backup_name_without_temp_token(self):
+        transaction_dir = self.project / "logs/transactions/3"
+        transaction_dir.mkdir(parents=True)
+        marker = transaction_dir / ".journal.json.backup.tmp"
+        marker.write_bytes(b"keep")
+
+        project_io.ProjectTransaction.recover(self.project)
+
+        self.assertEqual(b"keep", marker.read_bytes())
+        self.assertTrue(transaction_dir.is_dir())
+
     def test_recover_preserves_nonempty_journal_less_transaction_directory(self):
         transaction_dir = self.project / "logs/transactions/3"
         transaction_dir.mkdir(parents=True)

@@ -67,6 +67,8 @@ _LOCK_BYTE_OFFSET = 4096
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _HAS_NOFOLLOW = _O_NOFOLLOW != 0
 _REPARSE_POINT = 0x400
+# Match tempfile's eight-character token, not arbitrary journal backup names.
+_JOURNAL_TEMP_NAME = re.compile(r"\.journal\.json\.[a-z0-9_]{8}\.tmp")
 
 
 def _binary_fdopen(descriptor: int, mode: str) -> BinaryIO:
@@ -913,6 +915,19 @@ def _find_transaction_dir(transaction_dir: Path) -> int:
     return biggest + 1
 
 
+def _is_journal_temp_file(path: Path) -> bool:
+    """Return whether path is a regular journal publication temporary."""
+    if _JOURNAL_TEMP_NAME.fullmatch(path.name) is None:
+        return False
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return False
+    return stat.S_ISREG(metadata.st_mode) and not (
+        getattr(metadata, "st_file_attributes", 0) & _REPARSE_POINT
+    )
+
+
 class ProjectTransaction:
     """Durable journal-backed all-or-nothing batch of file replacements.
 
@@ -1277,6 +1292,14 @@ class ProjectTransaction:
                     ):
                         continue
                     try:
+                        children = list(tx_dir.iterdir())
+                    except OSError:
+                        continue
+                    if children and not all(_is_journal_temp_file(child) for child in children):
+                        continue
+                    try:
+                        for child in children:
+                            child.unlink()
                         tx_dir.rmdir()
                     except OSError:
                         continue
