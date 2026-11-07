@@ -1126,6 +1126,13 @@ class CreatorPositioningMetadataTests(unittest.TestCase):
             for phrase in forbidden:
                 self.assertNotIn(phrase, normalized)
 
+    def test_codex_marketplace_source_is_pinned_to_a_commit(self):
+        """Require the plugin source to use a reviewed, immutable Git snapshot."""
+        source = self.marketplace["plugins"][0]["source"]
+        self.assertEqual("url", source["source"])
+        self.assertEqual("https://github.com/wenn-id/comicsol.git", source["url"])
+        self.assertRegex(source["sha"], r"^[0-9a-f]{40}$")
+
     def test_metadata_schemas_preserve_identity_version_and_permissions(self):
         """Keep identity, version, permission, and policy fields unchanged."""
         self.assertEqual("comic-sol", self.plugin["name"])

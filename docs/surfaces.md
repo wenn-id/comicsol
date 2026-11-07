@@ -62,6 +62,8 @@ The same repository doubles as a skills-only Codex Plugin
 is synchronized from the canonical root files, so behavior and defaults are
 identical to the Skill checkout.
 
+- The marketplace pins its Git source to a full commit SHA; change the pin only
+  when intentionally refreshing the plugin bundle to a reviewed commit.
 - **How you start it:** install the plugin through Codex's repo marketplace and
   start a fresh session.
 - **Default output root:** the platform default in the table above.

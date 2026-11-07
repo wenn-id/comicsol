@@ -404,9 +404,73 @@ jobs:
           path: source-assets/*
           if-no-files-found: error
 
+  candidate-preflight:
+    name: Validate candidate artifacts with read-only permissions
+    needs: [prepare, full-tests, codeql, benchmark, live-visual, native, container, source]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact_inventory_sha256: ${{ steps.artifact-inventory.outputs.artifact_inventory_sha256 }}
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.11.15'
+      - name: Install pinned release validator
+        run: python -m pip install --require-hashes -r requirements/locks/release-linux-x86_64.txt
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: comic-sol-*
+          path: bundles
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: live-visual-evidence
+          path: bundles/live-visual-evidence
+      - name: Validate native bundles and SBOM schemas
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from comic_sol_product.distribution import ReleaseIdentity, validate_sbom_schema, verify_release_directory
+
+          root = Path("bundles")
+          for platform, arch in (("linux", "x86_64"), ("macos", "arm64"), ("windows", "x86_64")):
+              bundle = root / f"comic-sol-{platform}-{arch}"
+              identity = ReleaseIdentity(os.environ["RELEASE_VERSION"], platform, arch)
+              verify_release_directory(bundle, identity)
+              validate_sbom_schema(bundle / f"{identity.stem}.sbom.json")
+          PY
+      - name: Capture current-run artifact metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence-work
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+            > evidence-work/actions-artifacts.json
+      - name: Hash current-run artifact identities
+        id: artifact-inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/release_artifact_inventory.py \
+            --input evidence-work/actions-artifacts.json \
+            --output evidence-work/actions-artifact-identities.json
+
   candidate:
     name: Publish immutable prerelease candidate
-    needs: [prepare, full-tests, codeql, benchmark, live-visual, native, container, source]
+    needs: [prepare, full-tests, codeql, benchmark, live-visual, native, container, source, candidate-preflight]
     runs-on: ubuntu-latest
     environment:
       name: release-production
@@ -429,6 +493,7 @@ jobs:
       APPROVED_BYPASS_ACTORS: ${{ needs.prepare.outputs.approved_bypass_actors }}
       LIVE_VISUAL_SUMMARY_SHA256: ${{ needs.live-visual.outputs.summary_sha256 }}
       LIVE_VISUAL_REVIEWER_ATTESTATION_SHA256: ${{ needs.live-visual.outputs.reviewer_attestation_sha256 }}
+      EXPECTED_ARTIFACT_INVENTORY_SHA256: ${{ needs.candidate-preflight.outputs.artifact_inventory_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -438,8 +503,6 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.11.15'
-      - name: Install pinned release validator
-        run: python -m pip install --require-hashes -r requirements/locks/release-linux-x86_64.txt
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: comic-sol-*
@@ -448,6 +511,17 @@ jobs:
         with:
           name: live-visual-evidence
           path: bundles/live-visual-evidence
+      - name: Capture and bind current-run Actions artifact identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence-work
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+            > evidence-work/actions-artifacts.json
+          python scripts/release_artifact_inventory.py \
+            --input evidence-work/actions-artifacts.json \
+            --output evidence-work/actions-artifact-identities.json \
+            --expected-sha256 "$EXPECTED_ARTIFACT_INVENTORY_SHA256"
       - name: Verify Actions artifacts and create global SHA256SUMS
         shell: bash
         run: |
@@ -455,14 +529,13 @@ jobs:
           import hashlib
           import os
           from pathlib import Path
-          from comic_sol_product.distribution import ReleaseIdentity, validate_sbom_schema, verify_release_directory
+          from comic_sol_product.distribution import ReleaseIdentity, verify_release_directory
           root = Path("bundles")
           records = []
           for platform, arch in (("linux", "x86_64"), ("macos", "arm64"), ("windows", "x86_64")):
               bundle = root / f"comic-sol-{platform}-{arch}"
               identity = ReleaseIdentity(os.environ["RELEASE_VERSION"], platform, arch)
               verify_release_directory(bundle, identity)
-              validate_sbom_schema(bundle / f"{identity.stem}.sbom.json")
               for path in sorted(bundle.iterdir()):
                   if path.name != "SHA256SUMS":
                       records.append((path.name, hashlib.sha256(path.read_bytes()).hexdigest()))
@@ -491,13 +564,6 @@ jobs:
         run: |
           set -eu
           cosign sign-blob --yes --bundle bundles/SHA256SUMS.sigstore.json bundles/SHA256SUMS
-      - name: Capture current-run Actions artifact identities
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p evidence-work
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
-            > evidence-work/actions-artifacts.json
       - name: Create immutable candidate identity
         id: identity
         shell: bash
@@ -518,42 +584,16 @@ jobs:
               payloads.append({"name": name, "sha256": digest})
           manifest_sha = hashlib.sha256((root / "SHA256SUMS").read_bytes()).hexdigest()
           signature_sha = hashlib.sha256((root / "SHA256SUMS.sigstore.json").read_bytes()).hexdigest()
-          artifact_response = json.loads(
-              Path("evidence-work/actions-artifacts.json").read_text(encoding="utf-8")
+          actions_artifacts = json.loads(
+              Path("evidence-work/actions-artifact-identities.json").read_text(encoding="utf-8")
           )
-          expected_artifacts = {
-              "benchmark-results",
-              "comic-sol-container",
-              "comic-sol-linux-x86_64",
-              "comic-sol-macos-arm64",
-              "comic-sol-source",
-              "comic-sol-windows-x86_64",
-              "live-visual-evidence",
-          }
-          artifacts_by_name = {}
-          for artifact in artifact_response.get("artifacts", []):
-              name = artifact.get("name")
-              if name in expected_artifacts:
-                  if name in artifacts_by_name:
-                      raise RuntimeError(f"duplicate Actions artifact for current run: {name}")
-                  if artifact.get("expired"):
-                      raise RuntimeError(f"Actions artifact already expired: {name}")
-                  artifacts_by_name[name] = artifact
-          if set(artifacts_by_name) != expected_artifacts:
-              raise RuntimeError(
-                  f"current-run Actions artifact identity mismatch: "
-                  f"{sorted(expected_artifacts ^ set(artifacts_by_name))}"
-              )
-          actions_artifacts = []
-          for name in sorted(artifacts_by_name):
-              artifact = artifacts_by_name[name]
-              actions_artifacts.append(
-                  {
-                      key: artifact.get(key)
-                      for key in ("id", "name", "digest", "url", "archive_download_url")
-                      if artifact.get(key) is not None
-                  }
-              )
+          if not isinstance(actions_artifacts, list):
+              raise RuntimeError("candidate Actions artifact identity is invalid")
+          artifact_inventory_sha256 = hashlib.sha256(
+              json.dumps(actions_artifacts, sort_keys=True, separators=(",", ":")).encode("utf-8")
+          ).hexdigest()
+          if artifact_inventory_sha256 != os.environ["EXPECTED_ARTIFACT_INVENTORY_SHA256"]:
+              raise RuntimeError("candidate Actions artifact identity changed after verification")
           live_visual_path = root / "live-visual-evidence" / "v2.2-live-visual-summary.json"
           live_visual_bytes = live_visual_path.read_bytes()
           live_visual_sha256 = hashlib.sha256(live_visual_bytes).hexdigest()
