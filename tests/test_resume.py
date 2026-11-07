@@ -2959,6 +2959,43 @@ class BlockedRecoveryTests(unittest.TestCase):
         self.assertIn("agent required: generation", output.getvalue())
 
 
+class SourceCliJsonParseFailureTests(unittest.TestCase):
+    def invoke(self, argv: list[str]) -> tuple[int, str, str]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                code = main(argv)
+            except SystemExit as error:
+                code = int(error.code)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_json_parse_failures_emit_one_canonical_envelope(self):
+        for argv in (["status", "--json"], ["resume-plan", "--json"]):
+            with self.subTest(argv=argv):
+                code, stdout, stderr = self.invoke(argv)
+
+                self.assertEqual(2, code)
+                self.assertEqual("", stderr)
+                self.assertEqual(1, len(stdout.splitlines()))
+                payload = json.loads(stdout)
+                self.assertEqual({"ok", "command", "data", "error"}, set(payload))
+                self.assertFalse(payload["ok"])
+                self.assertIsNone(payload["command"])
+                self.assertIsNone(payload["data"])
+                self.assertEqual("CS-CLI-001", payload["error"]["code"])
+                self.assertEqual("invalid-request", payload["error"]["category"])
+                self.assertIn("project_dir", payload["error"]["detail"])
+
+    def test_human_parse_failure_keeps_argparse_output(self):
+        code, stdout, stderr = self.invoke(["status"])
+
+        self.assertEqual(2, code)
+        self.assertEqual("", stdout)
+        self.assertIn("usage:", stderr.lower())
+        self.assertIn("project_dir", stderr)
+
+
 class SourceHandoffCliContractTests(unittest.TestCase):
     """The source CLI exposes the same WP2 handoff routes as the product CLI."""
 
