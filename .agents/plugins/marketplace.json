@@ -11,7 +11,8 @@
       "longDescription": "Comic Sol is a provider-neutral, local-first comic production pipeline. The deterministic engine is the product; Agent Skills, CLI, and MCP are adapters. The core CLI does not create artwork by itself: it validates, persists, resumes, repairs, letters, composes, and exports around an agent-supplied compatible image generator. Comic Sol stores no provider credentials.",
       "source": {
         "source": "url",
-        "url": "./"
+        "url": "https://github.com/wenn-id/comicsol.git",
+        "sha": "68ad73aee9c9f0f9d17968707a3b487f610d39e9"
       },
       "policy": {
         "installation": "AVAILABLE",
