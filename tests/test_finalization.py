@@ -636,6 +636,54 @@ class GuardedOperationTests(unittest.TestCase):
         result = transition(self.project, "COMPLETE")
         self.assertEqual("COMPLETE", result["status"])
 
+    def test_override_after_completion_mirrors_preexisting_panel_warnings(self):
+        self._make_export_ready()
+        (self.project / "qa/report.md").write_text("# QA Report\n", encoding="utf-8")
+        from scripts.export_pdf import guarded_export
+
+        pdf_path = guarded_export(self.project)
+        manifest = read_json(self.project / "project.json")
+        manifest["artifacts"]["qa_report"] = {
+            "path": "qa/report.md",
+            "sha256": sha256_file(self.project / "qa/report.md"),
+        }
+        manifest["artifacts"]["pdf"] = {
+            "path": pdf_path.relative_to(self.project).as_posix(),
+            "sha256": sha256_file(pdf_path),
+        }
+        manifest["status"] = "EXPORTED"
+        atomic_write_json(self.project / "project.json", manifest)
+        transition(self.project, "COMPLETE")
+
+        panel_path = self.project / "qa/panels/p01-01.json"
+        record = read_json(panel_path)
+        existing_warning = "earlier panel warning"
+        record["checks"][0].update({"result": "fail", "severity": "error"})
+        record["checks"][1].update(
+            {"result": "warning", "severity": "warning", "evidence": existing_warning}
+        )
+        record.update({"decision": "regenerate", "unresolved_warnings": [existing_warning]})
+        atomic_write_json(panel_path, record)
+
+        from scripts.comic_sol import main
+
+        override_reason = "minor prop drift is acceptable"
+        result = main(
+            [
+                "override-panel",
+                str(self.project),
+                "p01-01",
+                "--reason",
+                override_reason,
+            ]
+        )
+        self.assertEqual(0, result)
+
+        manifest = read_json(self.project / "project.json")
+        self.assertEqual("COMPLETE_WITH_WARNINGS", manifest["status"])
+        self.assertEqual([existing_warning, override_reason], manifest["warnings"])
+        self.assertEqual([], validate_project(self.project, "final"))
+
     def test_guarded_transition_allows_complete_with_warnings(self):
         """GREEN: transition to COMPLETE_WITH_WARNINGS succeeds with warnings."""
         self._make_export_ready()
