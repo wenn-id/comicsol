@@ -1039,24 +1039,6 @@ def locked_scope_sha256(
         return _locked_scope_sha256(project_dir, prompt_paths, reference_paths)
 
 
-def assert_locked_scope(
-    project_dir: Path,
-    expected_sha256: str,
-    *,
-    prompt_paths: Sequence[str],
-    reference_paths: Sequence[str],
-) -> None:
-    """Reject a result whose expected scope digest no longer matches the project."""
-    issues: list[str] = []
-    _sha256(expected_sha256, "locked_scope_sha256", issues)
-    _require_valid(issues)
-    project_dir = Path(project_dir)
-    with ProjectLock(project_dir):
-        actual = _locked_scope_sha256(project_dir, prompt_paths, reference_paths)
-        if not hmac.compare_digest(actual, expected_sha256):
-            raise StaleLockedScopeError(["locked_scope_sha256: stale project scope"])
-
-
 def assert_current_locked_scope(
     project_dir: Path,
     expected_sha256: str,
@@ -1075,57 +1057,3 @@ def assert_current_locked_scope(
         actual = _locked_scope_sha256(project_dir, prompt_paths, complete_references)
         if not hmac.compare_digest(actual, expected_sha256):
             raise StaleLockedScopeError(["locked_scope_sha256: stale project scope"])
-
-
-def rank_executors(
-    declarations: Sequence[Mapping[str, object]],
-) -> list[dict[str, object]]:
-    """Return compatible executor declarations in deterministic policy order."""
-    fields = {
-        "capability_id",
-        "executor_kind",
-        "text_to_image",
-        "local_raster",
-        "supports_reference_images",
-        "supports_dimensions",
-        "supports_localized_edit",
-    }
-    validated: list[dict[str, object]] = []
-    issues: list[str] = []
-    for index, declaration in enumerate(declarations):
-        field = f"declarations[{index}]"
-        item = _object(
-            declaration,
-            allowed=fields,
-            required=fields,
-            field=field,
-            issues=issues,
-        )
-        if item is None:
-            continue
-        _identifier(item.get("capability_id"), f"{field}.capability_id", issues)
-        if item.get("executor_kind") not in _EXECUTOR_KINDS:
-            issues.append(f"{field}.executor_kind: must be native-tool or external-tool")
-        for name in (
-            "text_to_image",
-            "local_raster",
-            "supports_reference_images",
-            "supports_dimensions",
-            "supports_localized_edit",
-        ):
-            _boolean(item.get(name), f"{field}.{name}", issues)
-        validated.append(dict(item))
-    _require_valid(issues)
-    compatible = [
-        item for item in validated if item["text_to_image"] is True and item["local_raster"] is True
-    ]
-    return sorted(
-        compatible,
-        key=lambda item: (
-            0 if item["executor_kind"] == "native-tool" else 1,
-            -int(item["supports_reference_images"] is True),
-            -int(item["supports_dimensions"] is True),
-            -int(item["supports_localized_edit"] is True),
-            str(item["capability_id"]),
-        ),
-    )
