@@ -802,6 +802,7 @@ class BenchmarkIntegrationTests(unittest.TestCase):
             "--baseline",
             "--candidate",
             "--diff-output",
+            "cp -r comic_sol_product/engine",
             "if-no-files-found: error",
             "NO REGRESSION",
         ):
