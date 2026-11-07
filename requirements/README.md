@@ -76,9 +76,6 @@ together:
 - `release-*` diffs must differ only by marker-gated packages and their hashes
   (Windows: `colorama`, `pefile`, `pywin32`, `pywin32-ctypes`; macOS:
   `macholib`).
-- `web-*` locks follow the `base-*` rule: identical across platforms except for
-  the per-lock header. The Windows lock may add exactly the documented
-  `colorama` marker package from the Web quality/CLI tool chain.
 - Version changes must be intentional: raising a direct pin in the `.in` file is
   a deliberate change; unattended transitive drift should be reviewed with the
   same care as a direct bump and must keep `pip-audit` green.

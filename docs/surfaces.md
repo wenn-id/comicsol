@@ -136,15 +136,14 @@ persists outside that volume.
   to keep projects.
 - **Details:** [`docs/install-manual.md` → OCI image](install-manual.md#oci-image).
 
-## Comic Sol Studio (Web)
+## Downstream integration: Comic Sol Studio
 
-The Web distribution is a separately installed FastAPI application that
-exposes the same deterministic lifecycle through a browser and a WebMCP client.
-It lives in [`wenn-id/comic-sol-studio`](https://github.com/wenn-id/comic-sol-studio) and installs this engine as the
-`comic-sol` wheel, pinned to an exact engine commit. The local `stdio` MCP
-server remains exactly `18` tools. The Web surface is **not** a replacement for
-the core CLI: the engine, the local MCP server, the wheel, and the native
-archive are unchanged.
+Comic Sol Studio is a separately maintained FastAPI application in
+[`wenn-id/comic-sol-studio`](https://github.com/wenn-id/comic-sol-studio). Its
+browser and WebMCP workflows consume this engine as the `comic-sol` wheel, pinned
+to an exact engine commit. Studio owns its application, deployment, and project
+output-root configuration; this repository documents the integration, not its
+runtime setup.
 
 - **How you start it, default output root, provider model, and deployment:**
   see the [Studio documentation](https://github.com/wenn-id/comic-sol-studio#documentation).
@@ -160,4 +159,6 @@ archive are unchanged.
 | Native archive | installed `comic-sol doctor` | Platform default (table above); runtime lives separately |
 | MCP server | `comic-sol mcp --root <absolute path>` | None — explicit `--root` required |
 | OCI image | container entrypoint | `/data` inside the container |
-| Comic Sol Studio (Web) | See [`wenn-id/comic-sol-studio`](https://github.com/wenn-id/comic-sol-studio) | None — `COMIC_SOL_WEB_DATA_ROOT` is required |
+| Downstream integration: Comic Sol Studio | See [`wenn-id/comic-sol-studio`](https://github.com/wenn-id/comic-sol-studio) | Managed by Studio; see its documentation |
+
+Studio's output-root and runtime settings are maintained in the Studio repository.
