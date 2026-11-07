@@ -529,6 +529,7 @@ class GenerationContractTests(unittest.TestCase):
         self.assertEqual([], validate_generation_job(scene_job))
 
     def test_contracts_reject_unsafe_paths_secrets_and_raw_payload_fields(self):
+        """Reject unsafe paths, secrets, and raw provider payloads in records."""
         job = valid_job()
         job["prompt_path"] = "../private/prompt.txt"
         self.assert_invalid(validate_generation_job, job, "prompt_path")
@@ -705,6 +706,7 @@ class LockedScopeTests(unittest.TestCase):
         )
 
     def test_stale_scope_digest_is_rejected_after_any_covered_change(self):
+        """Detect changes to prompt inputs after their scope digest is captured."""
         expected = locked_scope_sha256(
             self.project,
             prompt_paths=["prompts/panels/p01-01.txt", "prompts/panels/p01-02.txt"],
@@ -725,6 +727,7 @@ class LockedScopeTests(unittest.TestCase):
             )
 
     def test_scope_hash_covers_job_references_outside_the_selection_plan(self):
+        """Include generation-job references beyond the original selection plan."""
         job_reference = self.project / "references/characters/sol.png"
         job_reference.write_bytes(b"job reference version one")
         prompt_paths = ["prompts/panels/p01-01.txt", "prompts/panels/p01-02.txt"]
@@ -751,6 +754,7 @@ class LockedScopeTests(unittest.TestCase):
             )
 
     def test_locked_scope_holds_project_lock_through_discovery_and_comparison(self):
+        """Hold the project lock through scope discovery and digest comparison."""
         expected = locked_scope_sha256(
             self.project,
             prompt_paths=["prompts/panels/p01-01.txt", "prompts/panels/p01-02.txt"],
