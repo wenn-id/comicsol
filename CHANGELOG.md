@@ -20,47 +20,12 @@ carries it.
 - Removed the Devpost WebMCP challenge materials (`marketing/devpost/` and
   `submission/webmcp/`, including the demo script, demo fixture, limitations,
   verification log, and submission-side evidence companion) and their contract
-  tests. The WebMCP tool list now lives at `docs/web/webmcp-tools.md`, and the
-  provider evidence state is tracked only in `docs/web/providers.md`.
+  tests.
 - Moved the official plugin directory listing and reviewer test cases from
   `submission/` to `docs/plugin-directory/`.
 - Removed the archived PR #312 review-reply drafts from `docs/agent-host-smoke/`.
 
 ### Added
-
-- Added the Web documentation and challenge submission for the separately
-  distributed Web surface (Comic Sol Studio, issue #268, WP17). New
-  `docs/web/index.md` documents the user workflow (sign in; create from
-  prompt/story or import a portable archive; review the Plan; choose
-  agent/hosted/BYOK; confirm cost; inspect the queue; confirm provider
-  switches; explicitly promote staged rasters; run QA; export a private
-  PDF/archive), the exact five-read/nine-write WebMCP surface, the four
-  credential modes, the four explicit confirmations, page-owned handles,
-  the evidence tiers, and the billing distinction. New `docs/web/providers.md`,
-  `docs/web/security.md`, `docs/web/deployment.md`, and `docs/web/rollback.md`
-  separate provider, security, deployment, and recovery contracts. A bounded,
-  evidence-backed submission lives under `submission/webmcp/`. The Web surface
-  is added to `docs/surfaces.md` and `docs/support-matrix.md`; the local
-  `stdio` MCP server remains unchanged at exactly 17 `comic_*` tools. No
-  production code, provider, migration, dependency, or lock file changed; no
-  live provider call or external deployment was made.
-- Added the Web/Studio live evidence collection framework (issue #321, WP18).
-  `docs/web/live-evidence.md` records the four distinct evidence states
-  (`implemented`, `offline-qualified`, `manually exercised`, `live-verified`),
-  the authorization boundaries, the exact-candidate recording protocol, the
-  eight acceptance-criteria mapping, and the honest current status ("no live
-  evidence has been retained"). The submission-side companion lives at
-  `submission/webmcp/live-evidence.md`. The framework's publication gate is
-  `scripts/live_web_evidence.py` (fail-closed, offline-only, never calls a
-  provider, never reads credentials). The contract is locked by
-  `tests/test_live_web_evidence.py` (25 tests): the empty-bundle accept path,
-  every reject path (bad candidate, secret-shaped strings, Markdown control
-  characters, escaped paths, SHA mismatch, missing file, unauthorized
-  manifest fields, schema-version drift), and the four distinct evidence
-  states. `docs/web/index.md` and `submission/webmcp/provider-evidence.md`
-  point to the framework as the durable evidence contract for any future
-  live-smoke, deployment, or release-asset claim. No production code,
-  provider, migration, dependency, or lock file changed.
 
 - Added three fixed, provider-neutral v1 starter bundles: `minimal-one-page`,
   `dialogue-two-page`, and `action-focused`. Starter selection is available through
