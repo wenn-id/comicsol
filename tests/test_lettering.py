@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import shutil
@@ -1744,28 +1745,39 @@ class LetteringFixtureIntegrationTests(unittest.TestCase):
             }
             self.assertEqual(before, after)
 
-    def test_storyboard_provenance_hash_is_read_under_project_lock(self):
+    def test_storyboard_provenance_hash_uses_consumed_bytes_under_project_lock(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "project"
             shutil.copytree(FIXTURES / "valid-one-page", project)
             from comic_sol_product.engine import letter_panels as letter_panels_module
 
-            real_sha256_file = letter_panels_module.sha256_file
             storyboard_path = project.resolve() / "plan/storyboard.json"
-            hashed_paths = []
+            original = storyboard_path.read_bytes()
+            snapshots = []
 
-            def hash_file(path):
-                if Path(path) == storyboard_path:
+            real_read = letter_panels_module.read_contained_bytes
+
+            def read_snapshot(root, relative, **kwargs):
+                payload = real_read(root, relative, **kwargs)
+                if Path(relative).as_posix() == "plan/storyboard.json":
                     self.assertIn(project.resolve(), ProjectLock._held_locks())
-                    hashed_paths.append(Path(path))
-                return real_sha256_file(path)
+                    snapshots.append(payload)
+                    storyboard_path.write_bytes(payload + b"\n")
+                return payload
 
             with mock.patch(
-                "comic_sol_product.engine.letter_panels.sha256_file", side_effect=hash_file
+                "comic_sol_product.engine.letter_panels.read_contained_bytes",
+                side_effect=read_snapshot,
             ):
                 letter_project(project)
 
-            self.assertEqual([storyboard_path], hashed_paths)
+            geometry = read_json(project / "panels/p01-01/lettering.json")
+            self.assertEqual([original], snapshots)
+            self.assertEqual(
+                hashlib.sha256(original).hexdigest(),
+                geometry["bindings"]["storyboard_sha256"],
+            )
+            self.assertNotEqual(original, storyboard_path.read_bytes())
 
     def test_valid_fixture_letters_three_panels_from_semantic_files(self):
         with tempfile.TemporaryDirectory() as temporary:

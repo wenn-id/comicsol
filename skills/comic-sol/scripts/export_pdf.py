@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -24,17 +25,20 @@ from .comic_sol import (
     PAGE_WIDTH,
     canonical_artifact_bytes,
     read_project_manifest,
-    sha256_file,
 )
+from .input_limits import MAX_JSON_BYTES
 from .pdf_quality import PdfQualityError, verify_pdf_payload
+from .page_quality import validate_page_quality
 from .project_io import (
     PROJECT_OPERATION_LOCK_TIMEOUT,
     ProjectLock,
     ProjectTransaction,
     contained_project_path,
     durable_atomic_write,
-    open_path_nofollow,
+    read_bytes_nofollow,
+    read_contained_bytes,
 )
+from .raster_limits import MAX_ENCODED_RASTER_BYTES
 from .validate_project import validate_manifest, require_valid_project
 
 
@@ -93,28 +97,39 @@ def discover_pages(project_dir: Path) -> list[Path]:
     return [path for _, path in numbered]
 
 
+def _read_page_payload(path: Path) -> bytes:
+    """Read bounded page bytes once for decoding and provenance."""
+    try:
+        return read_bytes_nofollow(Path(path), max_bytes=MAX_ENCODED_RASTER_BYTES)
+    except (OSError, ValueError) as error:
+        raise PdfExportError(f"{path.name} is not a readable PNG") from error
+
+
+def _decode_page(path: Path, payload: bytes) -> Image.Image:
+    """Decode one page from the exact bytes retained for provenance."""
+    try:
+        with Image.open(io.BytesIO(payload)) as image:
+            image.verify()
+        with Image.open(io.BytesIO(payload)) as image:
+            if image.format != "PNG":
+                raise PdfExportError(f"{path.name} must contain PNG data")
+            if image.size != (PAGE_WIDTH, PAGE_HEIGHT):
+                raise PdfExportError(f"{path.name} must be exactly {PAGE_WIDTH}x{PAGE_HEIGHT}")
+            converted = image.convert("RGB")
+            converted.load()
+            return converted
+    except PdfExportError:
+        raise
+    except (OSError, SyntaxError, ValueError, Image.DecompressionBombError) as error:
+        raise PdfExportError(f"{path.name} is not a readable PNG") from error
+
+
 def _load_pages(paths: list[Path]) -> list[Image.Image]:
     """Load validated final page images in page order."""
     pages: list[Image.Image] = []
     try:
         for path in paths:
-            try:
-                with open_path_nofollow(path) as stream, Image.open(stream) as image:
-                    image.verify()
-                with open_path_nofollow(path) as stream, Image.open(stream) as image:
-                    if image.format != "PNG":
-                        raise PdfExportError(f"{path.name} must contain PNG data")
-                    if image.size != (PAGE_WIDTH, PAGE_HEIGHT):
-                        raise PdfExportError(
-                            f"{path.name} must be exactly {PAGE_WIDTH}x{PAGE_HEIGHT}"
-                        )
-                    converted = image.convert("RGB")
-                    converted.load()
-                    pages.append(converted)
-            except PdfExportError:
-                raise
-            except (OSError, SyntaxError) as error:
-                raise PdfExportError(f"{path.name} is not a readable PNG") from error
+            pages.append(_decode_page(path, _read_page_payload(path)))
     except Exception:
         for page in pages:
             page.close()
@@ -135,6 +150,42 @@ def _required_page_qa_paths(project_dir: Path, page_count: int) -> list[tuple[st
             raise PdfExportError(f"missing page QA record: {qa_relative}")
         page_qa_paths.append((qa_relative, qa_path))
     return page_qa_paths
+
+
+def _capture_guarded_pages(
+    project_dir: Path,
+    page_paths: list[Path],
+    page_qa_paths: list[tuple[str, Path]],
+) -> tuple[list[Image.Image], list[str], list[str]]:
+    """Load each validated page from the same bytes recorded in provenance."""
+    pages: list[Image.Image] = []
+    page_sha256s: list[str] = []
+    page_qa_sha256s: list[str] = []
+    try:
+        for page_number, (page_path, (qa_relative, qa_path)) in enumerate(
+            zip(page_paths, page_qa_paths, strict=True), start=1
+        ):
+            page_bytes = _read_page_payload(page_path)
+            try:
+                qa_bytes = read_contained_bytes(project_dir, qa_relative, max_bytes=MAX_JSON_BYTES)
+            except (OSError, ValueError) as error:
+                raise PdfExportError(f"page QA record is unreadable: {qa_relative}") from error
+            page_quality_issues = validate_page_quality(
+                project_dir,
+                page_number,
+                artifact_snapshots={page_path: page_bytes, qa_path: qa_bytes},
+            )
+            if page_quality_issues:
+                details = "; ".join(issue.message for issue in page_quality_issues)
+                raise PdfExportError(f"page QA is stale for the consumed input snapshot: {details}")
+            pages.append(_decode_page(page_path, page_bytes))
+            page_sha256s.append(hashlib.sha256(page_bytes).hexdigest())
+            page_qa_sha256s.append(hashlib.sha256(qa_bytes).hexdigest())
+    except Exception:
+        for page in pages:
+            page.close()
+        raise
+    return pages, page_sha256s, page_qa_sha256s
 
 
 def _render_verified_payload(
@@ -256,7 +307,9 @@ def _guarded_export_locked(project_dir: Path, output_path: Path | None = None) -
     require_valid_project(project_dir, "export-ready")
     page_paths = discover_pages(project_dir)
     page_qa_paths = _required_page_qa_paths(project_dir, len(page_paths))
-    pages = _load_pages(page_paths)
+    pages, page_sha256s, page_qa_sha256s = _capture_guarded_pages(
+        project_dir, page_paths, page_qa_paths
+    )
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
         payload, metrics = _render_verified_payload(destination.parent, destination.name, pages)
@@ -266,14 +319,16 @@ def _guarded_export_locked(project_dir: Path, output_path: Path | None = None) -
 
     pdf_sha256 = hashlib.sha256(payload).hexdigest()
     source_pages: list[dict[str, object]] = []
-    for page_path, (qa_relative, qa_path) in zip(page_paths, page_qa_paths, strict=True):
+    for page_path, (qa_relative, _), page_sha256, page_qa_sha256 in zip(
+        page_paths, page_qa_paths, page_sha256s, page_qa_sha256s, strict=True
+    ):
         source_pages.append(
             {
                 "dimensions": [PAGE_WIDTH, PAGE_HEIGHT],
                 "page_qa_path": qa_relative,
-                "page_qa_sha256": sha256_file(qa_path),
+                "page_qa_sha256": page_qa_sha256,
                 "path": page_path.relative_to(project_dir).as_posix(),
-                "sha256": sha256_file(page_path),
+                "sha256": page_sha256,
             }
         )
     verification = {

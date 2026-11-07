@@ -23,7 +23,7 @@ if __package__ in {None, ""}:
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
-from .comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json, sha256_file
+from .comic_sol import atomic_write_bytes, canonical_artifact_bytes, read_json
 from .core_primitives import (
     _tail_intersects_ellipse,
     _tail_intersects_tail,
@@ -32,6 +32,7 @@ from .core_primitives import (
     rectangles_overlap,
     subject_keepout_radius,
 )
+from .input_limits import MAX_JSON_BYTES, loads_bounded_json
 from .project_io import (
     PROJECT_OPERATION_LOCK_TIMEOUT,
     ProjectLock,
@@ -1473,9 +1474,16 @@ def _letter_project_with_summaries_locked(
     """Build and publish lettering artifacts while holding the project lock."""
     project_dir = Path(project_dir)
     read_project_manifest(project_dir.resolve(strict=True) / "project.json")
-    storyboard = read_json(
-        contained_project_path(project_dir, "plan/storyboard.json", must_exist=True)
+    storyboard_relative = "plan/storyboard.json"
+    storyboard_path = contained_project_path(project_dir, storyboard_relative, must_exist=True)
+    storyboard_bytes = read_contained_bytes(
+        project_dir, storyboard_relative, max_bytes=MAX_JSON_BYTES
     )
+    storyboard_value = loads_bounded_json(storyboard_bytes, source=storyboard_path.name)
+    if not isinstance(storyboard_value, dict):
+        raise ValueError(f"expected a JSON object: {storyboard_path}")
+    storyboard = cast(dict[str, object], storyboard_value)
+    storyboard_sha256 = hashlib.sha256(storyboard_bytes).hexdigest()
     pages = storyboard.get("pages")
     if not isinstance(pages, list) or not pages:
         raise ValueError("storyboard pages must be a non-empty array")
@@ -1521,8 +1529,6 @@ def _letter_project_with_summaries_locked(
     outputs: list[Path] = []
     summaries: list[dict] = []
     staged: list[tuple[str, bytes, bytes, bytes, dict]] = []
-    storyboard_path = contained_project_path(project_dir, "plan/storyboard.json", must_exist=True)
-    storyboard_sha256 = sha256_file(storyboard_path)
     with tempfile.TemporaryDirectory(prefix="comic-sol-lettering-") as temporary:
         temporary_root = Path(temporary)
         for panel in panels:

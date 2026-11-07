@@ -143,8 +143,29 @@ class _ArtifactSnapshots:
 
     __slots__ = ("_snapshots",)
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        project_dir: Path,
+        snapshots: Mapping[Path, bytes] | None = None,
+    ) -> None:
+        """Index captured bytes by safe paths resolved within the project."""
+        project_root = Path(project_dir).resolve(strict=True)
         self._snapshots: dict[Path, tuple[bytes, str]] = {}
+        for path, payload in (snapshots or {}).items():
+            supplied = Path(path)
+            if supplied.is_absolute():
+                try:
+                    relative = supplied.relative_to(project_root)
+                except ValueError as error:
+                    raise ValueError(
+                        "artifact snapshot path escapes the project directory"
+                    ) from error
+            else:
+                relative = supplied
+            resolved = contained_project_path(project_root, relative)
+            if resolved in self._snapshots:
+                raise ValueError("artifact snapshot path is supplied more than once")
+            self._snapshots[resolved] = (payload, hashlib.sha256(payload).hexdigest())
 
     def snapshot(self, path: Path, *, max_bytes: int | None = None) -> tuple[bytes, str]:
         """Return one artifact's bytes with the digest of exactly those bytes."""
@@ -1031,7 +1052,7 @@ def _build_page_quality_record_locked(
     reviewed_at: str,
 ) -> dict[str, object]:
     """Derive a page QA record from one snapshot, with the project lock held."""
-    context = _page_context(project_dir, page_number, _ArtifactSnapshots())
+    context = _page_context(project_dir, page_number, _ArtifactSnapshots(project_dir))
     deterministic = _deterministic_checks(context)
     subjective = _reviewer_checks(visual_checks)
     _validate_tail_evidence(context, subjective)
@@ -1287,7 +1308,7 @@ def migrate_page_quality_record(project_dir: Path, page_number: int) -> dict[str
         migration = PAGE_QA_MIGRATIONS.get((str(source_version), CURRENT_PAGE_QA_SCHEMA_VERSION))
         if migration is None:
             raise UnsupportedSchemaVersionError(source_version, artifact="page QA")
-        context = _page_context(project_dir, page_number, _ArtifactSnapshots())
+        context = _page_context(project_dir, page_number, _ArtifactSnapshots(project_dir))
         bindings = _page_bindings(context)
         recorded_bindings = record.get("bindings")
         recorded_page_digest = (
@@ -1310,7 +1331,12 @@ def migrate_page_quality_record(project_dir: Path, page_number: int) -> dict[str
         return migrated
 
 
-def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQualityIssue, ...]:
+def validate_page_quality(
+    project_dir: Path,
+    page_number: int,
+    *,
+    artifact_snapshots: Mapping[Path, bytes] | None = None,
+) -> tuple[PageQualityIssue, ...]:
     """Fail closed when page QA or any of its provenance bindings is stale.
 
     This validator deliberately does not acquire `ProjectLock`. It is a read-only
@@ -1345,20 +1371,25 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
     project_dir = Path(project_dir)
     relative = f"qa/pages/{_page_id(page_number)}.json"
     issues: list[PageQualityIssue] = []
+
     # The recorded-path passes below and the re-derived pass at the end both need
     # the bytes of every bound artifact, and the page raster is expensive. Sharing
     # one cache reads and digests each file once for the whole validation without
     # merging the two verdicts: each pass still resolves its own paths and makes
     # its own comparison.
-    artifacts = _ArtifactSnapshots()
-
     def stale(field: str, detail: str) -> None:
         """Report whether a page-QA record is stale for current artifacts."""
         issues.append(PageQualityIssue(relative, field, f"page-quality-stale: {detail}"))
 
     try:
+        project_dir = Path(project_dir).resolve(strict=True)
         path = contained_project_path(project_dir, relative, must_exist=True)
-        record = read_json(path)
+    except (OSError, ValueError):
+        stale("record.path", "page quality record is missing or unreadable")
+        return tuple(issues)
+    artifacts = _ArtifactSnapshots(project_dir, artifact_snapshots)
+    try:
+        record, _ = _json_snapshot(path, artifacts)
     except (OSError, ValueError, json.JSONDecodeError):
         stale("record.path", "page quality record is missing or unreadable")
         return tuple(issues)
