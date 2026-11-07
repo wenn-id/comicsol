@@ -719,18 +719,16 @@ class ProjectTransactionTests(unittest.TestCase):
         marker.write_bytes(b"keep")
         transaction_dir = self.project / "logs/transactions/1"
         transaction_dir.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            transaction_dir.symlink_to(outside, target_is_directory=True)
-        except (OSError, NotImplementedError):
-            if os.name != "nt":
-                raise
-            self.skipTest("creating directory symlinks requires Windows privileges")
+        make_symlink(self, transaction_dir, outside, directory=True)
 
         transaction = project_io.ProjectTransaction(self.project, "composition")
         transaction._dir = transaction_dir
         transaction._cleanup()
 
-        self.assertTrue(transaction_dir.is_symlink())
+        is_reparse_point = bool(
+            getattr(transaction_dir.lstat(), "st_file_attributes", 0) & project_io._REPARSE_POINT
+        )
+        self.assertTrue(transaction_dir.is_symlink() or is_reparse_point)
         self.assertEqual(b"keep", marker.read_bytes())
 
     def test_recover_removes_empty_journal_less_transaction_directory(self):
@@ -759,16 +757,14 @@ class ProjectTransactionTests(unittest.TestCase):
         marker.write_bytes(b"keep")
         transaction_dir = self.project / "logs/transactions/3"
         transaction_dir.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            transaction_dir.symlink_to(outside, target_is_directory=True)
-        except (OSError, NotImplementedError):
-            if os.name != "nt":
-                raise
-            self.skipTest("creating directory symlinks requires Windows privileges")
+        make_symlink(self, transaction_dir, outside, directory=True)
 
         project_io.ProjectTransaction.recover(self.project)
 
-        self.assertTrue(transaction_dir.is_symlink())
+        is_reparse_point = bool(
+            getattr(transaction_dir.lstat(), "st_file_attributes", 0) & project_io._REPARSE_POINT
+        )
+        self.assertTrue(transaction_dir.is_symlink() or is_reparse_point)
         self.assertEqual(b"keep", marker.read_bytes())
 
     def test_recover_restores_interrupted_publishing_transaction(self):

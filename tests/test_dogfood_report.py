@@ -27,6 +27,7 @@ from scripts.handoff import (
     generation_job_sha256,
 )
 from scripts.input_limits import MAX_JSON_DEPTH, MAX_JSON_ENTRIES
+from tests.support import make_symlink
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -510,10 +511,7 @@ class DogfoodReportTests(unittest.TestCase):
         real_output = self.root / "real-output"
         real_output.mkdir()
         linked_output = self.root / "linked-output"
-        try:
-            linked_output.symlink_to(real_output, target_is_directory=True)
-        except OSError as error:
-            self.skipTest(f"directory symlinks unavailable: {error}")
+        make_symlink(self, linked_output, real_output, directory=True)
         with self.assertRaisesRegex(DogfoodReportError, "symlink"):
             write_report(linked_output / "report.json", self._build(), project_dir=self.project)
 
@@ -629,10 +627,7 @@ class DogfoodReportTests(unittest.TestCase):
 
     def test_symlinked_project_root_is_rejected_before_resolution(self):
         linked_project = self.root / "linked-project"
-        try:
-            linked_project.symlink_to(self.project, target_is_directory=True)
-        except OSError as error:
-            self.skipTest(f"directory symlinks unavailable: {error}")
+        make_symlink(self, linked_project, self.project, directory=True)
         with self.assertRaisesRegex(DogfoodReportError, "project directory"):
             derive_project_metrics(linked_project)
 

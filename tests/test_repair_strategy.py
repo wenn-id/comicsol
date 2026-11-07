@@ -34,6 +34,7 @@ from scripts.repair_strategy import (
     validate_defect_regions,
     validate_repair_plan,
 )
+from tests.support import make_symlink
 
 
 CHARACTER_TRAITS = (
@@ -924,10 +925,7 @@ class PersistenceTests(RepairPlanProjectHarness):
         )
         target = self.project / "qa/panels/p01-01.json"
         link = self.project / "qa/panels/p01-02.json"
-        try:
-            link.symlink_to(target)
-        except OSError as error:  # pragma: no cover - unprivileged Windows only
-            self.skipTest(f"symlink unavailable: {error}")
+        make_symlink(self, link, target)
         self.assertIsNotNone(record)
 
         with self.assertRaises(RepairStrategyError):
