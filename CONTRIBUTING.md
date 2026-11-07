@@ -11,6 +11,7 @@ Use Python 3.11+ and the pinned dependencies:
 PYTHON=python  # replace with resolved Python 3.11+ launcher
 "$PYTHON" -m venv .venv
 .venv/bin/python -m pip install --require-hashes -r requirements/locks/base-linux-x86_64.txt
+.venv/bin/python -m pip install --require-hashes -r requirements/locks/runtime-linux-x86_64.txt
 ```
 
 # macOS
@@ -18,6 +19,7 @@ PYTHON=python  # replace with resolved Python 3.11+ launcher
 PYTHON=python  # replace with resolved Python 3.11+ launcher
 "$PYTHON" -m venv .venv
 .venv/bin/python -m pip install --require-hashes -r requirements/locks/base-macos-x86_64.txt
+.venv/bin/python -m pip install --require-hashes -r requirements/locks/runtime-macos-x86_64.txt
 ```
 
 # Windows PowerShell
@@ -25,11 +27,29 @@ PYTHON=python  # replace with resolved Python 3.11+ launcher
 $PYTHON = "py"  # resolve Python 3.11+ first; use `py -3`
 & $PYTHON -3 -m venv .venv
 & .venv\Scripts\python.exe -m pip install --require-hashes -r requirements/locks/base-windows-x86_64.txt
+& .venv\Scripts\python.exe -m pip install --require-hashes -r requirements/locks/runtime-windows-x86_64.txt
+```
+
+The runtime lock supplies the MCP dependencies used by the full test suite; without it, MCP tests are skipped. To build and validate release artifacts, also install the matching release lock in the same environment. Use only the lock for your platform:
+
+Linux:
+```bash
+.venv/bin/python -m pip install --require-hashes -r requirements/locks/release-linux-x86_64.txt
+```
+
+macOS:
+```bash
+.venv/bin/python -m pip install --require-hashes -r requirements/locks/release-macos-x86_64.txt
+```
+
+Windows PowerShell:
+```powershell
+& .venv\Scripts\python.exe -m pip install --require-hashes -r requirements/locks/release-windows-x86_64.txt
 ```
 
 ## Required validation
 
-Run checks through same `.venv` interpreter used for dependency installation. Before requesting merge, the complete deterministic suite and the blocking quality policy must pass. Ruff's Bugbear and Complexity findings are capped by a checked-in per-file/rule baseline; the gate fails when a count increases and never rewrites that baseline. The quality gate runs on Linux with the hash-locked toolchain:
+Run checks through the same `.venv` interpreter used for dependency installation. Before requesting merge, the complete deterministic suite and the blocking quality policy must pass. Ruff's Bugbear and Complexity findings are capped by a checked-in per-file/rule baseline; the gate fails when a count increases and never rewrites that baseline. The quality gate runs on Linux with the hash-locked toolchain; `mypy --platform win32` checks Windows platform semantics from that Linux environment:
 
 ```bash
 .venv/bin/python -m pip install --require-hashes -r requirements/locks/quality-linux-x86_64.txt
@@ -99,9 +119,10 @@ references are canonical. Synchronize and verify the self-contained plugin bundl
 .venv/bin/python scripts/sync_plugin_bundle.py --check
 ```
 
-On Windows, use `.venv\Scripts\python.exe` for the same commands. The capability
-detection and image-provider setup references are intentionally host-specific; other
-bundle differences fail validation.
+On Windows, use `.venv\Scripts\python.exe` for the same commands. The capability-detection
+and image-provider setup references are synchronized like the other canonical
+references; every managed bundle file must match its canonical copy byte-for-byte, and
+any drift fails validation.
 
 ## Comic Sol Studio
 
