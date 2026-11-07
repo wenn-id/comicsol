@@ -20,6 +20,10 @@ from comic_sol_product.engine.comic_sol import (
     resume_project,
 )
 from comic_sol_product.engine.export_pdf import guarded_export
+from comic_sol_product.engine.compose_pages import compose_project
+from comic_sol_product.engine.letter_panels import letter_project
+from comic_sol_product.engine.page_quality import publish_page_quality_record
+from tests.test_finalization import valid_page_reviewer_checks
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -1261,20 +1265,18 @@ class PdfExportTransactionTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.project = Path(self.temporary_directory.name) / "project"
-        (self.project / "pages").mkdir(parents=True)
-        manifest = read_json(ROOT / "templates/manifest.json")
-        manifest["project_id"] = "project"
-        manifest["input"]["source_sha256"] = "a" * 64
-        manifest["settings"]["page_count"] = 1
-        manifest["settings"]["panel_count"] = 1
-        manifest["panels"] = ["p01-01"]
-        atomic_write_json(self.project / "project.json", manifest)
-        from PIL import Image
+        from shutil import copytree
 
-        Image.new("RGB", (1600, 2400), "red").save(self.project / "pages/page-001.png")
-        page_qa = self.project / "qa/pages"
-        page_qa.mkdir(parents=True)
-        (page_qa / "page-001.json").write_text("{}", "utf-8")
+        copytree(ROOT / "tests/fixtures/valid-one-page", self.project)
+        letter_project(self.project)
+        compose_project(self.project)
+        publish_page_quality_record(
+            self.project,
+            1,
+            valid_page_reviewer_checks(self.project, 1),
+            reviewer="fixture-reviewer",
+            reviewed_at="2026-08-14T01:02:03Z",
+        )
 
     def tearDown(self):
         self.temporary_directory.cleanup()
@@ -1291,10 +1293,6 @@ class PdfExportTransactionTests(unittest.TestCase):
             mock.patch(
                 "comic_sol_product.engine.export_pdf._render_verified_payload",
                 side_effect=mutate_manifest,
-            ),
-            mock.patch(
-                "comic_sol_product.engine.export_pdf.validate_page_quality",
-                return_value=[],
             ),
         ):
             guarded_export(self.project)
