@@ -18,9 +18,9 @@ from unittest import mock
 
 from comic_sol_product import cli as product_cli
 from comic_sol_product.release import REQUIRED_SDIST_SUFFIXES, REQUIRED_WHEEL_MEMBERS
-from scripts import comic_sol, sync_plugin_bundle
-from scripts.comic_sol import main as source_main
-from scripts.core_primitives import canonical_json_bytes
+from comic_sol_product.engine import comic_sol, sync_plugin_bundle
+from comic_sol_product.engine.comic_sol import main as source_main
+from comic_sol_product.engine.core_primitives import canonical_json_bytes
 from tests.support import make_symlink
 
 
@@ -59,11 +59,11 @@ class _MissingWp3Implementation(AssertionError):
 
 def _archive_module(testcase: unittest.TestCase):
     try:
-        return importlib.import_module("scripts.handoff_archive")
+        return importlib.import_module("comic_sol_product.engine.handoff_archive")
     except ModuleNotFoundError as error:
-        if error.name == "scripts.handoff_archive":
+        if error.name == "comic_sol_product.engine.handoff_archive":
             raise _MissingWp3Implementation(
-                "required WP3 module scripts.handoff_archive is not implemented"
+                "required WP3 module comic_sol_product.engine.handoff_archive is not implemented"
             ) from None
         raise
 
@@ -73,7 +73,7 @@ def _archive_api(testcase: unittest.TestCase):
     for name, expected in EXPECTED_ARCHIVE_CONSTANTS.items():
         testcase.assertTrue(
             hasattr(module, name),
-            f"required WP3 constant scripts.handoff_archive.{name} is not implemented",
+            f"required WP3 constant comic_sol_product.engine.handoff_archive.{name} is not implemented",
         )
         testcase.assertEqual(expected, getattr(module, name), name)
     for name in EXPECTED_LIMIT_CONSTANTS:
@@ -81,12 +81,12 @@ def _archive_api(testcase: unittest.TestCase):
         testcase.assertGreater(getattr(module, name), 0, name)
     testcase.assertTrue(
         isinstance(getattr(module, "HandoffArchiveError", None), type),
-        "required WP3 error scripts.handoff_archive.HandoffArchiveError is not implemented",
+        "required WP3 error comic_sol_product.engine.handoff_archive.HandoffArchiveError is not implemented",
     )
     for name in EXPECTED_ARCHIVE_FUNCTIONS:
         testcase.assertTrue(
             callable(getattr(module, name, None)),
-            f"required WP3 API scripts.handoff_archive.{name} is not implemented",
+            f"required WP3 API comic_sol_product.engine.handoff_archive.{name} is not implemented",
         )
     return module
 
@@ -444,7 +444,7 @@ class HandoffArchiveContractTests(unittest.TestCase):
         module = _archive_api(self)
         project = _prepared_project_with_user_reference(self)
         (project / "references/characters/mira.png").unlink()
-        from scripts.validate_project import validate_project
+        from comic_sol_product.engine.validate_project import validate_project
 
         scope_issues = [
             issue
@@ -596,7 +596,7 @@ class HandoffArchiveContractTests(unittest.TestCase):
         output_root = root / "fallback-import"
         output_root.mkdir()
 
-        with mock.patch("scripts.project_io._HAS_NOFOLLOW", False):
+        with mock.patch("comic_sol_product.engine.project_io._HAS_NOFOLLOW", False):
             module.import_handoff_archive(archive, output_root)
 
         imported = output_root / project.name
@@ -1039,7 +1039,7 @@ class HandoffArchiveContractTests(unittest.TestCase):
         self,
     ):
         from comic_sol_product.errors import classify_exception
-        from scripts.command_service import CommandService
+        from comic_sol_product.engine.command_service import CommandService
 
         module, project, archive, root = self._export_fixture()
         deeply_nested = b"[" * 10_000 + b"0" + b"]" * 10_000
@@ -1093,7 +1093,7 @@ class HandoffArchiveContractTests(unittest.TestCase):
         self,
     ):
         from comic_sol_product.errors import classify_exception
-        from scripts.command_service import CommandService
+        from comic_sol_product.engine.command_service import CommandService
 
         module, project, archive, root = self._export_fixture()
         payloads = {
@@ -1144,7 +1144,7 @@ class HandoffArchiveContractTests(unittest.TestCase):
 
     def test_public_routes_classify_malformed_deflate_as_handoff_archive_error(self):
         from comic_sol_product.errors import classify_exception
-        from scripts.command_service import CommandService
+        from comic_sol_product.engine.command_service import CommandService
 
         module, project, archive, root = self._export_fixture()
         malformed = archive.with_name(f"{archive.stem}-malformed-deflate{archive.suffix}")
@@ -1171,7 +1171,7 @@ class HandoffArchiveContractTests(unittest.TestCase):
 
     def test_public_routes_reject_zero_compressed_size_deflated_member(self):
         from comic_sol_product.errors import classify_exception
-        from scripts.command_service import CommandService
+        from comic_sol_product.engine.command_service import CommandService
 
         module, project, archive, root = self._export_fixture()
         member = "project/zz-empty.bin"
@@ -1870,7 +1870,9 @@ class SourceHandoffArchiveCliTests(unittest.TestCase):
         return code, stdout.getvalue(), stderr.getvalue()
 
     def invoke_with_service(self, argv: list[str], service) -> tuple[int, str, str]:
-        with mock.patch("scripts.command_service.CommandService", return_value=service):
+        with mock.patch(
+            "comic_sol_product.engine.command_service.CommandService", return_value=service
+        ):
             return self.invoke(argv)
 
     def test_source_routes_forward_exact_paths_and_render_raw_json(self):

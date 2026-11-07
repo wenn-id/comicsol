@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts.pdf_quality import (  # noqa: E402
+from comic_sol_product.engine.pdf_quality import (  # noqa: E402
     PDF_TOLERANCE_VERSION,
     PdfQualityError,
     compare_full_page,
@@ -155,7 +155,9 @@ class PdfCorruptionTests(unittest.TestCase):
             warnings.warn("unsafe dimensions", Image.DecompressionBombWarning)
             return decoded
 
-        with mock.patch("scripts.pdf_quality.Image.open", side_effect=open_with_warning):
+        with mock.patch(
+            "comic_sol_product.engine.pdf_quality.Image.open", side_effect=open_with_warning
+        ):
             with self.assertRaisesRegex(PdfQualityError, "decode"):
                 verify_pdf_payload(payload, [self.first])
         decoded.convert.return_value.close()

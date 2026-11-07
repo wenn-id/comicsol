@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts import project_io
-from scripts.project_io import contained_project_path
+from comic_sol_product.engine import project_io
+from comic_sol_product.engine.project_io import contained_project_path
 from tests.support import make_symlink
 
 

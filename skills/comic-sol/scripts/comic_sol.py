@@ -27,7 +27,7 @@ from typing import Callable, Literal, NoReturn, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    __package__ = "scripts"
+    __package__ = "comic_sol_product.engine"
 
 from comic_sol_product.cli_command_spec import add_shared_command_parsers
 from comic_sol_product.errors import CliUsageError, error_payload, safe_error_detail

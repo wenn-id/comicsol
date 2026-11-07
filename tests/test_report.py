@@ -10,14 +10,14 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts.comic_sol import atomic_write_json, canonical_json_bytes, read_json  # noqa: E402
-from scripts.page_quality import (  # noqa: E402
+from comic_sol_product.engine.comic_sol import atomic_write_json, canonical_json_bytes, read_json  # noqa: E402
+from comic_sol_product.engine.page_quality import (  # noqa: E402
     CURRENT_PAGE_QA_SCHEMA_VERSION,
     DETERMINISTIC_PAGE_CHECK_IDS,
 )
-from scripts.quality_records import PAGE_CHECK_IDS, PANEL_CHECK_IDS  # noqa: E402
-from scripts.render_report import QaSummary, main, render_report, summarize_qa  # noqa: E402
-from scripts import project_io  # noqa: E402
+from comic_sol_product.engine.quality_records import PAGE_CHECK_IDS, PANEL_CHECK_IDS  # noqa: E402
+from comic_sol_product.engine.render_report import QaSummary, main, render_report, summarize_qa  # noqa: E402
+from comic_sol_product.engine import project_io  # noqa: E402
 
 
 def panel_record(
@@ -169,7 +169,7 @@ class ReportTests(unittest.TestCase):
 
     def test_integrity_handles_pillow_decompression_bomb(self):
         with mock.patch(
-            "scripts.render_report.Image.open",
+            "comic_sol_product.engine.render_report.Image.open",
             side_effect=Image.DecompressionBombError("unsafe"),
         ):
             report = render_report(self.project).read_text("utf-8")
@@ -503,7 +503,7 @@ class ReportTests(unittest.TestCase):
             (ROOT / "templates/qa-report.md.tmpl").read_text("utf-8") + "\n{{UNKNOWN}}\n", "utf-8"
         )
         before = custom.read_bytes()
-        with mock.patch("scripts.render_report.TEMPLATE_PATH", broken_template):
+        with mock.patch("comic_sol_product.engine.render_report.TEMPLATE_PATH", broken_template):
             with self.assertRaisesRegex(ValueError, "template token"):
                 render_report(self.project, custom)
         self.assertEqual(before, custom.read_bytes())

@@ -8,7 +8,7 @@ from pathlib import Path
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    __package__ = "scripts"
+    __package__ = "comic_sol_product.engine"
 
 from .core_primitives import PANEL_ID_PATTERN
 from .project_io import contained_project_path, open_contained, read_contained_bytes

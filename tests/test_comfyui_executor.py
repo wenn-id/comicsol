@@ -24,8 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts import project_io  # noqa: E402
-from scripts.project_io import read_contained_bytes  # noqa: E402
+from comic_sol_product.engine import project_io  # noqa: E402
+from comic_sol_product.engine.project_io import read_contained_bytes  # noqa: E402
 from tests import support as test_support  # noqa: E402
 from tests.support import make_symlink  # noqa: E402
 
@@ -983,7 +983,7 @@ class ComfyUIExecutorTests(unittest.TestCase):
     def test_rejects_generation_jobs_outside_authoritative_identifier_and_target_grammar(
         self,
     ) -> None:
-        from scripts.handoff import validate_generation_job
+        from comic_sol_product.engine.handoff import validate_generation_job
 
         for name, updates in (
             ("batch", {"batch_id": "bad_id"}),

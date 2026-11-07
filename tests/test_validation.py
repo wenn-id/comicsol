@@ -15,8 +15,8 @@ from PIL import Image, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 
-import scripts.validate_project as validation  # noqa: E402
-from scripts.comic_sol import (  # noqa: E402
+import comic_sol_product.engine.validate_project as validation  # noqa: E402
+from comic_sol_product.engine.comic_sol import (  # noqa: E402
     atomic_write_json,
     init_project,
     layout_rects,
@@ -24,7 +24,7 @@ from scripts.comic_sol import (  # noqa: E402
     rectangles_overlap,
     sha256_file,
 )
-from scripts.handoff import (  # noqa: E402
+from comic_sol_product.engine.handoff import (  # noqa: E402
     attempt_id,
     build_generation_batches,
     build_generation_job,
@@ -33,8 +33,8 @@ from scripts.handoff import (  # noqa: E402
     generation_job_sha256,
     locked_scope_sha256,
 )
-from scripts.project_io import MAX_READ_BYTES, ProjectLock  # noqa: E402
-from scripts.validate_project import (  # noqa: E402
+from comic_sol_product.engine.project_io import MAX_READ_BYTES, ProjectLock  # noqa: E402
+from comic_sol_product.engine.validate_project import (  # noqa: E402
     ProjectValidationError,
     ValidationIssue,
     main as validation_main,
@@ -46,12 +46,12 @@ from scripts.validate_project import (  # noqa: E402
     validate_storyboard,
 )
 from tests.support import make_symlink  # noqa: E402
-from scripts.page_quality import (  # noqa: E402
+from comic_sol_product.engine.page_quality import (  # noqa: E402
     CURRENT_PAGE_QA_SCHEMA_VERSION,
     PAGE_BINDING_FIELDS,
 )
-from scripts.quality_records import PANEL_CHECK_IDS, PAGE_CHECK_IDS  # noqa: E402
-from scripts.normalize_panels import normalize_panel  # noqa: E402
+from comic_sol_product.engine.quality_records import PANEL_CHECK_IDS, PAGE_CHECK_IDS  # noqa: E402
+from comic_sol_product.engine.normalize_panels import normalize_panel  # noqa: E402
 
 
 def _provider_neutrality_violations(paths):
@@ -318,7 +318,7 @@ class TemplateContractTests(unittest.TestCase):
 
 class LayoutTextStepFieldTests(unittest.TestCase):
     def test_normalization_preserves_semantics_and_counts_limits(self):
-        from scripts.letter_panels import normalize_content, normalized_word_count
+        from comic_sol_product.engine.letter_panels import normalize_content, normalized_word_count
 
         self.assertEqual("Already normalized.", normalize_content("Already normalized."))
         self.assertEqual("Café", normalize_content("Cafe\u0301"))
@@ -2183,7 +2183,7 @@ class ProjectValidationTests(unittest.TestCase):
     def test_panel_stage_normalizes_pillow_safety_error_as_validation_issue(self):
         self.add_panel_files()
         with patch(
-            "scripts.validate_project.Image.open",
+            "comic_sol_product.engine.validate_project.Image.open",
             side_effect=Image.DecompressionBombError("unsafe dimensions"),
         ):
             issues = validate_project(self.project, "panels")
@@ -2191,7 +2191,7 @@ class ProjectValidationTests(unittest.TestCase):
 
     def test_panel_stage_rejects_raster_over_decode_limit(self):
         self.add_panel_files()
-        with patch("scripts.validate_project.MAX_DECODED_PIXELS", 1):
+        with patch("comic_sol_product.engine.validate_project.MAX_DECODED_PIXELS", 1):
             issues = validate_project(self.project, "panels")
         self.assertTrue(
             any(issue.field == "raw_path" and "unreadable" in issue.message for issue in issues),
@@ -2241,7 +2241,7 @@ class ProjectValidationTests(unittest.TestCase):
         }
         atomic_write_json(manifest_path, manifest)
         with patch(
-            "scripts.validate_project.validate_pdf_verification",
+            "comic_sol_product.engine.validate_project.validate_pdf_verification",
             side_effect=AssertionError("invalid project ID must not drive PDF validation"),
         ):
             issues = validate_project(self.project, "final")
@@ -2264,7 +2264,9 @@ class ProjectValidationTests(unittest.TestCase):
                 raise AssertionError("validator hashed an escaped artifact")
             return sha256_file(path)
 
-        with patch("scripts.validate_project.sha256_file", side_effect=guarded_hash):
+        with patch(
+            "comic_sol_product.engine.validate_project.sha256_file", side_effect=guarded_hash
+        ):
             issues = validate_project(self.project, "final")
         self.assertTrue(
             any(
@@ -2457,12 +2459,14 @@ class ProjectValidationTests(unittest.TestCase):
                 raise AssertionError("validator followed an escaping image symlink")
             return sha256_file(path)
 
-        with patch("scripts.validate_project.sha256_file", side_effect=guarded_hash):
+        with patch(
+            "comic_sol_product.engine.validate_project.sha256_file", side_effect=guarded_hash
+        ):
             issues = validate_project(self.project, "panels")
         self.assertTrue(any("escapes the project" in issue.message for issue in issues), issues)
 
     def test_hash_reads_repeat_shared_resolution_for_original_relative_paths(self):
-        from scripts import validate_project as validation_module
+        from comic_sol_product.engine import validate_project as validation_module
 
         self.add_panel_files()
         manifest_path = self.project / "project.json"
@@ -2489,7 +2493,7 @@ class ProjectValidationTests(unittest.TestCase):
                     return real_resolver(project_dir, candidate, **kwargs)
 
                 with patch(
-                    "scripts.validate_project.contained_project_path",
+                    "comic_sol_product.engine.validate_project.contained_project_path",
                     side_effect=recording_resolver,
                 ):
                     validate_project(self.project, stage)

@@ -12,18 +12,21 @@ from unittest import mock
 
 from comic_sol_product import __version__ as _V
 
-from scripts.release_evidence import build_evidence
-from scripts.release_evidence import write_evidence
-from scripts.release_qualification import aggregate_summaries
-from scripts.release_qualification import exercise_injected_rollback
-from scripts.release_qualification import executable_path
-from scripts.release_qualification import install
-from scripts.release_qualification import install_command
-from scripts.release_qualification import qualify
-from scripts.release_qualification import snapshot_tree
-from scripts.release_qualification import validate_published_metadata
-from scripts.release_qualification import verify_payload_checksums
-from scripts.release_visual_gate import EXPECTED_GROUPS, validate_live_visual_summary
+from comic_sol_product.engine.release_evidence import build_evidence
+from comic_sol_product.engine.release_evidence import write_evidence
+from comic_sol_product.engine.release_qualification import aggregate_summaries
+from comic_sol_product.engine.release_qualification import exercise_injected_rollback
+from comic_sol_product.engine.release_qualification import executable_path
+from comic_sol_product.engine.release_qualification import install
+from comic_sol_product.engine.release_qualification import install_command
+from comic_sol_product.engine.release_qualification import qualify
+from comic_sol_product.engine.release_qualification import snapshot_tree
+from comic_sol_product.engine.release_qualification import validate_published_metadata
+from comic_sol_product.engine.release_qualification import verify_payload_checksums
+from comic_sol_product.engine.release_visual_gate import (
+    EXPECTED_GROUPS,
+    validate_live_visual_summary,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -483,14 +486,25 @@ class ReleaseQualificationContractTests(unittest.TestCase):
                 binary.parent.rmdir()
 
             with (
-                mock.patch("scripts.release_qualification.install", side_effect=fake_install),
-                mock.patch("scripts.release_qualification.run", return_value=f"comic-sol {_V}"),
                 mock.patch(
-                    "scripts.release_qualification.json_command",
+                    "comic_sol_product.engine.release_qualification.install",
+                    side_effect=fake_install,
+                ),
+                mock.patch(
+                    "comic_sol_product.engine.release_qualification.run",
+                    return_value=f"comic-sol {_V}",
+                ),
+                mock.patch(
+                    "comic_sol_product.engine.release_qualification.json_command",
                     side_effect=fake_json_command,
                 ),
-                mock.patch("scripts.release_qualification.uninstall", side_effect=fake_uninstall),
-                mock.patch("scripts.release_qualification.exercise_injected_rollback"),
+                mock.patch(
+                    "comic_sol_product.engine.release_qualification.uninstall",
+                    side_effect=fake_uninstall,
+                ),
+                mock.patch(
+                    "comic_sol_product.engine.release_qualification.exercise_injected_rollback"
+                ),
             ):
                 result = qualify(
                     platform_name="macos",
@@ -524,9 +538,12 @@ class ReleaseQualificationContractTests(unittest.TestCase):
                 binary.write_text("fake executable\n", encoding="utf-8")
 
             with (
-                mock.patch("scripts.release_qualification.install", side_effect=fake_install),
                 mock.patch(
-                    "scripts.release_qualification.run",
+                    "comic_sol_product.engine.release_qualification.install",
+                    side_effect=fake_install,
+                ),
+                mock.patch(
+                    "comic_sol_product.engine.release_qualification.run",
                     return_value="comic-sol definitely-wrong",
                 ),
             ):

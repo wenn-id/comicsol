@@ -9,7 +9,7 @@ from typing import cast
 from unittest import mock
 
 from comic_sol_product import cli
-from scripts import comic_sol
+from comic_sol_product.engine import comic_sol
 
 
 class DoctorDiagnosticContractTests(unittest.TestCase):
@@ -312,7 +312,7 @@ class DoctorDiagnosticContractTests(unittest.TestCase):
         self.assertIn("unusable", cast(str, mcp_check["message"]))
 
     def test_doctor_redacts_exception_paths_from_runtime_diagnostics(self):
-        from scripts import font_coverage
+        from comic_sol_product.engine import font_coverage
 
         with tempfile.TemporaryDirectory() as raw:
             diagnostic_path = Path(raw) / "private-font.ttf"

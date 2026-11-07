@@ -14,15 +14,15 @@ import unittest
 from pathlib import Path
 
 import tests.consistency_benchmark as consistency_benchmark
-from scripts.character_identity import derive_identity_pack
-from scripts.character_quality import (
+from comic_sol_product.engine.character_identity import derive_identity_pack
+from comic_sol_product.engine.character_quality import (
     CHARACTER_TRAITS,
     build_character_identity_check,
     character_consistency_context,
 )
-from scripts.comic_sol import read_json, sha256_file
-from scripts.reference_strategy import project_reference_plan
-from scripts.validate_project import ProjectValidationError, require_valid_project
+from comic_sol_product.engine.comic_sol import read_json, sha256_file
+from comic_sol_product.engine.reference_strategy import project_reference_plan
+from comic_sol_product.engine.validate_project import ProjectValidationError, require_valid_project
 from tests.consistency_benchmark import (
     BASELINE_KIND,
     CHARACTERS,

@@ -7,9 +7,9 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from scripts import comic_sol
-from scripts.comic_sol import init_project, read_json, sha256_file
-from scripts.starter_templates import (
+from comic_sol_product.engine import comic_sol
+from comic_sol_product.engine.comic_sol import init_project, read_json, sha256_file
+from comic_sol_product.engine.starter_templates import (
     CATALOG,
     STARTER_FILES,
     STARTER_IDS,
@@ -17,7 +17,7 @@ from scripts.starter_templates import (
     inventory_starters,
     load_starter,
 )
-from scripts.validate_project import validate_project
+from comic_sol_product.engine.validate_project import validate_project
 
 
 ROOT = Path(__file__).resolve().parents[1]

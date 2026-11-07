@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from scripts.release_visual_gate import (
+from comic_sol_product.engine.release_visual_gate import (
     BUNDLE_ASSET,
     MARKDOWN_ASSET,
     SUMMARY_ASSET,

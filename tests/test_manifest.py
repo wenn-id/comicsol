@@ -13,7 +13,7 @@ from PIL import ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts.comic_sol import (  # noqa: E402
+from comic_sol_product.engine.comic_sol import (  # noqa: E402
     append_event,
     atomic_write_bytes,
     atomic_write_json,
@@ -28,8 +28,8 @@ from scripts.comic_sol import (  # noqa: E402
     slugify,
     transition,
 )
-from scripts.project_io import ProjectTransaction  # noqa: E402
-from scripts.schema import (  # noqa: E402
+from comic_sol_product.engine.project_io import ProjectTransaction  # noqa: E402
+from comic_sol_product.engine.schema import (  # noqa: E402
     CURRENT_PROJECT_SCHEMA_VERSION,
     MIN_READER_PROJECT_SCHEMA_VERSION,
     PROJECT_MIGRATIONS,
@@ -38,12 +38,12 @@ from scripts.schema import (  # noqa: E402
     migrate_project_manifest,
     read_project_manifest,
 )
-from scripts.stage_registry import RESUME_STAGES  # noqa: E402
-from scripts.validate_project import (  # noqa: E402
+from comic_sol_product.engine.stage_registry import RESUME_STAGES  # noqa: E402
+from comic_sol_product.engine.validate_project import (  # noqa: E402
     ProjectValidationError,
     validate_manifest,
 )
-from scripts import comic_sol, letter_panels, project_io  # noqa: E402
+from comic_sol_product.engine import comic_sol, letter_panels, project_io  # noqa: E402
 
 
 class ManifestTests(unittest.TestCase):
@@ -89,7 +89,9 @@ class ManifestTests(unittest.TestCase):
         stages_with_future_extension = (*RESUME_STAGES, "future-stage")
         manifest["stage_versions"] = {stage: "1" for stage in stages_with_future_extension}
 
-        with mock.patch("scripts.validate_project.RESUME_STAGES", stages_with_future_extension):
+        with mock.patch(
+            "comic_sol_product.engine.validate_project.RESUME_STAGES", stages_with_future_extension
+        ):
             self.assertEqual([], validate_manifest(manifest))
 
     def test_project_schema_contract_is_explicit_and_readable(self):
@@ -522,7 +524,7 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("minor prop drift", exported["warnings"])
         # This test isolates transition-graph behavior; final artifact gating is
         # covered by GuardedOperationTests.
-        with mock.patch("scripts.validate_project.require_valid_project"):
+        with mock.patch("comic_sol_product.engine.validate_project.require_valid_project"):
             terminal = transition(export_project, "COMPLETE")
         self.assertEqual("COMPLETE_WITH_WARNINGS", terminal["status"])
         self.assertIn("minor prop drift", terminal["warnings"])

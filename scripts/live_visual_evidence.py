@@ -25,7 +25,7 @@ from PIL.Image import DecompressionBombError
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.input_limits import looks_like_secret, loads_bounded_json
+from comic_sol_product.engine.input_limits import looks_like_secret, loads_bounded_json
 from tests.consistency_benchmark import (
     CONSISTENCY_DIMENSIONS,
     MATRIX_BY_PANEL,

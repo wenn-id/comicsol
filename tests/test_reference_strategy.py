@@ -3,12 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.character_identity import (
+from comic_sol_product.engine.character_identity import (
     IDENTITY_PACK_PATH,
     derive_and_write_identity_pack,
     derive_identity_pack,
 )
-from scripts.reference_strategy import (
+from comic_sol_product.engine.reference_strategy import (
     CANONICAL_ANCHOR,
     CLOSE_UP,
     DUPLICATE_PATH,

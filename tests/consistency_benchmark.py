@@ -39,14 +39,14 @@ if __package__ in {None, ""}:  # pragma: no cover - direct script execution
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from comic_sol_product import __version__ as ENGINE_VERSION
-from scripts.comic_sol import (
+from comic_sol_product.engine.comic_sol import (
     atomic_write_json,
     init_project,
     read_json,
     sha256_file,
     transition,
 )
-from scripts.validate_project import ProjectValidationError, require_valid_project
+from comic_sol_product.engine.validate_project import ProjectValidationError, require_valid_project
 
 # The corpus module already owns the canonical artifact builders for these shapes.
 # Reusing them keeps one schema statement in the test suite instead of two.

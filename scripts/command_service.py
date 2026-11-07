@@ -26,7 +26,7 @@ class CommandService:
         handoff_archive: Any | None = None,
         dogfood: Any | None = None,
     ) -> None:
-        package = __package__ or "scripts"
+        package = __package__ or "comic_sol_product.engine"
 
         def load(name: str) -> Any:
             return importlib.import_module(f"{package}.{name}")

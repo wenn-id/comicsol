@@ -9,10 +9,10 @@ from unittest import mock
 
 from PIL import Image, PngImagePlugin
 
-from scripts import comic_sol, handoff, handoff_archive, schema
-from scripts.character_identity import IDENTITY_PACK_PATH, derive_identity_pack
-from scripts.core_primitives import canonical_artifact_bytes, canonical_json_bytes
-from scripts.handoff import (
+from comic_sol_product.engine import comic_sol, handoff, handoff_archive, schema
+from comic_sol_product.engine.character_identity import IDENTITY_PACK_PATH, derive_identity_pack
+from comic_sol_product.engine.core_primitives import canonical_artifact_bytes, canonical_json_bytes
+from comic_sol_product.engine.handoff import (
     HANDOFF_CONTRACT_VERSION,
     HandoffContractError,
     HandoffResultError,
@@ -24,9 +24,9 @@ from scripts.handoff import (
     validate_generation_receipt,
     validate_handoff_manifest,
 )
-from scripts.layouts import layout_rects
-from scripts.input_limits import InputResourceLimitError
-from scripts.validate_project import validate_project
+from comic_sol_product.engine.layouts import layout_rects
+from comic_sol_product.engine.input_limits import InputResourceLimitError
+from comic_sol_product.engine.validate_project import validate_project
 from tests.support import make_symlink
 from tests.test_validation import valid_characters, valid_manifest, valid_story, valid_storyboard
 
@@ -730,7 +730,7 @@ class HandoffPrepareInspectTests(unittest.TestCase):
     def test_prepare_composes_migration_and_handoff_in_one_project_last_transaction(self):
         from unittest import mock
 
-        from scripts import project_io
+        from comic_sol_product.engine import project_io
 
         prepare = _require_api(self, comic_sol, "prepare_handoff")
         _, project = self._legacy_planner_project()
@@ -811,7 +811,7 @@ class HandoffPrepareInspectTests(unittest.TestCase):
     def test_repeated_prepare_is_byte_preserving_and_appends_no_event(self):
         from unittest import mock
 
-        from scripts import project_io
+        from comic_sol_product.engine import project_io
 
         prepare = _require_api(self, comic_sol, "prepare_handoff")
         inspect = _require_api(self, comic_sol, "inspect_handoff")
@@ -1154,7 +1154,7 @@ class HandoffPrepareInspectTests(unittest.TestCase):
         import os
         from unittest import mock
 
-        from scripts import project_io
+        from comic_sol_product.engine import project_io
 
         prepare = _require_api(self, comic_sol, "prepare_handoff")
         for boundary in ("stage", "fsync", "publication"):
@@ -1566,7 +1566,7 @@ class HandoffIntakeFailureTests(unittest.TestCase):
     def test_ordinals_duplicates_conflicts_and_completed_jobs_fail_closed(self):
         from unittest import mock
 
-        from scripts import project_io
+        from comic_sol_product.engine import project_io
 
         accept = _require_api(self, comic_sol, "accept_handoff_result")
         root, project, panel_job = self._prepared_panel()
@@ -1623,7 +1623,7 @@ class HandoffIntakeFailureTests(unittest.TestCase):
     def test_rasterless_failures_publish_sanitized_receipts_and_exhaust_retries(self):
         from unittest import mock
 
-        from scripts import project_io
+        from comic_sol_product.engine import project_io
 
         record_failure = _require_api(self, comic_sol, "record_handoff_failure")
         _root, project, panel_job = self._prepared_panel()
@@ -1841,7 +1841,7 @@ class HandoffIntakeFailureTests(unittest.TestCase):
         import os
         from unittest import mock
 
-        from scripts import project_io
+        from comic_sol_product.engine import project_io
 
         accept = _require_api(self, comic_sol, "accept_handoff_result")
         record_failure = _require_api(self, comic_sol, "record_handoff_failure")

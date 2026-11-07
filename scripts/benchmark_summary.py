@@ -32,7 +32,7 @@ from typing import Any, Callable, Mapping, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    __package__ = "scripts"
+    __package__ = "comic_sol_product.engine"
 
 from .benchmark import HARNESS_VERSION, METRIC_DIRECTIONS, METRIC_IDS, load_results
 
@@ -75,7 +75,7 @@ GATING_METRIC_IDS = (
 )
 
 # A ratio with no denominator measured nothing. Dialogue correctness is the one
-# metric whose absence is success, matching ``scripts.benchmark._metric``.
+# metric whose absence is success, matching ``comic_sol_product.engine.benchmark._metric``.
 EMPTY_METRIC_VALUES = {"dialogue_correctness": 1.0}
 
 CONSISTENCY_BENCHMARK = "character-consistency"

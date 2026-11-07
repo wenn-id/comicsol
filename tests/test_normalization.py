@@ -11,14 +11,14 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts.normalize_panels import (  # noqa: E402
+from comic_sol_product.engine.normalize_panels import (  # noqa: E402
     NormalizationSpec,
     normalization_geometry,
     normalize_panel,
     normalize_panels,
 )
-from scripts.validate_project import validate_panel_provenance  # noqa: E402
-from scripts import (  # noqa: E402
+from comic_sol_product.engine.validate_project import validate_panel_provenance  # noqa: E402
+from comic_sol_product.engine import (  # noqa: E402
     letter_panels,
     normalize_panels as normalize_panels_module,
     pdf_quality,
@@ -281,7 +281,7 @@ class PanelProvenanceTests(unittest.TestCase):
         self.assert_stale(validate_panel_provenance(self.project, self.record), "clean_width")
 
     def test_provenance_rejects_raster_over_decode_limit_before_loading(self):
-        with mock.patch("scripts.validate_project.MAX_DECODED_PIXELS", 1):
+        with mock.patch("comic_sol_product.engine.validate_project.MAX_DECODED_PIXELS", 1):
             issues = validate_panel_provenance(self.project, self.record)
 
         self.assert_stale(issues, "raw_path")
@@ -289,7 +289,7 @@ class PanelProvenanceTests(unittest.TestCase):
 
     def test_provenance_promotes_decompression_bomb_warning_to_stale_issue(self):
         with mock.patch(
-            "scripts.validate_project.Image.Image.load",
+            "comic_sol_product.engine.validate_project.Image.Image.load",
             side_effect=Image.DecompressionBombWarning("unsafe dimensions"),
         ):
             issues = validate_panel_provenance(self.project, self.record)

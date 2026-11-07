@@ -5,7 +5,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from scripts.comic_sol import (
+from comic_sol_product.engine.comic_sol import (
     atomic_write_json,
     bind_plan_artifacts,
     init_project,
@@ -14,9 +14,9 @@ from scripts.comic_sol import (
     record_stage,
     transition,
 )
-from scripts.project_io import sha256_file
-from scripts.schema import UnsupportedSchemaVersionError
-from scripts.validate_project import validate_project
+from comic_sol_product.engine.project_io import sha256_file
+from comic_sol_product.engine.schema import UnsupportedSchemaVersionError
+from comic_sol_product.engine.validate_project import validate_project
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAN_FIXTURE = ROOT / "tests/fixtures/valid-one-page"

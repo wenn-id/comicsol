@@ -12,18 +12,18 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts.comic_sol import atomic_write_json, read_json, sha256_file  # noqa: E402
-from scripts.export_pdf import (  # noqa: E402
+from comic_sol_product.engine.comic_sol import atomic_write_json, read_json, sha256_file  # noqa: E402
+from comic_sol_product.engine.export_pdf import (  # noqa: E402
     PdfExportError,
     discover_pages,
     export_pdf,
     guarded_export,
     main,
 )
-from scripts.compose_pages import compose_project  # noqa: E402
-from scripts.letter_panels import letter_project  # noqa: E402
-from scripts.project_io import ProjectLock  # noqa: E402
-from scripts.page_quality import publish_page_quality_record  # noqa: E402
+from comic_sol_product.engine.compose_pages import compose_project  # noqa: E402
+from comic_sol_product.engine.letter_panels import letter_project  # noqa: E402
+from comic_sol_product.engine.project_io import ProjectLock  # noqa: E402
+from comic_sol_product.engine.page_quality import publish_page_quality_record  # noqa: E402
 from tests.test_finalization import valid_page_reviewer_checks  # noqa: E402
 
 
@@ -141,10 +141,12 @@ class PdfExportTests(unittest.TestCase):
 
     def test_final_pdf_publication_uses_durable_atomic_writer(self):
         destination = self.project / "exports/durable.pdf"
-        from scripts import export_pdf as export_pdf_module
+        from comic_sol_product.engine import export_pdf as export_pdf_module
 
         real_writer = export_pdf_module.durable_atomic_write
-        with mock.patch("scripts.export_pdf.durable_atomic_write", wraps=real_writer) as writer:
+        with mock.patch(
+            "comic_sol_product.engine.export_pdf.durable_atomic_write", wraps=real_writer
+        ) as writer:
             self.assertEqual(destination, export_pdf(self.project, destination))
         writer.assert_called_once()
         self.assertEqual(destination, writer.call_args.args[0])
@@ -216,7 +218,7 @@ class ExportFixtureIntegrationTests(unittest.TestCase):
                 )
             }
             atomic_write_json(project / "project.json", manifest)
-            from scripts import export_pdf as export_pdf_module
+            from comic_sol_product.engine import export_pdf as export_pdf_module
 
             real_sha256_file = export_pdf_module.sha256_file
             hashed_paths = []
@@ -226,7 +228,9 @@ class ExportFixtureIntegrationTests(unittest.TestCase):
                 hashed_paths.append(Path(path).relative_to(project.resolve()).as_posix())
                 return real_sha256_file(path)
 
-            with mock.patch("scripts.export_pdf.sha256_file", side_effect=hash_file):
+            with mock.patch(
+                "comic_sol_product.engine.export_pdf.sha256_file", side_effect=hash_file
+            ):
                 guarded_export(project)
 
             self.assertCountEqual(["pages/page-001.png", "qa/pages/page-001.json"], hashed_paths)

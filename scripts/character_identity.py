@@ -34,7 +34,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    __package__ = "scripts"
+    __package__ = "comic_sol_product.engine"
 
 from .core_primitives import canonical_artifact_bytes, canonical_json_bytes
 from .project_io import ProjectTransaction, contained_project_path, read_contained_json

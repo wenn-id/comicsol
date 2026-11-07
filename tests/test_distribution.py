@@ -28,7 +28,7 @@ from comic_sol_product.portable import (
     REQUIRED_RUNTIME_SUFFIXES,
     validate_runtime_members,
 )
-from scripts.container_sbom import merge_syft_os_packages
+from comic_sol_product.engine.container_sbom import merge_syft_os_packages
 from tests.support import make_symlink
 
 
@@ -451,7 +451,7 @@ class NativeDistributionContractTests(unittest.TestCase):
             self.assertEqual([], list(root.glob(f".{archive.name}.*")))
 
     def test_release_assembly_rejects_architecture_mismatch(self):
-        from scripts import assemble_release
+        from comic_sol_product.engine import assemble_release
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -479,7 +479,7 @@ class NativeDistributionContractTests(unittest.TestCase):
 
     def test_portable_archives_reject_symlinked_runtime_root(self):
         from comic_sol_product.portable import create_portable_archive
-        from scripts import assemble_release
+        from comic_sol_product.engine import assemble_release
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

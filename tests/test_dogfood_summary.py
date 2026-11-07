@@ -12,9 +12,9 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.core_primitives import canonical_artifact_bytes
-from scripts.dogfood_report import canonical_report_bytes
-from scripts.dogfood_summary import (
+from comic_sol_product.engine.core_primitives import canonical_artifact_bytes
+from comic_sol_product.engine.dogfood_report import canonical_report_bytes
+from comic_sol_product.engine.dogfood_summary import (
     COLLECTION_LIMITATIONS,
     MAX_REPORT_INPUTS,
     DogfoodSummaryError,
@@ -25,8 +25,8 @@ from scripts.dogfood_summary import (
     render_markdown,
     write_summary,
 )
-from scripts.project_io import durable_atomic_write
-from scripts.input_limits import MAX_JSON_BYTES
+from comic_sol_product.engine.project_io import durable_atomic_write
+from comic_sol_product.engine.input_limits import MAX_JSON_BYTES
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -299,7 +299,10 @@ class DogfoodSummaryContractTests(unittest.TestCase):
             durable_atomic_write(path, payload)
 
         with (
-            patch("scripts.dogfood_summary.durable_atomic_write", side_effect=fail_second_write),
+            patch(
+                "comic_sol_product.engine.dogfood_summary.durable_atomic_write",
+                side_effect=fail_second_write,
+            ),
             self.assertRaisesRegex(DogfoodSummaryError, "cannot be written safely"),
         ):
             write_summary(
@@ -324,7 +327,10 @@ class DogfoodSummaryContractTests(unittest.TestCase):
             durable_atomic_write(path, payload)
 
         with (
-            patch("scripts.dogfood_summary.durable_atomic_write", side_effect=fail_second_write),
+            patch(
+                "comic_sol_product.engine.dogfood_summary.durable_atomic_write",
+                side_effect=fail_second_write,
+            ),
             self.assertRaisesRegex(DogfoodSummaryError, "cannot be written safely"),
         ):
             write_summary(

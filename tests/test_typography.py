@@ -9,9 +9,9 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts import typography  # noqa: E402
+from comic_sol_product.engine import typography  # noqa: E402
 
-from scripts.typography import (  # noqa: E402
+from comic_sol_product.engine.typography import (  # noqa: E402
     LETTERING_GEOMETRY_SCHEMA_VERSION,
     PREFLIGHT_CHECKS,
     SCRIPT_EXTENSION_KEY,
@@ -21,11 +21,14 @@ from scripts.typography import (  # noqa: E402
     preflight_text_items,
     write_typography_preflight,
 )
-from scripts import letter_panels  # noqa: E402
-from scripts.font_cmap import font_supports  # noqa: E402
-from scripts.letter_panels import letter_project  # noqa: E402
-from scripts.letter_panels import main as letter_main  # noqa: E402
-from scripts.validate_project import validate_lettering_provenance, validate_project  # noqa: E402
+from comic_sol_product.engine import letter_panels  # noqa: E402
+from comic_sol_product.engine.font_cmap import font_supports  # noqa: E402
+from comic_sol_product.engine.letter_panels import letter_project  # noqa: E402
+from comic_sol_product.engine.letter_panels import main as letter_main  # noqa: E402
+from comic_sol_product.engine.validate_project import (  # noqa: E402
+    validate_lettering_provenance,
+    validate_project,
+)
 
 
 FIXTURES = ROOT / "tests/fixtures"
@@ -79,7 +82,9 @@ class TypographyPreflightTests(unittest.TestCase):
     def test_combining_mark_in_precomposed_kana_base_is_refused_as_stacked(self):
         for kind in ("dialogue", "caption"):
             with self.subTest(kind=kind):
-                with mock.patch("scripts.typography.font_supports", return_value=True):
+                with mock.patch(
+                    "comic_sol_product.engine.typography.font_supports", return_value=True
+                ):
                     with self.assertRaises(TypographyPreflightError) as raised:
                         preflight_text_items([item("\u304c\u0301", kind=kind)], FONT_POLICY)
 
@@ -92,7 +97,7 @@ class TypographyPreflightTests(unittest.TestCase):
         typography._hash_font_file.cache_clear()
         typography._font_policy_hashes.cache_clear()
         with mock.patch(
-            "scripts.typography._hash_font_file", wraps=typography._hash_font_file
+            "comic_sol_product.engine.typography._hash_font_file", wraps=typography._hash_font_file
         ) as hashed:
             preflight_text_items([item("First")], FONT_POLICY)
             preflight_text_items([item("Second")], FONT_POLICY)
@@ -728,7 +733,7 @@ class TypographyLetteringIntegrationTests(unittest.TestCase):
             "utf-8",
         )
 
-        from scripts import project_io
+        from comic_sol_product.engine import project_io
 
         real_replace = project_io.os.replace
 

@@ -7,10 +7,10 @@ from copy import deepcopy
 from pathlib import Path
 from unittest import mock
 
-import scripts.handoff as handoff
+import comic_sol_product.engine.handoff as handoff
 
-from scripts.core_primitives import canonical_artifact_bytes, canonical_json_bytes
-from scripts.handoff import (
+from comic_sol_product.engine.core_primitives import canonical_artifact_bytes, canonical_json_bytes
+from comic_sol_product.engine.handoff import (
     HANDOFF_CONTRACT_VERSION,
     HandoffContractError,
     StaleLockedScopeError,
@@ -27,8 +27,8 @@ from scripts.handoff import (
     validate_generation_receipt,
     validate_handoff_manifest,
 )
-from scripts.project_io import ProjectLock
-from scripts.raster_limits import MAX_DECODED_PIXELS
+from comic_sol_product.engine.project_io import ProjectLock
+from comic_sol_product.engine.raster_limits import MAX_DECODED_PIXELS
 
 
 PROMPT_SHA256 = "a" * 64

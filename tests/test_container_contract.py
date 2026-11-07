@@ -19,14 +19,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 from comic_sol_product import __version__ as RELEASE_VERSION  # noqa: E402
-from scripts.container_runtime_audit import (  # noqa: E402
+from comic_sol_product.engine.container_runtime_audit import (  # noqa: E402
     DEFAULT_PIDS_LIMIT,
     EXPECTED_GID,
     EXPECTED_UID,
     MCP_INITIALIZE_REQUEST,
     _probe_args,
 )
-from scripts.container_sbom import (  # noqa: E402
+from comic_sol_product.engine.container_sbom import (  # noqa: E402
     container_sbom_name,
     container_tar_name,
     merge_syft_os_packages,
@@ -44,7 +44,7 @@ class ContainerSbomImportContractTests(unittest.TestCase):
             (
                 "import importlib, importlib.util, sys",
                 "before = sys.path.copy()",
-                "importlib.import_module('scripts.container_sbom')",
+                "importlib.import_module('comic_sol_product.engine.container_sbom')",
                 "assert sys.path == before",
                 "if importlib.util.find_spec('mcp') is not None:",
                 "    from comic_sol_product.mcp import _load_server",

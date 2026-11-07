@@ -47,7 +47,6 @@ BUNDLED_FONTS = (
     "OFL-NotoSans.txt",
 )
 BUNDLED_SCRIPTS = (
-    "__init__.py",
     "character_identity.py",
     "character_quality.py",
     "comic_sol.py",
@@ -83,7 +82,13 @@ BUNDLED_SCRIPTS = (
     "typography.py",
     "validate_project.py",
 )
-MANAGED_DIRECTORIES = ("references", "templates", "assets/fonts", "scripts")
+MANAGED_DIRECTORIES = (
+    "references",
+    "templates",
+    "assets/fonts",
+    "scripts",
+    "comic_sol_product/engine",
+)
 
 
 def synchronized_paths() -> list[Path]:
@@ -97,6 +102,7 @@ def synchronized_paths() -> list[Path]:
             for relative in STARTER_FILES
         ),
         *(Path("assets/fonts") / name for name in BUNDLED_FONTS),
+        Path("comic_sol_product/engine/__init__.py"),
         *(Path("scripts") / name for name in BUNDLED_SCRIPTS),
     ]
 

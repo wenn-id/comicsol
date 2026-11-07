@@ -1,5 +1,6 @@
 include LICENSE README.md SKILL.md runtime_contract.py
 recursive-include scripts *.py
+recursive-include comic_sol_product/engine *.py
 recursive-include assets *
 recursive-include templates *
 recursive-include references *.md

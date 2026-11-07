@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts.font_coverage import (  # noqa: E402
+from comic_sol_product.engine.font_coverage import (  # noqa: E402
     BUNDLED_COVERAGE_PROBES,
     BUNDLED_TARGET_SCRIPTS,
     EXTENSION_TARGET_SCRIPTS,
@@ -26,8 +26,8 @@ from scripts.font_coverage import (  # noqa: E402
     script_for_codepoint,
     shaping_policy,
 )
-from scripts.font_cmap import font_supports  # noqa: E402
-from scripts.typography import display_content  # noqa: E402
+from comic_sol_product.engine.font_cmap import font_supports  # noqa: E402
+from comic_sol_product.engine.typography import display_content  # noqa: E402
 
 
 FONTS = ROOT / "assets/fonts"

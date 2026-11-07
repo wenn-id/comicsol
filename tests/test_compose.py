@@ -6,11 +6,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts.compose_pages import compose_project  # noqa: E402
-from scripts.export_pdf import export_pdf  # noqa: E402
-from scripts.letter_panels import letter_project  # noqa: E402
-from scripts.render_report import render_report  # noqa: E402
-from scripts.validate_project import validate_project  # noqa: E402
+from comic_sol_product.engine.compose_pages import compose_project  # noqa: E402
+from comic_sol_product.engine.export_pdf import export_pdf  # noqa: E402
+from comic_sol_product.engine.letter_panels import letter_project  # noqa: E402
+from comic_sol_product.engine.render_report import render_report  # noqa: E402
+from comic_sol_product.engine.validate_project import validate_project  # noqa: E402
 from tests.test_export_pdf import pdf_frames  # noqa: E402
 
 

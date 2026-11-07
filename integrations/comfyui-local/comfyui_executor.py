@@ -34,7 +34,7 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPOSITORY_ROOT))
 
-from scripts.project_io import InputResourceLimitError, read_contained_bytes  # noqa: E402
+from comic_sol_product.engine.project_io import InputResourceLimitError, read_contained_bytes  # noqa: E402
 
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:8188"

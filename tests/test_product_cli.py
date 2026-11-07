@@ -13,8 +13,12 @@ from comic_sol_product import __version__
 
 from comic_sol_product import cli
 from comic_sol_product.config import default_output_root
-from scripts.comic_sol import init_project
-from scripts.handoff import HandoffContractError, HandoffResultError, StaleLockedScopeError
+from comic_sol_product.engine.comic_sol import init_project
+from comic_sol_product.engine.handoff import (
+    HandoffContractError,
+    HandoffResultError,
+    StaleLockedScopeError,
+)
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 

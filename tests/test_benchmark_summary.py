@@ -14,13 +14,13 @@ from tests.consistency_benchmark import definition_digest
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts.benchmark import (  # noqa: E402
+from comic_sol_product.engine.benchmark import (  # noqa: E402
     HARNESS_VERSION,
     METRIC_DIRECTIONS,
     METRIC_IDS,
     write_result,
 )
-from scripts.benchmark_summary import (  # noqa: E402
+from comic_sol_product.engine.benchmark_summary import (  # noqa: E402
     CONSISTENCY_METRIC_IDS,
     GATING_METRIC_IDS,
     SUMMARY_KIND,
@@ -688,7 +688,7 @@ class SummaryIntegrationTests(unittest.TestCase):
     def test_summary_tool_is_a_repository_gate_not_a_shipped_script(self):
         from comic_sol_product.release import REQUIRED_WHEEL_MEMBERS
         from comic_sol_product.runtime_contract import RUNTIME_SCRIPTS
-        from scripts.sync_plugin_bundle import BUNDLED_SCRIPTS
+        from comic_sol_product.engine.sync_plugin_bundle import BUNDLED_SCRIPTS
 
         self.assertNotIn("benchmark_summary.py", BUNDLED_SCRIPTS)
         self.assertFalse((ROOT / "skills/comic-sol/scripts/benchmark_summary.py").exists())
