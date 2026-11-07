@@ -312,21 +312,6 @@ def _staging_directory_identity(staging: Path) -> tuple[int, int]:
     return metadata.st_dev, metadata.st_ino
 
 
-def _allocate_project_directory(output_root: Path, base_slug: str) -> Path:
-    output_root.mkdir(parents=True, exist_ok=True)
-    suffix = 1
-    while True:
-        suffix_text = "" if suffix == 1 else f"-{suffix}"
-        candidate_slug = f"{base_slug[: 48 - len(suffix_text)].rstrip('-')}{suffix_text}"
-        candidate = output_root / candidate_slug
-        try:
-            candidate.mkdir()
-        except FileExistsError:
-            suffix += 1
-            continue
-        return candidate
-
-
 def validate_request_settings(request: dict[str, object]) -> dict[str, object]:
     """Validate the small, non-secret request record persisted in each project."""
     if not isinstance(request, dict):

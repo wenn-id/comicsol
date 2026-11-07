@@ -14,14 +14,13 @@ from comic_sol_product.engine.handoff import (
     HANDOFF_CONTRACT_VERSION,
     HandoffContractError,
     StaleLockedScopeError,
-    assert_locked_scope,
+    assert_current_locked_scope,
     build_generation_batches,
     build_generation_job,
     build_generation_receipt,
     build_handoff_manifest,
     generation_job_sha256,
     locked_scope_sha256,
-    rank_executors,
     validate_generation_batches,
     validate_generation_job,
     validate_generation_receipt,
@@ -568,19 +567,6 @@ class GenerationContractTests(unittest.TestCase):
         receipt["category"] = "ghp_abcdefghijklmnopqrstuvwxyz"
         self.assert_invalid(validate_generation_receipt, receipt, "category")
 
-        declaration = {
-            "capability_id": "native-image",
-            "executor_kind": "native-tool",
-            "text_to_image": True,
-            "local_raster": True,
-            "supports_reference_images": True,
-            "supports_dimensions": True,
-            "supports_localized_edit": False,
-            "credential": "token=super-secret-value",
-        }
-        with self.assertRaisesRegex(HandoffContractError, "credential"):
-            rank_executors([declaration])
-
     def test_contract_paths_reject_nul_bytes_deterministically(self):
         manifest = valid_handoff_manifest()
         manifest["required_artifacts"][0]["path"] = "plan/a\x00b"
@@ -724,19 +710,17 @@ class LockedScopeTests(unittest.TestCase):
             prompt_paths=["prompts/panels/p01-01.txt", "prompts/panels/p01-02.txt"],
             reference_paths=["references/characters/mira.png"],
         )
-        assert_locked_scope(
+        assert_current_locked_scope(
             self.project,
             expected,
-            prompt_paths=["prompts/panels/p01-02.txt", "prompts/panels/p01-01.txt"],
             reference_paths=["references/characters/mira.png"],
         )
         (self.project / "prompts/panels/p01-01.txt").write_bytes(b"changed prompt\n")
 
         with self.assertRaisesRegex(StaleLockedScopeError, "stale"):
-            assert_locked_scope(
+            assert_current_locked_scope(
                 self.project,
                 expected,
-                prompt_paths=["prompts/panels/p01-01.txt", "prompts/panels/p01-02.txt"],
                 reference_paths=["references/characters/mira.png"],
             )
 
@@ -760,10 +744,9 @@ class LockedScopeTests(unittest.TestCase):
         job_reference.write_bytes(b"job reference version two")
 
         with self.assertRaisesRegex(StaleLockedScopeError, "stale project scope"):
-            assert_locked_scope(
+            assert_current_locked_scope(
                 self.project,
                 expected,
-                prompt_paths=prompt_paths,
                 reference_paths=reference_paths,
             )
 
@@ -797,13 +780,9 @@ class LockedScopeTests(unittest.TestCase):
 
         def verify_scope():
             try:
-                assert_locked_scope(
+                assert_current_locked_scope(
                     self.project,
                     expected,
-                    prompt_paths=[
-                        "prompts/panels/p01-01.txt",
-                        "prompts/panels/p01-02.txt",
-                    ],
                     reference_paths=["references/characters/mira.png"],
                 )
             except BaseException as error:
@@ -876,61 +855,6 @@ class LockedScopeTests(unittest.TestCase):
                         prompt_paths=[path],
                         reference_paths=["references/characters/mira.png"],
                     )
-
-
-class ExecutorRankingTests(unittest.TestCase):
-    @staticmethod
-    def declaration(
-        capability_id,
-        executor_kind,
-        *,
-        text_to_image=True,
-        local_raster=True,
-        references=False,
-        dimensions=False,
-        localized_edit=False,
-    ):
-        return {
-            "capability_id": capability_id,
-            "executor_kind": executor_kind,
-            "text_to_image": text_to_image,
-            "local_raster": local_raster,
-            "supports_reference_images": references,
-            "supports_dimensions": dimensions,
-            "supports_localized_edit": localized_edit,
-        }
-
-    def test_ranking_uses_declared_features_and_stable_id_only(self):
-        declarations = [
-            self.declaration(
-                "external-complete",
-                "external-tool",
-                references=True,
-                dimensions=True,
-                localized_edit=True,
-            ),
-            self.declaration("native-basic", "native-tool"),
-            self.declaration("external-beta", "external-tool", references=True),
-            self.declaration("external-alpha", "external-tool", references=True),
-            self.declaration("no-raster", "native-tool", local_raster=False),
-        ]
-
-        ranked = rank_executors(declarations)
-
-        self.assertEqual(
-            ["native-basic", "external-complete", "external-alpha", "external-beta"],
-            [item["capability_id"] for item in ranked],
-        )
-
-    def test_ranking_rejects_unknown_keys_and_invalid_declarations(self):
-        invalid = self.declaration("native-image", "native-tool")
-        invalid["provider_name"] = "not-a-capability"
-        with self.assertRaisesRegex(HandoffContractError, "provider_name"):
-            rank_executors([invalid])
-
-        invalid = self.declaration("Bad ID", "native-tool")
-        with self.assertRaisesRegex(HandoffContractError, "capability_id"):
-            rank_executors([invalid])
 
 
 if __name__ == "__main__":

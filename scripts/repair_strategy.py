@@ -769,20 +769,6 @@ def recorded_panel_plan(project_dir: Path, panel_id: str) -> Mapping[str, Any] |
     )
 
 
-def write_repair_plan(project_dir: Path, document: Mapping[str, Any]) -> Path:
-    """Publish an already-derived repair-plan document atomically.
-
-    Prefer ``plan_and_write_repair_plan``, which derives and publishes under one
-    lock. This entry point is for a document the caller already holds, and it
-    cannot promise that the reviews behind that document are still current.
-    """
-    project_dir = Path(project_dir)
-    payload = canonical_artifact_bytes(document)
-    with ProjectTransaction(project_dir, "repair-plan") as transaction:
-        transaction.stage_bytes(REPAIR_PLAN_PATH, payload)
-    return project_dir / REPAIR_PLAN_PATH
-
-
 def plan_and_write_repair_plan(project_dir: Path, *, localized_edit_supported: bool) -> Path:
     """Plan every reviewed panel's repair, then publish the record.
 
