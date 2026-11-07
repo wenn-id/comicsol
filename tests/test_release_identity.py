@@ -13,6 +13,7 @@ from comic_sol_product.engine.release_identity import (
     prepare_identity,
     validate_release_metadata,
     validate_remote_refs,
+    validate_tag,
     validate_tag_rulesets,
 )
 
@@ -184,6 +185,50 @@ class ReleaseIdentityTests(unittest.TestCase):
             self.prepare(package_version="2.0.0rc5")
         with self.assertRaisesRegex(IdentityError, "invalid release tag"):
             self.prepare(tag="release-2.0.0rc6")
+
+    def test_validate_tag_accepts_all_supported_release_versions(self):
+        cases = {
+            "v1.2.3": "1.2.3",
+            "v1.2.3a1": "1.2.3a1",
+            "v1.2.3b2": "1.2.3b2",
+            "v1.2.3rc3": "1.2.3rc3",
+        }
+        for tag, version in cases.items():
+            with self.subTest(tag=tag):
+                self.assertEqual(version, validate_tag(tag))
+
+    def test_validate_tag_rejects_malformed_or_unanchored_values(self):
+        for tag in (
+            "release-v1.2.3",
+            "v1.2.3a",
+            "v1.2.3beta1",
+            "v1.2.3rc1\n",
+        ):
+            with self.subTest(tag=tag):
+                with self.assertRaisesRegex(IdentityError, "invalid release tag"):
+                    validate_tag(tag)
+
+    def test_validate_tag_cli_uses_the_canonical_parser(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = main(["validate-tag", "--tag", "v1.2.3b2"])
+
+        self.assertEqual(0, result)
+        self.assertEqual(
+            {"tag": "v1.2.3b2", "version": "1.2.3b2"},
+            json.loads(output.getvalue()),
+        )
+
+    def test_validate_tag_cli_rejects_invalid_input_without_traceback(self):
+        output = io.StringIO()
+        error = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
+            result = main(["validate-tag", "--tag", "v1.2.3rc1suffix"])
+
+        self.assertEqual(1, result)
+        self.assertEqual("", output.getvalue())
+        self.assertIn("release identity rejected: invalid release tag", error.getvalue())
+        self.assertNotIn("Traceback", error.getvalue())
 
     def test_event_and_checkout_identity_mismatches_are_rejected(self):
         tag_object_sha, candidate_commit = self.fixture.annotated_tag()
