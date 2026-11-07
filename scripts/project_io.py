@@ -1292,18 +1292,28 @@ class ProjectTransaction:
                     ):
                         continue
                     try:
-                        children = list(tx_dir.iterdir())
+                        all_children_are_temps = True
+                        for child in tx_dir.iterdir():
+                            if not _is_journal_temp_file(child):
+                                all_children_are_temps = False
+                                break
                     except OSError:
                         continue
-                    if children and not all(_is_journal_temp_file(child) for child in children):
+                    if not all_children_are_temps:
                         continue
+                    removed = False
                     try:
-                        for child in children:
+                        for child in tx_dir.iterdir():
+                            if not _is_journal_temp_file(child):
+                                break
                             child.unlink()
-                        tx_dir.rmdir()
+                        else:
+                            tx_dir.rmdir()
+                            removed = True
                     except OSError:
                         continue
-                    fsync_directory(base)
+                    if removed:
+                        fsync_directory(base)
                     continue
                 try:
                     journal = loads_bounded_json(

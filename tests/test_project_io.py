@@ -774,6 +774,31 @@ class ProjectTransactionTests(unittest.TestCase):
         self.assertEqual(b"keep", marker.read_bytes())
         self.assertTrue(transaction_dir.is_dir())
 
+    def test_recover_stops_at_first_unrecognized_child(self):
+        transaction_dir = self.project / "logs/transactions/3"
+        transaction_dir.mkdir(parents=True)
+        temporary = self._write_unpublished_journal_temp_file(transaction_dir)
+        marker = transaction_dir / "unrecognized.bin"
+        marker.write_bytes(b"keep")
+        original_iterdir = Path.iterdir
+
+        def bounded_iterdir(path):
+            if path == transaction_dir:
+
+                def children():
+                    yield temporary
+                    yield marker
+                    raise AssertionError("scan continued after an unrecognized child")
+
+                return children()
+            return original_iterdir(path)
+
+        with mock.patch.object(Path, "iterdir", new=bounded_iterdir):
+            project_io.ProjectTransaction.recover(self.project)
+
+        self.assertTrue(temporary.is_file())
+        self.assertEqual(b"keep", marker.read_bytes())
+
     def test_recover_preserves_symlink_with_journal_temp_name(self):
         transaction_dir = self.project / "logs/transactions/3"
         transaction_dir.mkdir(parents=True)
