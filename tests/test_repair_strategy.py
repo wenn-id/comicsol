@@ -8,10 +8,10 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts import repair_strategy
-from scripts.core_primitives import PANEL_CHECK_IDS
-from scripts.project_io import ProjectLock
-from scripts.repair_strategy import (
+from comic_sol_product.engine import repair_strategy
+from comic_sol_product.engine.core_primitives import PANEL_CHECK_IDS
+from comic_sol_product.engine.project_io import ProjectLock
+from comic_sol_product.engine.repair_strategy import (
     AREA_SCOPE,
     EDITING_UNSUPPORTED,
     FULL_REGENERATION,
@@ -894,7 +894,9 @@ class PersistenceTests(RepairPlanProjectHarness):
             )
             return real_check(project_dir, record)
 
-        with patch("scripts.repair_strategy.accepted_content_is_stale", side_effect=probe):
+        with patch(
+            "comic_sol_product.engine.repair_strategy.accepted_content_is_stale", side_effect=probe
+        ):
             plan_and_write_repair_plan(self.project, localized_edit_supported=True)
 
         self.assertEqual([True], observed)

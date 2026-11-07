@@ -24,7 +24,7 @@ from pathlib import Path
 if __package__ in {None, ""}:  # pragma: no cover - direct script execution
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.comic_sol import (
+from comic_sol_product.engine.comic_sol import (
     atomic_write_json,
     init_project,
     layout_rects,

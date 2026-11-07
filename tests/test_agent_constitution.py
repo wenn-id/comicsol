@@ -3,7 +3,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from scripts.stage_registry import RESUME_STAGES
+from comic_sol_product.engine.stage_registry import RESUME_STAGES
 
 
 class _OSReplaceCallVisitor(ast.NodeVisitor):

@@ -24,9 +24,9 @@ from comic_sol_product.errors import (
     error_payload,
 )
 
-from scripts import comic_sol
-from scripts import project_io as project_io_os
-from scripts.input_limits import (
+from comic_sol_product.engine import comic_sol
+from comic_sol_product.engine import project_io as project_io_os
+from comic_sol_product.engine.input_limits import (
     MAX_JSON_BYTES,
     MAX_JSON_DEPTH,
     MAX_JSON_ENTRIES,
@@ -38,19 +38,19 @@ from scripts.input_limits import (
     loads_bounded_json,
     validate_narrative,
 )
-from scripts.project_io import (
+from comic_sol_product.engine.project_io import (
     MAX_READ_BYTES,
     read_bytes_nofollow,
     read_contained_bytes,
     read_contained_json,
     read_json_nofollow,
 )
-from scripts.raster_limits import MAX_DECODED_PIXELS, MAX_ENCODED_RASTER_BYTES
-from scripts.validate_project import validate_manifest, validate_panel_record
+from comic_sol_product.engine.raster_limits import MAX_DECODED_PIXELS, MAX_ENCODED_RASTER_BYTES
+from comic_sol_product.engine.validate_project import validate_manifest, validate_panel_record
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
 if MCP_AVAILABLE:
-    from scripts import mcp_server
+    from comic_sol_product.engine import mcp_server
 
     try:
         from mcp.server.fastmcp.exceptions import ToolError

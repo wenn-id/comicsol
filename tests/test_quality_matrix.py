@@ -8,7 +8,7 @@ from unittest import mock
 
 from PIL import Image
 
-from scripts.comic_sol import (
+from comic_sol_product.engine.comic_sol import (
     atomic_write_json,
     finalize_project,
     init_project,
@@ -16,10 +16,13 @@ from scripts.comic_sol import (
     record_stage,
     sha256_file,
 )
-from scripts.normalize_panels import normalize_panel
-from scripts.page_quality import build_page_quality_record, write_page_quality_record
-from scripts.quality_sample import EvidenceModeError, build_evidence_record, main
-from scripts.validate_project import validate_project
+from comic_sol_product.engine.normalize_panels import normalize_panel
+from comic_sol_product.engine.page_quality import (
+    build_page_quality_record,
+    write_page_quality_record,
+)
+from comic_sol_product.engine.quality_sample import EvidenceModeError, build_evidence_record, main
+from comic_sol_product.engine.validate_project import validate_project
 
 from tests.support import (
     QUALITY_SCENARIOS,
@@ -264,7 +267,9 @@ class EvidenceModeContractTests(unittest.TestCase):
             lexical_project = project / ".." / project.name
 
             with mock.patch(
-                "scripts.quality_sample.sha256_file", wraps=sha256_file, create=True
+                "comic_sol_product.engine.quality_sample.sha256_file",
+                wraps=sha256_file,
+                create=True,
             ) as hashed:
                 self.assertEqual(
                     0,

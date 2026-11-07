@@ -36,7 +36,7 @@ from comic_sol_product.distribution import (  # noqa: E402
     validate_sbom_schema,
     write_sbom,
 )
-from scripts.build_portable import write_environment_sbom  # noqa: E402
+from comic_sol_product.engine.build_portable import write_environment_sbom  # noqa: E402
 
 BASE_IMAGE_PATTERN = re.compile(r'^ARG PYTHON_BASE="(?P<reference>[^"]+@[^\s"]+)"$', re.MULTILINE)
 OS_PACKAGE_PURL_TYPES = frozenset({"apk", "deb", "rpm"})

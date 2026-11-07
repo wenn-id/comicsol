@@ -13,7 +13,7 @@ from typing import Any, Mapping, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    __package__ = "scripts"
+    __package__ = "comic_sol_product.engine"
 
 from .character_identity import IDENTITY_PACK_PATH, STORYBOARD_PATH, validate_identity_pack
 from .core_primitives import PANEL_ID_PATTERN, canonical_artifact_bytes

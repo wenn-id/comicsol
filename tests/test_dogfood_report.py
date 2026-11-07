@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from comic_sol_product.version import VERSION
-from scripts.comic_sol import init_project
-from scripts.dogfood_report import (
+from comic_sol_product.engine.comic_sol import init_project
+from comic_sol_product.engine.dogfood_report import (
     DogfoodReportError,
     build_report,
     canonical_report_bytes,
@@ -20,13 +20,13 @@ from scripts.dogfood_report import (
     validate_report_file,
     write_report,
 )
-from scripts.handoff import (
+from comic_sol_product.engine.handoff import (
     attempt_id,
     build_generation_job,
     build_generation_receipt,
     generation_job_sha256,
 )
-from scripts.input_limits import MAX_JSON_DEPTH, MAX_JSON_ENTRIES
+from comic_sol_product.engine.input_limits import MAX_JSON_DEPTH, MAX_JSON_ENTRIES
 from tests.support import make_symlink
 
 
@@ -632,7 +632,9 @@ class DogfoodReportTests(unittest.TestCase):
             derive_project_metrics(linked_project)
 
     def test_unexpected_lock_error_is_not_reported_as_busy(self):
-        with patch("scripts.project_io.ProjectLock._lock", side_effect=OSError(5, "I/O")):
+        with patch(
+            "comic_sol_product.engine.project_io.ProjectLock._lock", side_effect=OSError(5, "I/O")
+        ):
             with self.assertRaisesRegex(DogfoodReportError, "opened safely") as caught:
                 derive_project_metrics(self.project)
         self.assertNotIn("busy", str(caught.exception))

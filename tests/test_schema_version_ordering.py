@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from scripts.schema import (
+from comic_sol_product.engine.schema import (
     CURRENT_PROJECT_SCHEMA_VERSION,
     MIN_READER_PROJECT_SCHEMA_VERSION,
     SUPPORTED_PROJECT_SCHEMA_VERSIONS,
@@ -74,8 +74,11 @@ class SchemaVersionParserTests(unittest.TestCase):
         # needed). Lexicographic order says "10.0" < "9.0" and would flip the
         # diagnosis to "no migration path" instead.
         with (
-            patch("scripts.schema.CURRENT_PROJECT_SCHEMA_VERSION", "9.0"),
-            patch("scripts.schema.SUPPORTED_PROJECT_SCHEMA_VERSIONS", frozenset({"9.0"})),
+            patch("comic_sol_product.engine.schema.CURRENT_PROJECT_SCHEMA_VERSION", "9.0"),
+            patch(
+                "comic_sol_product.engine.schema.SUPPORTED_PROJECT_SCHEMA_VERSIONS",
+                frozenset({"9.0"}),
+            ),
         ):
             error = schema_version_error("10.0")
         self.assertIsInstance(error, UnsupportedSchemaVersionError)
@@ -85,8 +88,11 @@ class SchemaVersionParserTests(unittest.TestCase):
         # With a future 1.9 reader, a 1.10 project must be NEWER. Lexicographic
         # order says "1.10" < "1.9" and would report the opposite direction.
         with (
-            patch("scripts.schema.CURRENT_PROJECT_SCHEMA_VERSION", "1.9"),
-            patch("scripts.schema.SUPPORTED_PROJECT_SCHEMA_VERSIONS", frozenset({"1.9"})),
+            patch("comic_sol_product.engine.schema.CURRENT_PROJECT_SCHEMA_VERSION", "1.9"),
+            patch(
+                "comic_sol_product.engine.schema.SUPPORTED_PROJECT_SCHEMA_VERSIONS",
+                frozenset({"1.9"}),
+            ),
         ):
             error = schema_version_error("1.10")
         self.assertIsInstance(error, UnsupportedSchemaVersionError)

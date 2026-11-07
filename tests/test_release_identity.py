@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.release_identity import (
+from comic_sol_product.engine.release_identity import (
     IdentityError,
     github_ref_pattern_matches,
     main,

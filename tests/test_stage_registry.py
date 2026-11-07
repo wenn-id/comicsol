@@ -5,16 +5,16 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-import scripts.comic_sol as comic_sol
-from scripts.comic_sol import _next_resume_action
-from scripts.stage_registry import (
+import comic_sol_product.engine.comic_sol as comic_sol
+from comic_sol_product.engine.comic_sol import _next_resume_action
+from comic_sol_product.engine.stage_registry import (
     ARTIFACT_STAGE,
     RESUME_STAGES,
     STAGE_COMPLETION_STATUS,
     STAGE_INVALIDATION_STATUS,
     STAGE_REGISTRY,
 )
-from scripts.validate_project import STAGES as VALIDATION_SCOPES, validate_project
+from comic_sol_product.engine.validate_project import STAGES as VALIDATION_SCOPES, validate_project
 
 
 class StageRegistryTests(unittest.TestCase):

@@ -15,17 +15,17 @@ from comic_sol_product.errors import (
     format_human_error,
 )
 
-from scripts.export_pdf import PdfExportError  # noqa: E402
-from scripts.handoff import (  # noqa: E402
+from comic_sol_product.engine.export_pdf import PdfExportError  # noqa: E402
+from comic_sol_product.engine.handoff import (  # noqa: E402
     HandoffContractError,
     HandoffResultError,
     StaleLockedScopeError,
 )
-from scripts.handoff_archive import HandoffArchiveError  # noqa: E402
-from scripts.page_quality import PageQualityMigrationError  # noqa: E402
-from scripts.pdf_quality import PdfQualityError  # noqa: E402
-from scripts.typography import TypographyPreflightError  # noqa: E402
-from scripts.validate_project import ProjectValidationError, ValidationIssue  # noqa: E402
+from comic_sol_product.engine.handoff_archive import HandoffArchiveError  # noqa: E402
+from comic_sol_product.engine.page_quality import PageQualityMigrationError  # noqa: E402
+from comic_sol_product.engine.pdf_quality import PdfQualityError  # noqa: E402
+from comic_sol_product.engine.typography import TypographyPreflightError  # noqa: E402
+from comic_sol_product.engine.validate_project import ProjectValidationError, ValidationIssue  # noqa: E402
 
 
 class StructuredErrorContractTests(unittest.TestCase):

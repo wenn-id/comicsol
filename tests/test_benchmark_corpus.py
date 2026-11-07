@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.comic_sol import read_json
-from scripts.validate_project import (
+from comic_sol_product.engine.comic_sol import read_json
+from comic_sol_product.engine.validate_project import (
     LAYOUTS,
     ProjectValidationError,
     require_valid_project,

@@ -39,10 +39,12 @@ class _ArgumentParser(argparse.ArgumentParser):
 def _engine_package() -> str:
     """Return the explicit checkout or installed engine package name."""
     package_root = Path(__file__).resolve().parent
-    if (package_root / "engine" / "comic_sol.py").is_file():
+    engine_root = package_root / "engine"
+    source_entry = package_root.parent / "scripts" / "comic_sol.py"
+    if (engine_root / "comic_sol.py").is_file() or (
+        (engine_root / "__init__.py").is_file() and source_entry.is_file()
+    ):
         return "comic_sol_product.engine"
-    if (package_root.parent / "scripts" / "comic_sol.py").is_file():
-        return "scripts"
     raise RuntimeError("Comic Sol engine files are missing; reinstall the package")
 
 

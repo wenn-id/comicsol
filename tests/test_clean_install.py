@@ -17,7 +17,7 @@ from comic_sol_product.release import (
 )
 from comic_sol_product.runtime_contract import RUNTIME_SCRIPTS
 from comic_sol_product.skill_payload import SKILL_SHARED_FILES, shared_package_path
-from scripts import clean_install_smoke
+from comic_sol_product.engine import clean_install_smoke
 
 
 class DistributionContractTests(unittest.TestCase):
@@ -371,7 +371,7 @@ class CleanInstallSmokeTests(unittest.TestCase):
         self.assertEqual({"command": "other"}, record["mcpServers"]["other"])
 
     def test_installed_smoke_parses_exact_command_and_arguments(self):
-        from scripts import installed_mcp_smoke
+        from comic_sol_product.engine import installed_mcp_smoke
 
         command = str(self.launcher.resolve())
         arguments = ["mcp", "--root", str(self.output.resolve())]
@@ -393,7 +393,7 @@ class CleanInstallSmokeTests(unittest.TestCase):
             "            raise ModuleNotFoundError('mcp extra is unavailable')\n"
             "        return None\n"
             "sys.meta_path.insert(0, BlockMcp())\n"
-            "from scripts.installed_mcp_smoke import parse_server_entry\n"
+            "from comic_sol_product.engine.installed_mcp_smoke import parse_server_entry\n"
             "assert parse_server_entry('comic-sol', '[]') == ('comic-sol', [])\n"
         )
 

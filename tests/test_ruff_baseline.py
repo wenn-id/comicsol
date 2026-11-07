@@ -10,7 +10,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
-from scripts import check_ruff_baseline
+from comic_sol_product.engine import check_ruff_baseline
 
 
 def baseline_payload(findings: list[dict[str, object]]) -> dict[str, object]:

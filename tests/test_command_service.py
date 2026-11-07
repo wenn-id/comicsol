@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from scripts.command_service import CommandService
+from comic_sol_product.engine.command_service import CommandService
 
 
 class CommandServiceContractTests(unittest.TestCase):

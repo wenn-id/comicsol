@@ -14,8 +14,8 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts import project_io  # noqa: E402
-from scripts.comic_sol import (  # noqa: E402
+from comic_sol_product.engine import project_io  # noqa: E402
+from comic_sol_product.engine.comic_sol import (  # noqa: E402
     ResumeAction,
     atomic_write_json,
     block_project,
@@ -38,17 +38,17 @@ from scripts.comic_sol import (  # noqa: E402
     summarize_project_status,
     transition,
 )
-from scripts.handoff import (  # noqa: E402
+from comic_sol_product.engine.handoff import (  # noqa: E402
     HandoffContractError,
     HandoffResultError,
     StaleLockedScopeError,
     build_handoff_manifest,
     validate_handoff_manifest,
 )
-from scripts.input_limits import InputResourceLimitError  # noqa: E402
-from scripts.normalize_panels import normalize_panel  # noqa: E402
-from scripts.schema import UnsupportedSchemaVersionError  # noqa: E402
-from scripts.validate_project import validate_manifest, validate_panel_record  # noqa: E402
+from comic_sol_product.engine.input_limits import InputResourceLimitError  # noqa: E402
+from comic_sol_product.engine.normalize_panels import normalize_panel  # noqa: E402
+from comic_sol_product.engine.schema import UnsupportedSchemaVersionError  # noqa: E402
+from comic_sol_product.engine.validate_project import validate_manifest, validate_panel_record  # noqa: E402
 from tests.support import make_symlink  # noqa: E402
 
 
@@ -308,12 +308,12 @@ class ResumeTests(unittest.TestCase):
         (self.project / "qa/pages").mkdir(parents=True, exist_ok=True)
         (self.project / "qa/pages/page-001.json").write_text("{}\n", "utf-8")
         with (
-            patch("scripts.compose_pages.compose_project"),
-            patch("scripts.page_quality.validate_page_quality", return_value=[]),
-            patch("scripts.export_pdf.guarded_export"),
-            patch("scripts.render_report.render_report"),
-            patch("scripts.comic_sol.record_stage"),
-            patch("scripts.comic_sol.transition"),
+            patch("comic_sol_product.engine.compose_pages.compose_project"),
+            patch("comic_sol_product.engine.page_quality.validate_page_quality", return_value=[]),
+            patch("comic_sol_product.engine.export_pdf.guarded_export"),
+            patch("comic_sol_product.engine.render_report.render_report"),
+            patch("comic_sol_product.engine.comic_sol.record_stage"),
+            patch("comic_sol_product.engine.comic_sol.transition"),
         ):
             return finalize_project(self.project if project_dir is None else project_dir)
 
@@ -353,7 +353,7 @@ class ResumeTests(unittest.TestCase):
         manifest["status"] = "INIT"
         atomic_write_json(self.project / "project.json", manifest)
         next_timestamp = "2030-04-05T06:07:08Z"
-        with patch("scripts.comic_sol._utc_now", return_value=next_timestamp):
+        with patch("comic_sol_product.engine.comic_sol._utc_now", return_value=next_timestamp):
             updated_manifest = transition(self.project, "PLANNED")
 
         self.assertEqual(created_at, updated_manifest["created_at"])
@@ -378,8 +378,10 @@ class ResumeTests(unittest.TestCase):
             with self.subTest(action=action):
                 plan = self._resume_plan("lettering", action)
                 with (
-                    patch("scripts.comic_sol.build_resume_plan", return_value=plan),
-                    patch("scripts.letter_panels.letter_project") as letter,
+                    patch(
+                        "comic_sol_product.engine.comic_sol.build_resume_plan", return_value=plan
+                    ),
+                    patch("comic_sol_product.engine.letter_panels.letter_project") as letter,
                 ):
                     self._run_finalize()
                 letter.assert_called_once_with(self.project)
@@ -389,8 +391,8 @@ class ResumeTests(unittest.TestCase):
         lexical_project = self.project / ".." / self.project.name
         plan = self._resume_plan("lettering", "rerun")
         with (
-            patch("scripts.comic_sol.build_resume_plan", return_value=plan),
-            patch("scripts.letter_panels.letter_project") as letter,
+            patch("comic_sol_product.engine.comic_sol.build_resume_plan", return_value=plan),
+            patch("comic_sol_product.engine.letter_panels.letter_project") as letter,
         ):
             self._run_finalize(lexical_project)
         letter.assert_called_once_with(lexical_project)
@@ -401,8 +403,11 @@ class ResumeTests(unittest.TestCase):
         atomic_write_json(self.project / "project.json", manifest)
         (self.project / "panels/p01-01/lettered.png").unlink(missing_ok=True)
         with (
-            patch("scripts.comic_sol.build_resume_plan", return_value=self._resume_plan()),
-            patch("scripts.letter_panels.letter_project") as letter,
+            patch(
+                "comic_sol_product.engine.comic_sol.build_resume_plan",
+                return_value=self._resume_plan(),
+            ),
+            patch("comic_sol_product.engine.letter_panels.letter_project") as letter,
         ):
             self._run_finalize()
         letter.assert_called_once_with(self.project)
@@ -415,8 +420,11 @@ class ResumeTests(unittest.TestCase):
         (self.project / "panels/p01-01/lettered.png").unlink(missing_ok=True)
         lexical_project = self.project / ".." / self.project.name
         with (
-            patch("scripts.comic_sol.build_resume_plan", return_value=self._resume_plan()),
-            patch("scripts.letter_panels.letter_project") as letter,
+            patch(
+                "comic_sol_product.engine.comic_sol.build_resume_plan",
+                return_value=self._resume_plan(),
+            ),
+            patch("comic_sol_product.engine.letter_panels.letter_project") as letter,
         ):
             self._run_finalize(lexical_project)
         letter.assert_called_once_with(lexical_project)
@@ -752,7 +760,7 @@ class ResumeTests(unittest.TestCase):
             return real_stage_bytes(transaction, relative, payload)
 
         with patch(
-            "scripts.comic_sol.ProjectTransaction.stage_bytes",
+            "comic_sol_product.engine.comic_sol.ProjectTransaction.stage_bytes",
             side_effect=fail_manifest_stage,
             autospec=True,
         ):
@@ -774,7 +782,7 @@ class ResumeTests(unittest.TestCase):
             raise OSError("injected event write failure")
 
         with patch(
-            "scripts.comic_sol.ProjectTransaction.commit",
+            "comic_sol_product.engine.comic_sol.ProjectTransaction.commit",
             side_effect=fail_commit,
             autospec=True,
         ):
@@ -910,7 +918,7 @@ class ResumeTests(unittest.TestCase):
         outside = self.root / "outside-valid.png"
         Image.new("RGB", (640, 960), "green").save(attempt)
         Image.new("RGB", (640, 960), "red").save(outside)
-        from scripts import comic_sol as comic_sol_module
+        from comic_sol_product.engine import comic_sol as comic_sol_module
 
         real_resolver = comic_sol_module._contained_project_path
         calls = 0
@@ -928,7 +936,7 @@ class ResumeTests(unittest.TestCase):
         make_symlink(self, probe, outside)
         probe.unlink()
         with patch(
-            "scripts.comic_sol._contained_project_path",
+            "comic_sol_product.engine.comic_sol._contained_project_path",
             side_effect=swap_after_preflight,
         ):
             with self.assertRaisesRegex(ValueError, "escapes|symlinks"):
@@ -939,7 +947,7 @@ class ResumeTests(unittest.TestCase):
         outside = self.root / "outside-valid.png"
         Image.new("RGB", (640, 960), "green").save(attempt)
         Image.new("RGB", (640, 960), "red").save(outside)
-        from scripts.comic_sol import _verify_raster
+        from comic_sol_product.engine.comic_sol import _verify_raster
 
         def verify_then_swap(path):
             result = _verify_raster(path)
@@ -950,7 +958,9 @@ class ResumeTests(unittest.TestCase):
         probe = self.project / "symlink-probe"
         make_symlink(self, probe, outside)
         probe.unlink()
-        with patch("scripts.comic_sol._verify_raster", side_effect=verify_then_swap):
+        with patch(
+            "comic_sol_product.engine.comic_sol._verify_raster", side_effect=verify_then_swap
+        ):
             with self.assertRaisesRegex(ValueError, "escapes|symlinks"):
                 promote_attempt(self.project, "p01-01", attempt)
 
@@ -1352,7 +1362,7 @@ class ResumeTests(unittest.TestCase):
 
         with (
             patch(
-                "scripts.comic_sol.Image.open",
+                "comic_sol_product.engine.comic_sol.Image.open",
                 side_effect=Image.DecompressionBombError("unsafe dimensions"),
             ),
             self.assertRaisesRegex(ValueError, "corrupt images cannot be overridden"),
@@ -1427,7 +1437,7 @@ class ResumeTests(unittest.TestCase):
 
         # This test isolates warning-target selection; final artifact gating is
         # covered by GuardedOperationTests.
-        with patch("scripts.validate_project.require_valid_project"):
+        with patch("comic_sol_product.engine.validate_project.require_valid_project"):
             completed = transition(self.project, "COMPLETE")
         self.assertEqual("COMPLETE_WITH_WARNINGS", completed["status"])
 
@@ -1945,7 +1955,7 @@ class ResumeFixtureIntegrationTests(unittest.TestCase):
             self.assertEqual("regenerate", panel_actions["p01-02"])
 
     def test_accepted_handoff_panel_requires_promotion_and_visual_qa_before_resume_reuse(self):
-        from scripts.comic_sol import accept_handoff_result, inspect_handoff
+        from comic_sol_product.engine.comic_sol import accept_handoff_result, inspect_handoff
         from tests.test_handoff_lifecycle import HandoffIntakeFailureTests
 
         fixture = HandoffIntakeFailureTests(
@@ -2142,7 +2152,7 @@ class BlockedRecoveryTests(unittest.TestCase):
         atomic_write_json(self.project / "project.json", manifest)
 
         cache = {"schema_version": "1.0", "stages": {}}
-        from scripts.comic_sol import _resume_stage_material
+        from comic_sol_product.engine.comic_sol import _resume_stage_material
 
         for stage in ("planning", "storyboard"):
             canonical_inputs, files = _resume_stage_material(self.project, stage, manifest)
@@ -2784,7 +2794,7 @@ class BlockedRecoveryTests(unittest.TestCase):
                 "qa/panels/p01-01.json",
             )
         }
-        from scripts.comic_sol import _stage_output_files as stage_output_files
+        from comic_sol_product.engine.comic_sol import _stage_output_files as stage_output_files
 
         calls = 0
 
@@ -2796,7 +2806,7 @@ class BlockedRecoveryTests(unittest.TestCase):
             return stage_output_files(project_dir, stage, current_manifest)
 
         with patch(
-            "scripts.comic_sol._stage_output_files",
+            "comic_sol_product.engine.comic_sol._stage_output_files",
             side_effect=fail_first_provenance_read,
         ):
             with self.assertRaisesRegex(OSError, "provenance read failure"):
@@ -2841,7 +2851,10 @@ class BlockedRecoveryTests(unittest.TestCase):
             except BaseException as error:
                 contender_errors.append(error)
 
-        with patch("scripts.comic_sol.ProjectTransaction.recover", side_effect=pause_recovery):
+        with patch(
+            "comic_sol_product.engine.comic_sol.ProjectTransaction.recover",
+            side_effect=pause_recovery,
+        ):
             worker = threading.Thread(target=lambda: resume_project(self.project))
             worker.start()
             self.assertTrue(entered.wait(timeout=5), "resume did not reach recovery")
@@ -2888,10 +2901,12 @@ class BlockedRecoveryTests(unittest.TestCase):
                 raise AssertionError("resume synchronization timed out")
             return invalidate_state_locked(project_dir, stage, manifest, cache)
 
-        from scripts.comic_sol import _invalidate_state_locked as invalidate_state_locked
+        from comic_sol_product.engine.comic_sol import (
+            _invalidate_state_locked as invalidate_state_locked,
+        )
 
         with patch(
-            "scripts.comic_sol._invalidate_state_locked",
+            "comic_sol_product.engine.comic_sol._invalidate_state_locked",
             side_effect=pause_invalidation,
         ):
             worker = threading.Thread(target=lambda: resume_project(self.project))
@@ -3005,7 +3020,7 @@ class SourceHandoffCliContractTests(unittest.TestCase):
         return code, stdout.getvalue(), stderr.getvalue()
 
     def invoke_with_service(self, argv: list[str], service) -> tuple[int, str, str]:
-        with patch("scripts.command_service.CommandService", return_value=service):
+        with patch("comic_sol_product.engine.command_service.CommandService", return_value=service):
             return self.invoke(argv)
 
     def assert_json_failure(self, stdout: str, command: str) -> dict[str, object]:
@@ -3389,7 +3404,7 @@ class DogfoodResumeEvidenceTests(unittest.TestCase):
             if path.is_file()
         }
         with patch(
-            "scripts.comic_sol.ProjectTransaction.stage_bytes",
+            "comic_sol_product.engine.comic_sol.ProjectTransaction.stage_bytes",
             side_effect=fail_manifest,
             autospec=True,
         ):
@@ -3411,7 +3426,7 @@ class DogfoodSourceCliContractTests(unittest.TestCase):
         stdout = io.StringIO()
         stderr = io.StringIO()
         with (
-            patch("scripts.command_service.CommandService", return_value=service),
+            patch("comic_sol_product.engine.command_service.CommandService", return_value=service),
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
         ):
@@ -3559,7 +3574,7 @@ class DogfoodCommandServiceTests(unittest.TestCase):
     """Dogfood routes dispatch exact persistence and validation arguments."""
 
     def test_direct_dogfood_dispatch(self):
-        from scripts.command_service import CommandService
+        from comic_sol_product.engine.command_service import CommandService
 
         class FakeDogfood:
             def __init__(self):

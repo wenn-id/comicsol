@@ -1,7 +1,7 @@
 import unittest
 from dataclasses import FrozenInstanceError
 
-from scripts.layouts import (
+from comic_sol_product.engine.layouts import (
     FOUR_GRID_RECTS,
     LAYOUT_VERSION,
     LayoutDefinition,
@@ -9,7 +9,7 @@ from scripts.layouts import (
     match_layout,
     validate_custom_layout,
 )
-from scripts.comic_sol import layout_rects
+from comic_sol_product.engine.comic_sol import layout_rects
 
 
 EXPECTED_LAYOUTS = {

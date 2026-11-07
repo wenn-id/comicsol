@@ -7,7 +7,7 @@ from io import StringIO
 from pathlib import Path
 
 from comic_sol_product import cli
-from scripts import comic_sol
+from comic_sol_product.engine import comic_sol
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC_FILES = (

@@ -16,15 +16,23 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 
 from tests.support import bounded_tail_regions, make_symlink  # noqa: E402
-from scripts.materialize_sample import materialize_sample  # noqa: E402
-from scripts.comic_sol import atomic_write_json, block_project, read_json, record_stage  # noqa: E402
-from scripts.page_quality import build_page_quality_record, write_page_quality_record  # noqa: E402
-from scripts.installed_mcp_smoke import EXPECTED_TOOLS  # noqa: E402
+from comic_sol_product.engine.materialize_sample import materialize_sample  # noqa: E402
+from comic_sol_product.engine.comic_sol import (  # noqa: E402
+    atomic_write_json,
+    block_project,
+    read_json,
+    record_stage,
+)
+from comic_sol_product.engine.page_quality import (  # noqa: E402
+    build_page_quality_record,
+    write_page_quality_record,
+)
+from comic_sol_product.engine.installed_mcp_smoke import EXPECTED_TOOLS  # noqa: E402
 
 MCP_AVAILABLE = importlib.util.find_spec("mcp") is not None
 
 if MCP_AVAILABLE:
-    from scripts import mcp_server  # noqa: E402
+    from comic_sol_product.engine import mcp_server  # noqa: E402
     from mcp import ClientSession, StdioServerParameters  # noqa: E402
     from mcp.client.stdio import stdio_client  # noqa: E402
 
@@ -179,7 +187,7 @@ class McpServerUnitTests(unittest.TestCase):
         self.assert_path_not_in_json(blocker, result)
 
     def test_validate_does_not_disclose_absolute_paths_from_permission_errors(self):
-        from scripts import validate_project as validation
+        from comic_sol_product.engine import validate_project as validation
 
         project_id = mcp_server.comic_init(
             "Permission test",
@@ -228,8 +236,8 @@ class McpServerUnitTests(unittest.TestCase):
         manifest = read_json(project / "project.json")
         manifest["status"] = "STORYBOARDED"
         atomic_write_json(project / "project.json", manifest)
-        from scripts.compose_pages import compose_project
-        from scripts.letter_panels import letter_project
+        from comic_sol_product.engine.compose_pages import compose_project
+        from comic_sol_product.engine.letter_panels import letter_project
 
         letter_project(project)
         compose_project(project)
@@ -255,11 +263,13 @@ class McpServerUnitTests(unittest.TestCase):
             relative: (project / relative).read_bytes() if (project / relative).is_file() else None
             for relative in relatives
         }
-        from scripts.export_pdf import guarded_export
+        from comic_sol_product.engine.export_pdf import guarded_export
 
         with (
-            mock.patch("scripts.comic_sol.build_resume_plan", return_value=[]),
-            mock.patch("scripts.export_pdf.guarded_export", wraps=guarded_export) as export,
+            mock.patch("comic_sol_product.engine.comic_sol.build_resume_plan", return_value=[]),
+            mock.patch(
+                "comic_sol_product.engine.export_pdf.guarded_export", wraps=guarded_export
+            ) as export,
             self.assertRaises(ToolError),
         ):
             mcp_server.comic_finalize("sunlight-courier")

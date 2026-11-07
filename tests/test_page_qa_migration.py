@@ -7,10 +7,10 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts.comic_sol import atomic_write_json, sha256_file  # noqa: E402
-from scripts.compose_pages import compose_all_pages  # noqa: E402
-from scripts.letter_panels import letter_project  # noqa: E402
-from scripts.page_quality import (  # noqa: E402
+from comic_sol_product.engine.comic_sol import atomic_write_json, sha256_file  # noqa: E402
+from comic_sol_product.engine.compose_pages import compose_all_pages  # noqa: E402
+from comic_sol_product.engine.letter_panels import letter_project  # noqa: E402
+from comic_sol_product.engine.page_quality import (  # noqa: E402
     CURRENT_PAGE_QA_SCHEMA_VERSION,
     DETERMINISTIC_PAGE_CHECK_IDS,
     PAGE_BINDING_FIELDS,
@@ -22,9 +22,9 @@ from scripts.page_quality import (  # noqa: E402
     migrate_page_quality_record,
     validate_page_quality,
 )
-from scripts.project_io import ProjectTransaction  # noqa: E402
-from scripts.schema import UnsupportedSchemaVersionError  # noqa: E402
-from scripts.validate_project import (  # noqa: E402
+from comic_sol_product.engine.project_io import ProjectTransaction  # noqa: E402
+from comic_sol_product.engine.schema import UnsupportedSchemaVersionError  # noqa: E402
+from comic_sol_product.engine.validate_project import (  # noqa: E402
     LEGACY_PAGE_QA_SCHEMA_VERSION,
     validate_project,
 )

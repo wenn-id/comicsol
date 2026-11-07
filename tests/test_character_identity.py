@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.character_identity import (
+from comic_sol_product.engine.character_identity import (
     CANONICAL_VIEW,
     DERIVED_FINGERPRINT_FIELDS,
     IDENTITY_PACK_PATH,

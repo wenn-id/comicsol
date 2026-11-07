@@ -15,14 +15,14 @@ from typing import Mapping, Sequence
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.core_primitives import canonical_artifact_bytes
-from scripts.dogfood_report import (
+from comic_sol_product.engine.core_primitives import canonical_artifact_bytes
+from comic_sol_product.engine.dogfood_report import (
     REPORT_SCHEMA_VERSION,
     DogfoodReportError,
     canonical_report_bytes,
     validate_report_file,
 )
-from scripts.project_io import durable_atomic_write, fsync_directory
+from comic_sol_product.engine.project_io import durable_atomic_write, fsync_directory
 
 
 SUMMARY_KIND = "comic-sol-dogfood-summary"

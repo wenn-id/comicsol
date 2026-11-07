@@ -8,23 +8,23 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts import comic_sol, project_io
-from scripts.comic_sol import (
+from comic_sol_product.engine import comic_sol, project_io
+from comic_sol_product.engine.comic_sol import (
     PROJECT_DIRECTORIES,
     atomic_write_json,
     init_project,
     read_json,
     sha256_file,
 )
-from scripts.schema import read_project_manifest
-from scripts.compose_pages import compose_all_pages
-from scripts.export_pdf import guarded_export
-from scripts.letter_panels import letter_project
-from scripts.page_quality import (
+from comic_sol_product.engine.schema import read_project_manifest
+from comic_sol_product.engine.compose_pages import compose_all_pages
+from comic_sol_product.engine.export_pdf import guarded_export
+from comic_sol_product.engine.letter_panels import letter_project
+from comic_sol_product.engine.page_quality import (
     build_page_quality_record,
     write_page_quality_record,
 )
-from scripts.project_io import ProjectTransaction
+from comic_sol_product.engine.project_io import ProjectTransaction
 from tests.test_page_quality import reviewer_checks
 
 

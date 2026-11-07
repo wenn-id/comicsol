@@ -33,7 +33,7 @@ from typing import Any, Literal, Mapping, Sequence, TypeGuard, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    __package__ = "scripts"
+    __package__ = "comic_sol_product.engine"
 
 from PIL import Image, ImageDraw
 

@@ -7,8 +7,8 @@ from comic_sol_product.cli_command_spec import (
     STARTER_IDS,
 )
 from comic_sol_product.config import default_output_root
-from scripts import comic_sol
-from scripts.starter_templates import STARTER_IDS as ENGINE_STARTER_IDS
+from comic_sol_product.engine import comic_sol
+from comic_sol_product.engine.starter_templates import STARTER_IDS as ENGINE_STARTER_IDS
 
 
 def _subparsers(parser):

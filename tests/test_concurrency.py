@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts import comic_sol, project_io
-from scripts.comic_sol import (
+from comic_sol_product.engine import comic_sol, project_io
+from comic_sol_product.engine.comic_sol import (
     atomic_write_json,
     canonical_artifact_bytes,
     canonical_event_record,
@@ -19,7 +19,7 @@ from scripts.comic_sol import (
     record_generation_attempt,
     resume_project,
 )
-from scripts.export_pdf import guarded_export
+from comic_sol_product.engine.export_pdf import guarded_export
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHILD_LOCK_SCRIPT = r"""
 import sys
 from pathlib import Path
-from scripts.project_io import ProjectLock
+from comic_sol_product.engine.project_io import ProjectLock
 
 try:
     with ProjectLock(Path(sys.argv[1]), timeout=0.2):
@@ -40,7 +40,7 @@ except TimeoutError as error:
 CONTENDER_AT_EMPTY_FILE_SCRIPT = r"""
 import sys
 from pathlib import Path
-from scripts.project_io import ProjectLock
+from comic_sol_product.engine.project_io import ProjectLock
 
 original_open = Path.open
 original_lock = ProjectLock._lock
@@ -240,7 +240,7 @@ _BUDGET_RACE_CHILD = r"""
 import json, os, sys
 from pathlib import Path
 sys.path.insert(0, os.fspath(Path(sys.argv[2])))
-from scripts.comic_sol import record_generation_attempt
+from comic_sol_product.engine.comic_sol import record_generation_attempt
 project_dir = Path(sys.argv[1])
 record_generation_attempt(project_dir, sys.argv[3], sys.argv[4], project_dir / sys.argv[5])
 """.strip()
@@ -317,7 +317,7 @@ class RetryCounterProcessTests(unittest.TestCase):
                 f"from pathlib import Path\n"
                 f"_sr={scripts_root!r}\n"
                 f"sys.path.insert(0, _sr)\n"
-                f"from scripts.comic_sol import record_generation_attempt\n"
+                f"from comic_sol_product.engine.comic_sol import record_generation_attempt\n"
                 f"project = Path(sys.argv[1])\n"
                 f"barrier = project / 'budget-barrier'\n"
                 f"for _ in range(500):\n"
@@ -364,7 +364,7 @@ _PROMOTION_RACE_CHILD = r"""
 import os, sys, time
 from pathlib import Path
 sys.path.insert(0, os.fspath(Path(sys.argv[2])))
-from scripts.comic_sol import promote_attempt
+from comic_sol_product.engine.comic_sol import promote_attempt
 project = Path(sys.argv[1])
 barrier = project / "promotion-barrier"
 for _ in range(500):
@@ -458,7 +458,10 @@ class HandoffConcurrencyTests(unittest.TestCase):
         self.temporary_directory.cleanup()
 
     def _planner_project(self):
-        from scripts.character_identity import IDENTITY_PACK_PATH, derive_identity_pack
+        from comic_sol_product.engine.character_identity import (
+            IDENTITY_PACK_PATH,
+            derive_identity_pack,
+        )
         from tests.test_validation import (
             valid_characters,
             valid_manifest,
@@ -608,7 +611,7 @@ class HandoffConcurrencyTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "scripts.comic_sol._validate_handoff_raster",
+                "comic_sol_product.engine.comic_sol._validate_handoff_raster",
                 side_effect=pause_owner_after_validation,
             ),
             mock.patch.object(
@@ -773,11 +776,11 @@ class HandoffConcurrencyTests(unittest.TestCase):
 
         with (
             mock.patch(
-                "scripts.comic_sol._validate_handoff_raster",
+                "comic_sol_product.engine.comic_sol._validate_handoff_raster",
                 side_effect=pause_intake_after_validation,
             ),
             mock.patch(
-                "scripts.comic_sol._validate_reference_activation",
+                "comic_sol_product.engine.comic_sol._validate_reference_activation",
                 side_effect=observe_committed_activation,
             ),
             mock.patch.object(
@@ -1002,7 +1005,7 @@ class FinalizeLockRaceTests(unittest.TestCase):
 
                 with (
                     mock.patch(
-                        "scripts.comic_sol.ProjectTransaction.recover",
+                        "comic_sol_product.engine.comic_sol.ProjectTransaction.recover",
                         side_effect=pause_owner_recovery,
                     ),
                     mock.patch.object(
@@ -1011,11 +1014,11 @@ class FinalizeLockRaceTests(unittest.TestCase):
                         new=staticmethod(observe_contender_lock),
                     ),
                     mock.patch(
-                        "scripts.comic_sol._resume_project_locked",
+                        "comic_sol_product.engine.comic_sol._resume_project_locked",
                         side_effect=resumed_state,
                     ),
                     mock.patch(
-                        "scripts.comic_sol._finalize_project_locked",
+                        "comic_sol_product.engine.comic_sol._finalize_project_locked",
                         side_effect=finalized_state,
                     ),
                 ):
@@ -1084,7 +1087,7 @@ class FinalizeLockRaceTests(unittest.TestCase):
                 contender_errors.append(error)
 
         with mock.patch(
-            "scripts.comic_sol.ProjectTransaction.recover",
+            "comic_sol_product.engine.comic_sol.ProjectTransaction.recover",
             side_effect=pause_recovery,
         ):
             worker = threading.Thread(target=run_status)
@@ -1109,7 +1112,7 @@ class FinalizeLockRaceTests(unittest.TestCase):
         self._leave_interrupted_manifest_publication()
         progress_events = []
 
-        with mock.patch("scripts.comic_sol._finalize_project_locked") as finalizer:
+        with mock.patch("comic_sol_product.engine.comic_sol._finalize_project_locked") as finalizer:
             with self.assertRaisesRegex(ValueError, "BLOCKED"):
                 finalize_project(self.project, progress=progress_events.append)
 
@@ -1133,9 +1136,11 @@ class FinalizeLockRaceTests(unittest.TestCase):
 
         try:
             with (
-                mock.patch("scripts.comic_sol._finalization_preflight", return_value=[]),
                 mock.patch(
-                    "scripts.comic_sol._finalize_project_locked",
+                    "comic_sol_product.engine.comic_sol._finalization_preflight", return_value=[]
+                ),
+                mock.patch(
+                    "comic_sol_product.engine.comic_sol._finalize_project_locked",
                     return_value={"status": "stub"},
                 ),
             ):
@@ -1226,9 +1231,11 @@ class FinalizeLockRaceTests(unittest.TestCase):
                 errors.append(error)
 
         with (
-            mock.patch("scripts.comic_sol._finalization_preflight", return_value=[]),
             mock.patch(
-                "scripts.comic_sol._finalize_project_locked",
+                "comic_sol_product.engine.comic_sol._finalization_preflight", return_value=[]
+            ),
+            mock.patch(
+                "comic_sol_product.engine.comic_sol._finalize_project_locked",
                 side_effect=blocked_finalize,
             ),
         ):
@@ -1280,9 +1287,9 @@ class PdfExportTransactionTests(unittest.TestCase):
             return b"%PDF-1.4\n%%EOF\n", {"page_count": 1}
 
         with (
-            mock.patch("scripts.export_pdf.require_valid_project"),
+            mock.patch("comic_sol_product.engine.export_pdf.require_valid_project"),
             mock.patch(
-                "scripts.export_pdf._render_verified_payload",
+                "comic_sol_product.engine.export_pdf._render_verified_payload",
                 side_effect=mutate_manifest,
             ),
         ):

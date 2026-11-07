@@ -1,7 +1,7 @@
 import math
 import unittest
 
-from scripts.core_primitives import (
+from comic_sol_product.engine.core_primitives import (
     PAGE_CHECK_IDS,
     PANEL_CHECK_IDS,
     PANEL_ID_PATTERN,

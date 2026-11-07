@@ -9,11 +9,17 @@ from copy import deepcopy
 from pathlib import Path
 from unittest import mock
 
-from scripts.character_identity import derive_and_write_identity_pack, derive_identity_pack
-from scripts.comic_sol import _accepted_panel_problem, record_override
-from scripts.core_primitives import PANEL_CHECK_IDS, canonical_artifact_bytes
-from scripts.reference_strategy import plan_and_write_reference_plan, project_reference_plan
-from scripts.validate_project import validate_panel_record, validate_project
+from comic_sol_product.engine.character_identity import (
+    derive_and_write_identity_pack,
+    derive_identity_pack,
+)
+from comic_sol_product.engine.comic_sol import _accepted_panel_problem, record_override
+from comic_sol_product.engine.core_primitives import PANEL_CHECK_IDS, canonical_artifact_bytes
+from comic_sol_product.engine.reference_strategy import (
+    plan_and_write_reference_plan,
+    project_reference_plan,
+)
+from comic_sol_product.engine.validate_project import validate_panel_record, validate_project
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -145,7 +151,7 @@ def panel_record():
 class CharacterQualityContextTests(unittest.TestCase):
     def test_context_exposes_every_expected_trait_for_each_panel_character(self):
         try:
-            module = importlib.import_module("scripts.character_quality")
+            module = importlib.import_module("comic_sol_product.engine.character_quality")
         except ModuleNotFoundError:
             self.fail("character quality context is not implemented")
         pack = derive_identity_pack(character_bible())
@@ -183,7 +189,7 @@ class CharacterQualityContextTests(unittest.TestCase):
         self.assertRegex(context["reference_plan_sha256"], r"^[0-9a-f]{64}$")
 
     def test_context_rejects_an_identity_pack_from_another_bible(self):
-        module = importlib.import_module("scripts.character_quality")
+        module = importlib.import_module("comic_sol_product.engine.character_quality")
         bible = character_bible()
         pack = derive_identity_pack(bible)
         plan = project_reference_plan(pack, storyboard())
@@ -195,7 +201,7 @@ class CharacterQualityContextTests(unittest.TestCase):
             )
 
     def test_context_rejects_a_reference_plan_that_drops_an_on_panel_character(self):
-        module = importlib.import_module("scripts.character_quality")
+        module = importlib.import_module("comic_sol_product.engine.character_quality")
         bible = character_bible()
         pack = derive_identity_pack(bible)
         board = storyboard()
@@ -215,7 +221,7 @@ class CharacterQualityContextTests(unittest.TestCase):
             )
 
     def test_context_rejects_a_selected_reference_not_derived_from_the_identity_pack(self):
-        module = importlib.import_module("scripts.character_quality")
+        module = importlib.import_module("comic_sol_product.engine.character_quality")
         bible = character_bible()
         pack = derive_identity_pack(bible)
         board = storyboard()
@@ -234,7 +240,7 @@ class CharacterQualityContextTests(unittest.TestCase):
 
 class CharacterIdentityCheckTests(unittest.TestCase):
     def test_warning_trait_is_explainable_without_becoming_a_hard_failure(self):
-        module = importlib.import_module("scripts.character_quality")
+        module = importlib.import_module("comic_sol_product.engine.character_quality")
         context = context_for_mira(module)
         assessments = passing_assessments()
         assessments[1].update(
@@ -274,7 +280,7 @@ class CharacterIdentityCheckTests(unittest.TestCase):
             self.assertNotIn(provider_term, serialized)
 
     def test_error_level_trait_failure_is_a_hard_failure(self):
-        module = importlib.import_module("scripts.character_quality")
+        module = importlib.import_module("comic_sol_product.engine.character_quality")
         context = context_for_mira(module)
         assessments = passing_assessments()
         assessments[0].update(
@@ -299,7 +305,7 @@ class CharacterIdentityCheckTests(unittest.TestCase):
         self.assertIn("1 hard failure", check["evidence"])
 
     def test_incomplete_or_foreign_assessments_fail_closed(self):
-        module = importlib.import_module("scripts.character_quality")
+        module = importlib.import_module("comic_sol_product.engine.character_quality")
         context = context_for_mira(module)
         builder = module.build_character_identity_check
         missing = passing_assessments()[:-1]
@@ -332,7 +338,7 @@ class CharacterIdentityCheckTests(unittest.TestCase):
 
 class PanelRecordIntegrationTests(unittest.TestCase):
     def test_warning_guidance_becomes_an_unresolved_panel_warning(self):
-        module = importlib.import_module("scripts.character_quality")
+        module = importlib.import_module("comic_sol_product.engine.character_quality")
         context = context_for_mira(module)
         assessments = passing_assessments()
         assessments[4].update(
@@ -361,7 +367,7 @@ class PanelRecordIntegrationTests(unittest.TestCase):
         self.assertEqual(check, updated["checks"][0])
 
     def test_hard_failure_requires_panel_regeneration(self):
-        module = importlib.import_module("scripts.character_quality")
+        module = importlib.import_module("comic_sol_product.engine.character_quality")
         context = context_for_mira(module)
         assessments = passing_assessments()
         assessments[5].update(
@@ -394,7 +400,7 @@ class CharacterQualityProvenanceTests(unittest.TestCase):
         shutil.copytree(ROOT / "tests/fixtures/valid-one-page", self.project)
         derive_and_write_identity_pack(self.project)
         plan_and_write_reference_plan(self.project)
-        self.module = importlib.import_module("scripts.character_quality")
+        self.module = importlib.import_module("comic_sol_product.engine.character_quality")
         pack = json.loads((self.project / "plan/character-identity-pack.json").read_text("utf-8"))
         bible = json.loads((self.project / "plan/character-bible.json").read_text("utf-8"))
         plan = json.loads((self.project / "logs/reference-selection.json").read_text("utf-8"))

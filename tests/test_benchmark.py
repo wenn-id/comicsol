@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts.benchmark import (  # noqa: E402
+from comic_sol_product.engine.benchmark import (  # noqa: E402
     CASES_ROOT,
     DIALOGUE_PAGE_CHECK_IDS,
     HARNESS_VERSION,
@@ -174,7 +174,7 @@ class BenchmarkPrimitiveTests(unittest.TestCase):
 
     def test_reference_rasters_are_reproducible_across_processes(self):
         code = (
-            "from scripts.benchmark import _reference_raster; "
+            "from comic_sol_product.engine.benchmark import _reference_raster; "
             "import hashlib; "
             "print(hashlib.sha256(_reference_raster(1, 'hero')).hexdigest())"
         )
@@ -657,7 +657,7 @@ class BenchmarkRunTests(unittest.TestCase):
         storyboard = json.loads((fixture / "plan/storyboard.json").read_text(encoding="utf-8"))
         panels = _storyboard_panels(storyboard)
         live_case = {**case, "evidence_mode": "live-visual"}
-        from scripts.core_primitives import PANEL_CHECK_IDS
+        from comic_sol_product.engine.core_primitives import PANEL_CHECK_IDS
 
         review_assertions = {
             panel_id: {
@@ -802,6 +802,7 @@ class BenchmarkIntegrationTests(unittest.TestCase):
             "--baseline",
             "--candidate",
             "--diff-output",
+            "cp -r comic_sol_product/engine",
             "if-no-files-found: error",
             "NO REGRESSION",
         ):
@@ -821,7 +822,7 @@ class BenchmarkIntegrationTests(unittest.TestCase):
                 self.assertIn(token, source)
 
     def test_benchmark_harness_is_not_shipped_in_the_plugin_bundle(self):
-        from scripts.sync_plugin_bundle import BUNDLED_SCRIPTS
+        from comic_sol_product.engine.sync_plugin_bundle import BUNDLED_SCRIPTS
 
         self.assertNotIn(
             "benchmark.py",

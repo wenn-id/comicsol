@@ -11,7 +11,7 @@ from PIL import Image
 
 from tests.consistency_benchmark import scorecard_template
 
-from scripts.live_visual_evidence import (
+from comic_sol_product.engine.live_visual_evidence import (
     CANONICAL_PANELS,
     EXPECTED_GROUPS,
     KIND,

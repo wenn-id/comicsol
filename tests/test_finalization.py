@@ -9,7 +9,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts.comic_sol import (  # noqa: E402
+from comic_sol_product.engine.comic_sol import (  # noqa: E402
     atomic_write_json,
     block_project,
     finalize_project,
@@ -19,16 +19,19 @@ from scripts.comic_sol import (  # noqa: E402
     sha256_file,
     transition,
 )
-from scripts.stage_registry import RESUME_STAGES  # noqa: E402
-from scripts.validate_project import (  # noqa: E402
+from comic_sol_product.engine.stage_registry import RESUME_STAGES  # noqa: E402
+from comic_sol_product.engine.validate_project import (  # noqa: E402
     ProjectValidationError,
     require_valid_project,
     validate_project,
 )
-from scripts.normalize_panels import normalize_panel  # noqa: E402
-from scripts.letter_panels import letter_project  # noqa: E402
-from scripts.compose_pages import compose_project  # noqa: E402
-from scripts.page_quality import build_page_quality_record, write_page_quality_record  # noqa: E402
+from comic_sol_product.engine.normalize_panels import normalize_panel  # noqa: E402
+from comic_sol_product.engine.letter_panels import letter_project  # noqa: E402
+from comic_sol_product.engine.compose_pages import compose_project  # noqa: E402
+from comic_sol_product.engine.page_quality import (  # noqa: E402
+    build_page_quality_record,
+    write_page_quality_record,
+)
 
 from tests.test_validation import (  # noqa: E402
     valid_characters,
@@ -331,13 +334,17 @@ class GuardedOperationTests(unittest.TestCase):
         block_project(self.project, "test-block", "test-block")
         before = self._finalization_snapshot()
         progress_events = []
-        from scripts.export_pdf import guarded_export
-        from scripts.render_report import render_report
+        from comic_sol_product.engine.export_pdf import guarded_export
+        from comic_sol_product.engine.render_report import render_report
 
         with (
-            mock.patch("scripts.comic_sol.build_resume_plan", return_value=[]),
-            mock.patch("scripts.export_pdf.guarded_export", wraps=guarded_export) as export,
-            mock.patch("scripts.render_report.render_report", wraps=render_report) as report,
+            mock.patch("comic_sol_product.engine.comic_sol.build_resume_plan", return_value=[]),
+            mock.patch(
+                "comic_sol_product.engine.export_pdf.guarded_export", wraps=guarded_export
+            ) as export,
+            mock.patch(
+                "comic_sol_product.engine.render_report.render_report", wraps=render_report
+            ) as report,
         ):
             with self.assertRaisesRegex(ValueError, "BLOCKED"):
                 finalize_project(self.project, progress=progress_events.append)
@@ -353,13 +360,17 @@ class GuardedOperationTests(unittest.TestCase):
         manifest["status"] = "COMPLETE"
         atomic_write_json(self.project / "project.json", manifest)
         before = self._finalization_snapshot()
-        from scripts.export_pdf import guarded_export
-        from scripts.render_report import render_report
+        from comic_sol_product.engine.export_pdf import guarded_export
+        from comic_sol_product.engine.render_report import render_report
 
         with (
-            mock.patch("scripts.comic_sol.build_resume_plan", return_value=[]),
-            mock.patch("scripts.export_pdf.guarded_export", wraps=guarded_export) as export,
-            mock.patch("scripts.render_report.render_report", wraps=render_report) as report,
+            mock.patch("comic_sol_product.engine.comic_sol.build_resume_plan", return_value=[]),
+            mock.patch(
+                "comic_sol_product.engine.export_pdf.guarded_export", wraps=guarded_export
+            ) as export,
+            mock.patch(
+                "comic_sol_product.engine.render_report.render_report", wraps=render_report
+            ) as report,
         ):
             with self.assertRaisesRegex(ValueError, "terminal"):
                 finalize_project(self.project)
@@ -385,7 +396,7 @@ class GuardedOperationTests(unittest.TestCase):
         ]
         before = self._finalization_snapshot()
 
-        with mock.patch("scripts.comic_sol.build_resume_plan", return_value=plan):
+        with mock.patch("comic_sol_product.engine.comic_sol.build_resume_plan", return_value=plan):
             with self.assertRaisesRegex(ValueError, "generation stage is stale"):
                 finalize_project(self.project)
 
@@ -407,7 +418,7 @@ class GuardedOperationTests(unittest.TestCase):
         record["decision"] = "regenerate"
         record["retry_reason"] = "character identity failure"
         atomic_write_json(self.project / "qa/panels/p01-01.json", record)
-        from scripts.export_pdf import guarded_export
+        from comic_sol_product.engine.export_pdf import guarded_export
 
         with self.assertRaises(ProjectValidationError):
             guarded_export(self.project)
@@ -448,7 +459,7 @@ class GuardedOperationTests(unittest.TestCase):
         (self.project / "cache/composition.json").write_text(
             json.dumps({"schema_version": "1.0", "stages": {}})
         )
-        from scripts.export_pdf import PdfExportError, guarded_export
+        from comic_sol_product.engine.export_pdf import PdfExportError, guarded_export
 
         with self.assertRaises(PdfExportError):
             guarded_export(self.project)
@@ -459,7 +470,7 @@ class GuardedOperationTests(unittest.TestCase):
     def test_guarded_export_writes_pdf_and_records_descriptor(self):
         """GREEN: guarded_export with valid export-ready writes PDF and records descriptor."""
         self._make_export_ready()
-        from scripts.export_pdf import guarded_export
+        from comic_sol_product.engine.export_pdf import guarded_export
 
         lexical_project = self.project / ".." / self.project.name
         result = guarded_export(lexical_project)
@@ -503,7 +514,7 @@ class GuardedOperationTests(unittest.TestCase):
         manifest.pop("schema_version")
         manifest.pop("handoff", None)
         atomic_write_json(manifest_path, manifest)
-        from scripts.export_pdf import guarded_export
+        from comic_sol_product.engine.export_pdf import guarded_export
 
         guarded_export(self.project)
 
@@ -523,8 +534,8 @@ class GuardedOperationTests(unittest.TestCase):
             "verification": verification.read_bytes(),
             "manifest": (self.project / "project.json").read_bytes(),
         }
-        from scripts import project_io
-        from scripts.export_pdf import guarded_export
+        from comic_sol_product.engine import project_io
+        from comic_sol_product.engine.export_pdf import guarded_export
 
         real_replace = project_io.os.replace
 
@@ -548,7 +559,7 @@ class GuardedOperationTests(unittest.TestCase):
         self._make_export_ready()
         report = self.project / "qa/report.md"
         report.write_text("# QA Report\n", encoding="utf-8")
-        from scripts.export_pdf import guarded_export
+        from comic_sol_product.engine.export_pdf import guarded_export
 
         guarded_export(self.project)
         manifest = read_json(self.project / "project.json")
@@ -603,7 +614,7 @@ class GuardedOperationTests(unittest.TestCase):
         manifest = read_json(self.project / "project.json")
         manifest["status"] = "EXPORTED"
         atomic_write_json(self.project / "project.json", manifest)
-        from scripts.comic_sol import transition
+        from comic_sol_product.engine.comic_sol import transition
 
         with self.assertRaises(ProjectValidationError):
             transition(self.project, "COMPLETE")
@@ -616,7 +627,7 @@ class GuardedOperationTests(unittest.TestCase):
         self._make_export_ready()
         # Add report and PDF
         (self.project / "qa/report.md").write_text("# QA Report\n", encoding="utf-8")
-        from scripts.export_pdf import guarded_export
+        from comic_sol_product.engine.export_pdf import guarded_export
 
         pdf_path = guarded_export(self.project)
         # Update manifest with report and pdf descriptors, set status to EXPORTED
@@ -631,7 +642,7 @@ class GuardedOperationTests(unittest.TestCase):
         }
         manifest["status"] = "EXPORTED"
         atomic_write_json(self.project / "project.json", manifest)
-        from scripts.comic_sol import transition
+        from comic_sol_product.engine.comic_sol import transition
 
         result = transition(self.project, "COMPLETE")
         self.assertEqual("COMPLETE", result["status"])
@@ -639,7 +650,7 @@ class GuardedOperationTests(unittest.TestCase):
     def test_override_after_completion_mirrors_preexisting_panel_warnings(self):
         self._make_export_ready()
         (self.project / "qa/report.md").write_text("# QA Report\n", encoding="utf-8")
-        from scripts.export_pdf import guarded_export
+        from comic_sol_product.engine.export_pdf import guarded_export
 
         pdf_path = guarded_export(self.project)
         manifest = read_json(self.project / "project.json")
@@ -665,7 +676,7 @@ class GuardedOperationTests(unittest.TestCase):
         record.update({"decision": "regenerate", "unresolved_warnings": [existing_warning]})
         atomic_write_json(panel_path, record)
 
-        from scripts.comic_sol import main
+        from comic_sol_product.engine.comic_sol import main
 
         override_reason = "minor prop drift is acceptable"
         result = main(
@@ -688,7 +699,7 @@ class GuardedOperationTests(unittest.TestCase):
         """GREEN: transition to COMPLETE_WITH_WARNINGS succeeds with warnings."""
         self._make_export_ready()
         (self.project / "qa/report.md").write_text("# QA Report\n", encoding="utf-8")
-        from scripts.export_pdf import guarded_export
+        from comic_sol_product.engine.export_pdf import guarded_export
 
         pdf_path = guarded_export(self.project)
         manifest = read_json(self.project / "project.json")
@@ -703,20 +714,20 @@ class GuardedOperationTests(unittest.TestCase):
         manifest["warnings"] = ["minor prop drift"]
         manifest["status"] = "EXPORTED"
         atomic_write_json(self.project / "project.json", manifest)
-        from scripts.comic_sol import transition
+        from comic_sol_product.engine.comic_sol import transition
 
         result = transition(self.project, "COMPLETE_WITH_WARNINGS")
         self.assertEqual("COMPLETE_WITH_WARNINGS", result["status"])
 
     def test_guarded_transition_rejects_late_warning_without_writing(self):
         self._make_export_ready()
-        from scripts.export_pdf import guarded_export
+        from comic_sol_product.engine.export_pdf import guarded_export
 
         guarded_export(self.project)
         manifest = read_json(self.project / "project.json")
         manifest["status"] = "EXPORTED"
         atomic_write_json(self.project / "project.json", manifest)
-        from scripts.render_report import render_report
+        from comic_sol_product.engine.render_report import render_report
 
         render_report(self.project)
         before = self._finalization_snapshot()

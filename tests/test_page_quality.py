@@ -12,10 +12,10 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts import page_quality  # noqa: E402
-from scripts.compose_pages import compose_all_pages  # noqa: E402
-from scripts.letter_panels import letter_project  # noqa: E402
-from scripts.page_quality import (  # noqa: E402
+from comic_sol_product.engine import page_quality  # noqa: E402
+from comic_sol_product.engine.compose_pages import compose_all_pages  # noqa: E402
+from comic_sol_product.engine.letter_panels import letter_project  # noqa: E402
+from comic_sol_product.engine.page_quality import (  # noqa: E402
     DETERMINISTIC_PAGE_CHECK_IDS,
     PAGE_CHECK_IDS,
     build_page_quality_record,
@@ -23,8 +23,8 @@ from scripts.page_quality import (  # noqa: E402
     validate_page_quality,
     write_page_quality_record,
 )
-from scripts.project_io import ProjectLock  # noqa: E402
-from scripts.validate_project import (  # noqa: E402
+from comic_sol_product.engine.project_io import ProjectLock  # noqa: E402
+from comic_sol_product.engine.validate_project import (  # noqa: E402
     validate_lettering_provenance,
     validate_project,
 )
@@ -129,8 +129,8 @@ class PageQualityTests(unittest.TestCase):
         pixel_count = 1600 * 2400
         warning_filters = list(warnings.filters)
         with (
-            patch("scripts.page_quality.Image.MAX_IMAGE_PIXELS", pixel_count - 1),
-            patch("scripts.raster_limits.MAX_DECODED_PIXELS", pixel_count + 1),
+            patch("comic_sol_product.engine.page_quality.Image.MAX_IMAGE_PIXELS", pixel_count - 1),
+            patch("comic_sol_product.engine.raster_limits.MAX_DECODED_PIXELS", pixel_count + 1),
         ):
             issues = validate_page_quality(self.project, 1)
 
@@ -149,8 +149,8 @@ class PageQualityTests(unittest.TestCase):
         pixel_count = 1600 * 2400
         warning_filters = list(warnings.filters)
         with (
-            patch("scripts.page_quality.Image.MAX_IMAGE_PIXELS", pixel_count - 1),
-            patch("scripts.raster_limits.MAX_DECODED_PIXELS", pixel_count + 1),
+            patch("comic_sol_product.engine.page_quality.Image.MAX_IMAGE_PIXELS", pixel_count - 1),
+            patch("comic_sol_product.engine.raster_limits.MAX_DECODED_PIXELS", pixel_count + 1),
         ):
             with self.assertRaisesRegex(
                 ValueError,

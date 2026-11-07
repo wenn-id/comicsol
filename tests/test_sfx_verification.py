@@ -12,24 +12,24 @@ from PIL import Image, ImageChops
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts import page_quality  # noqa: E402
+from comic_sol_product.engine import page_quality  # noqa: E402
 
-from scripts.comic_sol import (  # noqa: E402
+from comic_sol_product.engine.comic_sol import (  # noqa: E402
     _manifest_artifact_problem,
     _resume_stage_material,
     read_json,
     sha256_file,
     stage_cache_key,
 )
-from scripts.letter_panels import (  # noqa: E402
+from comic_sol_product.engine.letter_panels import (  # noqa: E402
     _letter_project_with_summaries,
     letter_panel,
     letter_project,
 )
-from scripts.schema import read_project_manifest  # noqa: E402
-from scripts.sfx_repair import main as sfx_repair_main  # noqa: E402
-from scripts.sfx_repair import replace_generated_sfx  # noqa: E402
-from scripts.sfx_verification import (  # noqa: E402
+from comic_sol_product.engine.schema import read_project_manifest  # noqa: E402
+from comic_sol_product.engine.sfx_repair import main as sfx_repair_main  # noqa: E402
+from comic_sol_product.engine.sfx_repair import replace_generated_sfx  # noqa: E402
+from comic_sol_product.engine.sfx_verification import (  # noqa: E402
     DETERMINISTIC_LETTERING,
     DETERMINISTIC_SFX_NEGATIVE,
     GENERATED_VISUAL,
@@ -48,8 +48,8 @@ from scripts.sfx_verification import (  # noqa: E402
     sfx_provenance,
     sfx_render_mode,
 )
-from scripts.typography import LETTERING_GEOMETRY_SCHEMA_VERSION  # noqa: E402
-from scripts.validate_project import (  # noqa: E402
+from comic_sol_product.engine.typography import LETTERING_GEOMETRY_SCHEMA_VERSION  # noqa: E402
+from comic_sol_product.engine.validate_project import (  # noqa: E402
     sfx_advisories,
     validate_lettering_provenance,
     validate_storyboard,

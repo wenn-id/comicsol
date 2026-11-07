@@ -4,9 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.build_examples import build_example, discover_examples
-from scripts.comic_sol import read_json
-from scripts.validate_project import require_valid_project
+from comic_sol_product.engine.build_examples import build_example, discover_examples
+from comic_sol_product.engine.comic_sol import read_json
+from comic_sol_product.engine.validate_project import require_valid_project
 
 
 ROOT = Path(__file__).resolve().parents[1]

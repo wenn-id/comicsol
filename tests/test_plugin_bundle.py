@@ -12,7 +12,7 @@ from comic_sol_product import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
 
-from scripts import sync_plugin_bundle  # noqa: E402
+from comic_sol_product.engine import sync_plugin_bundle  # noqa: E402
 
 
 class PluginBundleTests(unittest.TestCase):

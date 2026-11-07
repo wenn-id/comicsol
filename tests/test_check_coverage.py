@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.check_coverage import (
+from comic_sol_product.engine.check_coverage import (
     BRANCH_COVERAGE_FLOOR,
     LINE_COVERAGE_FLOOR,
     check_coverage,

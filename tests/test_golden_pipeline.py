@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from scripts.comic_sol import (
+from comic_sol_product.engine.comic_sol import (
     atomic_write_json,
     finalize_project,
     init_project,
@@ -18,10 +18,10 @@ from scripts.comic_sol import (
     sha256_file,
     transition,
 )
-from scripts.normalize_panels import normalize_panel
-from scripts.letter_panels import letter_project
-from scripts.compose_pages import compose_project
-from scripts.page_quality import (
+from comic_sol_product.engine.normalize_panels import normalize_panel
+from comic_sol_product.engine.letter_panels import letter_project
+from comic_sol_product.engine.compose_pages import compose_project
+from comic_sol_product.engine.page_quality import (
     build_page_quality_record,
     write_page_quality_record,
 )
@@ -230,7 +230,10 @@ class GoldenPipelineTests(unittest.TestCase):
         finalize_project(self.project)
         page = self.project / "pages/page-001.png"
         Image.new("RGB", (1600, 2400), "magenta").save(page)
-        from scripts.validate_project import ProjectValidationError, require_valid_project
+        from comic_sol_product.engine.validate_project import (
+            ProjectValidationError,
+            require_valid_project,
+        )
 
         with self.assertRaises(ProjectValidationError) as context:
             require_valid_project(self.project, "final")

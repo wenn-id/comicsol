@@ -91,6 +91,8 @@ jobs:
           # A baseline predating the harness cannot be benchmarked; run the current
           # harness against the baseline engine so the comparison stays meaningful.
           cp scripts/benchmark.py "${RUNNER_TEMP}/baseline-checkout/scripts/benchmark.py"
+          # The current harness also needs the package bridge in older checkouts.
+          cp -r comic_sol_product/engine "${RUNNER_TEMP}/baseline-checkout/comic_sol_product/"
           cp -r benchmarks "${RUNNER_TEMP}/baseline-checkout/benchmarks"
           cd "${RUNNER_TEMP}/baseline-checkout"
           python scripts/benchmark.py --all \

@@ -16,7 +16,7 @@ from typing import Sequence
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    __package__ = "scripts"
+    __package__ = "comic_sol_product.engine"
 
 from .project_io import ProjectTransaction, contained_project_path
 from .comic_sol import sha256_file

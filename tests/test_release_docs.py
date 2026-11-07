@@ -6,9 +6,12 @@ from pathlib import Path
 
 from comic_sol_product import __version__
 from comic_sol_product.distribution import ReleaseIdentity, native_payload_names
-from scripts.release_qualification import ARTIFACT_PLATFORMS, DEFAULT_REQUIRED_TARGETS
-from scripts.stage_registry import ARTIFACT_STAGE
-from scripts.validate_project import (
+from comic_sol_product.engine.release_qualification import (
+    ARTIFACT_PLATFORMS,
+    DEFAULT_REQUIRED_TARGETS,
+)
+from comic_sol_product.engine.stage_registry import ARTIFACT_STAGE
+from comic_sol_product.engine.validate_project import (
     EXPORT_READY_ARTIFACT_PATHS,
     MANIFEST_ARTIFACT_KEYS,
     TERMINAL_ARTIFACT_KEYS,
