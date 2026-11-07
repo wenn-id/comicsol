@@ -8,6 +8,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import venv
 from pathlib import Path
@@ -23,6 +24,36 @@ def run(command: list[str], cwd: Path) -> None:
 def run_output(command: list[str], cwd: Path) -> str:
     """Run a command and return its captured standard output."""
     return subprocess.check_output(command, cwd=cwd, text=True).strip()
+
+
+PYTHON_LICENSE_RELATIVE = Path("_internal/licenses/python/LICENSE.txt")
+
+
+def find_python_license(stdlib: Path, prefix: Path) -> Path:
+    """Locate the license supplied with the build interpreter."""
+    for candidate in (stdlib / "LICENSE.txt", prefix / "LICENSE.txt"):
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError("Python runtime LICENSE.txt is missing")
+
+
+def copy_python_license(source: Path, runtime: Path) -> Path:
+    """Copy the interpreter license into the frozen runtime's licenses tree."""
+    source = source.resolve(strict=True)
+    runtime_root = runtime.resolve(strict=True)
+    parent = runtime_root / PYTHON_LICENSE_RELATIVE.parent
+    resolved_parent = parent.resolve(strict=False)
+    if resolved_parent != runtime_root and runtime_root not in resolved_parent.parents:
+        raise ValueError("Python license destination escapes the portable runtime")
+    parent.mkdir(parents=True, exist_ok=True)
+    resolved_parent = parent.resolve(strict=True)
+    if resolved_parent != runtime_root and runtime_root not in resolved_parent.parents:
+        raise ValueError("Python license destination escapes the portable runtime")
+    destination = resolved_parent / PYTHON_LICENSE_RELATIVE.name
+    if destination.is_symlink() or destination.exists():
+        raise FileExistsError(f"Python license destination already exists: {destination}")
+    shutil.copy2(source, destination)
+    return destination
 
 
 def install_locked(python: Path, lock: Path, cwd: Path) -> None:
@@ -114,6 +145,7 @@ def main() -> int:
     wheel = arguments.wheel.resolve(strict=True)
     output = arguments.output.resolve()
     lock = arguments.lock.resolve(strict=True)
+    python_license = find_python_license(Path(sysconfig.get_path("stdlib")), Path(sys.prefix))
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="comic-sol-freeze-") as raw:
         temporary = Path(raw)
@@ -142,6 +174,7 @@ def main() -> int:
         if target.exists():
             shutil.rmtree(target)
         shutil.copytree(built, target)
+        copy_python_license(python_license, target)
         generator = temporary / "sbom-venv"
         venv.EnvBuilder(with_pip=True, clear=True).create(generator)
         generator_python = generator / (

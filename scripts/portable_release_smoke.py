@@ -24,6 +24,11 @@ def main() -> int:
     executable = runtime / ("comic-sol.exe" if sys.platform == "win32" else "comic-sol")
     if not executable.is_file():
         raise RuntimeError("portable executable is missing")
+    python_license = runtime / "_internal" / "licenses" / "python" / "LICENSE.txt"
+    if not python_license.is_file():
+        raise RuntimeError("portable runtime is missing the CPython license")
+    if "Python Software Foundation" not in python_license.read_text(encoding="utf-8"):
+        raise RuntimeError("portable runtime CPython license is invalid")
     with tempfile.TemporaryDirectory(prefix="comic-sol-native-smoke-") as raw:
         temporary = Path(raw)
         run([str(executable), "--version"], temporary)

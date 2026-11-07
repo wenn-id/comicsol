@@ -24,6 +24,7 @@ REQUIRED_RUNTIME_SUFFIXES = frozenset(
         "comic-sol/_internal/comic_sol_product/skill/SKILL.md",
         "comic-sol/_internal/comic_sol_product/skill/references/workflow.md",
         "comic-sol/_internal/comic_sol_product/skill/references/starter-templates.md",
+        "comic-sol/_internal/licenses/python/LICENSE.txt",
     }
     | {
         f"comic-sol/_internal/comic_sol_product/templates/starters/v1/{starter_id}/{relative}"
@@ -126,17 +127,29 @@ def _same_directory(metadata: os.stat_result, expected: _Directory) -> bool:
     )
 
 
-def _same_member(metadata: os.stat_result, expected: _Member) -> bool:
-    return (
-        stat.S_ISREG(metadata.st_mode)
-        and not _is_reparse(metadata)
-        and metadata.st_dev == expected.device
-        and metadata.st_ino == expected.inode
-        and metadata.st_mode == expected.mode
-        and metadata.st_size == expected.size
-        and metadata.st_mtime_ns == expected.modified_ns
-        and metadata.st_ctime_ns == expected.changed_ns
+def _member_modes_match(metadata_mode: int, expected_mode: int) -> bool:
+    """Compare full POSIX modes and stable file types on Windows."""
+    if os.name == "nt":
+        return stat.S_IFMT(metadata_mode) == stat.S_IFMT(expected_mode)
+    return metadata_mode == expected_mode
+
+
+def _member_mismatch_fields(metadata: os.stat_result, expected: _Member) -> tuple[str, ...]:
+    """Name stat fields that differ from the runtime member snapshot."""
+    checks = (
+        ("file_type", stat.S_ISREG(metadata.st_mode) and not _is_reparse(metadata)),
+        ("device", metadata.st_dev == expected.device),
+        ("inode", metadata.st_ino == expected.inode),
+        ("mode", _member_modes_match(metadata.st_mode, expected.mode)),
+        ("size", metadata.st_size == expected.size),
+        ("modified_ns", metadata.st_mtime_ns == expected.modified_ns),
+        ("changed_ns", metadata.st_ctime_ns == expected.changed_ns),
     )
+    return tuple(name for name, matches in checks if not matches)
+
+
+def _same_member(metadata: os.stat_result, expected: _Member) -> bool:
+    return not _member_mismatch_fields(metadata, expected)
 
 
 def _resolved_within(root: Path, path: Path) -> None:
@@ -327,9 +340,11 @@ def _read_member(
         ) from error
     with stream:
         before = os.fstat(stream.fileno())
-        if not _same_member(before, member):
+        mismatches = _member_mismatch_fields(before, member)
+        if mismatches:
             raise ValueError(
-                f"portable runtime member changed before it could be read: {member.relative}"
+                f"portable runtime member changed before it could be read: {member.relative} "
+                f"(metadata mismatch: {', '.join(mismatches)})"
             )
         payload = stream.read()
         after = os.fstat(stream.fileno())
