@@ -49,6 +49,7 @@ from scripts.input_limits import InputResourceLimitError  # noqa: E402
 from scripts.normalize_panels import normalize_panel  # noqa: E402
 from scripts.schema import UnsupportedSchemaVersionError  # noqa: E402
 from scripts.validate_project import validate_manifest, validate_panel_record  # noqa: E402
+from tests.support import make_symlink  # noqa: E402
 
 
 STAGES = ("planning", "storyboard", "generation", "lettering", "composition", "export")
@@ -920,15 +921,12 @@ class ResumeTests(unittest.TestCase):
             if Path(path) == attempt and calls == 0:
                 calls += 1
                 attempt.unlink()
-                attempt.symlink_to(outside)
+                make_symlink(self, attempt, outside)
             return result
 
-        try:
-            probe = self.project / "symlink-probe"
-            probe.symlink_to(outside)
-            probe.unlink()
-        except OSError as error:
-            self.skipTest(f"symlink unavailable: {error}")
+        probe = self.project / "symlink-probe"
+        make_symlink(self, probe, outside)
+        probe.unlink()
         with patch(
             "scripts.comic_sol._contained_project_path",
             side_effect=swap_after_preflight,
@@ -946,15 +944,12 @@ class ResumeTests(unittest.TestCase):
         def verify_then_swap(path):
             result = _verify_raster(path)
             attempt.unlink()
-            attempt.symlink_to(outside)
+            make_symlink(self, attempt, outside)
             return result
 
-        try:
-            probe = self.project / "symlink-probe"
-            probe.symlink_to(outside)
-            probe.unlink()
-        except OSError as error:
-            self.skipTest(f"symlink unavailable: {error}")
+        probe = self.project / "symlink-probe"
+        make_symlink(self, probe, outside)
+        probe.unlink()
         with patch("scripts.comic_sol._verify_raster", side_effect=verify_then_swap):
             with self.assertRaisesRegex(ValueError, "escapes|symlinks"):
                 promote_attempt(self.project, "p01-01", attempt)

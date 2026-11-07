@@ -2446,10 +2446,7 @@ class ProjectValidationTests(unittest.TestCase):
         Image.new("RGB", (736, 1136), "black").save(outside)
         raw = self.project / "panels/raw/p01-01.png"
         raw.unlink()
-        try:
-            raw.symlink_to(outside)
-        except OSError as error:
-            self.skipTest(f"symlink creation is unavailable: {error}")
+        make_symlink(self, raw, outside)
         record_path = self.project / "qa/panels/p01-01.json"
         record = read_json(record_path)
         record["raw_sha256"] = sha256_file(outside)

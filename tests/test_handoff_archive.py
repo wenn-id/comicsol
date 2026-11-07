@@ -21,6 +21,7 @@ from comic_sol_product.release import REQUIRED_SDIST_SUFFIXES, REQUIRED_WHEEL_ME
 from scripts import comic_sol, sync_plugin_bundle
 from scripts.comic_sol import main as source_main
 from scripts.core_primitives import canonical_json_bytes
+from tests.support import make_symlink
 
 
 # WP3 intentionally freezes this smallest public archive surface and layout.
@@ -511,10 +512,7 @@ class HandoffArchiveContractTests(unittest.TestCase):
         archive_parent.mkdir(parents=True)
         output_root.mkdir()
         alias = root / "alias"
-        try:
-            alias.symlink_to(real, target_is_directory=True)
-        except (NotImplementedError, OSError) as error:
-            self.skipTest(f"directory symlinks are unavailable: {error}")
+        make_symlink(self, alias, real, directory=True)
         archive = alias / "archives" / "ancestor.comic-sol-handoff"
 
         export_result = module.export_handoff_archive(project, archive)

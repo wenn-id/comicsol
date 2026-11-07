@@ -11,6 +11,7 @@ from comic_sol_product import __version__
 from comic_sol_product import skill_install
 from comic_sol_product.errors import CliUsageError
 from comic_sol_product.skill_payload import SKILL_SHARED_FILES, shared_package_path
+from tests.support import make_symlink
 
 
 class SkillInstallTests(unittest.TestCase):
@@ -509,12 +510,7 @@ class SkillInstallTests(unittest.TestCase):
         real = self.root / "real-home"
         real.mkdir()
         linked = self.root / "linked-home"
-        try:
-            linked.symlink_to(real, target_is_directory=True)
-        except OSError as error:
-            if os.name == "nt":
-                self.skipTest(f"unprivileged Windows cannot create directory symlinks: {error}")
-            self.fail(f"directory symlink creation unexpectedly failed: {error}")
+        make_symlink(self, linked, real, directory=True)
         with self.assertRaises(skill_install.UnsafeSkillPathError):
             self.install("claude", "user", home=linked)
         self.assertFalse((real / ".claude/skills/comic-sol").exists())
@@ -755,12 +751,7 @@ class SkillInstallTests(unittest.TestCase):
         linked.unlink()
         outside = self.root / "outside"
         outside.write_text("outside\n")
-        try:
-            linked.symlink_to(outside)
-        except OSError as error:
-            if os.name == "nt":
-                self.skipTest(f"unprivileged Windows cannot create file symlinks: {error}")
-            self.fail(f"file symlink creation unexpectedly failed: {error}")
+        make_symlink(self, linked, outside)
         with self.assertRaises(skill_install.UnsafeSkillPathError):
             self.uninstall("claude", "user")
         self.assertEqual("outside\n", outside.read_text())

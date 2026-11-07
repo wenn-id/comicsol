@@ -29,6 +29,7 @@ from comic_sol_product.portable import (
     validate_runtime_members,
 )
 from scripts.container_sbom import merge_syft_os_packages
+from tests.support import make_symlink
 
 
 class NativeDistributionContractTests(unittest.TestCase):
@@ -484,10 +485,7 @@ class NativeDistributionContractTests(unittest.TestCase):
             root = Path(temporary_directory)
             runtime = self._portable_runtime(root)
             linked_runtime = root / "linked-runtime"
-            try:
-                linked_runtime.symlink_to(runtime, target_is_directory=True)
-            except OSError as error:
-                self.skipTest(f"directory symlinks are unavailable: {error}")
+            make_symlink(self, linked_runtime, runtime, directory=True)
             for extension in ("zip", "tar.gz"):
                 with self.subTest(extension=extension):
                     with self.assertRaisesRegex(ValueError, "symlinks or reparse points"):
@@ -524,10 +522,7 @@ class NativeDistributionContractTests(unittest.TestCase):
             runtime = self._portable_runtime(root)
             outside = root / "outside"
             outside.write_bytes(b"outside")
-            try:
-                (runtime / "linked-file").symlink_to(outside)
-            except OSError as error:
-                self.skipTest(f"file symlinks are unavailable: {error}")
+            make_symlink(self, runtime / "linked-file", outside)
             for extension in ("zip", "tar.gz"):
                 with self.subTest(extension=extension):
                     with self.assertRaisesRegex(ValueError, "symlinks or reparse points"):
@@ -540,10 +535,7 @@ class NativeDistributionContractTests(unittest.TestCase):
             runtime = self._portable_runtime(root)
             outside = root / "outside"
             outside.mkdir()
-            try:
-                (runtime / "linked-directory").symlink_to(outside, target_is_directory=True)
-            except OSError as error:
-                self.skipTest(f"directory symlinks are unavailable: {error}")
+            make_symlink(self, runtime / "linked-directory", outside, directory=True)
             for extension in ("zip", "tar.gz"):
                 with self.subTest(extension=extension):
                     with self.assertRaisesRegex(ValueError, "symlinks or reparse points"):
