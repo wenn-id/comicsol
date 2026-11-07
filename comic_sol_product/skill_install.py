@@ -356,9 +356,28 @@ def _packaged_shared_files(root: Path) -> dict[str, Path]:
     return shared
 
 
+def _default_bundle_root() -> Path:
+    """Use the packaged payload, or the canonical tree in a source checkout."""
+    package_root = Path(__file__).resolve().parent
+    packaged = package_root / "skill"
+    try:
+        packaged.lstat()
+    except FileNotFoundError:
+        repository = package_root.parent
+        checkout = repository / "skills" / "comic-sol"
+        if (repository / "pyproject.toml").is_file():
+            try:
+                checkout.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                return checkout
+    return packaged
+
+
 def bundle_digest(bundle_root: Path | None = None) -> str:
     """Digest the default packaged Skill or an explicitly supplied full bundle."""
-    root = bundle_root or Path(__file__).resolve().parent / "skill"
+    root = bundle_root or _default_bundle_root()
     shared_files = _packaged_shared_files(root) if bundle_root is None else None
     return _scan_payload(root, shared_files=shared_files)[1]
 
@@ -762,9 +781,7 @@ def install_skill(
         home=home_path,
         codex_home=codex_path,
     )
-    source = _lexical_path(
-        bundle_root or Path(__file__).resolve().parent / "skill", label="bundle root"
-    )
+    source = _lexical_path(bundle_root or _default_bundle_root(), label="bundle root")
     shared_files = _packaged_shared_files(source) if bundle_root is None else None
     managed, digest = _scan_payload(source, shared_files=shared_files)
 
