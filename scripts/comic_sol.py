@@ -4206,9 +4206,10 @@ def _stage_override(
 
     manifest_changed = False
     status_changed = False
-    if normalized_reason not in manifest_warnings:
-        manifest_warnings.append(normalized_reason)
-        manifest_changed = True
+    for warning in warnings:
+        if warning not in manifest_warnings:
+            manifest_warnings.append(warning)
+            manifest_changed = True
     if manifest.get("status") == "COMPLETE" and manifest_warnings:
         manifest["status"] = "COMPLETE_WITH_WARNINGS"
         manifest_changed = True
