@@ -3,6 +3,7 @@ import json
 import os
 import re
 import socket
+import stat
 import struct
 import tarfile
 import tempfile
@@ -584,6 +585,54 @@ class NativeDistributionContractTests(unittest.TestCase):
                                 root / f"portable.{extension}",
                                 architecture="x86_64",
                             )
+
+    def test_portable_member_mode_comparison_is_platform_aware(self):
+        """Keep file-type checks strict while tolerating Windows permission-bit differences."""
+        from comic_sol_product import portable
+        from types import SimpleNamespace
+        from typing import cast
+
+        expected = portable._Member(
+            Path("comic-sol.exe"),
+            1,
+            2,
+            stat.S_IFREG | 0o755,
+            4,
+            8_000_000_000,
+            9_000_000_000,
+        )
+        regular = cast(
+            os.stat_result,
+            SimpleNamespace(
+                st_mode=stat.S_IFREG | 0o644,
+                st_dev=1,
+                st_ino=2,
+                st_size=4,
+                st_mtime_ns=8_000_000_000,
+                st_ctime_ns=9_000_000_000,
+                st_file_attributes=0,
+            ),
+        )
+        directory = cast(
+            os.stat_result,
+            SimpleNamespace(
+                st_mode=stat.S_IFDIR | 0o644,
+                st_dev=1,
+                st_ino=2,
+                st_size=4,
+                st_mtime_ns=8_000_000_000,
+                st_ctime_ns=9_000_000_000,
+                st_file_attributes=0,
+            ),
+        )
+
+        with mock.patch.object(portable.os, "name", "posix"):
+            self.assertIn("mode", portable._member_mismatch_fields(regular, expected))
+        with mock.patch.object(portable.os, "name", "nt"):
+            self.assertEqual(portable._member_mismatch_fields(regular, expected), ())
+            mismatches = portable._member_mismatch_fields(directory, expected)
+        self.assertIn("file_type", mismatches)
+        self.assertIn("mode", mismatches)
 
     def test_portable_archive_rejects_member_replaced_after_scan(self):
         from comic_sol_product import portable

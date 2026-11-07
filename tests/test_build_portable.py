@@ -56,7 +56,10 @@ class BuildPortableLicenseTests(unittest.TestCase):
             runtime = root / "runtime" / "comic-sol"
             runtime.mkdir(parents=True)
             destination = copy_python_license(source, runtime)
-            self.assertEqual(runtime / PYTHON_LICENSE_RELATIVE, destination)
+            self.assertEqual(
+                (runtime / PYTHON_LICENSE_RELATIVE).resolve(),
+                destination.resolve(),
+            )
             self.assertEqual(source.read_bytes(), destination.read_bytes())
 
     def test_license_parent_symlink_cannot_create_directories_outside_runtime(self):

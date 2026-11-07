@@ -127,13 +127,20 @@ def _same_directory(metadata: os.stat_result, expected: _Directory) -> bool:
     )
 
 
+def _member_modes_match(metadata_mode: int, expected_mode: int) -> bool:
+    """Compare full POSIX modes and stable file types on Windows."""
+    if os.name == "nt":
+        return stat.S_IFMT(metadata_mode) == stat.S_IFMT(expected_mode)
+    return metadata_mode == expected_mode
+
+
 def _member_mismatch_fields(metadata: os.stat_result, expected: _Member) -> tuple[str, ...]:
     """Name stat fields that differ from the runtime member snapshot."""
     checks = (
         ("file_type", stat.S_ISREG(metadata.st_mode) and not _is_reparse(metadata)),
         ("device", metadata.st_dev == expected.device),
         ("inode", metadata.st_ino == expected.inode),
-        ("mode", metadata.st_mode == expected.mode),
+        ("mode", _member_modes_match(metadata.st_mode, expected.mode)),
         ("size", metadata.st_size == expected.size),
         ("modified_ns", metadata.st_mtime_ns == expected.modified_ns),
         ("changed_ns", metadata.st_ctime_ns == expected.changed_ns),
