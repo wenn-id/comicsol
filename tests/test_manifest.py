@@ -317,6 +317,35 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(unsupported, manifest_path.read_bytes())
         self.assertNotEqual(original, manifest_path.read_bytes())
 
+    def test_future_schema_json_error_advises_update_not_restore(self):
+        project = init_project(
+            self.root,
+            "Future Schema CLI",
+            b"Schema contract source",
+            {"mode": "short_prompt", "language": "en"},
+        )
+        manifest_path = project / "project.json"
+        manifest = read_json(manifest_path)
+        manifest["schema_version"] = "9.0"
+        atomic_write_json(manifest_path, manifest)
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            result = main(["status", os.fspath(project), "--json"])
+
+        self.assertEqual(1, result)
+        self.assertEqual("", stderr.getvalue())
+        payload = json.loads(stdout.getvalue())
+        self.assertFalse(payload["ok"])
+        self.assertEqual("status", payload["command"])
+        self.assertEqual("CS-PROJ-001", payload["error"]["code"])
+        self.assertIn("upgrade Comic Sol", payload["error"]["detail"])
+        recovery = payload["error"]["recovery"]
+        self.assertIn("newer than this reader supports", recovery)
+        self.assertIn("update Comic Sol", recovery)
+        self.assertIn("rather than restoring", recovery)
+
     def test_migration_failure_preserves_project_bytes(self):
         project = init_project(
             self.root,

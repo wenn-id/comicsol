@@ -23,14 +23,14 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Literal, cast
+from typing import Callable, Literal, NoReturn, cast
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     __package__ = "scripts"
 
 from comic_sol_product.cli_command_spec import add_shared_command_parsers
-from comic_sol_product.errors import error_payload, safe_error_detail
+from comic_sol_product.errors import CliUsageError, error_payload, safe_error_detail
 
 from PIL import Image, ImageFont
 
@@ -4871,8 +4871,16 @@ def _finalize_project_locked(
     }
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="comic_sol.py")
+class _JsonArgumentParser(argparse.ArgumentParser):
+    """Raise a structured signal for parse failures in JSON mode."""
+
+    def error(self, message: str) -> NoReturn:
+        raise CliUsageError(message)
+
+
+def _build_parser(*, json_errors: bool = False) -> argparse.ArgumentParser:
+    parser_type = _JsonArgumentParser if json_errors else argparse.ArgumentParser
+    parser = parser_type(prog="comic_sol.py")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     add_shared_command_parsers(subparsers, ("init",), source_cli=True)
@@ -5028,8 +5036,13 @@ def main(argv: list[str] | None = None) -> int:
         engine=sys.modules[__name__],
         validation=importlib.import_module(".validate_project", __package__),
     )
-    parser = _build_parser()
-    arguments = parser.parse_args(argv)
+    raw_arguments = sys.argv[1:] if argv is None else list(argv)
+    parser = _build_parser(json_errors="--json" in raw_arguments)
+    try:
+        arguments = parser.parse_args(raw_arguments)
+    except CliUsageError as error:
+        _emit_cli_error(error, argparse.Namespace(command=None, as_json=True))
+        return 2
     try:
         if arguments.command == "init":
             if arguments.starter is not None:

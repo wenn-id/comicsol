@@ -118,7 +118,7 @@ _DEFINITIONS = (
         "invalid-data",
         "Project data is invalid.",
         "A project file or request value does not match the Comic Sol schema.",
-        "Validate or restore the project data, then retry the command.",
+        "Validate malformed project data and correct invalid request values. If the project schema is newer than this reader supports, update Comic Sol rather than restoring an older copy over it.",
     ),
     ErrorDefinition(
         "CS-PROJ-002",

@@ -14,11 +14,13 @@ installed-CLI option, for example `comic-sol --json status PROJECT_DIR`.
 
 ### `CS-PROJ-001`
 
-Project data is invalid. Run `comic-sol validate PROJECT_DIR` and use its issue
-list to identify the file or field. Restore a known-good file or ask the Skill
-to repair the project, then validate again before resuming. If request data is
-invalid, correct the command or tool request against its documented schema and
-retry that request. Do not guess at schema fields.
+Project or request data does not match a supported schema. Run
+`comic-sol validate PROJECT_DIR` to identify malformed project data, and correct
+invalid request fields against their documented schema. If the error detail says
+the project schema is newer than this reader supports, update Comic Sol to a
+compatible version; do not restore an older copy over the newer project. Restore
+a known-good file only when validation shows the data is malformed or damaged.
+Do not guess at schema fields.
 
 ### `CS-PROJ-002`
 

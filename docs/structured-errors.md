@@ -18,9 +18,10 @@ The namespaces are `CS-IMG`, `CS-PROJ`, `CS-QA`, `CS-FONT`, `CS-MCP`, `CS-INSTAL
 
 ## Fail-closed behavior
 
-Both surfaces are fail-closed: every failure path emits exactly one canonical result instead of argparse usage text, `SystemExit`, or a raw traceback.
+The installed CLI and MCP surfaces are fail-closed: failures emit one canonical result instead of raw tracebacks. The source engine CLI also emits the canonical JSON envelope for parse failures when `--json` is requested, while preserving its existing human-mode argparse output.
 
 - **Parse errors.** Invalid or missing arguments raise `comic_sol_product.errors.CliUsageError` instead of argparse's `SystemExit`. When `--json` is requested (the flag may appear anywhere in the invocation), `stdout` receives exactly one envelope classified `CS-CLI-001` with `command: null`, the argparse diagnostic in `error.detail`, and exit status `2`; `stderr` stays empty. Human mode prints the canonical error block to `stderr` and exits `2`. `--help` and `--version` remain successful exits with their usual text on `stdout`.
+- **Source engine parse errors.** For `scripts/comic_sol.py`, a parse failure with `--json` in the invocation emits one `CS-CLI-001` JSON envelope on `stdout`, with `command: null`, and exits `2`; `stderr` stays empty. Without `--json`, the engine keeps argparse's existing usage output. Help output remains unchanged.
 - **Unexpected exceptions.** A final top-level boundary catches every exception the typed handlers do not. It classifies as `CS-PROJ-005` on the CLI surface (`CS-MCP-002` on MCP), adds a redacted `error.detail`, exits `1`, and never prints a traceback.
 - **Validation failures.** `comic-sol validate` fails closed: a completed inspection that reports issues returns `ok: false`, exit status `2`, and the canonical `CS-QA-001` payload, while `data` still carries the full issue list for parity with the MCP `comic_validate` tool (which returns that same list as its tool result). An empty issue list remains `ok: true` with exit status `0`. Human mode prints the issue list to `stdout` and the error block to `stderr`.
 
@@ -46,7 +47,7 @@ Both surfaces are fail-closed: every failure path emits exactly one canonical re
 | `CS-HANDOFF-001` | `handoff-contract-error` | Handoff data, locked scope, or the current job binding is invalid or stale; [inspect or prepare the handoff again](../references/schemas.md#portable-handoff-contracts). |
 | `CS-HANDOFF-002` | `handoff-archive-error` | The portable handoff archive failed a format, integrity, resource, or publication-safety check; use an intact archive from a trusted export and retry. |
 | `CS-HANDOFF-003` | `handoff-result-error` | Executor metadata, attempt identity, raster evidence, or reference activation was rejected; [correct and resubmit the current result](../references/schemas.md#generation-receipt-generationreceiptsattempt-idjson). |
-| `CS-PROJ-001` | `invalid-data` | Project or request data violates the schema; [validate or restore it](user/troubleshooting.md#cs-proj-001). |
+| `CS-PROJ-001` | `invalid-data` | Project or request data is invalid or uses an unsupported schema; [validate or correct it, and update Comic Sol for a newer project schema](user/troubleshooting.md#cs-proj-001). |
 | `CS-PROJ-002` | `not-found` | Required project data is missing; [locate or restore it](user/troubleshooting.md#cs-proj-002). |
 | `CS-PROJ-003` | `permission-denied` | The process cannot access project data; [restore safe access](user/troubleshooting.md#cs-proj-003). |
 | `CS-PROJ-004` | `io-error` | The filesystem failed during a project operation; [check storage and retry](user/troubleshooting.md#cs-proj-004). |
