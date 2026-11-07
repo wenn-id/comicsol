@@ -1483,6 +1483,7 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
             "native",
             "container",
             "source",
+            "candidate-preflight",
             "candidate",
             "qualification",
             "promote",
@@ -1503,6 +1504,33 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
                 self.assertNotIn("contents: write", section, job_name)
                 self.assertNotIn("id-token: write", section, job_name)
                 self.assertNotIn("attestations: write", section, job_name)
+
+    def test_candidate_dependency_validation_isolated_from_release_permissions(self):
+        release = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        preflight = release.split("\n  candidate-preflight:\n", 1)[1].split("\n  candidate:\n", 1)[
+            0
+        ]
+        candidate = release.split("\n  candidate:\n", 1)[1].split("\n  qualification:\n", 1)[0]
+        self.assertIn("actions: read", preflight)
+        self.assertIn("contents: read", preflight)
+        self.assertNotIn("contents: write", preflight)
+        self.assertNotIn("id-token: write", preflight)
+        self.assertNotIn("attestations: write", preflight)
+        self.assertNotIn("environment:", preflight)
+        self.assertIn("python -m pip install --require-hashes", preflight)
+        self.assertIn("validate_sbom_schema", preflight)
+        self.assertIn("artifact_inventory_sha256:", preflight)
+        self.assertIn("scripts/release_artifact_inventory.py", preflight)
+        self.assertIn("needs.candidate-preflight.outputs.artifact_inventory_sha256", candidate)
+        self.assertIn("EXPECTED_ARTIFACT_INVENTORY_SHA256", candidate)
+        self.assertNotIn("pip install", candidate)
+        self.assertIn("scripts/release_artifact_inventory.py", candidate)
+        self.assertIn("name: release-production", candidate)
+        self.assertLess(
+            candidate.index("Capture and bind current-run Actions artifact identities"),
+            candidate.index("cosign sign-blob"),
+        )
+        self.assertIn("candidate Actions artifact identity changed after verification", candidate)
 
     def test_every_workflow_checkout_disables_persisted_credentials(self):
         workflows = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
