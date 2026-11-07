@@ -1292,6 +1292,10 @@ class PdfExportTransactionTests(unittest.TestCase):
                 "comic_sol_product.engine.export_pdf._render_verified_payload",
                 side_effect=mutate_manifest,
             ),
+            mock.patch(
+                "comic_sol_product.engine.export_pdf.validate_page_quality",
+                return_value=[],
+            ),
         ):
             guarded_export(self.project)
 

@@ -191,7 +191,7 @@ class PdfExportTests(unittest.TestCase):
 
 
 class ExportFixtureIntegrationTests(unittest.TestCase):
-    def test_guarded_export_hashes_inputs_under_project_lock(self):
+    def test_guarded_export_hashes_captured_inputs_under_project_lock(self):
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary) / "project"
             shutil.copytree(ROOT / "tests/fixtures/valid-one-page", project)
@@ -220,20 +220,55 @@ class ExportFixtureIntegrationTests(unittest.TestCase):
             atomic_write_json(project / "project.json", manifest)
             from comic_sol_product.engine import export_pdf as export_pdf_module
 
-            real_sha256_file = export_pdf_module.sha256_file
-            hashed_paths = []
+            page_path = project.resolve() / "pages/page-001.png"
+            qa_path = project.resolve() / "qa/pages/page-001.json"
+            original_page = page_path.read_bytes()
+            original_qa = qa_path.read_bytes()
+            replacement = io.BytesIO()
+            Image.new("RGB", (1600, 2400), "red").save(replacement, format="PNG")
+            replacement_page = replacement.getvalue()
+            self.assertNotEqual(original_page, replacement_page)
+            read_pages = []
+            read_qa_records = []
 
-            def hash_file(path):
-                self.assertIn(project.resolve(), ProjectLock._held_locks())
-                hashed_paths.append(Path(path).relative_to(project.resolve()).as_posix())
-                return real_sha256_file(path)
+            real_read_page = export_pdf_module.read_bytes_nofollow
+            real_read_qa = export_pdf_module.read_contained_bytes
 
-            with mock.patch(
-                "comic_sol_product.engine.export_pdf.sha256_file", side_effect=hash_file
+            def read_page(path, **kwargs):
+                payload = real_read_page(path, **kwargs)
+                if Path(path) == page_path:
+                    self.assertIn(project.resolve(), ProjectLock._held_locks())
+                    read_pages.append(Path(path))
+                    page_path.write_bytes(replacement_page)
+                return payload
+
+            def read_qa(root, relative, **kwargs):
+                payload = real_read_qa(root, relative, **kwargs)
+                if relative == "qa/pages/page-001.json":
+                    self.assertIn(project.resolve(), ProjectLock._held_locks())
+                    read_qa_records.append(relative)
+                    qa_path.write_bytes(payload + b"\n")
+                return payload
+
+            with (
+                mock.patch(
+                    "comic_sol_product.engine.export_pdf.read_bytes_nofollow",
+                    side_effect=read_page,
+                ),
+                mock.patch(
+                    "comic_sol_product.engine.export_pdf.read_contained_bytes",
+                    side_effect=read_qa,
+                ),
             ):
                 guarded_export(project)
 
-            self.assertCountEqual(["pages/page-001.png", "qa/pages/page-001.json"], hashed_paths)
+            self.assertEqual([page_path], read_pages)
+            self.assertEqual(["qa/pages/page-001.json"], read_qa_records)
+            source_page = read_json(project / "exports/pdf-verification.json")["source_pages"][0]
+            self.assertEqual(hashlib.sha256(original_page).hexdigest(), source_page["sha256"])
+            self.assertEqual(hashlib.sha256(original_qa).hexdigest(), source_page["page_qa_sha256"])
+            self.assertNotEqual(source_page["sha256"], sha256_file(page_path))
+            self.assertNotEqual(source_page["page_qa_sha256"], sha256_file(qa_path))
 
     def test_valid_fixture_exports_one_readable_page(self):
         with tempfile.TemporaryDirectory() as temporary:

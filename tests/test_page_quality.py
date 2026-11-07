@@ -436,6 +436,7 @@ class PageQualityTests(unittest.TestCase):
                 "panels/p01-03/lettering.json": 1,
                 "panels/p01-03/normalization.json": 1,
                 "plan/storyboard.json": 1,
+                "qa/pages/page-001.json": 1,
             },
             reads,
         )

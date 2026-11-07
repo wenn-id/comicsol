@@ -143,8 +143,11 @@ class _ArtifactSnapshots:
 
     __slots__ = ("_snapshots",)
 
-    def __init__(self) -> None:
-        self._snapshots: dict[Path, tuple[bytes, str]] = {}
+    def __init__(self, snapshots: Mapping[Path, bytes] | None = None) -> None:
+        self._snapshots = {
+            Path(path): (payload, hashlib.sha256(payload).hexdigest())
+            for path, payload in (snapshots or {}).items()
+        }
 
     def snapshot(self, path: Path, *, max_bytes: int | None = None) -> tuple[bytes, str]:
         """Return one artifact's bytes with the digest of exactly those bytes."""
@@ -1310,7 +1313,12 @@ def migrate_page_quality_record(project_dir: Path, page_number: int) -> dict[str
         return migrated
 
 
-def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQualityIssue, ...]:
+def validate_page_quality(
+    project_dir: Path,
+    page_number: int,
+    *,
+    artifact_snapshots: Mapping[Path, bytes] | None = None,
+) -> tuple[PageQualityIssue, ...]:
     """Fail closed when page QA or any of its provenance bindings is stale.
 
     This validator deliberately does not acquire `ProjectLock`. It is a read-only
@@ -1350,7 +1358,7 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
     # one cache reads and digests each file once for the whole validation without
     # merging the two verdicts: each pass still resolves its own paths and makes
     # its own comparison.
-    artifacts = _ArtifactSnapshots()
+    artifacts = _ArtifactSnapshots(artifact_snapshots)
 
     def stale(field: str, detail: str) -> None:
         """Report whether a page-QA record is stale for current artifacts."""
@@ -1358,7 +1366,7 @@ def validate_page_quality(project_dir: Path, page_number: int) -> tuple[PageQual
 
     try:
         path = contained_project_path(project_dir, relative, must_exist=True)
-        record = read_json(path)
+        record, _ = _json_snapshot(path, artifacts)
     except (OSError, ValueError, json.JSONDecodeError):
         stale("record.path", "page quality record is missing or unreadable")
         return tuple(issues)
