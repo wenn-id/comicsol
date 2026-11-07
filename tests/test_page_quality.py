@@ -441,6 +441,38 @@ class PageQualityTests(unittest.TestCase):
             reads,
         )
 
+    def test_relative_artifact_snapshot_keys_use_captured_bytes(self):
+        write_page_quality_record(self.project, 1, self._build_record())
+        page_path = self.project / "pages/page-001.png"
+        record_path = self.project / "qa/pages/page-001.json"
+        snapshots = {
+            Path("pages/page-001.png"): page_path.read_bytes(),
+            Path("qa/pages/page-001.json"): record_path.read_bytes(),
+        }
+        page_path.write_bytes(b"not a png")
+        record_path.write_bytes(b"{")
+
+        issues = validate_page_quality(self.project, 1, artifact_snapshots=snapshots)
+
+        self.assertEqual((), issues)
+
+    def test_artifact_snapshot_keys_outside_project_are_rejected(self):
+        write_page_quality_record(self.project, 1, self._build_record())
+        outside_paths = (Path("../outside.png"), self.project.parent / "outside.png")
+
+        for path in outside_paths:
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                validate_page_quality(self.project, 1, artifact_snapshots={path: b"unused"})
+
+    def test_duplicate_snapshot_keys_after_normalization_are_rejected(self):
+        write_page_quality_record(self.project, 1, self._build_record())
+        record_path = self.project / "qa/pages/page-001.json"
+        payload = record_path.read_bytes()
+        snapshots = {Path("qa/pages/page-001.json"): payload, record_path.resolve(): payload}
+
+        with self.assertRaises(ValueError):
+            validate_page_quality(self.project, 1, artifact_snapshots=snapshots)
+
     def test_missing_and_changed_bound_artifacts_report_separately(self):
         write_page_quality_record(self.project, 1, self._build_record())
         page = self.project / "pages/page-001.png"
