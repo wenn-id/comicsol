@@ -148,7 +148,7 @@ runtime setup.
 - **How you start it, default output root, provider model, and deployment:**
   see the [Studio documentation](https://github.com/wenn-id/comic-sol-studio#documentation).
 
-## Surface and integration summary
+## Surface summary
 
 | Surface | Start command | Default project output root |
 |---|---|---|
