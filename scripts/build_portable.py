@@ -40,8 +40,18 @@ def find_python_license(stdlib: Path, prefix: Path) -> Path:
 def copy_python_license(source: Path, runtime: Path) -> Path:
     """Copy the interpreter license into the frozen runtime's licenses tree."""
     source = source.resolve(strict=True)
-    destination = runtime / PYTHON_LICENSE_RELATIVE
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    runtime_root = runtime.resolve(strict=True)
+    parent = runtime_root / PYTHON_LICENSE_RELATIVE.parent
+    resolved_parent = parent.resolve(strict=False)
+    if resolved_parent != runtime_root and runtime_root not in resolved_parent.parents:
+        raise ValueError("Python license destination escapes the portable runtime")
+    parent.mkdir(parents=True, exist_ok=True)
+    resolved_parent = parent.resolve(strict=True)
+    if resolved_parent != runtime_root and runtime_root not in resolved_parent.parents:
+        raise ValueError("Python license destination escapes the portable runtime")
+    destination = resolved_parent / PYTHON_LICENSE_RELATIVE.name
+    if destination.is_symlink() or destination.exists():
+        raise FileExistsError(f"Python license destination already exists: {destination}")
     shutil.copy2(source, destination)
     return destination
 

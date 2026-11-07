@@ -343,6 +343,7 @@ class NativeDistributionContractTests(unittest.TestCase):
             validate_runtime_members({"comic-sol/comic-sol"})
 
     def test_portable_runtime_requires_cpython_license(self):
+        """Require the redistributed CPython license in every portable runtime."""
         python_license = "comic-sol/_internal/licenses/python/LICENSE.txt"
         members = (REQUIRED_RUNTIME_SUFFIXES - {python_license}) | {"comic-sol/comic-sol"}
         with self.assertRaisesRegex(ValueError, re.escape(python_license)):

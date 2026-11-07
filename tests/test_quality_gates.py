@@ -155,6 +155,7 @@ class QualityGateContractTests(unittest.TestCase):
                 self.assertNotIn(b"\r\n", (ROOT / relative).read_bytes())
 
     def test_workflow_runs_blocking_quality_tools_and_publishes_coverage(self):
+        """Require the blocking quality tools and retained coverage output."""
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("requirements/locks/runtime-linux-x86_64.txt", workflow)
@@ -181,6 +182,23 @@ class QualityGateContractTests(unittest.TestCase):
         self.assertIn("quality-coverage", workflow)
         self.assertNotIn("check_coverage.py", RUNTIME_SCRIPTS)
         self.assertNotIn("check_ruff_baseline.py", RUNTIME_SCRIPTS)
+
+    def test_workflow_checkout_refs_are_scoped_to_event_type(self):
+        """Keep candidate pins separate from direct push and pull request refs."""
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        release_workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        checkout_steps = workflow.count("uses: actions/checkout@")
+        candidate_steps = workflow.count("if: inputs.candidate_sha != ''")
+        event_steps = workflow.count("if: inputs.candidate_sha == ''")
+
+        self.assertEqual(2 * candidate_steps, checkout_steps)
+        self.assertEqual(candidate_steps, event_steps)
+        self.assertEqual(candidate_steps, workflow.count("ref: ${{ inputs.candidate_sha }}"))
+        self.assertEqual(event_steps, workflow.count("ref: ${{ github.sha }}"))
+        self.assertIn("  workflow_call:\n    inputs:\n      candidate_sha:\n", workflow)
+        self.assertNotIn("workflow_dispatch:", workflow)
+        self.assertNotIn("inputs.candidate_sha || github.sha", workflow)
+        self.assertIn("candidate_sha: ${{ needs.prepare.outputs.sha }}", release_workflow)
 
     def test_release_caller_gates_the_exact_sha_without_a_relaxed_mode(self):
         release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")

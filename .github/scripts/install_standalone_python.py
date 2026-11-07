@@ -112,13 +112,8 @@ def _archive_member_path(name: str) -> PurePosixPath:
     return PurePosixPath(*parts)
 
 
-def _validate_link_target(
-    member_path: PurePosixPath,
-    linkname: str,
-    *,
-    is_hard_link: bool,
-) -> None:
-    """Require archive links to resolve inside the runtime's python directory."""
+def _symlink_target_trace(member_path: PurePosixPath, linkname: str) -> tuple[PurePosixPath, ...]:
+    """Return each normalized path traversed by a relative symlink target."""
     if (
         not linkname
         or linkname.startswith("/")
@@ -127,14 +122,9 @@ def _validate_link_target(
         or any(part == "" for part in linkname.split("/"))
     ):
         raise ValueError(f"unsafe archive link target: {linkname!r}")
-    if is_hard_link:
-        try:
-            _archive_member_path(linkname)
-        except ValueError as error:
-            raise ValueError(f"unsafe archive link target: {linkname!r}") from error
-        return
 
     resolved = list(member_path.parent.parts)
+    trace = [PurePosixPath(*resolved)]
     for part in linkname.split("/"):
         if part == ".":
             continue
@@ -146,30 +136,73 @@ def _validate_link_target(
             raise ValueError(f"unsafe archive link target: {linkname!r}")
         else:
             resolved.append(part)
+        trace.append(PurePosixPath(*resolved))
     if not resolved or resolved[0] != "python":
         raise ValueError(f"unsafe archive link target: {linkname!r}")
+    return tuple(trace)
+
+
+def _validate_link_target(
+    member_path: PurePosixPath,
+    linkname: str,
+    *,
+    is_hard_link: bool,
+) -> None:
+    """Require archive links to resolve inside the runtime's python directory."""
+    if is_hard_link:
+        try:
+            _archive_member_path(linkname)
+        except ValueError as error:
+            raise ValueError(f"unsafe archive link target: {linkname!r}") from error
+        return
+    _symlink_target_trace(member_path, linkname)
+
+
+def _validate_archive_member(member: tarfile.TarInfo, seen: set[PurePosixPath]) -> None:
+    """Validate one archive path, type, and link target while tracking duplicates."""
+    path = _archive_member_path(member.name)
+    if path in seen:
+        raise ValueError(f"duplicate archive member path: {member.name!r}")
+    seen.add(path)
+    if member.issym():
+        _validate_link_target(path, member.linkname, is_hard_link=False)
+    elif member.islnk():
+        _validate_link_target(path, member.linkname, is_hard_link=True)
+    elif not (member.isfile() or member.isdir()):
+        raise ValueError(f"unsupported archive member type: {member.name!r}")
+    if path == PurePosixPath("python") and not member.isdir():
+        raise ValueError("standalone runtime root must be a directory")
+
+
+def _validate_archive_link_chains(members: list[tarfile.TarInfo]) -> None:
+    """Reject archive paths and link targets that traverse another symlink."""
+    symbolic_links = {_archive_member_path(member.name) for member in members if member.issym()}
+    for member in members:
+        path = _archive_member_path(member.name)
+        if any(parent in symbolic_links for parent in path.parents):
+            raise ValueError(f"archive member traverses a symbolic link: {member.name!r}")
+        if member.issym():
+            trace = _symlink_target_trace(path, member.linkname)
+            if any(part in symbolic_links for part in trace):
+                raise ValueError(f"archive link target traverses a symbolic link: {member.name!r}")
+        elif member.islnk():
+            target = _archive_member_path(member.linkname)
+            if target in symbolic_links or any(
+                parent in symbolic_links for parent in target.parents
+            ):
+                raise ValueError(f"archive link target traverses a symbolic link: {member.name!r}")
 
 
 def _validated_archive_members(
     members: list[tarfile.TarInfo],
 ) -> list[tarfile.TarInfo]:
     """Reject unsafe paths, duplicate members, links, and special files."""
-    seen: set[PurePosixPath] = set()
-    for member in members:
-        path = _archive_member_path(member.name)
-        if path in seen:
-            raise ValueError(f"duplicate archive member path: {member.name!r}")
-        seen.add(path)
-        if member.issym():
-            _validate_link_target(path, member.linkname, is_hard_link=False)
-        elif member.islnk():
-            _validate_link_target(path, member.linkname, is_hard_link=True)
-        elif not (member.isfile() or member.isdir()):
-            raise ValueError(f"unsupported archive member type: {member.name!r}")
-        if path == PurePosixPath("python") and not member.isdir():
-            raise ValueError("standalone runtime root must be a directory")
     if not members:
         raise ValueError("standalone runtime archive is empty")
+    seen: set[PurePosixPath] = set()
+    for member in members:
+        _validate_archive_member(member, seen)
+    _validate_archive_link_chains(members)
     return members
 
 
@@ -180,7 +213,7 @@ def extract_archive(archive_path: Path, destination: Path) -> Path:
         raise FileExistsError(f"archive staging directory is not empty: {destination}")
     with tarfile.open(archive_path, "r:gz") as archive:
         members = _validated_archive_members(archive.getmembers())
-        archive.extractall(path=destination, members=members)
+        archive.extractall(path=destination, members=members, filter="data")
     runtime_root = destination / "python"
     if runtime_root.is_symlink() or not runtime_root.is_dir():
         raise FileNotFoundError("standalone runtime archive has no python directory")
