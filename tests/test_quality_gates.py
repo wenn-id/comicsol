@@ -183,6 +183,33 @@ class QualityGateContractTests(unittest.TestCase):
         self.assertNotIn("check_coverage.py", RUNTIME_SCRIPTS)
         self.assertNotIn("check_ruff_baseline.py", RUNTIME_SCRIPTS)
 
+    def test_advertised_python_minors_run_full_suite_with_hash_locked_runtime(self):
+        """Keep explicitly advertised interpreter minors in a locked full-suite job."""
+        project = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]
+        advertised_minors = {
+            classifier.rsplit(" :: ", 1)[1]
+            for classifier in project["classifiers"]
+            if classifier.startswith("Programming Language :: Python :: 3.")
+        }
+        newer_minors = advertised_minors - {"3.11"}
+        self.assertTrue(newer_minors)
+
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        job_start = workflow.index("  test-supported-python-minors:\n")
+        job_end = workflow.index("\n  quality:\n", job_start)
+        compatibility_job = workflow[job_start:job_end]
+
+        self.assertIn("python-version: ${{ matrix.python-version }}", compatibility_job)
+        self.assertIn(
+            "python -m pip install --require-hashes -r requirements/locks/runtime-linux-x86_64.txt",
+            compatibility_job,
+        )
+        self.assertIn('COMIC_SOL_REQUIRE_SYMLINK_TESTS: "1"', compatibility_job)
+        self.assertIn("python -m unittest discover -s tests -v", compatibility_job)
+        for minor in sorted(newer_minors):
+            with self.subTest(python_minor=minor):
+                self.assertIn(f'"{minor}"', compatibility_job)
+
     def test_workflow_checkout_refs_are_scoped_to_event_type(self):
         """Keep candidate pins separate from direct push and pull request refs."""
         workflow = WORKFLOW.read_text(encoding="utf-8")
