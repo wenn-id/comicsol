@@ -635,6 +635,16 @@ class ReleaseQualificationContractTests(unittest.TestCase):
         pinned_windows = install_command(platform_name="windows", release=f"v{_V}", **arguments)
         self.assertEqual("-Release", pinned_windows[4])
         self.assertEqual(f"v{_V}", pinned_windows[5])
+        for release in ("v1.2.3a1", "v1.2.3b2", "v1.2.3rc3"):
+            with self.subTest(release=release):
+                alpha_beta_rc_posix = install_command(
+                    platform_name="linux", release=release, **arguments
+                )
+                self.assertEqual(release, alpha_beta_rc_posix[3])
+                alpha_beta_rc_windows = install_command(
+                    platform_name="windows", release=release, **arguments
+                )
+                self.assertEqual(release, alpha_beta_rc_windows[5])
         with self.assertRaisesRegex(ValueError, "invalid pinned release tag"):
             install_command(platform_name="linux", release="latest", **arguments)
         with self.assertRaisesRegex(ValueError, "unsupported qualification platform"):
@@ -1434,16 +1444,16 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
 
     def test_wsl_tag_gate_uses_the_shared_canonical_validator(self):
         qualification = WORKFLOW.read_text(encoding="utf-8")
-        setup = qualification.split(
-            "      - name: Set up Python for canonical Windows tag validation\n", 1
-        )[1].split("      - name:", 1)[0]
+        wsl_job = qualification.split("\n  wsl:\n", 1)[1].split("\n  source:\n", 1)[0]
         wsl = qualification.split("      - name: Qualify Linux artifact in WSL2\n", 1)[1].split(
             "      - name: Upload WSL qualification summary\n", 1
         )[0]
 
-        self.assertIn("if: matrix.platform == 'windows'", setup)
-        self.assertIn("actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0", setup)
-        self.assertIn("python-version: '3.11.15'", setup)
+        self.assertEqual(
+            1, wsl_job.count("actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0")
+        )
+        self.assertIn("python-version: '3.11.9'", wsl_job)
+        self.assertNotIn("matrix.platform", wsl_job)
         self.assertIn("scripts/release_identity.py validate-tag", wsl)
         self.assertIn("--tag $env:RELEASE_TAG", wsl)
         self.assertIn("if ($LASTEXITCODE -ne 0)", wsl)

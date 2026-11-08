@@ -423,11 +423,6 @@ jobs:
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
         with:
           cosign-release: v3.0.6
-      - name: Set up Python for canonical Windows tag validation
-        if: matrix.platform == 'windows'
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
-        with:
-          python-version: '3.11.15'
       - name: Qualify Linux artifact in WSL2
         shell: pwsh
         env:

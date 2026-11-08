@@ -121,7 +121,7 @@ def install_command(
     """Return exact installer argv for recommended or explicit mode."""
     if (
         release is not None
-        and re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?", release) is None
+        and re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:(?:[ab]|rc)[0-9]+)?", release) is None
     ):
         raise ValueError(f"invalid pinned release tag: {release}")
     if platform_name in {"linux", "macos", "wsl"}:
