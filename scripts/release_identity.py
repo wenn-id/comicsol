@@ -67,12 +67,17 @@ def _load_json(path: Path, label: str) -> Mapping[str, Any]:
     return value
 
 
-def validate_tag_and_version(tag: str, package_version: str) -> str:
-    """Return the exact package version encoded by a canonical release tag."""
+def validate_tag(tag: str) -> str:
+    """Return the version encoded by a canonical release tag."""
     match = _TAG_PATTERN.fullmatch(tag)
     if match is None:
         raise IdentityError(f"invalid release tag: {tag}")
-    version = match.group("version")
+    return match.group("version")
+
+
+def validate_tag_and_version(tag: str, package_version: str) -> str:
+    """Return the exact package version encoded by a canonical release tag."""
+    version = validate_tag(tag)
     if package_version != version:
         raise IdentityError(
             f"release tag version {version} does not match package version {package_version}"
@@ -395,6 +400,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    validate_tag_parser = subparsers.add_parser(
+        "validate-tag", help="validate a canonical release tag"
+    )
+    validate_tag_parser.add_argument("--tag", required=True)
+
     prepare = subparsers.add_parser("prepare", help="capture and validate initial identity")
     prepare.add_argument("--repository", type=Path, default=Path("."))
     prepare.add_argument("--tag", required=True)
@@ -428,7 +438,9 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        if args.command == "prepare":
+        if args.command == "validate-tag":
+            result = {"tag": args.tag, "version": validate_tag(args.tag)}
+        elif args.command == "prepare":
             result = prepare_identity(
                 repository=args.repository,
                 tag=args.tag,

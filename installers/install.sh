@@ -301,13 +301,13 @@ if [ "$UNINSTALL" -eq 1 ]; then
 elif [ -n "$RELEASE" ]; then
   RELEASE_MODE=1
   case "$RELEASE" in
-    ''|*[!0-9vrc.]*)
-      echo "--release must be an exact vX.Y.Z or vX.Y.ZrcN tag" >&2
+    ''|*[!0-9vabrc.]*)
+      echo "--release must be an exact vX.Y.Z, vX.Y.ZaN, vX.Y.ZbN, or vX.Y.ZrcN tag" >&2
       exit 2
       ;;
   esac
-  if ! printf '%s\n' "$RELEASE" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$'; then
-    echo "--release must be an exact vX.Y.Z or vX.Y.ZrcN tag" >&2
+  if ! printf '%s\n' "$RELEASE" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(([ab]|rc)[0-9]+)?$'; then
+    echo "--release must be an exact vX.Y.Z, vX.Y.ZaN, vX.Y.ZbN, or vX.Y.ZrcN tag" >&2
     exit 2
   fi
   if [ -n "$ARCHIVE$SHA256$CHECKSUMS$SIGNATURE$URL" ]; then
@@ -576,7 +576,7 @@ EXE="$RUNTIME/comic-sol"
 chmod 755 "$EXE"
 VERSION_OUTPUT=$("$EXE" --version) || { echo "unable to determine a valid runtime version" >&2; exit 1; }
 VERSION=$(printf '%s\n' "$VERSION_OUTPUT" | awk 'NR == 1 && $1 == "comic-sol" { print $2 }')
-if ! printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$'; then
+if ! printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(([ab]|rc)[0-9]+)?$'; then
   echo "unable to determine a valid runtime version" >&2
   exit 1
 fi

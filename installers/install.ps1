@@ -142,8 +142,8 @@ if ($Uninstall -and $InstallArguments.Count -gt 0) {
     throw "-Uninstall cannot be combined with install arguments"
 }
 if ($Release) {
-    if ($Release -cnotmatch '\Av[0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?\z') {
-        throw "-Release must be an exact vX.Y.Z or vX.Y.ZrcN tag"
+    if ($Release -cnotmatch '\Av[0-9]+\.[0-9]+\.[0-9]+(?:(?:[ab]|rc)[0-9]+)?\z') {
+        throw "-Release must be an exact vX.Y.Z, vX.Y.ZaN, vX.Y.ZbN, or vX.Y.ZrcN tag"
     }
     $ManualArguments = @("Archive", "Url", "SHA256", "Checksums", "Signature") |
         Where-Object { $PSBoundParameters.ContainsKey($_) }
@@ -325,7 +325,7 @@ try {
     $VersionOutput = & $Exe --version
     $VersionLine = [string]($VersionOutput | Select-Object -First 1)
     $VersionLine = $VersionLine.Trim()
-    if ($LASTEXITCODE -ne 0 -or $VersionLine -notmatch '^comic-sol ([0-9]+\.[0-9]+\.[0-9]+(?:rc[0-9]+)?)$') { throw "unable to determine a valid runtime version" }
+    if ($LASTEXITCODE -ne 0 -or $VersionLine -notmatch '^comic-sol ([0-9]+\.[0-9]+\.[0-9]+(?:(?:[ab]|rc)[0-9]+)?)$') { throw "unable to determine a valid runtime version" }
     $Version = $Matches[1]
     if ($Release -and $Version -cne $ReleaseVersion) {
         throw "downloaded runtime version does not match selected release $Release"

@@ -795,8 +795,9 @@ class PublicInstallerContractTests(unittest.TestCase):
         self.assertIn("--release", self.posix)
         self.assertIn("-Release", self.powershell)
         self.assertIn("^v[0-9]+\\.[0-9]+\\.[0-9]+", self.posix)
+        self.assertIn("(([ab]|rc)[0-9]+)?", self.posix)
         self.assertIn("\\Av[0-9]+\\.[0-9]+\\.[0-9]+", self.powershell)
-        self.assertIn("(?:rc[0-9]+)?\\z", self.powershell)
+        self.assertIn("(?:(?:[ab]|rc)[0-9]+)?\\z", self.powershell)
         self.assertIn("Linux:x86_64", self.posix)
         self.assertIn("Darwin:arm64", self.posix)
         self.assertIn("windows-x86_64.zip", self.powershell)
@@ -884,7 +885,7 @@ class PublicInstallerContractTests(unittest.TestCase):
     def test_posix_release_selects_assets_verifies_staged_runtime_and_prints_doctor(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            release = "v9.8.7rc1"
+            release = "v9.8.7b2"
             archive = self.write_runtime_archive(root, version=release[1:])
             install_root = root / "install root with spaces"
             doctor_marker = root / "staged-doctor"
@@ -1599,7 +1600,7 @@ class PublicInstallerContractTests(unittest.TestCase):
     def test_powershell_release_selects_asset_verifies_stage_and_prints_doctor(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            release = "v9.8.7rc1"
+            release = "v9.8.7b2"
             archive = self.write_windows_runtime_archive(
                 root,
                 version=release.removeprefix("v"),
@@ -1621,13 +1622,13 @@ class PublicInstallerContractTests(unittest.TestCase):
                 [
                     f"{release_base}/SHA256SUMS",
                     f"{release_base}/SHA256SUMS.sigstore.json",
-                    f"{release_base}/comic-sol-9.8.7rc1-windows-x86_64.zip",
+                    f"{release_base}/comic-sol-{release[1:]}-windows-x86_64.zip",
                 ],
                 urls,
             )
             self.assertEqual("staged", doctor_marker.read_text(encoding="utf-8"))
             self.assertEqual(
-                "9.8.7rc1",
+                release[1:],
                 (install_root / "active-version").read_text(encoding="utf-8-sig").strip(),
             )
             self.assertTrue((install_root / "bin" / "comic-sol.exe").is_file())

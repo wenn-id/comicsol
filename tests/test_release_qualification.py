@@ -635,6 +635,16 @@ class ReleaseQualificationContractTests(unittest.TestCase):
         pinned_windows = install_command(platform_name="windows", release=f"v{_V}", **arguments)
         self.assertEqual("-Release", pinned_windows[4])
         self.assertEqual(f"v{_V}", pinned_windows[5])
+        for release in ("v1.2.3a1", "v1.2.3b2", "v1.2.3rc3"):
+            with self.subTest(release=release):
+                alpha_beta_rc_posix = install_command(
+                    platform_name="linux", release=release, **arguments
+                )
+                self.assertEqual(release, alpha_beta_rc_posix[3])
+                alpha_beta_rc_windows = install_command(
+                    platform_name="windows", release=release, **arguments
+                )
+                self.assertEqual(release, alpha_beta_rc_windows[5])
         with self.assertRaisesRegex(ValueError, "invalid pinned release tag"):
             install_command(platform_name="linux", release="latest", **arguments)
         with self.assertRaisesRegex(ValueError, "unsupported qualification platform"):
@@ -804,13 +814,17 @@ class ReleaseQualificationContractTests(unittest.TestCase):
 
         The dispatch script is static, every dynamic value crosses the WSL
         boundary as one direct argv element via `wsl.exe --exec`, and cosign
-        crosses through the WSLENV environment handoff. The release tag is
-        full-matched before anything is dispatched into WSL.
+        crosses through the WSLENV environment handoff. The shared release
+        identity parser full-matches the tag before anything is dispatched into WSL.
         """
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertNotIn("bash -lc", workflow)
         self.assertIn("refusing WSL qualification: release tag", workflow)
-        self.assertIn("-notmatch '^v[0-9]+\\.[0-9]+\\.[0-9]+(rc[0-9]+)?$'", workflow)
+        self.assertIn("scripts/release_identity.py validate-tag --tag $env:RELEASE_TAG", workflow)
+        self.assertLess(
+            workflow.index("scripts/release_identity.py validate-tag"),
+            workflow.index("wsl.exe --exec bash"),
+        )
         self.assertIn("wsl-qualify.sh", workflow)
         self.assertIn("& wsl.exe --exec bash", workflow)
         self.assertIn('$env:WSLENV = "COMIC_SOL_COSIGN/up"', workflow)
@@ -1427,6 +1441,24 @@ class ReleaseOrchestrationContractTests(unittest.TestCase):
                 self.assertIn("--refs-file", arguments)
                 self.assertIn('--tag "$RELEASE_TAG"', arguments)
                 self.assertIn('--tag-object-sha "$TAG_OBJECT_SHA"', arguments)
+
+    def test_wsl_tag_gate_uses_the_shared_canonical_validator(self):
+        qualification = WORKFLOW.read_text(encoding="utf-8")
+        wsl_job = qualification.split("\n  wsl:\n", 1)[1].split("\n  source:\n", 1)[0]
+        wsl = qualification.split("      - name: Qualify Linux artifact in WSL2\n", 1)[1].split(
+            "      - name: Upload WSL qualification summary\n", 1
+        )[0]
+
+        self.assertEqual(
+            1, wsl_job.count("actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0")
+        )
+        self.assertIn("python-version: '3.11.9'", wsl_job)
+        self.assertNotIn("matrix.platform", wsl_job)
+        self.assertIn("scripts/release_identity.py validate-tag", wsl)
+        self.assertIn("--tag $env:RELEASE_TAG", wsl)
+        self.assertIn("if ($LASTEXITCODE -ne 0)", wsl)
+        self.assertLess(wsl.index("validate-tag"), wsl.index("wsl.exe --status"))
+        self.assertNotIn("rc[0-9]+", wsl)
 
     def test_manual_qualification_cannot_emit_ready_for_a_mutable_release(self):
         qualification = WORKFLOW.read_text(encoding="utf-8")

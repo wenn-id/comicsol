@@ -430,9 +430,11 @@ jobs:
           ARCH: x86_64
         run: |
           $ErrorActionPreference = "Stop"
-          # Full-match every supplied release tag before anything is dispatched into WSL.
-          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(rc[0-9]+)?$') {
-            throw "refusing WSL qualification: release tag is not an exact vX.Y.Z[rcN] tag: $env:RELEASE_TAG"
+          # Use the same canonical tag grammar as release identity capture before dispatching to WSL.
+          $null = & python scripts/release_identity.py validate-tag --tag $env:RELEASE_TAG
+          $tagValidationExitCode = $LASTEXITCODE
+          if ($tagValidationExitCode -ne 0) {
+            throw "refusing WSL qualification: release tag is not a canonical vX.Y.Z[aN|bN|rcN] tag"
           }
           $wslStatus = & wsl.exe --status 2>&1
           if ($LASTEXITCODE -ne 0) {
