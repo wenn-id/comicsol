@@ -574,7 +574,7 @@ jobs:
           )
           PY
       - name: Install cosign for release checksum signing
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
         with:
           cosign-release: v3.0.6
       - name: Sign global SHA256SUMS with Sigstore
@@ -990,7 +990,7 @@ jobs:
               newline="\n",
           )
           PY
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
         with:
           cosign-release: v3.0.6
       - name: Download and revalidate every published candidate byte
