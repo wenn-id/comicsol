@@ -1,0 +1,33 @@
+[package]
+name = "comic-sol-native-status"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "comic-sol"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.22"
+cap-fs-ext = "3.4"
+cap-primitives = "3.4"
+caseless = "0.2.2"
+flate2 = "1.1.11"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+png = "0.18.1"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+sha2 = "0.10"
+time = "0.3.55"
+toml = "=0.8.23"
+unicode-normalization = "0.1"
+unicode-segmentation = "1.13"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }

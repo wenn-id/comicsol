@@ -1,0 +1,689 @@
+{
+  "initialize": {
+    "capabilities": {
+      "prompts": {
+        "listChanged": false
+      },
+      "resources": {
+        "listChanged": false,
+        "subscribe": false
+      },
+      "tools": {
+        "listChanged": false
+      }
+    },
+    "instructions": "Deterministic Comic Sol project tools",
+    "protocolVersion": "2025-11-25",
+    "serverInfo": {
+      "name": "Comic Sol",
+      "version": ""
+    }
+  },
+  "tools": [
+    {
+      "description": "Check the runtime and report a provider-neutral agent capability observation.",
+      "inputSchema": {
+        "properties": {
+          "image_capability": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "available",
+                      "unavailable"
+                    ],
+                    "type": "string"
+                  },
+                  "name": {
+                    "anyOf": [
+                      {
+                        "const": "agent-image-generation",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "supports_reference_images": {
+                    "type": "boolean"
+                  },
+                  "supports_dimensions": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "status",
+                  "name",
+                  "supports_reference_images",
+                  "supports_dimensions"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Image Capability"
+          }
+        },
+        "type": "object",
+        "title": "comic_doctorArguments"
+      },
+      "name": "comic_doctor",
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "comic_doctorDictOutput"
+      }
+    },
+    {
+      "description": "Initialize a blank project or one fixed provider-neutral v1 starter.",
+      "inputSchema": {
+        "properties": {
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "source_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Text"
+          },
+          "request_settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Settings"
+          },
+          "page_count": {
+            "anyOf": [
+              {
+                "maximum": 4,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Page Count"
+          },
+          "starter": {
+            "anyOf": [
+              {
+                "enum": [
+                  "minimal-one-page",
+                  "dialogue-two-page",
+                  "action-focused"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Starter"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object",
+        "title": "comic_initArguments"
+      },
+      "name": "comic_init",
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "title": "comic_initOutput"
+      }
+    },
+    {
+      "description": "Bind validated plan files to manifest descriptors and panel counts.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "type": "object",
+        "title": "comic_bind_planArguments"
+      },
+      "name": "comic_bind_plan",
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "comic_bind_planDictOutput"
+      }
+    },
+    {
+      "description": "Read the current project manifest.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "type": "object",
+        "title": "comic_statusArguments"
+      },
+      "name": "comic_status",
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "comic_statusDictOutput"
+      }
+    },
+    {
+      "description": "Move the project to the next state.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Warning"
+          }
+        },
+        "required": [
+          "project_id",
+          "target"
+        ],
+        "type": "object",
+        "title": "comic_transitionArguments"
+      },
+      "name": "comic_transition",
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "comic_transitionDictOutput"
+      }
+    },
+    {
+      "description": "Run integrity validators on the project.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "stage": {
+            "default": "all",
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "type": "object",
+        "title": "comic_validateArguments"
+      },
+      "name": "comic_validate",
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "title": "comic_validateOutput"
+      }
+    },
+    {
+      "description": "Get the deterministic resume plan.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "type": "object",
+        "title": "comic_resume_planArguments"
+      },
+      "name": "comic_resume_plan",
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "title": "comic_resume_planOutput"
+      }
+    },
+    {
+      "description": "Recover a BLOCKED project to its last valid state.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "type": "object",
+        "title": "comic_resumeArguments"
+      },
+      "name": "comic_resume",
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "comic_resumeDictOutput"
+      }
+    },
+    {
+      "description": "Invalidate a stage and its downstream dependents.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "stage"
+        ],
+        "type": "object",
+        "title": "comic_invalidateArguments"
+      },
+      "name": "comic_invalidate",
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "title": "comic_invalidateOutput"
+      }
+    },
+    {
+      "description": "Persist cache and hashes for a completed stage.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "stage"
+        ],
+        "type": "object",
+        "title": "comic_record_stageArguments"
+      },
+      "name": "comic_record_stage",
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "comic_record_stageDictOutput"
+      }
+    },
+    {
+      "description": "Record a generated panel attempt and manage the budget.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "panel_id": {
+            "title": "Panel Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "initial",
+              "visual_retry",
+              "transient_repeat"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "relative_path": {
+            "title": "Relative Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "panel_id",
+          "kind",
+          "relative_path"
+        ],
+        "type": "object",
+        "title": "comic_record_attemptArguments"
+      },
+      "name": "comic_record_attempt",
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "integer"
+        },
+        "title": "comic_record_attemptDictOutput"
+      }
+    },
+    {
+      "description": "Promote an attempt to be the accepted raw panel.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "panel_id": {
+            "title": "Panel Id",
+            "type": "string"
+          },
+          "relative_path": {
+            "title": "Relative Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "panel_id",
+          "relative_path"
+        ],
+        "type": "object",
+        "title": "comic_promote_attemptArguments"
+      },
+      "name": "comic_promote_attempt",
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "title": "comic_promote_attemptOutput"
+      }
+    },
+    {
+      "description": "Force accept a panel with warnings.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "panel_id": {
+            "title": "Panel Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "panel_id",
+          "reason"
+        ],
+        "type": "object",
+        "title": "comic_override_panelArguments"
+      },
+      "name": "comic_override_panel",
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "title": "comic_override_panelOutput"
+      }
+    },
+    {
+      "description": "Run deterministic text lettering.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "type": "object",
+        "title": "comic_letterArguments"
+      },
+      "name": "comic_letter",
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "title": "comic_letterOutput"
+      }
+    },
+    {
+      "description": "Compose letters and panels onto full pages.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "type": "object",
+        "title": "comic_composeArguments"
+      },
+      "name": "comic_compose",
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Result",
+            "type": "array"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "title": "comic_composeOutput"
+      }
+    },
+    {
+      "description": "Export the finished PDF.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "type": "object",
+        "title": "comic_exportArguments"
+      },
+      "name": "comic_export",
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "title": "comic_exportOutput"
+      }
+    },
+    {
+      "description": "Render the QA report.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "type": "object",
+        "title": "comic_render_reportArguments"
+      },
+      "name": "comic_render_report",
+      "outputSchema": {
+        "properties": {
+          "result": {
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "title": "comic_render_reportOutput"
+      }
+    },
+    {
+      "description": "Run all deterministic finalization steps: validate, letter, compose, export, report, transition.",
+      "inputSchema": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "type": "object",
+        "title": "comic_finalizeArguments"
+      },
+      "name": "comic_finalize",
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": true,
+        "title": "comic_finalizeDictOutput"
+      }
+    }
+  ]
+}
