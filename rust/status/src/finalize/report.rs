@@ -18,7 +18,17 @@ const TEMPLATE: &str = include_str!("../../../../templates/qa-report.md.tmpl");
 const MAX_EVENTS: u64 = 8 * 1024 * 1024;
 
 pub(super) fn run(locked: &LockedProject, project: &mut Value, final_status: &str) -> Result<()> {
-    let root = locked.root();
+    let bytes = render(locked.root(), project, final_status)?;
+    descriptor(project, "qa_report", REPORT, &bytes);
+    publish_manifest(
+        locked,
+        "report-publish",
+        project,
+        vec![Change::Replace(REPORT.into(), bytes)],
+    )
+}
+
+pub(super) fn render(root: &File, project: &Value, final_status: &str) -> Result<Vec<u8>> {
     let mut panels = Vec::new();
     for entry in names(root, "qa/panels")?
         .into_iter()
@@ -74,14 +84,7 @@ pub(super) fn run(locked: &LockedProject, project: &mut Value, final_status: &st
         .fold(TEMPLATE.to_owned(), |report, (token, text)| {
             report.replace(token, &text)
         });
-    let bytes = format!("{}\n", rendered.trim_end()).into_bytes();
-    descriptor(project, "qa_report", REPORT, &bytes);
-    publish_manifest(
-        locked,
-        "report-publish",
-        project,
-        vec![Change::Replace(REPORT.into(), bytes)],
-    )
+    Ok(format!("{}\n", rendered.trim_end()).into_bytes())
 }
 
 fn string(value: &Value) -> String {

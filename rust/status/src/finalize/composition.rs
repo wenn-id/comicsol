@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use crate::error::{Error, Result};
 use crate::manifest;
 use crate::project_fs::LockedProject;
-use crate::recovery::Change;
+use crate::recovery::{Change, publish};
 use crate::validation::{artifact, bytes_hash, storyboard};
 
 use super::{COMPOSITION, MAX_RASTER, descriptor, publish_manifest, raster, read};
@@ -12,6 +12,24 @@ pub(super) const WIDTH: u32 = 1600;
 pub(super) const HEIGHT: u32 = 2400;
 
 pub(super) fn run(locked: &LockedProject, project: &mut Value, board: &Value) -> Result<()> {
+    compose(locked, project, board, None)
+}
+
+pub(super) fn one(
+    locked: &LockedProject,
+    project: &mut Value,
+    board: &Value,
+    page: u64,
+) -> Result<()> {
+    compose(locked, project, board, Some(page))
+}
+
+fn compose(
+    locked: &LockedProject,
+    project: &mut Value,
+    board: &Value,
+    only: Option<u64>,
+) -> Result<()> {
     let root = locked.root();
     let settings = &project["settings"];
     if !settings.is_object() || !project.get("artifacts").is_none_or(Value::is_object) {
@@ -27,7 +45,16 @@ pub(super) fn run(locked: &LockedProject, project: &mut Value, board: &Value) ->
         .filter_map(|page| Some((page["number"].as_u64()?, page)))
         .collect();
     numbered.sort_unstable_by_key(|&(number, _)| number);
-    if numbered.len() != pages.len() || !numbered.iter().map(|&(n, _)| n).eq(1..=pages.len() as u64)
+    if let Some(number) = only {
+        numbered.retain(|&(n, _)| n == number);
+        if numbered.is_empty() {
+            return Err(Error::invalid(format!(
+                "storyboard does not define page {number}"
+            )));
+        }
+        numbered.truncate(1);
+    } else if numbered.len() != pages.len()
+        || !numbered.iter().map(|&(n, _)| n).eq(1..=pages.len() as u64)
     {
         return Err(Error::invalid(
             "storyboard pages must be numbered contiguously from 1",
@@ -116,6 +143,9 @@ pub(super) fn run(locked: &LockedProject, project: &mut Value, board: &Value) ->
             "storyboard_page_sha256":bytes_hash(&manifest::canonical(page)),
         }));
         changes.push(Change::Replace(relative, png));
+    }
+    if only.is_some() {
+        return publish(locked, "composition-page", changes);
     }
     let bytes = manifest::canonical(
         &json!({"kind":"composition-cache","pages":records,"schema_version":"2.0"}),

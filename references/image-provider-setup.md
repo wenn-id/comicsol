@@ -145,12 +145,8 @@ availability and features through declared tool metadata.
 This route is available only from a Comic Sol repository checkout; it is not a bundled
 host engine. Comic Sol includes the agent-managed ComfyUI adapter as a reference
 implementation of the existing `external-tool` handoff contract. It remains outside
-`scripts/`, `comic_sol_product/`, the deterministic wheel, and the MCP surface. The active
-agent—not the deterministic engine—launches it for one prepared generation job:
-
-```text
-python integrations/comfyui-local/comfyui_executor.py run --job JOB --workflow WORKFLOW --profile PROFILE --output FILE [--endpoint URL] [--allow-non-loopback]
-```
+`scripts/`, `comic_sol_product/`, the deterministic wheel, and the MCP surface. For a
+prepared generation job, use the launch instructions in the [integration README](https://github.com/wenn-id/comicsol/blob/main/integrations/comfyui-local/README.md).
 
 Before invoking it, run `handoff inspect` as `comic-sol handoff inspect PROJECT`, select
 only a reported job whose effective `status` is `ready`, and pass `PROJECT/<jobs[].path>`

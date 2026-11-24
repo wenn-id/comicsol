@@ -103,7 +103,7 @@ The linear success path is:
 
 `BLOCKED` is permitted from any nonterminal state when the run cannot safely continue. `COMPLETE_WITH_WARNINGS` is a terminal alternative to `COMPLETE`. Skipping a linear state is invalid.
 
-While `status` is `BLOCKED`, `blocked_from` and `blocked_reason` are both set; in every other status both are `null`. Only `comic_sol.py resume` clears them, so recovering a blocked project always goes through `resume` rather than `invalidate`.
+While `status` is `BLOCKED`, `blocked_from` and `blocked_reason` are both set; in every other status both are `null`. Only `comic-sol resume` clears them, so recovering a blocked project always goes through `resume` rather than `invalidate`.
 
 ### `input`
 
@@ -159,7 +159,7 @@ The stage registry owns descriptor assignment, and the validator owns canonical 
 | `pdf` | `export` | `exports/{project_id}.pdf` | `terminal` |
 | `pdf_verification` | `export` | `exports/pdf-verification.json` | `terminal` |
 
-Deterministic scripts write the last four descriptors: `compose_pages.py` records `composition_cache`, `render_report.py` records `qa_report`, and `export_pdf.py` transactionally records both `pdf` and `pdf_verification`. The export stage owns `pdf_verification`; `exports/pdf-verification.json` binds the PDF hash, ordered source pages, page-QA hashes, dimensions, and page count. Final validation requires all seven descriptors, and `COMPLETE` or `COMPLETE_WITH_WARNINGS` cannot be entered without that final validation, so `pdf_verification` is a terminal-state requirement rather than optional provenance.
+Deterministic scripts write the last four descriptors: `comic-sol skill compose` records `composition_cache`, `comic-sol skill render-report` records `qa_report`, and `comic-sol skill export` transactionally records both `pdf` and `pdf_verification`. The export stage owns `pdf_verification`; `exports/pdf-verification.json` binds the PDF hash, ordered source pages, page-QA hashes, dimensions, and page count. Final validation requires all seven descriptors, and `COMPLETE` or `COMPLETE_WITH_WARNINGS` cannot be entered without that final validation, so `pdf_verification` is a terminal-state requirement rather than optional provenance.
 
 ### `stage_versions`
 
@@ -381,11 +381,11 @@ The identity pack is an opt-in companion plan artifact that carries each charact
 visual identity in one structured place, so panel prompts embed a single fixed copy of the
 identity instead of a freshly reworded description per panel. Its `schema_version` is `1.0`
 and is independent of the project manifest version; `SUPPORTED_IDENTITY_PACK_SCHEMA_VERSIONS`
-in `scripts/character_identity.py` is its compatibility gate. Top-level fields are exactly
+in the project validator is its compatibility gate. Top-level fields are exactly
 `schema_version` and `characters`, an array of unique entries in character-bible order.
 
 The pack is derived from `plan/character-bible.json` rather than authored from scratch.
-`character_identity.py PROJECT_DIR --derive` publishes it atomically through the project
+`comic-sol skill character-identity PROJECT_DIR --derive` publishes it atomically through the project
 transaction, and re-running it on an unchanged project rewrites byte-identical content. It
 is not a manifest `artifacts` descriptor and does not change the independent
 identity-pack schema version; the pack is validated by its own gate instead.
@@ -420,12 +420,12 @@ ahead of other supplementary views. Any other view name is treated as scene-spec
 
 ### Validation and prompt use
 
-`character_identity.py PROJECT_DIR --check` fails closed before generation when the pack is
+`comic-sol skill character-identity PROJECT_DIR --check` fails closed before generation when the pack is
 missing, structurally invalid, inconsistent with the bible, stale relative to
 `source_fingerprint_sha256`, or backed by a reference view whose file is missing or escapes
 the project boundary. Every path resolves through `contained_project_path()`.
 
-`character_identity.py PROJECT_DIR --panel PANEL_ID` renders the deterministic `IDENTITY
+`comic-sol skill character-identity PROJECT_DIR --panel PANEL_ID` renders the deterministic `IDENTITY
 LOCK` block for the characters that storyboard panel uses, ordered by the pack rather than
 the panel so one character's clause is byte-stable project-wide. That block and
 `identity_reference_paths()` emit plain text and relative paths only; they name no provider,
@@ -440,7 +440,7 @@ without knowing the references it was actually given. Its `schema_version` is `1
 independent of the project manifest version. Top-level fields are exactly `schema_version`
 and `panels`, one entry per storyboard panel in page and reading order.
 
-`reference_strategy.py PROJECT_DIR --plan [--budget COUNT]` derives the plan from
+`comic-sol skill reference-strategy PROJECT_DIR --plan [--budget COUNT]` derives the plan from
 `plan/character-identity-pack.json` and `plan/storyboard.json` and publishes it atomically
 through the project transaction. It refuses to publish while the identity pack gate reports
 an issue, and re-running it on an unchanged project rewrites byte-identical content. The
@@ -616,9 +616,9 @@ generated variant.
 `generated-visual` is the default, so every storyboard authored before this field existed
 keeps its exact previous meaning. The effect is authored storyboard content for generation
 prompts and visual QA:
-Pillow neither draws generated SFX nor allocates a placement rectangle or overlap reservation
+The lettering engine neither draws generated SFX nor allocates a placement rectangle or overlap reservation
 for it, and the raster is left byte-identical. `deterministic-lettering`
-routes the effect to Pillow, which draws it as outlined bold display type — no balloon or
+routes the effect to the lettering engine, which draws it as outlined bold display type — no balloon or
 strip behind it — and places it in the eight-anchor search like any other item, reserving
 its rectangle so a drawn effect never prints over a drawn balloon. Lettering summaries
 retain `text_count` for the total authored item count, `rendered_text_count` for every item
@@ -640,7 +640,7 @@ differ from the authored request when the overlap search relocated it; the autho
 otherwise), `content` as the storyboard authored it, `id`, `render_mode`, `verification`,
 and `origin` — `image-model` or `comic-sol-lettering`. `origin` is the field that answers
 which effects came from the image model and which this engine drew; it is recomputed from
-the storyboard by `validate_project.py` rather than read back, so a record cannot assert
+the storyboard by `comic-sol validate` rather than read back, so a record cannot assert
 that an effect was lettered when the plan still hands it to the model.
 
 `verification` states how far the record can be checked, not that pixels were inspected.
@@ -663,7 +663,7 @@ semantic accuracy of arbitrary artwork remains a reviewer judgement.
 
 ### SFX repair record: `panels/{panel-id}/sfx-audit.json`
 
-`sfx_repair.py PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason
+`comic-sol skill sfx-repair PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason
 "$REASON_TEXT"` is the supported path for replacing a faulty generated effect. In one transaction it
 flips that item to `deterministic-lettering`, adds a generated-SFX prohibition to the
 panel's `negative` list when none names SFX, archives the rejected clean raster — and the
@@ -737,9 +737,9 @@ documents, and compares the panel's current reference selection. A changed bible
 identity pack, selected reference, or reference plan makes the accepted panel stale and
 forces review on resume; unchanged inputs remain reusable.
 
-`character_quality.py PROJECT_DIR --context PANEL_ID` prints the provider-neutral review
+`comic-sol skill character-quality PROJECT_DIR --context PANEL_ID` prints the provider-neutral review
 input. To publish normalized assessment objects into the existing panel QA record, pipe a
-JSON array on standard input to `character_quality.py PROJECT_DIR --record PANEL_ID
+JSON array on standard input to `comic-sol skill character-quality PROJECT_DIR --record PANEL_ID
 --method METHOD --reviewer REVIEWER`. Publication uses `ProjectTransaction`; raw provider
 responses, credentials, endpoints, and vendor-specific model contracts are not stored.
 
@@ -775,7 +775,7 @@ retry budget and re-rolls detail the review already accepted. Its `schema_versio
 and is independent of the project manifest version. Top-level fields are exactly
 `schema_version` and `panels`.
 
-`repair_strategy.py PROJECT_DIR --plan [--localized-edit]` derives the plan from
+`comic-sol skill repair-strategy PROJECT_DIR --plan [--localized-edit]` derives the plan from
 `plan/storyboard.json` and the published panel QA records and publishes it atomically
 through the project transaction. `--localized-edit` states that the detected capability can
 edit a bounded part of an existing raster; omitting it plans a full regeneration for every
@@ -947,7 +947,7 @@ still be letterable under the current policy. A record therefore cannot assert t
 bidirectional or reordering script is fine and carry the claim past the export gate.
 
 Script names, block ranges, and shaping classification come from
-`scripts/font_coverage.py`, whose `main()` prints the coverage inventory. A script is
+`comic-sol skill font-coverage`, whose `main()` prints the coverage inventory. A script is
 admitted only when advance-only placement renders it faithfully; see
 `docs/typography.md` for the supported set, the selected extension fonts, and the
 fallback order.
@@ -958,7 +958,7 @@ The version 1.0 project boundary contains `project.json`; exact source/request c
 
 The opt-in `plan/character-identity-pack.json` companion artifact also lives inside this boundary, as does the `logs/reference-selection.json` provenance record derived from it and the `logs/repair-plan.json` record derived from the panel QA records.
 
-Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-number}.png`; only the accepted attempt occupies `panels/raw/{panel-id}.png`. An accepted raster is replaced only while its QA record asks for a repair: promotion verifies the new raster, refuses to overwrite a panel the review still accepts, and archives the previous accepted bytes before publishing the replacement. Only a review that was never written permits replacement, which is what initial generation and transient repeats need; a record that exists but cannot be resolved, read, or understood withholds permission rather than granting it, because it is not evidence that anything faulted the panel. The record is read inside the promotion transaction, under the same lock that publishes the replacement. Generated images intentionally contain no dialogue, captions, speech bubbles, signatures, logos, or watermarks. Exact storyboard-authored `generated-visual` SFX is instead allowed and required in generated artwork; generated SFX is forbidden when the storyboard authors none in that mode. A generated effect that came back misspelled or unreadable is replaced through `scripts/sfx_repair.py`, which routes it to deterministic lettering and archives the rejected clean and lettered rasters under `panels/{panel-id}/sfx-audit/` rather than discarding the artwork it faulted.
+Failed image attempts are retained as `panels/raw/{panel-id}.attempt-{attempt-number}.png`; only the accepted attempt occupies `panels/raw/{panel-id}.png`. An accepted raster is replaced only while its QA record asks for a repair: promotion verifies the new raster, refuses to overwrite a panel the review still accepts, and archives the previous accepted bytes before publishing the replacement. Only a review that was never written permits replacement, which is what initial generation and transient repeats need; a record that exists but cannot be resolved, read, or understood withholds permission rather than granting it, because it is not evidence that anything faulted the panel. The record is read inside the promotion transaction, under the same lock that publishes the replacement. Generated images intentionally contain no dialogue, captions, speech bubbles, signatures, logos, or watermarks. Exact storyboard-authored `generated-visual` SFX is instead allowed and required in generated artwork; generated SFX is forbidden when the storyboard authors none in that mode. A generated effect that came back misspelled or unreadable is replaced through `comic-sol skill sfx-repair`, which routes it to deterministic lettering and archives the rejected clean and lettered rasters under `panels/{panel-id}/sfx-audit/` rather than discarding the artwork it faulted.
 
 ## Page QA record: `qa/pages/page-{NNN}.json`
 
@@ -1063,15 +1063,15 @@ page on disk, because that digest is the evidence the reviewer inspected those p
 the page has changed, migration is refused as stale and the page must be reviewed again.
 `decision` and `unresolved_warnings` are re-derived from the merged ten-check set, since a
 newly derived check can warn where the `2.0` record accepted.
-These records are the integrity gate on finalization. `comic_sol.py finalize` and `validate_project.py --stage final|export-ready` fail closed when a record is missing or when `page_sha256` no longer matches the page, because a terminal status must not claim visual review that did not happen. Recompose a page and its record goes stale; write it again after re-inspecting.
+These records are the integrity gate on finalization. `comic-sol finalize` and `comic-sol validate --stage final|export-ready` fail closed when a record is missing or when `page_sha256` no longer matches the page, because a terminal status must not claim visual review that did not happen. Recompose a page and its record goes stale; write it again after re-inspecting.
 
 ## Composition cache: `cache/composition.json`
 
-`compose_pages.py PROJECT_DIR --all` writes this file and its `composition_cache` manifest descriptor in the same transaction as the page PNGs. It is a canonical JSON object containing exactly `schema_version` and `stages`, where `stages.composition.artifacts` maps each `pages/page-{NNN}.png` to its SHA-256. Final and export-ready validation require both the file and the descriptor.
+`comic-sol skill compose PROJECT_DIR --all` writes this file and its `composition_cache` manifest descriptor in the same transaction as the page PNGs. It is a canonical JSON object containing exactly `schema_version` and `stages`, where `stages.composition.artifacts` maps each `pages/page-{NNN}.png` to its SHA-256. Final and export-ready validation require both the file and the descriptor.
 
 ## Stage cache: `logs/stage-cache.json`
 
-`comic_sol.py record-stage PROJECT_DIR STAGE` persists one completed stage's resume cache entry atomically. The file is a canonical JSON object containing exactly `schema_version` and `stages`. During a run, `stages` contains zero or more entries keyed only by the six resume stages (`planning`, `storyboard`, `generation`, `lettering`, `composition`, `export`); a fully recorded project contains all six. Each entry contains exactly:
+`comic-sol skill record-stage PROJECT_DIR STAGE` persists one completed stage's resume cache entry atomically. The file is a canonical JSON object containing exactly `schema_version` and `stages`. During a run, `stages` contains zero or more entries keyed only by the six resume stages (`planning`, `storyboard`, `generation`, `lettering`, `composition`, `export`); a fully recorded project contains all six. Each entry contains exactly:
 
 - `key`: the SHA-256 stage cache key over timestamp-free semantic inputs, required material file hashes, and the manifest `stage_versions` value. Generation material includes each panel's recorded source prompt and actual character/scene reference paths.
 - `artifacts`: an object mapping every required stage output file (relative path) to its SHA-256 value.

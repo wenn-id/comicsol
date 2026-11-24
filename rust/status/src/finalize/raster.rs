@@ -9,20 +9,30 @@ use crate::error::{Error, Result};
 
 use super::native;
 
-const MAX_PIXELS: u64 = 1600 * 2400 * 16;
+pub(crate) const MAX_PIXELS: u64 = 1600 * 2400 * 16;
 const PRECISION: i64 = 1 << 22;
 
 pub(super) fn decode(bytes: &[u8]) -> Option<(DynamicImage, ImageFormat)> {
-    let (image, format, _) = raster(bytes, false)?;
+    let (image, format, _, _) = raster(bytes, false)?;
     Some((image, format))
 }
 
 pub(super) fn lettering_source(bytes: &[u8]) -> Option<(RgbImage, (u32, u32))> {
-    let (image, _, dimensions) = raster(bytes, true)?;
+    let (image, _, dimensions, _) = raster(bytes, true)?;
     Some((image.into_rgb8(), dimensions))
 }
 
-fn raster(bytes: &[u8], orient: bool) -> Option<(DynamicImage, ImageFormat, (u32, u32))> {
+type Decoded = (DynamicImage, ImageFormat, (u32, u32), u8);
+
+pub(crate) fn raster(bytes: &[u8], orient: bool) -> Option<Decoded> {
+    decode_raster(bytes, orient, false)
+}
+
+pub(crate) fn normalization_source(bytes: &[u8]) -> Option<Decoded> {
+    decode_raster(bytes, true, true)
+}
+
+fn decode_raster(bytes: &[u8], orient: bool, native_jpeg: bool) -> Option<Decoded> {
     let format = image::guess_format(bytes).ok()?;
     if !matches!(
         format,
@@ -41,14 +51,23 @@ fn raster(bytes: &[u8], orient: bool) -> Option<(DynamicImage, ImageFormat, (u32
         return None;
     }
     let orientation = orient.then(|| decoder.orientation().ok()).flatten();
-    let mut image = DynamicImage::from_decoder(decoder).ok()?;
+    let mut image = if format == ImageFormat::Jpeg && native_jpeg {
+        DynamicImage::ImageRgb8(native::decode_jpeg(bytes, width, height)?)
+    } else {
+        DynamicImage::from_decoder(decoder).ok()?
+    };
     if let Some(orientation) = orientation {
         image.apply_orientation(orientation);
     }
-    Some((image, format, (width, height)))
+    Some((
+        image,
+        format,
+        (width, height),
+        orientation.map_or(1, |value| value.to_exif()),
+    ))
 }
 
-pub(super) fn png(image: &RgbImage) -> Result<Vec<u8>> {
+pub(crate) fn png(image: &RgbImage) -> Result<Vec<u8>> {
     encode_png(image.as_raw(), image.width(), image.height(), 8, 2, None, 9)
 }
 
@@ -197,7 +216,7 @@ fn sample<P: Pixel<Subpixel = u8>>(weights: &Weights, mut pixel: impl FnMut(usiz
     *P::from_slice(&channels[..usize::from(P::CHANNEL_COUNT)])
 }
 
-fn resize<P: Pixel<Subpixel = u8> + 'static>(
+pub(crate) fn resize<P: Pixel<Subpixel = u8> + 'static>(
     image: &ImageBuffer<P, Vec<u8>>,
     width: u32,
     height: u32,

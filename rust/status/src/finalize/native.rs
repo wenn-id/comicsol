@@ -156,17 +156,24 @@ fn raqm_available() -> bool {
     *AVAILABLE.get_or_init(|| unsafe { cs_font_init_shaping() != 0 })
 }
 
-pub(super) struct Font(NonNull<c_void>);
+pub(super) struct Font(NonNull<c_void>, Option<Vec<u8>>);
 
 impl Drop for Font {
     fn drop(&mut self) {
         unsafe { cs_font_close(self.0.as_ptr()) };
+        drop(self.1.take());
     }
 }
 
 impl Font {
     pub(super) fn new(bytes: &'static [u8]) -> Option<Self> {
-        NonNull::new(unsafe { cs_font_open(bytes.as_ptr(), bytes.len()) }).map(Self)
+        NonNull::new(unsafe { cs_font_open(bytes.as_ptr(), bytes.len()) })
+            .map(|face| Self(face, None))
+    }
+
+    pub(super) fn from_bytes(bytes: Vec<u8>) -> Option<Self> {
+        NonNull::new(unsafe { cs_font_open(bytes.as_ptr(), bytes.len()) })
+            .map(|face| Self(face, Some(bytes)))
     }
 
     pub(super) fn glyph_index(&self, character: char) -> u32 {

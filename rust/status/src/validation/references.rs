@@ -166,7 +166,7 @@ fn preference(class: &str) -> [&str; 5] {
     }
 }
 
-pub(super) fn plan(pack: &Value, board: &Value, budget: &Value) -> Option<Value> {
+pub(crate) fn plan(pack: &Value, board: &Value, budget: &Value) -> Option<Value> {
     let limit = if budget.is_null() {
         None
     } else {

@@ -251,6 +251,23 @@ pub(crate) fn reusable(root: &File, record: &Value, id: &str) -> Result<bool> {
     Ok(v2 || sizes[0] == sizes[1])
 }
 
+pub(crate) fn record_issue(record: &Value) -> Option<String> {
+    let mut issues = Vec::new();
+    let mut report = Report {
+        path: "",
+        issues: &mut issues,
+    };
+    if record["schema_version"] == "2.0" {
+        modern(record, &mut report);
+    } else {
+        legacy(record, &mut report);
+    }
+    issues.sort_unstable();
+    issues
+        .first()
+        .map(|issue| format!("{}: {}", issue.field, issue.message))
+}
+
 fn legacy(record: &Value, r: &mut Report) {
     r.object(
         record,

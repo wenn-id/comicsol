@@ -519,7 +519,7 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
 
     def test_accept_result_command_blocks_match_panel_and_reference_contracts(self):
         """Panel and reference result intake document their exact, distinct arguments."""
-        panel_command = """PYTHON scripts/comic_sol.py handoff accept-result PROJECT \\
+        panel_command = """comic-sol handoff accept-result PROJECT \\
   --job JOB_ID \\
   --attempt N \\
   --executor-kind EXECUTOR_KIND \\
@@ -528,7 +528,7 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         reference_command = f"{panel_command} \\\n  --approve-reference"
         blocks = self.command_blocks(
             self.workflow,
-            "PYTHON scripts/comic_sol.py handoff accept-result PROJECT",
+            "comic-sol handoff accept-result PROJECT",
         )
         self.assertEqual([reference_command, panel_command], blocks)
         self.assertNotIn("PANEL_ID", panel_command)
@@ -540,7 +540,7 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
 
     def test_record_failure_command_block_matches_contract(self):
         """Failure intake documents its exact arguments without unsupported options."""
-        expected = """PYTHON scripts/comic_sol.py handoff record-failure PROJECT \\
+        expected = """comic-sol handoff record-failure PROJECT \\
   --job JOB_ID \\
   --attempt N \\
   --executor-kind EXECUTOR_KIND \\
@@ -548,15 +548,15 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
   --category CATEGORY"""
         blocks = self.command_blocks(
             self.workflow,
-            "PYTHON scripts/comic_sol.py handoff record-failure PROJECT",
+            "comic-sol handoff record-failure PROJECT",
         )
         self.assertEqual([expected], blocks)
         self.assertNotIn("PANEL_ID", expected)
         self.assertNotIn("--reason", expected)
         self.assertNotIn("--approve-reference", expected)
 
-    def test_handoff_lifecycle_uses_source_launcher(self):
-        """Every handoff lifecycle command runs from source and documents the installed alias."""
+    def test_handoff_lifecycle_uses_installed_cli(self):
+        """Every handoff lifecycle command uses the installed native CLI."""
         section = self.workflow[self.workflow.find("## Cross-agent handoff lifecycle") :]
         for command in (
             "prepare PROJECT",
@@ -566,9 +566,9 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
             "accept-result PROJECT",
             "record-failure PROJECT",
         ):
-            self.assertIn(f"PYTHON scripts/comic_sol.py handoff {command}", section)
+            self.assertIn(f"comic-sol handoff {command}", section)
         self.assertIn(
-            "installed package, `comic-sol handoff` is equivalent",
+            "Use the installed `comic-sol handoff` commands.",
             section,
         )
 
@@ -596,9 +596,10 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
 
     def test_fast_mode_allows_documented_handoff_subcommands(self):
         """Fast Mode keeps engine source unread while permitting the handoff CLI."""
-        fast_mode = self.skill.split("## Fast Mode", 1)[1].split("### Resolve Python once", 1)[0]
+        fast_mode = self.skill.split("## Fast Mode", 1)[1].split("### Resolve the native binary once", 1)[0]
         self.assertIn("Do not read, grep, or open any file under `scripts/`", fast_mode)
-        self.assertIn("documented `handoff` subcommands", fast_mode)
+        self.assertIn("`handoff` subcommands", fast_mode)
+        self.assertIn("`skill` and", fast_mode)
 
     def test_handoff_inspection_applies_only_to_prepared_handoff_execution(self):
         """Direct native generation does not require a prepared handoff job."""
@@ -629,7 +630,7 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
         export_pos = section.find("export the prepared project")
         import_pos = section.find("import at the destination")
         execute_pos = section.find("Execute via the selected executor")
-        accept_pos = section.find("PYTHON scripts/comic_sol.py handoff accept-result")
+        accept_pos = section.find("comic-sol handoff accept-result")
         for name, position in (
             ("export", export_pos),
             ("import", import_pos),

@@ -492,7 +492,7 @@ class PackagedSkillPayloadContractTests(unittest.TestCase):
                     validate_wheel_skill_payload(archive, canonical_root=self.canonical)
 
             duplicate = Path(raw) / "duplicate.whl"
-            relative = "scripts/comic_sol.py"
+            relative = "assets/fonts/OFL-ComicNeue.txt"
             with zipfile.ZipFile(duplicate, "w") as archive:
                 add_payload(archive)
                 archive.writestr(

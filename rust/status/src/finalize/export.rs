@@ -55,7 +55,6 @@ pub(super) fn run(locked: &LockedProject, project: &mut Value, count: usize) -> 
     }
 
     let mut sources = Vec::with_capacity(count);
-    let mut frames = Vec::with_capacity(count);
     let mut images = Vec::with_capacity(count);
     for number in 1..=count {
         let page = format!("pages/page-{number:03}.png");
@@ -101,23 +100,9 @@ pub(super) fn run(locked: &LockedProject, project: &mut Value, count: usize) -> 
             json!({"dimensions":[WIDTH,HEIGHT],"path":page,"page_qa_path":qa,
             "sha256":hash,"page_qa_sha256":bytes_hash(&review)}),
         );
-        let image = image.into_rgb8();
-        let jpeg = native::jpeg(&image)
-            .ok_or_else(|| Error::export("cannot encode the PDF raster frame"))?;
-        frames.push(jpeg);
-        images.push(image);
+        images.push(image.into_rgb8());
     }
-    let (pdf, streams) = pdf_bytes(&frames);
-    let metrics: Vec<_> = streams
-        .iter()
-        .zip(&images)
-        .enumerate()
-        .map(|(index, (stream, image))| {
-            let decoded = native::decode_jpeg(&pdf[stream.clone()], WIDTH, HEIGHT)
-                .ok_or_else(|| Error::export("PDF raster frame could not be decoded"))?;
-            metrics(image, &decoded, index + 1)
-        })
-        .collect::<Result<_>>()?;
+    let (pdf, metrics) = render_verified(&images)?;
     let verification = json!({
         "exporter_version":"comic-sol-pillow-raster-v1", "page_count":count, "pages":metrics,
         "tolerance":{"grid_region_max_size_px":64,"high_error_channel_threshold":24,
@@ -139,6 +124,60 @@ pub(super) fn run(locked: &LockedProject, project: &mut Value, count: usize) -> 
         ],
     )?;
     Ok(destination)
+}
+
+pub(super) fn unbound(locked: &LockedProject, project: &Value) -> Result<Vec<u8>> {
+    let root = locked.root();
+    let count = project["settings"]["page_count"]
+        .as_u64()
+        .and_then(|n| usize::try_from(n).ok())
+        .filter(|&n| n > 0)
+        .ok_or_else(|| Error::export("manifest page count is invalid"))?;
+    let numbers: Vec<_> = names(root, "pages")?
+        .into_iter()
+        .filter_map(|name| page_number(&name, ".png"))
+        .collect();
+    if !numbers.iter().copied().eq(1..=count) {
+        return Err(Error::export(
+            "page filenames must be contiguous and match the page count",
+        ));
+    }
+    let mut images = Vec::with_capacity(numbers.len());
+    for number in numbers {
+        let path = format!("pages/page-{number:03}.png");
+        let bytes = read(root, &path, MAX_RASTER)?;
+        let Some((image, ImageFormat::Png)) = raster::decode(&bytes) else {
+            return Err(Error::export(format!("{path} must contain PNG data")));
+        };
+        if (image.width(), image.height()) != (WIDTH, HEIGHT) {
+            return Err(Error::export(format!(
+                "{path} must be exactly {WIDTH}x{HEIGHT}"
+            )));
+        }
+        images.push(image.into_rgb8());
+    }
+    Ok(render_verified(&images)?.0)
+}
+
+fn render_verified(images: &[RgbImage]) -> Result<(Vec<u8>, Vec<Value>)> {
+    let frames = images
+        .iter()
+        .map(|image| {
+            native::jpeg(image).ok_or_else(|| Error::export("cannot encode the PDF raster frame"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let (pdf, streams) = pdf_bytes(&frames);
+    let verified = streams
+        .iter()
+        .zip(images)
+        .enumerate()
+        .map(|(index, (stream, image))| {
+            let decoded = native::decode_jpeg(&pdf[stream.clone()], WIDTH, HEIGHT)
+                .ok_or_else(|| Error::export("PDF raster frame could not be decoded"))?;
+            metrics(image, &decoded, index + 1)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((pdf, verified))
 }
 
 fn pdf_bytes(jpegs: &[Vec<u8>]) -> (Vec<u8>, Vec<Range<usize>>) {

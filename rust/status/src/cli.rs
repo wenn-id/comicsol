@@ -37,8 +37,88 @@ struct Flag {
 }
 
 static CLI: LazyLock<Parser> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("cli-contract.json")).expect("installed CLI contract")
+    let mut parser: Parser =
+        serde_json::from_str(include_str!("cli-contract.json")).expect("installed CLI contract");
+    let skill = skill_parser();
+    parser
+        .help
+        .push_str("\nUse comic-sol skill --help for Agent Skill workflow commands.\n");
+    parser.names.push("skill".into());
+    parser.children.insert("skill".into(), skill);
+    parser
 });
+
+fn skill_parser() -> Parser {
+    type Command = (
+        &'static str,
+        Vec<&'static str>,
+        Vec<(&'static str, &'static str)>,
+    );
+    let commands: Vec<Command> = serde_json::from_str(include_str!("skill-contract.json"))
+        .expect("Agent Skill CLI contract");
+    let mut root = Parser {
+        help: "usage: comic-sol [--json] skill COMMAND [OPTIONS]\n\nCommands:\n".into(),
+        flags: vec![help_flag()],
+        positionals: Vec::new(),
+        subcommand: Some("command".into()),
+        names: Vec::new(),
+        children: BTreeMap::new(),
+    };
+    for (name, positionals, options) in commands {
+        let mut usage = format!("usage: comic-sol [--json] skill {name}");
+        for positional in &positionals {
+            usage.push_str(&format!(" {}", positional.to_ascii_uppercase()));
+        }
+        let mut flags = vec![help_flag()];
+        for (option, kind) in options {
+            let key = option.strip_prefix("--").expect("long skill option");
+            usage.push_str(&format!(
+                " [{option}{}{}]",
+                if kind.is_empty() { "" } else { " " },
+                if kind.is_empty() {
+                    String::new()
+                } else {
+                    key.to_ascii_uppercase()
+                },
+            ));
+            flags.push(Flag {
+                name: key.into(),
+                aliases: vec![option.into()],
+                takes_value: !kind.is_empty(),
+                required: false,
+                repeat: kind == "repeat",
+                choices: Vec::new(),
+                kind: (kind == "int").then(|| "int".into()),
+            });
+        }
+        root.help.push_str(&format!("  {name}\n"));
+        root.names.push(name.into());
+        root.children.insert(
+            name.into(),
+            Parser {
+                help: format!("{usage}\n"),
+                flags,
+                positionals: positionals.iter().map(|name| (*name).into()).collect(),
+                subcommand: None,
+                children: BTreeMap::new(),
+                names: Vec::new(),
+            },
+        );
+    }
+    root
+}
+
+fn help_flag() -> Flag {
+    Flag {
+        name: "help".into(),
+        aliases: vec!["-h".into(), "--help".into()],
+        takes_value: false,
+        required: false,
+        repeat: false,
+        choices: Vec::new(),
+        kind: None,
+    }
+}
 
 pub enum Invocation {
     Help(&'static str),

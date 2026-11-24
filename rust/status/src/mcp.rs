@@ -1,4 +1,4 @@
-mod lifecycle;
+pub(crate) mod lifecycle;
 
 use std::fs::{self, File};
 use std::io::{self, BufRead, Read, Write};

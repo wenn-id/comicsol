@@ -2,6 +2,7 @@ mod shapes;
 pub(super) mod typography;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use image::RgbImage;
 use serde_json::{Value, json};
@@ -11,12 +12,12 @@ use crate::error::{Error, Result};
 use crate::manifest;
 use crate::project_fs::LockedProject;
 use crate::recovery::{Change, publish};
-use crate::validation::{artifact, bytes_hash, is_panel, python_whitespace, sfx};
+use crate::validation::{artifact, bytes_hash, is_panel, items, python_whitespace, sfx};
 
 use super::native::TextRun;
 use super::{BOARD, MAX_RASTER, object, raster, read};
 use shapes::{Rect, Tail};
-use typography::{BOLD, Fonts, Glyph, digest, display, font_runs};
+use typography::{BOLD, Fonts, Glyph, digest, display};
 
 const ANCHORS: [&str; 8] = [
     "top-left",
@@ -32,6 +33,15 @@ const GENERATED: &str = "generated-visual";
 const LETTERED: &str = "deterministic-lettering";
 
 pub(super) fn run(locked: &LockedProject, board: &Value) -> Result<()> {
+    run_with_fonts(locked, board, &Fonts::new()?, Path::new("")).map(|_| ())
+}
+
+pub(super) fn run_with_fonts(
+    locked: &LockedProject,
+    board: &Value,
+    fonts: &Fonts,
+    project_path: &Path,
+) -> Result<Value> {
     let root = locked.root();
     let board_bytes = read(root, BOARD, crate::error::contract::MAX_JSON_BYTES as u64)?;
     let board_hash = bytes_hash(&board_bytes);
@@ -44,7 +54,6 @@ pub(super) fn run(locked: &LockedProject, board: &Value) -> Result<()> {
         .as_array()
         .filter(|pages| !pages.is_empty())
         .ok_or_else(|| Error::invalid("storyboard pages must be a non-empty array"))?;
-    let fonts = Fonts::new()?;
     let mut panels = Vec::new();
     for (page_index, page) in pages.iter().enumerate() {
         if !page.is_object() {
@@ -87,6 +96,7 @@ pub(super) fn run(locked: &LockedProject, board: &Value) -> Result<()> {
         }
     }
     let mut changes = Vec::new();
+    let mut summaries = Vec::new();
     for (id, panel, text, preflight) in panels {
         let canonical = format!("panels/{id}/clean.png");
         let clean_path = if artifact(root, &canonical)?.is_some() {
@@ -101,7 +111,7 @@ pub(super) fn run(locked: &LockedProject, board: &Value) -> Result<()> {
         if canvas.dimensions() != size {
             canvas = raster::fit(&canvas, size.0, size.1);
         }
-        let placements = draw_panel(&mut canvas, text, cast, &fonts)?;
+        let placements = draw_panel(&mut canvas, text, cast, fonts)?;
         let image = raster::png(&canvas)?;
         let path = format!("panels/{id}/lettered.png");
         let typography = manifest::canonical(&preflight);
@@ -113,6 +123,25 @@ pub(super) fn run(locked: &LockedProject, board: &Value) -> Result<()> {
             "panel_id":id,"schema_version":"1.2","sfx":sfx::provenance(panel,&placements),
         });
         geometry["geometry_sha256"] = digest(&geometry).into();
+        if !project_path.as_os_str().is_empty() {
+            let effects = text.iter().filter(|item| item["kind"] == "sfx").count();
+            let word_count: usize = text
+                .iter()
+                .filter_map(|item| item["content"].as_str())
+                .map(|content| {
+                    content
+                        .split(python_whitespace)
+                        .filter(|word| !word.is_empty())
+                        .count()
+                })
+                .sum();
+            let output = std::fs::canonicalize(project_path)?.join(&path);
+            summaries.push(json!({
+                "font_used":fonts.regular_path(), "lettered_path":output, "lettered_sfx_count":items(&placements).iter().filter(|item| item["kind"] == "sfx").count(),
+                "rendered_text_count":items(&placements).len(), "sfx_count":effects, "text_count":text.len(), "word_count":word_count,
+                "placements":placements, "sfx_flags":geometry["sfx"]["flags"],
+            }));
+        }
         changes.push(Change::Replace(path, image));
         changes.push(Change::Replace(
             format!("panels/{id}/typography.json"),
@@ -123,7 +152,8 @@ pub(super) fn run(locked: &LockedProject, board: &Value) -> Result<()> {
             manifest::canonical(&geometry),
         ));
     }
-    publish(locked, "lettering", changes)
+    publish(locked, "lettering", changes)?;
+    Ok(json!(summaries))
 }
 
 fn priority(item: &Value) -> f64 {
@@ -371,7 +401,7 @@ fn draw_panel(
             top,
             kind,
         )?;
-        let runs = font_runs(&fonts.tokens(text, primary, *kind != "sfx"));
+        let runs = fonts.runs(&fonts.tokens(text, primary, *kind != "sfx"));
         geometry.push(json!({"anchor":name,"attribution":attribution.get(id),"box":rect.value(),
             "font_runs":runs,"id":id,"kind":kind,"reading_order":index+1,"tail":tail.as_ref().map(|tail| &tail.data)}));
         placed.push(Placed { rect, tail });

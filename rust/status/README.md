@@ -63,9 +63,12 @@ Handoff export uses a prefixed zlib 1.3.1 compressor to match the reference ZIP
 bytes. Archive extraction validates hashes, CRCs, resource bounds, and project
 schema in a private staging directory before publication.
 
-The repository's Python package remains available as the reference
-implementation. The canonical Skill still contains its original source scripts
-to keep the installed bundle and its marker digest compatible.
+The Agent Skill uses this executable for the full deterministic workflow.
+`comic-sol skill --help` lists its lifecycle, character identity and QA,
+reference selection, normalization, repair, lettering, and export commands.
+`comic-sol skill-install --target CLIENT --scope user` installs the instructions,
+templates, and fonts. It upgrades intact older installations in place. The
+Python package remains available as an independent reference implementation.
 
 Status accepts current and legacy manifests, including manifests without a
 schema version. It holds the existing project lock through transaction recovery

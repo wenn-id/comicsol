@@ -822,11 +822,11 @@ class BenchmarkIntegrationTests(unittest.TestCase):
                 self.assertIn(token, source)
 
     def test_benchmark_harness_is_not_shipped_in_the_plugin_bundle(self):
-        from comic_sol_product.engine.sync_plugin_bundle import BUNDLED_SCRIPTS
+        from comic_sol_product.engine.sync_plugin_bundle import synchronized_paths
 
         self.assertNotIn(
-            "benchmark.py",
-            BUNDLED_SCRIPTS,
+            Path("scripts/benchmark.py"),
+            synchronized_paths(),
             "the benchmark harness is a repository gate, not a bundled runtime script",
         )
         self.assertFalse((ROOT / "skills/comic-sol/scripts/benchmark.py").exists())

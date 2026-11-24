@@ -14,6 +14,7 @@ mod project_fs;
 mod recovery;
 mod resume;
 mod skill;
+mod skill_commands;
 mod validation;
 
 use std::env;
@@ -83,6 +84,7 @@ fn main() -> ExitCode {
             validation::handoff::submit_result(&args)
         }
         "skill-install" | "skill-uninstall" => skill::run(&args),
+        command if command.starts_with("skill.") => skill_commands::run(&args),
         "setup" | "repair" | "uninstall" => clients::run(&args),
         "validate" => validate(
             args.paths("project_dir"),
@@ -154,6 +156,11 @@ fn main() -> ExitCode {
             format!("{}\n", human::handoff(command, &data)).as_bytes(),
             0,
         ),
+        Ok(data) if command.starts_with("skill.") && data.is_string() => stdout(
+            format!("{}\n", data.as_str().unwrap_or_default()).as_bytes(),
+            0,
+        ),
+        Ok(Value::Null) if command.starts_with("skill.") => ExitCode::SUCCESS,
         Ok(data) if command.starts_with("skill-") => {
             stdout(format!("{}\n", human::skill(&data)).as_bytes(), 0)
         }

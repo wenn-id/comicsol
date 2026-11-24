@@ -121,6 +121,11 @@ typedef struct {
     unsigned char *buffer;
 } JpegDecode;
 
+static unsigned cmyk_channel(unsigned channel, unsigned black) {
+    unsigned product = channel * black + 128;
+    return ((product >> 8) + product) >> 8;
+}
+
 int cs_jpeg_decode(const unsigned char *data, size_t len, unsigned width, unsigned height, Buffer *out) {
     if (!len || len > ULONG_MAX) {
         return 0;
@@ -143,16 +148,29 @@ int cs_jpeg_decode(const unsigned char *data, size_t len, unsigned width, unsign
     if (job->jpeg.image_width != width || job->jpeg.image_height != height) {
         longjmp(error.recovery, 1);
     }
-    job->jpeg.out_color_space = JCS_RGB;
+    int cmyk = job->jpeg.jpeg_color_space == JCS_CMYK || job->jpeg.jpeg_color_space == JCS_YCCK;
+    job->jpeg.out_color_space = cmyk ? JCS_CMYK : JCS_RGB;
     jpeg_start_decompress(&job->jpeg);
     size_t stride = (size_t)width * 3;
     job->buffer = malloc(stride * height);
     if (!job->buffer) {
         longjmp(error.recovery, 1);
     }
+    JSAMPARRAY cmyk_row = cmyk ? (*job->jpeg.mem->alloc_sarray)((j_common_ptr)&job->jpeg,
+                                                            JPOOL_IMAGE, width * 4, 1) : NULL;
     while (job->jpeg.output_scanline < height) {
         unsigned char *row = job->buffer + (size_t)job->jpeg.output_scanline * stride;
-        jpeg_read_scanlines(&job->jpeg, &row, 1);
+        if (cmyk) {
+            jpeg_read_scanlines(&job->jpeg, cmyk_row, 1);
+            for (unsigned x = 0; x < width; x++) {
+                const unsigned char *pixel = cmyk_row[0] + (size_t)x * 4;
+                for (unsigned channel = 0; channel < 3; channel++) {
+                    row[(size_t)x * 3 + channel] = (unsigned char)cmyk_channel(pixel[channel], pixel[3]);
+                }
+            }
+        } else {
+            jpeg_read_scanlines(&job->jpeg, &row, 1);
+        }
     }
     jpeg_finish_decompress(&job->jpeg);
     jpeg_destroy_decompress(&job->jpeg);

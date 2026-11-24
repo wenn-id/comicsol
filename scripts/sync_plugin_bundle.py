@@ -46,42 +46,6 @@ BUNDLED_FONTS = (
     "OFL-ComicNeue.txt",
     "OFL-NotoSans.txt",
 )
-BUNDLED_SCRIPTS = (
-    "character_identity.py",
-    "character_quality.py",
-    "comic_sol.py",
-    "compose_pages.py",
-    "command_service.py",
-    "core_primitives.py",
-    "dogfood_report.py",
-    "export_pdf.py",
-    "font_cmap.py",
-    "font_coverage.py",
-    "handoff.py",
-    "handoff_archive.py",
-    "input_limits.py",
-    "layouts.py",
-    "lifecycle_contracts.py",
-    "letter_panels.py",
-    "normalize_panels.py",
-    "page_quality.py",
-    "pdf_quality.py",
-    "project_io.py",
-    "version.py",
-    "quality_records.py",
-    "quality_sample.py",
-    "raster_limits.py",
-    "reference_strategy.py",
-    "render_report.py",
-    "repair_strategy.py",
-    "schema.py",
-    "sfx_repair.py",
-    "sfx_verification.py",
-    "stage_registry.py",
-    "starter_templates.py",
-    "typography.py",
-    "validate_project.py",
-)
 MANAGED_DIRECTORIES = (
     "references",
     "templates",
@@ -102,8 +66,6 @@ def synchronized_paths() -> list[Path]:
             for relative in STARTER_FILES
         ),
         *(Path("assets/fonts") / name for name in BUNDLED_FONTS),
-        Path("comic_sol_product/engine/__init__.py"),
-        *(Path("scripts") / name for name in BUNDLED_SCRIPTS),
     ]
 
 

@@ -1979,14 +1979,12 @@ class SourceHandoffArchiveCliTests(unittest.TestCase):
 
 
 class HandoffArchiveDistributionInventoryTests(unittest.TestCase):
-    def test_plugin_inventory_manages_archive_module_and_mirror(self):
+    def test_plugin_inventory_uses_the_native_handoff_command(self):
         relative = Path("scripts/handoff_archive.py")
-        self.assertIn(relative, sync_plugin_bundle.synchronized_paths())
-        canonical = Path(__file__).resolve().parents[1] / relative
-        bundled = Path(__file__).resolve().parents[1] / "skills/comic-sol" / relative
-        self.assertTrue(canonical.is_file())
-        self.assertTrue(bundled.is_file())
-        self.assertEqual(canonical.read_bytes(), bundled.read_bytes())
+        self.assertNotIn(relative, sync_plugin_bundle.synchronized_paths())
+        bundle = sync_plugin_bundle.BUNDLE
+        self.assertFalse((bundle / relative).exists())
+        self.assertIn("comic-sol handoff export", (bundle / "references/workflow.md").read_text("utf-8"))
 
     def test_release_inventory_requires_archive_module_in_wheel_and_sdist(self):
         self.assertIn("comic_sol_product/engine/handoff_archive.py", REQUIRED_WHEEL_MEMBERS)

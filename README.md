@@ -75,6 +75,9 @@ run this command only after installing an rc6-or-later package or native distrib
 are available, or from a trusted rc6 source checkout installed as a package.
 The latest published prerelease is `v2.0.0rc4` and does not include `skill-install`.
 
+The Agent Skill workflow uses the Rust executable. Confirm `comic-sol skill --help`
+is available before installing the bundle. See the [native CLI guide](rust/status/README.md).
+
 ```bash
 comic-sol skill-install --target codex --scope user
 ```

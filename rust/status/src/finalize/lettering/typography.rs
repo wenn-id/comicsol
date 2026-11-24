@@ -1,4 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 use unicode_normalization::UnicodeNormalization;
@@ -9,6 +12,9 @@ use crate::manifest;
 use crate::validation::{bytes_hash, python_whitespace};
 
 use super::super::native::Font;
+
+mod inventory;
+pub(in crate::finalize) use inventory::coverage;
 
 const REGULAR: usize = 0;
 pub(super) const BOLD: usize = 1;
@@ -92,15 +98,25 @@ pub(super) struct Glyph {
     pub(super) font: usize,
 }
 
-pub(super) struct Fonts {
+pub(in crate::finalize) struct Fonts {
     pub(super) faces: Vec<Font>,
+    identifiers: Vec<String>,
+    extensions: BTreeMap<String, usize>,
+    regular_path: PathBuf,
     policy: Value,
     hash: String,
 }
 
 impl Fonts {
     pub(super) fn new() -> Result<Self> {
-        let faces = SOURCES
+        Self::configured(None, std::iter::empty())
+    }
+
+    pub(in crate::finalize) fn configured<'a>(
+        regular: Option<&Path>,
+        extensions: impl Iterator<Item = &'a OsStr>,
+    ) -> Result<Self> {
+        let mut faces: Vec<_> = SOURCES
             .iter()
             .map(|bytes| {
                 Font::new(bytes).ok_or_else(|| {
@@ -108,20 +124,72 @@ impl Fonts {
                 })
             })
             .collect::<Result<_>>()?;
-        let mut policy = serde_json::Map::new();
+        let mut identities: Vec<_> = IDS.into_iter().map(str::to_owned).collect();
         let mut binding = serde_json::Map::new();
         for (index, role) in ROLES.into_iter().enumerate() {
-            policy.insert(role.into(), IDS[index].into());
             binding.insert(
                 role.into(),
                 json!({"font_id":IDS[index],"sha256":bytes_hash(SOURCES[index])}),
             );
         }
+        if let Some(path) = regular {
+            let (font, id, sha) = load_font(path)?;
+            faces[REGULAR] = font;
+            identities[REGULAR] = id.clone();
+            binding.insert("regular".into(), json!({"font_id":id, "sha256":sha}));
+        }
+        let mut script_faces = BTreeMap::new();
+        for entry in extensions {
+            let raw = entry
+                .to_str()
+                .ok_or_else(|| Error::invalid("font script override must be UTF-8"))?;
+            let (script, path) = raw
+                .split_once('=')
+                .map(|(a, b)| (a.trim(), b.trim()))
+                .filter(|(a, b)| !a.is_empty() && !b.is_empty())
+                .ok_or_else(|| {
+                    Error::invalid(format!("font script override must be SCRIPT=PATH: {raw}"))
+                })?;
+            if script_faces.contains_key(script) {
+                return Err(Error::invalid(format!(
+                    "font script override is duplicated: {script}"
+                )));
+            }
+            if !UNICODE_BLOCKS
+                .iter()
+                .any(|&(_, _, name, linear, ..)| name == script && linear)
+            {
+                return Err(Error::invalid(format!(
+                    "font policy script extension cannot be lettered: {script}"
+                )));
+            }
+            let (font, id, sha) = load_font(Path::new(path))?;
+            script_faces.insert(script.to_owned(), faces.len());
+            faces.push(font);
+            identities.push(id.clone());
+            binding.insert(
+                format!("script:{script}"),
+                json!({"font_id":id, "sha256":sha}),
+            );
+        }
+        let policy = binding
+            .iter()
+            .map(|(role, entry)| (role.clone(), entry["font_id"].clone()))
+            .collect();
         Ok(Self {
             faces,
+            identifiers: identities,
+            extensions: script_faces,
+            regular_path: regular
+                .unwrap_or_else(|| Path::new(IDS[REGULAR]))
+                .to_owned(),
             policy: Value::Object(policy),
             hash: digest(&Value::Object(binding)),
         })
+    }
+
+    pub(super) fn regular_path(&self) -> &Path {
+        &self.regular_path
     }
 
     fn supports(&self, face: usize, character: char) -> bool {
@@ -129,10 +197,24 @@ impl Fonts {
     }
 
     fn select(&self, primary: usize, character: char, base: Option<usize>) -> Option<usize> {
-        [base, Some(primary), Some(FALLBACK)]
-            .into_iter()
-            .flatten()
+        self.candidates(primary, character, base)
             .find(|&face| self.supports(face, character))
+    }
+
+    fn candidates(
+        &self,
+        primary: usize,
+        character: char,
+        base: Option<usize>,
+    ) -> impl Iterator<Item = usize> {
+        [
+            base,
+            Some(primary),
+            Some(FALLBACK),
+            self.extensions.get(block(character).0).copied(),
+        ]
+        .into_iter()
+        .flatten()
     }
 
     pub(super) fn tokens(&self, text: &str, primary: usize, emphasis: bool) -> Vec<Glyph> {
@@ -225,10 +307,9 @@ impl Fonts {
                     if let Some((category, reason)) = problem {
                         shaping_failed |= category == "unsupported-shaping";
                         let mut tried = Vec::new();
-                        for label in [base_role, Some(primary), Some(FALLBACK)]
-                            .into_iter()
-                            .flatten()
-                            .map(|index| IDS[index])
+                        for label in self
+                            .candidates(primary, character, base_role)
+                            .map(|index| self.identifiers[index].as_str())
                         {
                             if !tried.contains(&label) {
                                 tried.push(label);
@@ -242,7 +323,7 @@ impl Fonts {
                         let mut remediation =
                             "choose supported text or bundle a tested font".to_owned();
                         if category == "missing-glyph" {
-                            if let Some((_, family, license)) =
+                            if let Some((_, family, license, ..)) =
                                 crate::error::contract::SCRIPT_FONT_RECOMMENDATIONS
                                     .iter()
                                     .find(|(name, ..)| *name == script)
@@ -257,10 +338,10 @@ impl Fonts {
                     }
                     let face = selected.expect("supported glyph");
                     glyphs.push(json!({"character":character.to_string(),"codepoint":codepoint,"coverage":"supported",
-                        "font_id":IDS[face],"item_id":id,"script":script,"shaping":"supported","style":style}));
+                        "font_id":self.identifiers[face],"item_id":id,"script":script,"shaping":"supported","style":style}));
                     let entry = scripts.entry(script).or_default();
                     entry.0 += 1;
-                    entry.1.insert(IDS[face]);
+                    entry.1.insert(&self.identifiers[face]);
                     base = Some((character, face));
                 }
             }
@@ -314,7 +395,7 @@ fn block(character: char) -> (&'static str, bool, bool, &'static str) {
     UNICODE_BLOCKS
         .iter()
         .find(|(first, last, ..)| (*first..=*last).contains(&code))
-        .map(|&(_, _, script, linear, combining, reason)| (script, linear, combining, reason))
+        .map(|&(_, _, script, linear, combining, reason, _)| (script, linear, combining, reason))
         .unwrap_or((
             "unassigned",
             false,
@@ -323,20 +404,36 @@ fn block(character: char) -> (&'static str, bool, bool, &'static str) {
         ))
 }
 
-pub(super) fn font_runs(tokens: &[Glyph]) -> Vec<Value> {
-    let mut runs: Vec<(usize, String)> = Vec::new();
-    for &Glyph { character, font } in tokens {
-        if let Some((last, text)) = runs.last_mut()
-            && *last == font
-        {
-            text.push(character);
-        } else {
-            runs.push((font, String::from(character)));
+impl Fonts {
+    pub(super) fn runs(&self, tokens: &[Glyph]) -> Vec<Value> {
+        let mut runs: Vec<(usize, String)> = Vec::new();
+        for &Glyph { character, font } in tokens {
+            if let Some((last, text)) = runs.last_mut()
+                && *last == font
+            {
+                text.push(character);
+            } else {
+                runs.push((font, String::from(character)));
+            }
         }
+        runs.into_iter().map(|(font,text)| json!({"font_id":self.identifiers[font],"text":text,"style":if font==BOLD {"bold"} else {"regular"}})).collect()
     }
-    runs.into_iter().map(|(font,text)| json!({"font_id":IDS[font],"text":text,"style":if font==BOLD {"bold"} else {"regular"}})).collect()
 }
 
+fn load_font(path: &Path) -> Result<(Font, String, String)> {
+    const MAX_FONT: u64 = 32 * 1024 * 1024;
+    let (parent, name) = crate::project_fs::external_target(path)?;
+    let file = crate::project_fs::open_file(&parent, Path::new(&name), false, false)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_FONT + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_FONT {
+        return Err(Error::limit("the font byte limit"));
+    }
+    let hash = bytes_hash(&bytes);
+    let font = Font::from_bytes(bytes)
+        .ok_or_else(|| Error::typography("font is not a readable TrueType/OpenType file"))?;
+    Ok((font, name.to_string_lossy().into_owned(), hash))
+}
 fn styled(text: &str, emphasis: bool) -> Vec<(&str, bool)> {
     if !emphasis {
         return vec![(text, false)];

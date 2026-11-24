@@ -6,7 +6,7 @@ declared invariants. Record non-empty evidence for exactly seven ordered checks:
 1. `character-identity`: principal identity and all visible fingerprint invariants.
    For every on-panel character, inspect face, hair, age appearance, clothing,
    accessories, proportions, and immutable traits against the exact expectations emitted
-   by `character_quality.py PROJECT_DIR --context PANEL_ID`. Record specific observed
+   by `comic-sol skill character-quality PROJECT_DIR --context PANEL_ID`. Record specific observed
    evidence for every trait; generic evidence such as `"ok"` or `"pass"` is invalid.
 2. `anatomy`: readable pose, hands, limbs, face, and no beat-breaking defects.
    Evidence: short phrase (`"pose ok"`, `"hands visible"`, `"face correct"`).
@@ -35,7 +35,7 @@ Results are `pass`, `warning`, or `fail`; severity is `warning` or `error`. Deci
 - `regenerate`: an error-level failure needs a new attempt.
 
 For trait-level identity review, pipe the seven normalized assessment records per
-character to `character_quality.py PROJECT_DIR --record PANEL_ID --method METHOD
+character to `comic-sol skill character-quality PROJECT_DIR --record PANEL_ID --method METHOD
 --reviewer REVIEWER`. The engine attaches the canonical expectation and reference
 provenance, derives the panel decision, and generates subject-specific repair guidance for
 every warning or failure. The review method may be human, model-assisted, or another
@@ -54,7 +54,7 @@ eight storyboard anchor `area` values, with specific evidence and repair guidanc
   retry limits are allocated across panel jobs from that same allowance, and failed extra
   attempts consume slots; without earlier extra calls, 12 initial panels can make at most
   20 panel calls.
-- Plan every repair with `repair_strategy.py PROJECT_DIR --panel PANEL_ID
+- Plan every repair with `comic-sol skill repair-strategy PROJECT_DIR --panel PANEL_ID
   [--localized-edit]`, then record the project-wide decision with `--plan`.
 - A `selective-repair` edits only the listed subjects and areas, carries one correction
   clause per target, and leaves every other pixel of the accepted raster unchanged.
@@ -70,7 +70,7 @@ eight storyboard anchor `area` values, with specific evidence and repair guidanc
 - A subject defect region names a character the panel's trait review covered. Use an
   `area` region, or record the trait review first, when it cannot.
 - A faulty generated SFX has a cheaper remedy than re-rolling the panel and hoping.
-  `sfx_repair.py PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason
+  `comic-sol skill sfx-repair PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason
   "$REASON_TEXT"` routes that one effect to deterministic lettering, archives the rejected raw,
   clean, and lettered rasters under `panels/{panel-id}/sfx-audit/`, records the transition
   and the reason in `panels/{panel-id}/sfx-audit.json`, and adds the missing generated-SFX

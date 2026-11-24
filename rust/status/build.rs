@@ -33,6 +33,10 @@ fn embed_skill() {
                     .map(|part| part.as_os_str().to_str().expect("Skill path"))
                     .collect::<Vec<_>>()
                     .join("/");
+                assert!(
+                    !relative.ends_with(".py"),
+                    "Python source in Agent Skill bundle: {relative}"
+                );
                 files.push((
                     relative,
                     fs::canonicalize(path).expect("absolute Skill member"),
@@ -244,7 +248,7 @@ fn main() {
         .split_once("\n)")
         .expect("end of Unicode block table")
         .0;
-    output.push_str("pub const UNICODE_BLOCKS: &[(u32, u32, &str, bool, bool, &str)] = &[\n");
+    output.push_str("pub const UNICODE_BLOCKS: &[(u32, u32, &str, bool, bool, &str, &str)] = &[\n");
     for line in blocks.lines().skip(1).map(str::trim) {
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -252,7 +256,8 @@ fn main() {
         let (function, fields) = line.split_once('(').expect("Unicode block constructor");
         let mut quoted = fields.split('"');
         let script = quoted.nth(1).expect("Unicode block script");
-        let rest = quoted.nth(2).expect("Unicode block range");
+        let label = quoted.nth(1).expect("Unicode block label");
+        let rest = quoted.next().expect("Unicode block range");
         let mut bounds = rest
             .split(',')
             .map(str::trim)
@@ -281,7 +286,7 @@ fn main() {
             assignment(&font, symbol).trim_matches('"')
         };
         output.push_str(&format!(
-            "({first}, {last}, {script:?}, {linear}, {combining}, {reason:?}),\n"
+            "({first}, {last}, {script:?}, {linear}, {combining}, {reason:?}, {label:?}),\n"
         ));
     }
     output.push_str("];\n");
@@ -292,11 +297,16 @@ fn main() {
         .split_once("\n)")
         .expect("end of script fonts")
         .0;
-    output.push_str("pub const SCRIPT_FONT_RECOMMENDATIONS: &[(&str, &str, &str)] = &[\n");
+    output.push_str(
+        "pub const SCRIPT_FONT_RECOMMENDATIONS: &[(&str, &str, &str, &str, &str)] = &[\n",
+    );
     for block in recommendations.split("ScriptFont(").skip(1) {
         let data: Vec<_> = block.split('"').skip(1).step_by(2).collect();
         assert_eq!(data.len(), 5, "script font record");
-        output.push_str(&format!("({:?}, {:?}, {:?}),\n", data[0], data[1], data[4]));
+        output.push_str(&format!(
+            "({:?}, {:?}, {:?}, {:?}, {:?}),\n",
+            data[0], data[1], data[4], data[2], data[3]
+        ));
     }
     output.push_str("];\n");
     let stages = fs::read_to_string(stage_registry).expect("read canonical stage registry");

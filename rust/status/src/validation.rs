@@ -1,11 +1,11 @@
-mod character;
+pub(crate) mod character;
 pub(crate) mod handoff;
 mod lettering;
 mod page_quality;
 pub(crate) mod panels;
 mod planning;
-mod references;
-mod repair;
+pub(crate) mod references;
+pub(crate) mod repair;
 pub(crate) mod sfx;
 pub(crate) mod storyboard;
 pub(crate) mod terminal;
@@ -605,7 +605,7 @@ fn check_legacy_version(value: &Value, report: &mut Report) {
     );
 }
 
-fn repr(value: &Value) -> String {
+pub(crate) fn repr(value: &Value) -> String {
     match value {
         Value::Null => "None".into(),
         Value::Bool(true) => "True".into(),

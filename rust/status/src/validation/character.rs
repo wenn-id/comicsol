@@ -9,9 +9,9 @@ use super::{
 };
 use crate::manifest;
 
-const PACK: &str = "plan/character-identity-pack.json";
-const REFERENCE_PLAN: &str = "logs/reference-selection.json";
-const TRAITS: &[&str] = &[
+pub(crate) const PACK: &str = "plan/character-identity-pack.json";
+pub(crate) const REFERENCE_PLAN: &str = "logs/reference-selection.json";
+pub(crate) const TRAITS: &[&str] = &[
     "face",
     "hair",
     "age-appearance",
@@ -250,6 +250,16 @@ fn compare_identity(child: &Value, source: &Value) -> bool {
 }
 
 pub(super) fn identity_pack(root: &File, pack: &Value, bible: &Value) -> (Option<String>, bool) {
+    let (issues, structurally_valid) = pack_issues(root, pack, bible, true);
+    (issues.into_iter().next(), structurally_valid)
+}
+
+pub(crate) fn pack_issues(
+    root: &File,
+    pack: &Value,
+    bible: &Value,
+    require_reference_files: bool,
+) -> (BTreeSet<String>, bool) {
     let mut issues = BTreeSet::new();
     let mut reference_issues = BTreeSet::new();
     fields(
@@ -263,7 +273,7 @@ pub(super) fn identity_pack(root: &File, pack: &Value, bible: &Value) -> (Option
     }
     let Some(characters) = pack["characters"].as_array() else {
         issues.insert("character-identity-pack.characters must be an array".into());
-        return (issues.into_iter().next(), false);
+        return (issues, false);
     };
     let mut seen_ids = HashSet::new();
     for (index, entry) in characters.iter().enumerate() {
@@ -382,10 +392,10 @@ pub(super) fn identity_pack(root: &File, pack: &Value, bible: &Value) -> (Option
                     ));
                 } else if let Some(id) = id {
                     match artifact(root, path) {
-                        Ok(Some(_)) => {}
-                        Ok(None) => {
+                        Ok(None) if require_reference_files => {
                             reference_issues.insert(format!("character-identity-pack character '{id}' reference view file is missing: {path}"));
                         }
+                        Ok(_) => {}
                         Err(error) => {
                             let detail = error.detail().unwrap_or("filesystem error");
                             reference_issues.insert(format!("character-identity-pack character '{id}' reference view is not a contained project path: {path} ({detail})"));
@@ -456,7 +466,7 @@ pub(super) fn identity_pack(root: &File, pack: &Value, bible: &Value) -> (Option
     }
     let valid = issues.is_empty();
     issues.extend(reference_issues);
-    (issues.into_iter().next(), valid)
+    (issues, valid)
 }
 
 fn bound(

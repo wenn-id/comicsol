@@ -1,4 +1,5 @@
 import argparse
+import json
 import re
 import shlex
 import unittest
@@ -164,11 +165,34 @@ def _normalize_arguments(parser, arguments):
     return normalized
 
 
+def _native_skill_parser():
+    parser = argparse.ArgumentParser(prog="comic-sol", exit_on_error=False)
+    parser.add_argument("--json", action="store_true")
+    root = parser.add_subparsers(required=True).add_parser("skill")
+    commands = root.add_subparsers(required=True)
+    contract = ROOT / "rust/status/src/skill-contract.json"
+    for name, positionals, options in json.loads(contract.read_text("utf-8")):
+        command = commands.add_parser(name)
+        for positional in positionals:
+            command.add_argument(positional)
+        for option, kind in options:
+            if not kind:
+                command.add_argument(option, action="store_true")
+            elif kind == "int":
+                command.add_argument(option, type=int)
+            elif kind == "repeat":
+                command.add_argument(option, action="append")
+            else:
+                command.add_argument(option)
+    return parser
+
+
 class DocumentedCliCommandTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.installed_parser = cli.build_parser()
         cls.source_parser = comic_sol._build_parser()
+        cls.native_skill_parser = _native_skill_parser()
 
     def test_every_fenced_comic_sol_cli_invocation_parses(self):
         examples = []
@@ -181,7 +205,12 @@ class DocumentedCliCommandTests(unittest.TestCase):
                     if invocation is None:
                         continue
                     surface, arguments = invocation
-                    parser = self.installed_parser if surface == "installed" else self.source_parser
+                    if surface == "source":
+                        parser = self.source_parser
+                    elif next((arg for arg in arguments if arg != "--json"), None) == "skill":
+                        parser = self.native_skill_parser
+                    else:
+                        parser = self.installed_parser
                     examples.append(
                         (path, block_start + relative_line - 1, command, parser, arguments)
                     )

@@ -3,7 +3,7 @@
 > **Provider setup:** See [`image-provider-setup.md`](image-provider-setup.md) for
 > host-neutral setup guidance and clearly labeled host examples.
 
-Capability detection belongs to the agent plane, not deterministic Python. The agent
+The agent inspects its own exposed tools and passes those observations to Comic Sol. The agent
 performs a metadata-only inspection before `doctor`; detection never invokes an image
 tool, probes a provider, reads credentials, or makes a network request.
 
@@ -19,7 +19,7 @@ tool, probes a provider, reads credentials, or makes a network request.
 3. Include an optional feature only when the exposed tool description or schema declares
    it. Unknown and unsupported features both use the safe degraded behavior: omit the
    matching flag.
-4. Note localized editing separately. Pass `--localized-edit` to `repair_strategy.py`
+4. Note localized editing separately. Pass `--localized-edit` to `comic-sol skill repair-strategy`
    only when the session exposes a tool that can edit a bounded part of an existing
    raster and return a local image. Localized editing is not part of the `doctor`
    descriptor.
@@ -34,14 +34,14 @@ For a usable capability, pass one active descriptor. Add each optional feature f
 when it was declared by the selected tool:
 
 ```text
-PYTHON scripts/comic_sol.py doctor --output-root OUTPUT_ROOT --image-capability-status available --image-capability-name agent-image-generation --supports-reference-images --supports-dimensions
+comic-sol doctor --output-root OUTPUT_ROOT --image-capability-status available --image-capability-name agent-image-generation --supports-reference-images --supports-dimensions
 ```
 
 If the exposed inventory is inspectable but contains no usable text-to-image capability,
 report that fact without installing or invoking anything:
 
 ```text
-PYTHON scripts/comic_sol.py doctor --output-root OUTPUT_ROOT --image-capability-status unavailable
+comic-sol doctor --output-root OUTPUT_ROOT --image-capability-status unavailable
 ```
 
 If the inventory cannot be inspected or metadata inspection fails, omit every image
@@ -63,7 +63,7 @@ the same neutral name, availability, reference support, dimension support, and d
 time in `project.json` according to `schemas.md`.
 
 The first canonical-reference generation is the operational check. After every actual
-invocation, require a local PNG/JPEG/WebP that Pillow can read, with both dimensions at
+invocation, require a local PNG/JPEG/WebP that Comic Sol can decode, with both dimensions at
 least 512 px, and normalize accepted data to PNG. If references are unsupported,
 strengthen exact text anchors and record degraded mode.
 

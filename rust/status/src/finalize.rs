@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use crate::cli::Arguments;
 use crate::error::{Error, Result};
 use crate::manifest;
 use crate::project_fs::{self, LockedProject};
@@ -30,6 +31,10 @@ const MAX_RASTER: u64 = 128 * 1024 * 1024;
 
 pub fn font_diagnostics() -> (Vec<(&'static str, bool)>, Vec<String>) {
     lettering::typography::diagnostics()
+}
+
+pub fn font_inventory(args: &Arguments) -> Result<Value> {
+    lettering::typography::coverage(args.values("font"))
 }
 
 pub fn run(path: &Path, progress: &mut crate::human::Progress<'_>) -> Result<Value> {
@@ -175,6 +180,102 @@ pub fn report_only(locked: &LockedProject, mut project: Value) -> Result<Value> 
     let status = project["status"].as_str().unwrap_or("None").to_owned();
     report::run(locked, &mut project, &status)?;
     Ok(REPORT.into())
+}
+
+pub fn letter_for_skill(locked: &LockedProject, args: &Arguments) -> Result<Value> {
+    let board = object(locked.root(), BOARD)?;
+    let fonts =
+        lettering::typography::Fonts::configured(args.path("font"), args.values("font-script"))?;
+    lettering::run_with_fonts(locked, &board, &fonts, args.paths("project_dir"))
+}
+
+pub fn compose_for_skill(
+    locked: &LockedProject,
+    mut project: Value,
+    args: &Arguments,
+) -> Result<Value> {
+    let page = args.text("page");
+    if args.has("all") == page.is_some() {
+        return Err(Error::invalid("choose either --all or --page"));
+    }
+    let Some(page) = page else {
+        return compose_only(locked, project);
+    };
+    let page = page
+        .parse::<u64>()
+        .ok()
+        .filter(|&n| n > 0)
+        .ok_or_else(|| Error::invalid("page number must be a positive integer"))?;
+    let board = object(locked.root(), BOARD)?;
+    composition::one(locked, &mut project, &board, page)?;
+    Ok(format!("pages/page-{page:03}.png").into())
+}
+
+pub fn export_for_skill(locked: &LockedProject, project: Value, args: &Arguments) -> Result<Value> {
+    if let Some(output) = args.path("output") {
+        let data = export::unbound(locked, &project)?;
+        write_ad_hoc(locked, args.paths("project_dir"), output, "pdf", data)?;
+        Ok(output.to_string_lossy().into_owned().into())
+    } else {
+        export_only(locked, project)
+    }
+}
+
+pub fn report_for_skill(
+    locked: &LockedProject,
+    mut project: Value,
+    args: &Arguments,
+) -> Result<Value> {
+    let final_status = if items(&project["warnings"]).is_empty() {
+        "COMPLETE"
+    } else {
+        "COMPLETE_WITH_WARNINGS"
+    };
+    if let Some(output) = args.path("output") {
+        let data = report::render(locked.root(), &project, final_status)?;
+        write_ad_hoc(locked, args.paths("project_dir"), output, "md", data)?;
+        Ok(output.to_string_lossy().into_owned().into())
+    } else {
+        report::run(locked, &mut project, final_status)?;
+        Ok(REPORT.into())
+    }
+}
+
+fn write_ad_hoc(
+    locked: &LockedProject,
+    project: &Path,
+    output: &Path,
+    extension: &str,
+    data: Vec<u8>,
+) -> Result<()> {
+    let output_absolute = std::path::absolute(output)?;
+    let project_absolute = std::fs::canonicalize(project)?;
+    if let Ok(path) = output_absolute.strip_prefix(project_absolute) {
+        let path = path
+            .to_str()
+            .ok_or_else(|| Error::invalid("output path is not UTF-8"))?;
+        if Path::new(path).extension().and_then(|part| part.to_str()) != Some(extension) {
+            return Err(Error::invalid(format!(
+                "project copy must use .{extension}"
+            )));
+        }
+        let path = path.replace('\\', "/");
+        project_fs::relative_path(&path)?;
+        let state = manifest::read_project(locked.root(), false)?;
+        if state["artifacts"].as_object().is_some_and(|artifacts| {
+            artifacts
+                .values()
+                .any(|entry| entry["path"] == path || entry == &path)
+        }) || path == REPORT
+        {
+            return Err(Error::invalid(
+                "ad-hoc output would replace a recorded project artifact",
+            ));
+        }
+        publish(locked, "ad-hoc-output", vec![Change::Replace(path, data)])
+    } else {
+        project_fs::write_external(output, project, &data)
+    }
 }
 
 pub(crate) fn require_valid(root: &File, stage: Stage) -> Result<()> {

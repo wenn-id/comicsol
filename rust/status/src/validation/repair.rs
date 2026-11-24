@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::panels::IDS;
 use super::{artifact, file_hash, is_panel, items, keys, read_value, text};
 
-pub(super) const PATH: &str = "logs/repair-plan.json";
+pub(crate) const PATH: &str = "logs/repair-plan.json";
 const IDENTITY: &str = "character-identity";
 const PANEL_WIDE: &[&str] = &["action", "composition", "continuity", "technical"];
 const REGIONS: &[&str] = &[
@@ -174,7 +174,7 @@ fn accepted_stale(root: &File, bindings: &Value) -> bool {
     })
 }
 
-fn derive(root: &File, record: &Value, can_edit: bool) -> Option<Value> {
+pub(crate) fn derive(root: &File, record: &Value, can_edit: bool) -> Option<Value> {
     if record["schema_version"] != "2.0" {
         return None;
     }
@@ -277,7 +277,7 @@ fn derive(root: &File, record: &Value, can_edit: bool) -> Option<Value> {
     )
 }
 
-pub(super) fn board_panels(board: &Value) -> Option<Vec<&Value>> {
+pub(crate) fn board_panels(board: &Value) -> Option<Vec<&Value>> {
     let mut panels = Vec::new();
     let mut seen = HashSet::new();
     for page in board["pages"].as_array()? {
@@ -291,7 +291,7 @@ pub(super) fn board_panels(board: &Value) -> Option<Vec<&Value>> {
     Some(panels)
 }
 
-pub(super) fn inspect(root: &File, board: &Value, document: &Value) -> BTreeSet<&'static str> {
+pub(crate) fn inspect(root: &File, board: &Value, document: &Value) -> BTreeSet<&'static str> {
     if !keys(document, &["panels", "schema_version"]) {
         return BTreeSet::from(["repair-plan-structure"]);
     }

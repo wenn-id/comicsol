@@ -24,7 +24,7 @@ comic-sol --json init --output-root /absolute/projects \
 Source CLI:
 
 ```bash
-PYTHON scripts/comic_sol.py init --output-root OUTPUT_ROOT \
+comic-sol init --output-root OUTPUT_ROOT \
   --title "Bridge Run Draft" --starter action-focused
 ```
 
