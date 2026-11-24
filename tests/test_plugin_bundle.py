@@ -133,11 +133,13 @@ class PluginBundleTests(unittest.TestCase):
                     f"{document}: unresolved link {target}",
                 )
 
-    def test_handoff_contract_module_is_a_managed_bundle_path(self):
-        self.assertIn(Path("scripts/handoff.py"), sync_plugin_bundle.synchronized_paths())
-
-    def test_dogfood_report_module_is_a_managed_bundle_path(self):
-        self.assertIn(Path("scripts/dogfood_report.py"), sync_plugin_bundle.synchronized_paths())
+    def test_bundle_has_no_python_files_and_uses_native_entry_points(self):
+        bundle = sync_plugin_bundle.BUNDLE
+        self.assertFalse(any(bundle.rglob("*.py")))
+        self.assertFalse(any(bundle.rglob("*.pyc")))
+        self.assertIn("comic-sol skill --help", (bundle / "SKILL.md").read_text("utf-8"))
+        for doc in bundle.rglob("*.md"):
+            self.assertNotRegex(doc.read_text("utf-8"), r"(?m)^\s*(?:python|PYTHON)\s")
 
     def test_starter_assets_are_managed_bundle_paths(self):
         synchronized = set(sync_plugin_bundle.synchronized_paths())
@@ -148,15 +150,15 @@ class PluginBundleTests(unittest.TestCase):
                     synchronized,
                 )
         self.assertIn(Path("references/starter-templates.md"), synchronized)
-        self.assertIn(Path("scripts/starter_templates.py"), synchronized)
+        self.assertNotIn(Path("scripts/starter_templates.py"), synchronized)
 
-    def test_check_detects_a_deleted_bundled_script(self):
+    def test_check_detects_an_obsolete_bundled_script(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             bundle = root / "skills/comic-sol"
-            source = root / "scripts/comic_sol.py"
-            source.parent.mkdir(parents=True)
-            source.write_text("canonical\n", encoding="utf-8")
+            stale = bundle / "scripts/comic_sol.py"
+            stale.parent.mkdir(parents=True)
+            stale.write_text("obsolete\n", encoding="utf-8")
 
             with (
                 patch.object(sync_plugin_bundle, "ROOT", root),

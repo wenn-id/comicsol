@@ -1,0 +1,21 @@
+[
+  ["transition", ["project_dir", "target"], [["--warning", "text"]]],
+  ["resume-plan", ["project_dir"], []],
+  ["invalidate", ["project_dir", "stage"], []],
+  ["record-stage", ["project_dir", "stage"], []],
+  ["record-attempt", ["project_dir", "panel_id", "kind", "path"], []],
+  ["promote-attempt", ["project_dir", "panel_id", "path"], []],
+  ["override-panel", ["project_dir", "panel_id"], [["--reason", "text"]]],
+  ["letter", ["project_dir"], [["--font", "path"], ["--font-script", "repeat"]]],
+  ["compose", ["project_dir"], [["--all", ""], ["--page", "int"]]],
+  ["export", ["project_dir"], [["--output", "path"]]],
+  ["render-report", ["project_dir"], [["--output", "path"]]],
+  ["character-identity", ["project_dir"], [["--derive", ""], ["--check", ""], ["--panel", "text"], ["--allow-missing-references", ""]]],
+  ["reference-strategy", ["project_dir"], [["--plan", ""], ["--panel", "text"], ["--budget", "int"], ["--json", ""]]],
+  ["character-quality", ["project_dir"], [["--context", "text"], ["--record", "text"], ["--method", "text"], ["--reviewer", "text"]]],
+  ["repair-strategy", ["project_dir"], [["--plan", ""], ["--panel", "text"], ["--check", ""], ["--localized-edit", ""], ["--json", ""]]],
+  ["sfx-repair", ["project_dir"], [["--panel", "text"], ["--text-id", "text"], ["--reason", "text"]]],
+  ["quality-sample", ["project_dir"], [["--mode", "text"], ["--retained-attempt", "path"], ["--provider", "text"], ["--model", "text"], ["--reference", "repeat"], ["--reviewer-method", "text"], ["--limitation", "repeat"]]],
+  ["normalize-panel", ["project_dir"], [["--panel", "text"], ["--source", "path"], ["--width", "int"], ["--height", "int"], ["--mode", "text"]]],
+  ["font-coverage", [], [["--font", "repeat"]]]
+]

@@ -2734,12 +2734,12 @@ class SkillContractTests(unittest.TestCase):
             # The repair path is part of the reviewer contract: a faulty generated
             # effect has a cheaper remedy than re-rolling the panel, and whether it
             # still needs a regeneration has to be stated rather than assumed.
-            "sfx_repair.py",
+            "comic-sol skill sfx-repair",
             "re-review the panel to `regenerate`",
         ):
             self.assertIn(phrase, visual)
         self.assertIn(
-            "pillow neither draws generated sfx nor allocates a placement rectangle "
+            "the lettering engine neither draws generated sfx nor allocates a placement rectangle "
             "or overlap reservation",
             schemas,
         )
@@ -2770,30 +2770,30 @@ class SkillContractTests(unittest.TestCase):
             self.assertIn(phrase, schemas)
         self.assertIn("exact `generated-visual` storyboard sfx", skill)
         self.assertIn("`deterministic-lettering` sfx", skill)
-        self.assertIn("sfx_repair.py", skill)
+        self.assertIn("comic-sol skill sfx-repair", skill)
         self.assertIn("image model", skill)
 
     def test_all_deterministic_cli_commands_are_routed(self):
         text = self.skill_text()
         commands = (
             "comic-sol --json init",
-            "comic_sol.py transition",
+            "comic-sol skill transition",
             "comic-sol --json status",
             "comic-sol --json doctor",
-            "comic_sol.py resume-plan",
+            "comic-sol --json skill resume-plan",
             "comic-sol --json resume",
             "comic-sol --json finalize",
-            "comic_sol.py invalidate",
-            "comic_sol.py record-stage",
-            "comic_sol.py record-attempt",
-            "comic_sol.py promote-attempt",
-            "comic_sol.py override-panel",
-            "validate_project.py",
-            "letter_panels.py",
-            "sfx_repair.py",
-            "compose_pages.py",
-            "export_pdf.py",
-            "render_report.py",
+            "comic-sol skill invalidate",
+            "comic-sol skill record-stage",
+            "comic-sol skill record-attempt",
+            "comic-sol skill promote-attempt",
+            "comic-sol skill override-panel",
+            "comic-sol --json validate",
+            "comic-sol skill letter",
+            "comic-sol skill sfx-repair",
+            "comic-sol skill compose",
+            "comic-sol skill export",
+            "comic-sol skill render-report",
         )
         for command in commands:
             self.assertIn(command, text)
@@ -2824,7 +2824,7 @@ class PackagingTests(unittest.TestCase):
             self.assertIn(required, readme)
         self.assertNotRegex(readme.lower(), r"npm run|start the server|docker compose")
 
-    def test_runtime_instructions_use_active_python_not_a_fixed_minor_version(self):
+    def test_runtime_instructions_use_native_skill_and_active_python_for_legacy(self):
         documents = (
             ROOT / "SKILL.md",
             ROOT / "skills/comic-sol/SKILL.md",
@@ -2843,10 +2843,10 @@ class PackagingTests(unittest.TestCase):
             self.assertFalse(fixed_minor.search(text), path)
 
         for path in (ROOT / "SKILL.md", ROOT / "skills/comic-sol/SKILL.md"):
-            self.assertIn("`PYTHON`", path.read_text("utf-8"), path)
+            self.assertIn("comic-sol skill --help", path.read_text("utf-8"), path)
+            self.assertNotIn("`PYTHON`", path.read_text("utf-8"), path)
         self.assertIn("$PYTHON", (ROOT / "README.md").read_text("utf-8"))
         self.assertIn("Python 3.11+", (ROOT / "README.md").read_text("utf-8"))
-        self.assertIn("Python 3.11+", (ROOT / "SKILL.md").read_text("utf-8"))
 
     def test_public_surface_uses_the_canonical_independent_repository(self):
         readme = self.readme()

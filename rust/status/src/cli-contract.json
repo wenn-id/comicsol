@@ -1,0 +1,1037 @@
+{
+  "help": "usage: comic-sol [-h] [--version] [--json]\n                 {doctor,init,status,validate,bind-plan,resume,finalize,dogfood,handoff,mcp,skill-install,skill-uninstall,setup,repair,uninstall} ...\n\npositional arguments:\n  {doctor,init,status,validate,bind-plan,resume,finalize,dogfood,handoff,mcp,skill-install,skill-uninstall,setup,repair,uninstall}\n\noptions:\n  -h, --help            show this help message and exit\n  --version             show program's version number and exit\n  --json\n",
+  "flags": [
+    {
+      "name": "help",
+      "aliases": [
+        "-h",
+        "--help"
+      ],
+      "takes_value": false
+    },
+    {
+      "name": "version",
+      "aliases": [
+        "--version"
+      ],
+      "takes_value": false
+    },
+    {
+      "name": "as_json",
+      "aliases": [
+        "--json"
+      ],
+      "takes_value": false
+    }
+  ],
+  "subcommand": "command",
+  "children": {
+    "doctor": {
+      "help": "usage: comic-sol doctor [-h] [--output-root OUTPUT_ROOT]\n                        [--image-capability-status {available,unavailable}]\n                        [--image-capability-name IMAGE_CAPABILITY_NAME]\n                        [--supports-reference-images] [--supports-dimensions]\n\noptions:\n  -h, --help            show this help message and exit\n  --output-root OUTPUT_ROOT\n  --image-capability-status {available,unavailable}\n  --image-capability-name IMAGE_CAPABILITY_NAME\n  --supports-reference-images\n  --supports-dimensions\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        },
+        {
+          "name": "output_root",
+          "aliases": [
+            "--output-root"
+          ],
+          "takes_value": true
+        },
+        {
+          "name": "image_capability_status",
+          "aliases": [
+            "--image-capability-status"
+          ],
+          "takes_value": true,
+          "choices": [
+            "available",
+            "unavailable"
+          ]
+        },
+        {
+          "name": "image_capability_name",
+          "aliases": [
+            "--image-capability-name"
+          ],
+          "takes_value": true
+        },
+        {
+          "name": "supports_reference_images",
+          "aliases": [
+            "--supports-reference-images"
+          ],
+          "takes_value": false
+        },
+        {
+          "name": "supports_dimensions",
+          "aliases": [
+            "--supports-dimensions"
+          ],
+          "takes_value": false
+        }
+      ]
+    },
+    "init": {
+      "help": "usage: comic-sol init [-h] [--interactive] [--output-root OUTPUT_ROOT]\n                      [--title TITLE] [--source SOURCE]\n                      [--request-json REQUEST_JSON]\n                      [--starter {minimal-one-page,dialogue-two-page,action-focused}]\n                      [--page-count {1,2,3,4}]\n                      [--image-capability-status {available,unavailable}]\n                      [--image-capability-name IMAGE_CAPABILITY_NAME]\n                      [--supports-reference-images] [--supports-dimensions]\n\nCreate a project from explicit flags or a guided terminal session.\n\noptions:\n  -h, --help            show this help message and exit\n  --interactive         prompt for project settings (human terminals only)\n  --output-root OUTPUT_ROOT\n                        parent directory for the project\n  --title TITLE         project title\n  --source SOURCE       UTF-8 .txt or .md story source\n  --request-json REQUEST_JSON\n                        optional request settings JSON\n  --starter {minimal-one-page,dialogue-two-page,action-focused}\n                        initialize from a bundled v1 storyboard starter\n  --page-count {1,2,3,4}\n                        planned page count (default: 2)\n  --image-capability-status {available,unavailable}\n  --image-capability-name IMAGE_CAPABILITY_NAME\n  --supports-reference-images\n  --supports-dimensions\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        },
+        {
+          "name": "interactive",
+          "aliases": [
+            "--interactive"
+          ],
+          "takes_value": false
+        },
+        {
+          "name": "output_root",
+          "aliases": [
+            "--output-root"
+          ],
+          "takes_value": true
+        },
+        {
+          "name": "title",
+          "aliases": [
+            "--title"
+          ],
+          "takes_value": true
+        },
+        {
+          "name": "source",
+          "aliases": [
+            "--source"
+          ],
+          "takes_value": true
+        },
+        {
+          "name": "request_json",
+          "aliases": [
+            "--request-json"
+          ],
+          "takes_value": true
+        },
+        {
+          "name": "starter",
+          "aliases": [
+            "--starter"
+          ],
+          "takes_value": true,
+          "choices": [
+            "minimal-one-page",
+            "dialogue-two-page",
+            "action-focused"
+          ]
+        },
+        {
+          "name": "page_count",
+          "aliases": [
+            "--page-count"
+          ],
+          "takes_value": true,
+          "choices": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "type": "int"
+        },
+        {
+          "name": "image_capability_status",
+          "aliases": [
+            "--image-capability-status"
+          ],
+          "takes_value": true,
+          "choices": [
+            "available",
+            "unavailable"
+          ]
+        },
+        {
+          "name": "image_capability_name",
+          "aliases": [
+            "--image-capability-name"
+          ],
+          "takes_value": true
+        },
+        {
+          "name": "supports_reference_images",
+          "aliases": [
+            "--supports-reference-images"
+          ],
+          "takes_value": false
+        },
+        {
+          "name": "supports_dimensions",
+          "aliases": [
+            "--supports-dimensions"
+          ],
+          "takes_value": false
+        }
+      ]
+    },
+    "status": {
+      "help": "usage: comic-sol status [-h] project_dir\n\npositional arguments:\n  project_dir\n\noptions:\n  -h, --help   show this help message and exit\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        }
+      ],
+      "positionals": [
+        "project_dir"
+      ]
+    },
+    "validate": {
+      "help": "usage: comic-sol validate [-h] [--stage STAGE] project_dir\n\npositional arguments:\n  project_dir\n\noptions:\n  -h, --help     show this help message and exit\n  --stage STAGE\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        },
+        {
+          "name": "stage",
+          "aliases": [
+            "--stage"
+          ],
+          "takes_value": true
+        }
+      ],
+      "positionals": [
+        "project_dir"
+      ]
+    },
+    "bind-plan": {
+      "help": "usage: comic-sol bind-plan [-h] project_dir\n\nBind validated plan files to manifest descriptors and panel counts.\n\npositional arguments:\n  project_dir\n\noptions:\n  -h, --help   show this help message and exit\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        }
+      ],
+      "positionals": [
+        "project_dir"
+      ]
+    },
+    "resume": {
+      "help": "usage: comic-sol resume [-h] project_dir\n\npositional arguments:\n  project_dir\n\noptions:\n  -h, --help   show this help message and exit\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        }
+      ],
+      "positionals": [
+        "project_dir"
+      ]
+    },
+    "finalize": {
+      "help": "usage: comic-sol finalize [-h] project_dir\n\npositional arguments:\n  project_dir\n\noptions:\n  -h, --help   show this help message and exit\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        }
+      ],
+      "positionals": [
+        "project_dir"
+      ]
+    },
+    "dogfood": {
+      "help": "usage: comic-sol dogfood [-h] {report,preview,validate} ...\n\npositional arguments:\n  {report,preview,validate}\n\noptions:\n  -h, --help            show this help message and exit\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        }
+      ],
+      "subcommand": "dogfood_command",
+      "children": {
+        "report": {
+          "help": "usage: comic-sol dogfood report [-h] --setup-minutes SETUP_MINUTES\n                                --first-project-minutes FIRST_PROJECT_MINUTES\n                                --pdf-minutes PDF_MINUTES\n                                --manual-intervention MANUAL_INTERVENTION\n                                --would-use-again WOULD_USE_AGAIN\n                                [--failed-resume-attempts FAILED_RESUME_ATTEMPTS]\n                                [--friction FRICTION]\n                                [--cohort-alias COHORT_ALIAS]\n                                --consent-to-share --output OUTPUT_PATH\n                                project_dir\n\npositional arguments:\n  project_dir\n\noptions:\n  -h, --help            show this help message and exit\n  --setup-minutes SETUP_MINUTES\n  --first-project-minutes FIRST_PROJECT_MINUTES\n  --pdf-minutes PDF_MINUTES\n  --manual-intervention MANUAL_INTERVENTION\n  --would-use-again WOULD_USE_AGAIN\n  --failed-resume-attempts FAILED_RESUME_ATTEMPTS\n  --friction FRICTION\n  --cohort-alias COHORT_ALIAS\n  --consent-to-share\n  --output OUTPUT_PATH\n",
+          "flags": [
+            {
+              "name": "help",
+              "aliases": [
+                "-h",
+                "--help"
+              ],
+              "takes_value": false
+            },
+            {
+              "name": "setup_minutes",
+              "aliases": [
+                "--setup-minutes"
+              ],
+              "takes_value": true,
+              "required": true,
+              "type": "dogfood_minutes"
+            },
+            {
+              "name": "first_project_minutes",
+              "aliases": [
+                "--first-project-minutes"
+              ],
+              "takes_value": true,
+              "required": true,
+              "type": "dogfood_minutes"
+            },
+            {
+              "name": "pdf_minutes",
+              "aliases": [
+                "--pdf-minutes"
+              ],
+              "takes_value": true,
+              "required": true,
+              "type": "dogfood_minutes"
+            },
+            {
+              "name": "manual_intervention",
+              "aliases": [
+                "--manual-intervention"
+              ],
+              "takes_value": true,
+              "required": true,
+              "type": "dogfood_yes_no"
+            },
+            {
+              "name": "would_use_again",
+              "aliases": [
+                "--would-use-again"
+              ],
+              "takes_value": true,
+              "required": true,
+              "type": "dogfood_yes_no"
+            },
+            {
+              "name": "failed_resume_attempts",
+              "aliases": [
+                "--failed-resume-attempts"
+              ],
+              "takes_value": true,
+              "type": "dogfood_failed_attempts"
+            },
+            {
+              "name": "friction",
+              "aliases": [
+                "--friction"
+              ],
+              "takes_value": true,
+              "repeat": true
+            },
+            {
+              "name": "cohort_alias",
+              "aliases": [
+                "--cohort-alias"
+              ],
+              "takes_value": true
+            },
+            {
+              "name": "consent_to_share",
+              "aliases": [
+                "--consent-to-share"
+              ],
+              "takes_value": false,
+              "required": true
+            },
+            {
+              "name": "output_path",
+              "aliases": [
+                "--output"
+              ],
+              "takes_value": true,
+              "required": true
+            }
+          ],
+          "positionals": [
+            "project_dir"
+          ]
+        },
+        "preview": {
+          "help": "usage: comic-sol dogfood preview [-h] --setup-minutes SETUP_MINUTES\n                                 --first-project-minutes FIRST_PROJECT_MINUTES\n                                 --pdf-minutes PDF_MINUTES\n                                 --manual-intervention MANUAL_INTERVENTION\n                                 --would-use-again WOULD_USE_AGAIN\n                                 [--failed-resume-attempts FAILED_RESUME_ATTEMPTS]\n                                 [--friction FRICTION]\n                                 [--cohort-alias COHORT_ALIAS]\n                                 [--consent-to-share]\n                                 project_dir\n\npositional arguments:\n  project_dir\n\noptions:\n  -h, --help            show this help message and exit\n  --setup-minutes SETUP_MINUTES\n  --first-project-minutes FIRST_PROJECT_MINUTES\n  --pdf-minutes PDF_MINUTES\n  --manual-intervention MANUAL_INTERVENTION\n  --would-use-again WOULD_USE_AGAIN\n  --failed-resume-attempts FAILED_RESUME_ATTEMPTS\n  --friction FRICTION\n  --cohort-alias COHORT_ALIAS\n  --consent-to-share\n",
+          "flags": [
+            {
+              "name": "help",
+              "aliases": [
+                "-h",
+                "--help"
+              ],
+              "takes_value": false
+            },
+            {
+              "name": "setup_minutes",
+              "aliases": [
+                "--setup-minutes"
+              ],
+              "takes_value": true,
+              "required": true,
+              "type": "dogfood_minutes"
+            },
+            {
+              "name": "first_project_minutes",
+              "aliases": [
+                "--first-project-minutes"
+              ],
+              "takes_value": true,
+              "required": true,
+              "type": "dogfood_minutes"
+            },
+            {
+              "name": "pdf_minutes",
+              "aliases": [
+                "--pdf-minutes"
+              ],
+              "takes_value": true,
+              "required": true,
+              "type": "dogfood_minutes"
+            },
+            {
+              "name": "manual_intervention",
+              "aliases": [
+                "--manual-intervention"
+              ],
+              "takes_value": true,
+              "required": true,
+              "type": "dogfood_yes_no"
+            },
+            {
+              "name": "would_use_again",
+              "aliases": [
+                "--would-use-again"
+              ],
+              "takes_value": true,
+              "required": true,
+              "type": "dogfood_yes_no"
+            },
+            {
+              "name": "failed_resume_attempts",
+              "aliases": [
+                "--failed-resume-attempts"
+              ],
+              "takes_value": true,
+              "type": "dogfood_failed_attempts"
+            },
+            {
+              "name": "friction",
+              "aliases": [
+                "--friction"
+              ],
+              "takes_value": true,
+              "repeat": true
+            },
+            {
+              "name": "cohort_alias",
+              "aliases": [
+                "--cohort-alias"
+              ],
+              "takes_value": true
+            },
+            {
+              "name": "consent_to_share",
+              "aliases": [
+                "--consent-to-share"
+              ],
+              "takes_value": false
+            }
+          ],
+          "positionals": [
+            "project_dir"
+          ]
+        },
+        "validate": {
+          "help": "usage: comic-sol dogfood validate [-h] report_path\n\npositional arguments:\n  report_path\n\noptions:\n  -h, --help   show this help message and exit\n",
+          "flags": [
+            {
+              "name": "help",
+              "aliases": [
+                "-h",
+                "--help"
+              ],
+              "takes_value": false
+            }
+          ],
+          "positionals": [
+            "report_path"
+          ]
+        }
+      },
+      "names": [
+        "report",
+        "preview",
+        "validate"
+      ]
+    },
+    "handoff": {
+      "help": "usage: comic-sol handoff [-h]\n                         {prepare,inspect,export,import,accept-result,record-failure} ...\n\npositional arguments:\n  {prepare,inspect,export,import,accept-result,record-failure}\n\noptions:\n  -h, --help            show this help message and exit\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        }
+      ],
+      "subcommand": "handoff_command",
+      "children": {
+        "prepare": {
+          "help": "usage: comic-sol handoff prepare [-h] project_dir\n\npositional arguments:\n  project_dir\n\noptions:\n  -h, --help   show this help message and exit\n",
+          "flags": [
+            {
+              "name": "help",
+              "aliases": [
+                "-h",
+                "--help"
+              ],
+              "takes_value": false
+            }
+          ],
+          "positionals": [
+            "project_dir"
+          ]
+        },
+        "inspect": {
+          "help": "usage: comic-sol handoff inspect [-h] target\n\npositional arguments:\n  target\n\noptions:\n  -h, --help  show this help message and exit\n",
+          "flags": [
+            {
+              "name": "help",
+              "aliases": [
+                "-h",
+                "--help"
+              ],
+              "takes_value": false
+            }
+          ],
+          "positionals": [
+            "target"
+          ]
+        },
+        "export": {
+          "help": "usage: comic-sol handoff export [-h] --output OUTPUT_PATH project_dir\n\npositional arguments:\n  project_dir\n\noptions:\n  -h, --help            show this help message and exit\n  --output OUTPUT_PATH\n",
+          "flags": [
+            {
+              "name": "help",
+              "aliases": [
+                "-h",
+                "--help"
+              ],
+              "takes_value": false
+            },
+            {
+              "name": "output_path",
+              "aliases": [
+                "--output"
+              ],
+              "takes_value": true,
+              "required": true
+            }
+          ],
+          "positionals": [
+            "project_dir"
+          ]
+        },
+        "import": {
+          "help": "usage: comic-sol handoff import [-h] --output-root OUTPUT_ROOT archive_path\n\npositional arguments:\n  archive_path\n\noptions:\n  -h, --help            show this help message and exit\n  --output-root OUTPUT_ROOT\n",
+          "flags": [
+            {
+              "name": "help",
+              "aliases": [
+                "-h",
+                "--help"
+              ],
+              "takes_value": false
+            },
+            {
+              "name": "output_root",
+              "aliases": [
+                "--output-root"
+              ],
+              "takes_value": true,
+              "required": true
+            }
+          ],
+          "positionals": [
+            "archive_path"
+          ]
+        },
+        "accept-result": {
+          "help": "usage: comic-sol handoff accept-result [-h] --job JOB_ID --attempt ATTEMPT\n                                       --executor-kind {native-tool,external-tool}\n                                       --executor-id EXECUTOR_ID\n                                       [--provider PROVIDER] [--model MODEL]\n                                       [--used-reference-images]\n                                       [--used-dimensions]\n                                       [--used-localized-edit]\n                                       --path RASTER_PATH\n                                       [--approve-reference]\n                                       project_dir\n\npositional arguments:\n  project_dir\n\noptions:\n  -h, --help            show this help message and exit\n  --job JOB_ID\n  --attempt ATTEMPT\n  --executor-kind {native-tool,external-tool}\n  --executor-id EXECUTOR_ID\n  --provider PROVIDER\n  --model MODEL\n  --used-reference-images\n  --used-dimensions\n  --used-localized-edit\n  --path RASTER_PATH\n  --approve-reference\n",
+          "flags": [
+            {
+              "name": "help",
+              "aliases": [
+                "-h",
+                "--help"
+              ],
+              "takes_value": false
+            },
+            {
+              "name": "job_id",
+              "aliases": [
+                "--job"
+              ],
+              "takes_value": true,
+              "required": true
+            },
+            {
+              "name": "attempt",
+              "aliases": [
+                "--attempt"
+              ],
+              "takes_value": true,
+              "required": true,
+              "type": "int"
+            },
+            {
+              "name": "executor_kind",
+              "aliases": [
+                "--executor-kind"
+              ],
+              "takes_value": true,
+              "required": true,
+              "choices": [
+                "native-tool",
+                "external-tool"
+              ]
+            },
+            {
+              "name": "executor_id",
+              "aliases": [
+                "--executor-id"
+              ],
+              "takes_value": true,
+              "required": true
+            },
+            {
+              "name": "provider",
+              "aliases": [
+                "--provider"
+              ],
+              "takes_value": true
+            },
+            {
+              "name": "model",
+              "aliases": [
+                "--model"
+              ],
+              "takes_value": true
+            },
+            {
+              "name": "used_reference_images",
+              "aliases": [
+                "--used-reference-images"
+              ],
+              "takes_value": false
+            },
+            {
+              "name": "used_dimensions",
+              "aliases": [
+                "--used-dimensions"
+              ],
+              "takes_value": false
+            },
+            {
+              "name": "used_localized_edit",
+              "aliases": [
+                "--used-localized-edit"
+              ],
+              "takes_value": false
+            },
+            {
+              "name": "raster_path",
+              "aliases": [
+                "--path"
+              ],
+              "takes_value": true,
+              "required": true
+            },
+            {
+              "name": "approve_reference",
+              "aliases": [
+                "--approve-reference"
+              ],
+              "takes_value": false
+            }
+          ],
+          "positionals": [
+            "project_dir"
+          ]
+        },
+        "record-failure": {
+          "help": "usage: comic-sol handoff record-failure [-h] --job JOB_ID --attempt ATTEMPT\n                                        --executor-kind {native-tool,external-tool}\n                                        --executor-id EXECUTOR_ID\n                                        [--provider PROVIDER] [--model MODEL]\n                                        [--used-reference-images]\n                                        [--used-dimensions]\n                                        [--used-localized-edit]\n                                        --category CATEGORY\n                                        project_dir\n\npositional arguments:\n  project_dir\n\noptions:\n  -h, --help            show this help message and exit\n  --job JOB_ID\n  --attempt ATTEMPT\n  --executor-kind {native-tool,external-tool}\n  --executor-id EXECUTOR_ID\n  --provider PROVIDER\n  --model MODEL\n  --used-reference-images\n  --used-dimensions\n  --used-localized-edit\n  --category CATEGORY\n",
+          "flags": [
+            {
+              "name": "help",
+              "aliases": [
+                "-h",
+                "--help"
+              ],
+              "takes_value": false
+            },
+            {
+              "name": "job_id",
+              "aliases": [
+                "--job"
+              ],
+              "takes_value": true,
+              "required": true
+            },
+            {
+              "name": "attempt",
+              "aliases": [
+                "--attempt"
+              ],
+              "takes_value": true,
+              "required": true,
+              "type": "int"
+            },
+            {
+              "name": "executor_kind",
+              "aliases": [
+                "--executor-kind"
+              ],
+              "takes_value": true,
+              "required": true,
+              "choices": [
+                "native-tool",
+                "external-tool"
+              ]
+            },
+            {
+              "name": "executor_id",
+              "aliases": [
+                "--executor-id"
+              ],
+              "takes_value": true,
+              "required": true
+            },
+            {
+              "name": "provider",
+              "aliases": [
+                "--provider"
+              ],
+              "takes_value": true
+            },
+            {
+              "name": "model",
+              "aliases": [
+                "--model"
+              ],
+              "takes_value": true
+            },
+            {
+              "name": "used_reference_images",
+              "aliases": [
+                "--used-reference-images"
+              ],
+              "takes_value": false
+            },
+            {
+              "name": "used_dimensions",
+              "aliases": [
+                "--used-dimensions"
+              ],
+              "takes_value": false
+            },
+            {
+              "name": "used_localized_edit",
+              "aliases": [
+                "--used-localized-edit"
+              ],
+              "takes_value": false
+            },
+            {
+              "name": "category",
+              "aliases": [
+                "--category"
+              ],
+              "takes_value": true,
+              "required": true
+            }
+          ],
+          "positionals": [
+            "project_dir"
+          ]
+        }
+      },
+      "names": [
+        "prepare",
+        "inspect",
+        "export",
+        "import",
+        "accept-result",
+        "record-failure"
+      ]
+    },
+    "mcp": {
+      "help": "usage: comic-sol mcp [-h] --root ROOT\n\noptions:\n  -h, --help   show this help message and exit\n  --root ROOT\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        },
+        {
+          "name": "root",
+          "aliases": [
+            "--root"
+          ],
+          "takes_value": true,
+          "required": true
+        }
+      ]
+    },
+    "skill-install": {
+      "help": "usage: comic-sol skill-install [-h]\n                               --target {codex,claude,antigravity,zcode,auto}\n                               --scope {user,project}\n                               [--project-root PROJECT_ROOT]\n\nPlace or remove the canonical Comic Sol Agent Skill bundle.\n\noptions:\n  -h, --help            show this help message and exit\n  --target {codex,claude,antigravity,zcode,auto}\n  --scope {user,project}\n  --project-root PROJECT_ROOT\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        },
+        {
+          "name": "target",
+          "aliases": [
+            "--target"
+          ],
+          "takes_value": true,
+          "required": true,
+          "choices": [
+            "codex",
+            "claude",
+            "antigravity",
+            "zcode",
+            "auto"
+          ]
+        },
+        {
+          "name": "scope",
+          "aliases": [
+            "--scope"
+          ],
+          "takes_value": true,
+          "required": true,
+          "choices": [
+            "user",
+            "project"
+          ]
+        },
+        {
+          "name": "project_root",
+          "aliases": [
+            "--project-root"
+          ],
+          "takes_value": true
+        }
+      ]
+    },
+    "skill-uninstall": {
+      "help": "usage: comic-sol skill-uninstall [-h]\n                                 --target {codex,claude,antigravity,zcode}\n                                 --scope {user,project}\n                                 [--project-root PROJECT_ROOT]\n\nPlace or remove the canonical Comic Sol Agent Skill bundle.\n\noptions:\n  -h, --help            show this help message and exit\n  --target {codex,claude,antigravity,zcode}\n  --scope {user,project}\n  --project-root PROJECT_ROOT\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        },
+        {
+          "name": "target",
+          "aliases": [
+            "--target"
+          ],
+          "takes_value": true,
+          "required": true,
+          "choices": [
+            "codex",
+            "claude",
+            "antigravity",
+            "zcode"
+          ]
+        },
+        {
+          "name": "scope",
+          "aliases": [
+            "--scope"
+          ],
+          "takes_value": true,
+          "required": true,
+          "choices": [
+            "user",
+            "project"
+          ]
+        },
+        {
+          "name": "project_root",
+          "aliases": [
+            "--project-root"
+          ],
+          "takes_value": true
+        }
+      ]
+    },
+    "setup": {
+      "help": "usage: comic-sol setup [-h] [--output-root OUTPUT_ROOT] [--client CLIENTS]\n\noptions:\n  -h, --help            show this help message and exit\n  --output-root OUTPUT_ROOT\n  --client CLIENTS\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        },
+        {
+          "name": "output_root",
+          "aliases": [
+            "--output-root"
+          ],
+          "takes_value": true
+        },
+        {
+          "name": "clients",
+          "aliases": [
+            "--client"
+          ],
+          "takes_value": true,
+          "repeat": true
+        }
+      ]
+    },
+    "repair": {
+      "help": "usage: comic-sol repair [-h] [--output-root OUTPUT_ROOT]\n                        [--client {codex,hermes,claude-desktop,claude-code,cursor,vscode,windsurf}]\n                        [--dry-run]\n\noptions:\n  -h, --help            show this help message and exit\n  --output-root OUTPUT_ROOT\n  --client {codex,hermes,claude-desktop,claude-code,cursor,vscode,windsurf}\n  --dry-run\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        },
+        {
+          "name": "output_root",
+          "aliases": [
+            "--output-root"
+          ],
+          "takes_value": true
+        },
+        {
+          "name": "clients",
+          "aliases": [
+            "--client"
+          ],
+          "takes_value": true,
+          "choices": [
+            "codex",
+            "hermes",
+            "claude-desktop",
+            "claude-code",
+            "cursor",
+            "vscode",
+            "windsurf"
+          ],
+          "repeat": true
+        },
+        {
+          "name": "dry_run",
+          "aliases": [
+            "--dry-run"
+          ],
+          "takes_value": false
+        }
+      ]
+    },
+    "uninstall": {
+      "help": "usage: comic-sol uninstall [-h] [--output-root OUTPUT_ROOT] [--client CLIENTS]\n\noptions:\n  -h, --help            show this help message and exit\n  --output-root OUTPUT_ROOT\n  --client CLIENTS\n",
+      "flags": [
+        {
+          "name": "help",
+          "aliases": [
+            "-h",
+            "--help"
+          ],
+          "takes_value": false
+        },
+        {
+          "name": "output_root",
+          "aliases": [
+            "--output-root"
+          ],
+          "takes_value": true
+        },
+        {
+          "name": "clients",
+          "aliases": [
+            "--client"
+          ],
+          "takes_value": true,
+          "repeat": true
+        }
+      ]
+    }
+  },
+  "names": [
+    "doctor",
+    "init",
+    "status",
+    "validate",
+    "bind-plan",
+    "resume",
+    "finalize",
+    "dogfood",
+    "handoff",
+    "mcp",
+    "skill-install",
+    "skill-uninstall",
+    "setup",
+    "repair",
+    "uninstall"
+  ]
+}

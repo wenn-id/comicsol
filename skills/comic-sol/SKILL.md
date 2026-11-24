@@ -5,7 +5,7 @@ description: Create, storyboard, render, resume, repair, and export finished ori
 
 # Comic Sol
 
-Turn one natural-language request into a local, editable comic project. Reason about story and images, then delegate deterministic work to the bundled Python scripts.
+Turn one natural-language request into a local, editable comic project. Reason about story and images, then delegate deterministic work to the installed native `comic-sol` binary.
 
 ## Read progressively
 
@@ -32,18 +32,18 @@ Turn one natural-language request into a local, editable comic project. Reason a
    a declared external adapter is available, prepare that handoff and then transition
    the project to `BLOCKED` until a destination declares a usable capability. Deterministic
    scripts never discover or call providers.
-5. Generate canonical references and panels into attempt paths, including through an explicitly selected agent-managed external adapter; normal intake, retention, review, and promotion gates still apply. For prepared-handoff execution, run `PYTHON scripts/comic_sol.py handoff inspect PROJECT` (installed equivalent: `comic-sol handoff inspect PROJECT`), select only a reported job whose effective `status` is `ready`, and pass `PROJECT/<jobs[].path>` using the exact `path` returned for that job. After result intake, inspect again before retrying; the new inspection is authoritative for status and the next attempt. Never enumerate or execute retained `generation/jobs/*.json` files directly. See [workflow](references/workflow.md) for the full lifecycle. Require the image model to draw each exact `generated-visual` storyboard SFX and never a `deterministic-lettering` one.
-   Inspect every result visually, record all seven QA checks, and repair only failures within budget. Route a bad effect to lettering with `sfx_repair.py` and follow its
+5. Generate canonical references and panels into attempt paths, including through an explicitly selected agent-managed external adapter; normal intake, retention, review, and promotion gates still apply. For prepared-handoff execution, run `comic-sol handoff inspect PROJECT`, select only a reported job whose effective `status` is `ready`, and pass `PROJECT/<jobs[].path>` using the exact `path` returned for that job. After result intake, inspect again before retrying; the new inspection is authoritative for status and the next attempt. Never enumerate or execute retained `generation/jobs/*.json` files directly. See [workflow](references/workflow.md) for the full lifecycle. Require the image model to draw each exact `generated-visual` storyboard SFX and never a `deterministic-lettering` one.
+   Inspect every result visually, record all seven QA checks, and repair only failures within budget. Route a bad effect to lettering with `comic-sol skill sfx-repair` and follow its
    `next_action`: ink the model drew needs a `regenerate` review, not re-lettering alone.
 6. Promote accepted attempts; deterministically letter dialogue, captions, and any
    `deterministic-lettering` SFX while validating and counting exact `generated-visual`
-   storyboard SFX without drawing it in Pillow; compose pages, inspect every composed page
+   storyboard SFX without drawing it in the lettering engine; compose pages, inspect every composed page
    and write its `qa/pages/page-{NNN}.json` record, export the PDF, render the QA report
    (which projects the terminal status), validate final integrity, then transition to it.
 7. Return status, counts, warnings, and clickable project output paths.
 
 ## Executor selection
-When generation is needed, a compatible native image tool is eligible only when declared; follow this declared capability priority: (1) a compatible declared native image tool; (2) a compatible declared external adapter (the compatible declared external executor route); (3) Prepare a handoff for portable transfer with `PYTHON scripts/comic_sol.py handoff prepare PROJECT`; (4) an actionable `BLOCKED` state that preserves all editable intermediates while the handoff awaits a destination with a usable declared capability. Use the first compatible executor in that order. Handoff preparation creates job descriptors, not an executor: after preparing it, transition to `BLOCKED` until a destination declares a usable capability. Selection ranks only declared capabilities, never by provider name, model name, or provider-specific hard-coded ranking. Never infer capability availability or features from provider, model, or tool names.
+When generation is needed, a compatible native image tool is eligible only when declared; follow this declared capability priority: (1) a compatible declared native image tool; (2) a compatible declared external adapter (the compatible declared external executor route); (3) Prepare a handoff for portable transfer with `comic-sol handoff prepare PROJECT`; (4) an actionable `BLOCKED` state that preserves all editable intermediates while the handoff awaits a destination with a usable declared capability. Use the first compatible executor in that order. Handoff preparation creates job descriptors, not an executor: after preparing it, transition to `BLOCKED` until a destination declares a usable capability. Selection ranks only declared capabilities, never by provider name, model name, or provider-specific hard-coded ranking. Never infer capability availability or features from provider, model, or tool names.
 The full cross-agent handoff lifecycle is in [workflow](references/workflow.md).
 
 ## Fast Mode
@@ -53,18 +53,18 @@ pilot into a 4+ hour run. Apply it to every new production by default.
 ### Never read engine source
 
 Do not read, grep, or open any file under `scripts/`, `comic_sol_product/`, or
-`tests/`. The deterministic engine is a black box invoked only via `init`, `doctor`,
-`validate`, `status`, `resume-plan`, `finalize`, and the documented `handoff` subcommands.
+`tests/`. Use the documented `comic-sol` commands, including the `skill` and
+`handoff` subcommands, or the corresponding MCP tools.
 Reading source wastes context and risks editing the engine you should not touch.
 
-If doctor reports missing Python/font/Pillow, stop and report the exact required
+If doctor reports a native runtime, codec, or font problem, stop and report the exact required
 environment change. Obtain explicit user approval, then apply only that documented
 fix; do not patch the engine to make the check pass. If a version pin looks wrong,
 report it as a skill upgrade, not an ad-hoc edit.
 
-### Resolve Python once
+### Resolve the native binary once
 
-Resolve one Python 3.11+ launcher before deterministic commands. Store its command/path as `PYTHON`, substitute `PYTHON` in examples below, and never switch interpreter mid-project.
+Use the native `comic-sol` executable for your platform. Verify `comic-sol skill --help` before creating a project. If the executable is installed outside PATH, use its absolute path for every command. To install this bundle with the executable, run `comic-sol skill-install --target CLIENT --scope user`.
 
 ### Use init, never hand-write setup scripts
 
@@ -165,7 +165,7 @@ agent-authored `qa/pages/page-{NNN}.json` record matching that page's hash. Run
 
 Label deterministic sample evidence as `mechanics-only`: it proves normalization,
 layout, lettering, retry/resume, provenance, rollback, and export integrity, but does
-not prove live visual quality. Use `scripts/quality_sample.py PROJECT_DIR --mode
+not prove live visual quality. Use `comic-sol skill quality-sample PROJECT_DIR --mode
 deterministic` to write that disclosure into `qa/evidence.json`.
 
 Live visual evidence is valid only for an already retained local attempt. Supply its
@@ -182,36 +182,32 @@ subagent to audit results.
 
 ## Deterministic command route
 
-Prefer installed `comic-sol --json` for shared commands; it emits the stable
-`{ok, command, data, error}` envelope. The source CLI keeps command-local raw `--json`
-for compatibility and engine-only routes such as `transition` and `resume-plan`.
-
-Use a resolved Python 3.11+ launcher for `PYTHON` below. Build `IMAGE_CAPABILITY_FLAGS`
-exactly as specified in the capability reference; leave it empty only if inspection is
-unavailable or fails.
+Use `comic-sol --json` for the stable `{ok, command, data, error}` envelope.
+Build `IMAGE_CAPABILITY_FLAGS` as specified in the capability reference. Leave it empty only if inspection is unavailable or fails.
 
 ```text
 comic-sol --json doctor --output-root OUTPUT_ROOT [IMAGE_CAPABILITY_FLAGS]
 comic-sol --json init --output-root "$OUTPUT_ROOT" --title "$TITLE" --source "$SOURCE" --request-json "$REQUEST_JSON" --page-count "$PAGE_COUNT" [IMAGE_CAPABILITY_FLAGS]
 comic-sol --json status PROJECT_DIR
-PYTHON scripts/comic_sol.py transition PROJECT_DIR TARGET [--warning "$WARNING_TEXT"]
-PYTHON scripts/validate_project.py PROJECT_DIR --stage plan|storyboard|panels|final [--json]
+comic-sol skill transition PROJECT_DIR TARGET [--warning "$WARNING_TEXT"]
+comic-sol --json validate PROJECT_DIR --stage plan|storyboard|panels|final
 
-PYTHON scripts/comic_sol.py resume-plan PROJECT_DIR --json
+comic-sol --json skill resume-plan PROJECT_DIR
 comic-sol --json resume PROJECT_DIR
-PYTHON scripts/comic_sol.py invalidate PROJECT_DIR STAGE
-PYTHON scripts/comic_sol.py record-stage PROJECT_DIR STAGE
-PYTHON scripts/comic_sol.py record-attempt PROJECT_DIR PANEL_ID initial|visual_retry|transient_repeat PATH
-PYTHON scripts/comic_sol.py promote-attempt PROJECT_DIR PANEL_ID PATH
-PYTHON scripts/comic_sol.py override-panel PROJECT_DIR PANEL_ID --reason "$REASON_TEXT"
+comic-sol skill invalidate PROJECT_DIR STAGE
+comic-sol skill record-stage PROJECT_DIR STAGE
+comic-sol skill record-attempt PROJECT_DIR PANEL_ID initial|visual_retry|transient_repeat PATH
+comic-sol skill promote-attempt PROJECT_DIR PANEL_ID PATH
+comic-sol skill override-panel PROJECT_DIR PANEL_ID --reason "$REASON_TEXT"
 comic-sol --json finalize PROJECT_DIR
 
-PYTHON scripts/letter_panels.py PROJECT_DIR [--font PATH]
-PYTHON scripts/sfx_repair.py PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason "$REASON_TEXT"
-PYTHON scripts/compose_pages.py PROJECT_DIR --all
-PYTHON scripts/compose_pages.py PROJECT_DIR --page N
-PYTHON scripts/export_pdf.py PROJECT_DIR [--output PATH]
-PYTHON scripts/render_report.py PROJECT_DIR [--output PATH]
+comic-sol skill normalize-panel PROJECT_DIR --panel PANEL_ID --source PATH --width W --height H --mode exact|fit|crop
+comic-sol skill letter PROJECT_DIR [--font PATH]
+comic-sol skill sfx-repair PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason "$REASON_TEXT"
+comic-sol skill compose PROJECT_DIR --all
+comic-sol skill compose PROJECT_DIR --page N
+comic-sol skill export PROJECT_DIR [--output PATH]
+comic-sol skill render-report PROJECT_DIR [--output PATH]
 ```
 
 Never fabricate successful artifacts, provider capability, visual evidence, or a terminal

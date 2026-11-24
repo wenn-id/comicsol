@@ -55,7 +55,7 @@ pause unless a material condition applies.
 ## Ten stages
 
 After a stage's required inputs and outputs validate, persist its resume cache with
-`comic_sol.py record-stage PROJECT_DIR
+`comic-sol skill record-stage PROJECT_DIR
 planning|storyboard|generation|lettering|composition|export`. Record before advancing
 to the next production stage; record `export` after the terminal QA report is rendered.
 Without a valid recorded cache entry, `resume-plan` honestly marks the affected stage
@@ -64,16 +64,16 @@ and its downstream stages for rerun instead of guessing.
 ### 1. Detect and initialize
 
 Inspect capability metadata as described in the capability reference, run
-`comic_sol.py doctor` with that observation, then run `comic_sol.py init` with exact
+`comic-sol doctor` with that observation, then run `comic-sol init` with exact
 source/request files and `--page-count PAGE_COUNT`. Agents and CI always use this
-non-interactive form. For resume, run `comic_sol.py status` and `comic_sol.py resume-plan`,
+non-interactive form. For resume, run `comic-sol status` and `comic-sol skill resume-plan`,
 then recover by status:
 
-- A `BLOCKED` project recovers with `comic_sol.py resume PROJECT_DIR`. Only `resume`
+- A `BLOCKED` project recovers with `comic-sol resume PROJECT_DIR`. Only `resume`
   clears `blocked_from` and `blocked_reason`, and it invalidates the stale stages itself.
   Running `invalidate` on a blocked project leaves those fields set and every later
   validation rejects the manifest, so `invalidate` refuses while a project is `BLOCKED`.
-- A non-blocked project with a stale stage uses `comic_sol.py invalidate PROJECT_DIR
+- A non-blocked project with a stale stage uses `comic-sol skill invalidate PROJECT_DIR
   STAGE` from the earliest stale stage only.
 
 Initialization creates the generated directory boundary and `INIT` manifest. Alternatively,
@@ -87,10 +87,11 @@ publication path, records planning and storyboard artifacts, and begins at
 ### 2. Plan story and characters
 
 Write canonical `plan/story-plan.json` and `plan/character-bible.json` using the schemas
-and creative reference. Run `validate_project.py PROJECT_DIR --stage plan`, revise invalid
-semantic content, then `comic_sol.py transition PROJECT_DIR PLANNED`.
+and creative reference. Run `comic-sol validate PROJECT_DIR --stage plan`, revise invalid
+semantic content, then `comic-sol skill transition PROJECT_DIR PLANNED`.
 
-Then publish the character identity pack with `character_identity.py PROJECT_DIR --derive`.
+Then publish the character identity pack with
+`comic-sol skill character-identity PROJECT_DIR --derive --allow-missing-references`.
 The pack is the identity context every panel prompt embeds later, so deriving it once here
 keeps each panel pointing at one structured copy of the traits instead of a fresh
 paraphrase. Re-run `--derive` after any character-bible fingerprint edit.
@@ -110,9 +111,8 @@ are always deterministic lettering content. SFX chooses its producer with `rende
 `deterministic-lettering` when the effect must be legible verbatim — non-Latin scripts
 especially — and `generated-visual` when integration with the artwork matters more than
 exactness. Transition through `SCRIPTED`, validate with
-`validate_project.py PROJECT_DIR --stage storyboard`, then transition to `STORYBOARDED`.
-Before storyboard validation, run `comic_sol.py bind-plan PROJECT_DIR` (or
-`comic-sol bind-plan PROJECT_DIR`). It validates the three plan artifacts and records their
+`comic-sol validate PROJECT_DIR --stage storyboard`, then transition to `STORYBOARDED`.
+Before storyboard validation, run `comic-sol bind-plan PROJECT_DIR`. It validates the three plan artifacts and records their
 hashes, page and panel counts, and ordered panel IDs in the manifest. Keep `project.json`
 engine-owned; do not edit it by hand.
 
@@ -120,7 +120,7 @@ engine-owned; do not edit it by hand.
 
 When generation is needed, use this declared capability priority: (1) a compatible
  declared native image tool; (2) a compatible declared external adapter; (3) Prepare a
- handoff with `PYTHON scripts/comic_sol.py handoff prepare PROJECT`; (4) an
+ handoff with `comic-sol handoff prepare PROJECT`; (4) an
  actionable `BLOCKED` state that preserves all editable intermediates while the handoff
  awaits a destination with a usable declared capability. Use the first compatible executor
  in that order. Handoff preparation creates job descriptors, not an executor: after
@@ -130,7 +130,9 @@ When generation is needed, use this declared capability priority: (1) a compatib
 Reuse the provider-neutral observation supplied to `doctor`, unless the active session's
 tool inventory changed; in that case inspect it again as described in the capability
 reference. Record the same neutral feature flags in `project.json`. If no declared native
-or external route is available, run `PYTHON scripts/comic_sol.py handoff prepare PROJECT`,
+or external route is available, write one prompt per storyboard panel at
+`prompts/panels/PANEL_ID.txt` and one per missing canonical character reference at
+`prompts/references/CHARACTER_ID.txt`. Then run `comic-sol handoff prepare PROJECT`,
 then transition to `BLOCKED` with the exact preservation error until a destination records
 a usable declared capability. Do not create empty image files.
 
@@ -167,13 +169,13 @@ scene reference only at the creative threshold. Preserve prompts and transition 
 `REFERENCES_READY` only when references are usable.
 
 Record any additional usable view beyond the bible reference in the identity pack's
-`reference_views`, then re-run `character_identity.py PROJECT_DIR --derive`; authored views
+`reference_views`, then re-run `comic-sol skill character-identity PROJECT_DIR --derive`; authored views
 and proportion notes survive re-derivation while derived identity fields are rebuilt. Name
 a view `close-up`, `profile`, `three-quarter`, or `full-body` when it is that framing of
 the character, so panels of that shot receive it; any other name is treated as
 scene-specific and ranked after the identity views.
 
-Then publish the reference plan with `reference_strategy.py PROJECT_DIR --plan [--budget
+Then publish the reference plan with `comic-sol skill reference-strategy PROJECT_DIR --plan [--budget
 COUNT]`. Pass the capability's reference limit from stage 4 as `--budget`, omit it when
 there is no limit, and pass `0` when `supports_reference_images` is false. The plan is
 recorded at `logs/reference-selection.json`, so a panel that drifts can be reviewed
@@ -182,7 +184,7 @@ view or a panel's `shot`.
 
 ### 6. Generate panels
 
-Before the first panel, run `character_identity.py PROJECT_DIR --check`. It fails closed on
+Before the first panel, run `comic-sol skill character-identity PROJECT_DIR --check`. It fails closed on
 a missing, invalid, stale, or unbacked identity pack rather than letting identity drift
 start.
 
@@ -193,35 +195,36 @@ logos, signatures, watermarks, or un-authored SFX. Never ask it for a
 authors none in `generated-visual` mode: Comic Sol draws those effects itself after
 generation, so a baked copy would sit underneath the drawn one.
 
-Embed the `character_identity.py PROJECT_DIR
+Embed the `comic-sol skill character-identity PROJECT_DIR
 --panel PANEL_ID` block verbatim in the prompt, so a retry or a resume reuses the same
 identity context instead of rewording it.
 
-Attach exactly the references named by `reference_strategy.py PROJECT_DIR --panel PANEL_ID
+Attach exactly the references named by `comic-sol skill reference-strategy PROJECT_DIR --panel PANEL_ID
 [--budget COUNT]`, in the order it lists: the canonical view leads, the view matching the
 panel's shot follows, and scene-specific views come last. Do not re-add a view the block
 records as omitted; each omission states its reason, and a reference path shared by two
 characters is deliberately attached once rather than spending the limit twice.
 
-Invoke the selected agent tool into an attempt file, then run `comic_sol.py
-record-attempt`. Confirm readable raster output and at least 512 px in both dimensions.
-Never promote before visual QA.
+Invoke the selected agent tool into an attempt file, then run `comic-sol skill record-attempt`. Confirm readable raster output and at least 512 px in both dimensions.
+Never promote before visual QA. After promotion, normalize the retained raster with
+`comic-sol skill normalize-panel PROJECT_DIR --panel PANEL_ID --source panels/raw/PANEL_ID.png --width WIDTH --height HEIGHT --mode MODE`.
+Use the panel rectangle's dimensions and choose `exact`, `fit`, or `crop` based on the reviewed framing. The command publishes the clean PNG and its normalization record together.
 
 ### 7. Visual QA and selective repair
 
 Apply all seven checks from the QA reference with evidence, including exact SFX spelling,
 count, and authorization. Retry only failed panels and retain every attempt. Use
-`comic_sol.py promote-attempt` for accepted images; it refuses to overwrite a panel whose
+`comic-sol skill promote-attempt` for accepted images; it refuses to overwrite a panel whose
 record still accepts it, so record the new review before promoting a repair. Use
-`comic_sol.py override-panel` only for an explicit allowed user override: it downgrades
+`comic-sol skill override-panel` only for an explicit allowed user override: it downgrades
 the failed error-level checks to warning severity, records the reason on the panel and
 manifest, and the run continues toward `COMPLETE_WITH_WARNINGS` at the final transition.
-Validate with `validate_project.py PROJECT_DIR --stage panels`, then transition through
+Validate with `comic-sol validate PROJECT_DIR --stage panels`, then transition through
 `PANELS_READY` and `QA_READY`.
 
-Before judging `character-identity`, run `character_quality.py PROJECT_DIR --context
+Before judging `character-identity`, run `comic-sol skill character-quality PROJECT_DIR --context
 PANEL_ID`. Assess all seven emitted traits for every listed character, then pipe the
-normalized assessment array to `character_quality.py PROJECT_DIR --record PANEL_ID
+normalized assessment array to `comic-sol skill character-quality PROJECT_DIR --record PANEL_ID
 --method METHOD --reviewer REVIEWER`. The command replaces only the panel's existing
 `character-identity` check, preserves the other six checks, publishes atomically, and
 derives `accept`, `accept-warning`, or `regenerate`. Do not persist a raw vision-provider
@@ -234,14 +237,14 @@ the pack carries, which is a different repair from a prompt that contradicted th
 the failed trait's `repair_guidance` as the single correction clause; it names the subject
 and canonical expectation without requiring a provider-specific repair API.
 
-Before repairing any faulted panel, run `repair_strategy.py PROJECT_DIR --panel PANEL_ID`,
+Before repairing any faulted panel, run `comic-sol skill repair-strategy PROJECT_DIR --panel PANEL_ID`,
 adding `--localized-edit` only when the detected capability can edit a bounded part of an
 existing raster. A `selective-repair` block lists the subjects and areas you may touch and
 the accepted content you must leave alone; a `full-regeneration` block states which of
 `stale-bindings`, `editing-unsupported`, `panel-wide-check`, or `unlocalized-evidence`
 withdrew the narrower option. To locate a non-identity defect for the planner, record
 bounded defect regions on `anatomy` or `text-free` when the review can name a character or
-an anchor area. Publish the project-wide record with `repair_strategy.py PROJECT_DIR --plan
+an anchor area. Publish the project-wide record with `comic-sol skill repair-strategy PROJECT_DIR --plan
 [--localized-edit]` after each review so `logs/repair-plan.json` matches the current
 records; validation reports a plan that no longer does.
 
@@ -250,7 +253,7 @@ records; validation reports a plan that no longer does.
 After the last panel is accepted and promoted, prefer one combined command:
 
 ```text
-PYTHON scripts/comic_sol.py finalize PROJECT_DIR
+comic-sol finalize PROJECT_DIR
 ```
 
 `finalize` runs lettering, composition, PDF export, report rendering, final validation,
@@ -266,31 +269,31 @@ to complete. Recomposing a page invalidates its record.
 
 If `finalize` is unavailable, run the stages individually in this order:
 
-1. `letter_panels.py PROJECT_DIR [--font PATH]`, `comic_sol.py record-stage PROJECT_DIR
+1. `comic-sol skill letter PROJECT_DIR [--font PATH]`, `comic-sol skill record-stage PROJECT_DIR
    lettering`, then transition to `LETTERED`. `text_count` is the authored total;
    `rendered_text_count` counts every item drawn; `sfx_count` counts validated authored
-   SFX; `lettered_sfx_count` counts the SFX subset Pillow drew. Pillow must not draw
+   SFX; `lettered_sfx_count` counts the SFX subset drawn by the lettering engine. It must not draw
    `generated-visual` SFX. Each panel's `sfx` provenance block names every effect's
    `origin` as `image-model` or `comic-sol-lettering`; replace a faulty generated effect
-   with `sfx_repair.py PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason "$REASON_TEXT"`,
+   with `comic-sol skill sfx-repair PROJECT_DIR --panel PANEL_ID --text-id TEXT_ID --reason "$REASON_TEXT"`,
    which archives the rejected rasters and re-letters from the corrected storyboard.
-2. `compose_pages.py PROJECT_DIR --all`, `comic_sol.py record-stage PROJECT_DIR
+2. `comic-sol skill compose PROJECT_DIR --all`, `comic-sol skill record-stage PROJECT_DIR
    composition`, then transition to `COMPOSED`. Composition also writes
    `cache/composition.json` and its manifest descriptor.
 3. Inspect each composed page and write its `qa/pages/page-{NNN}.json` record. Confirm
-   with `validate_project.py PROJECT_DIR --stage export-ready`.
-4. `export_pdf.py PROJECT_DIR` full-content verifies every decoded PDF page and
+   with `comic-sol validate PROJECT_DIR --stage export-ready`.
+4. `comic-sol skill export PROJECT_DIR` full-content verifies every decoded PDF page and
    transactionally records `pdf_verification` at `exports/pdf-verification.json`
    alongside the `pdf` descriptor, then transition to `EXPORTED`.
-5. `render_report.py PROJECT_DIR`, which records the `qa_report` descriptor. The report
+5. `comic-sol skill render-report PROJECT_DIR`, which records the `qa_report` descriptor. The report
    must exist before the terminal transition because final validation requires it, and
    it projects the terminal status the project is about to reach. Do not re-render it
    afterwards; that would invalidate the recorded hash.
    Record any warning that affects the terminal status before rendering the report;
    terminal transitions cannot take a new `--warning` value.
-6. `validate_project.py PROJECT_DIR --stage final`, then transition to `COMPLETE`,
+6. `comic-sol validate PROJECT_DIR --stage final`, then transition to `COMPLETE`,
    `COMPLETE_WITH_WARNINGS`, or `BLOCKED`, and record the `export` cache with
-   `comic_sol.py record-stage PROJECT_DIR export`.
+   `comic-sol skill record-stage PROJECT_DIR export`.
 
 The success path is:
 
@@ -299,21 +302,19 @@ The success path is:
 ## Cross-agent handoff lifecycle
 
 When the active session cannot generate images directly, the handoff lifecycle enables
-another agent, device, or workspace to complete generation. Use the source launcher below;
-for an installed package, `comic-sol handoff` is equivalent to
-`PYTHON scripts/comic_sol.py handoff`.
+another agent, device, or workspace to complete generation. Use the installed `comic-sol handoff` commands.
 
-1. Run `PYTHON scripts/comic_sol.py handoff prepare PROJECT`. When canonical references
+1. Run `comic-sol handoff prepare PROJECT`. When canonical references
    are missing, this first pass will prepare reference jobs. Otherwise it creates panel
    jobs and the reference phase below is skipped.
-2. Run `PYTHON scripts/comic_sol.py handoff inspect PROJECT` to check current readiness.
+2. Run `comic-sol handoff inspect PROJECT` to check current readiness.
 3. For cross-workspace or cross-device transfer, export the prepared project:
-   `PYTHON scripts/comic_sol.py handoff export PROJECT --output PROJECT.comic-sol-handoff`.
+   `comic-sol handoff export PROJECT --output PROJECT.comic-sol-handoff`.
    Handoff archives must use the `.comic-sol-handoff` suffix.
 4. Transfer the archive and import at the destination:
-   `PYTHON scripts/comic_sol.py handoff import PROJECT.comic-sol-handoff --output-root ROOT`
-5. In the executing agent, run `PYTHON scripts/comic_sol.py handoff inspect PROJECT`
-   again (installed equivalent: `comic-sol handoff inspect PROJECT`). Select only a
+   `comic-sol handoff import PROJECT.comic-sol-handoff --output-root ROOT`
+5. In the executing agent, run `comic-sol handoff inspect PROJECT`
+   again. Select only a
    reported job whose effective `status` is `ready`, and pass
    `PROJECT/<jobs[].path>` using the exact `path` returned for that job; never enumerate
    or execute retained `generation/jobs/*.json` files directly.
@@ -324,7 +325,7 @@ for an installed package, `comic-sol handoff` is equivalent to
 7. Accept each approved reference-job result with the required `--approve-reference`:
 
    ```text
-   PYTHON scripts/comic_sol.py handoff accept-result PROJECT \
+   comic-sol handoff accept-result PROJECT \
      --job JOB_ID \
      --attempt N \
      --executor-kind EXECUTOR_KIND \
@@ -336,7 +337,7 @@ for an installed package, `comic-sol handoff` is equivalent to
    At either phase, record a sanitized executor failure instead of accepting a result:
 
    ```text
-   PYTHON scripts/comic_sol.py handoff record-failure PROJECT \
+   comic-sol handoff record-failure PROJECT \
      --job JOB_ID \
      --attempt N \
      --executor-kind EXECUTOR_KIND \
@@ -346,13 +347,13 @@ for an installed package, `comic-sol handoff` is equivalent to
 
 8. Inspect after each reference intake. When all reference jobs are complete and inspect
    reports that `next_action` is `prepare`, prepare again to create panel jobs:
-   `PYTHON scripts/comic_sol.py handoff prepare PROJECT`.
+   `comic-sol handoff prepare PROJECT`.
 9. Inspect the newly created panel jobs, then execute every ready panel job using the exact
    path returned by inspect.
 10. Accept each panel-job result without `--approve-reference`:
 
    ```text
-   PYTHON scripts/comic_sol.py handoff accept-result PROJECT \
+   comic-sol handoff accept-result PROJECT \
      --job JOB_ID \
      --attempt N \
      --executor-kind EXECUTOR_KIND \
@@ -370,19 +371,19 @@ for an installed package, `comic-sol handoff` is equivalent to
     the project records an available capability; otherwise preserve `BLOCKED`.
 12. Continue normal visual QA, promotion, and deterministic export. For durable
     cross-device export after completion, run
-    `PYTHON scripts/comic_sol.py handoff export PROJECT --output PROJECT.comic-sol-handoff`.
+    `comic-sol handoff export PROJECT --output PROJECT.comic-sol-handoff`.
 
 The deterministic engine owns contracts, validation, accounting, archive safety, and
 result intake. It does not own provider credentials or provider SDK integrations.
 
 ## Evidence provenance
 
-Deterministic quality fixtures and `quality_sample.py --mode deterministic` prove
+Deterministic quality fixtures and `comic-sol skill quality-sample PROJECT_DIR --mode deterministic` prove
 mechanics only: normalization, layout, typography policy, retry/resume, provenance,
 rollback, and artifact integrity. They do not prove live visual quality.
 
 For live visual evidence, retain the actual attempt first, then run
-`quality_sample.py --mode live-visual` with its relative path, provider/model,
+`comic-sol skill quality-sample PROJECT_DIR --mode live-visual` with its relative path, provider/model,
 references, reviewer method, and known limitations. The runner hashes the retained
 local file and never calls a provider. Missing retained attempts or provenance fail
 closed. The QA report reads `qa/evidence.json` and displays the claim boundary.
