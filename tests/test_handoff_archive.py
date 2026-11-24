@@ -1984,7 +1984,9 @@ class HandoffArchiveDistributionInventoryTests(unittest.TestCase):
         self.assertNotIn(relative, sync_plugin_bundle.synchronized_paths())
         bundle = sync_plugin_bundle.BUNDLE
         self.assertFalse((bundle / relative).exists())
-        self.assertIn("comic-sol handoff export", (bundle / "references/workflow.md").read_text("utf-8"))
+        self.assertIn(
+            "comic-sol handoff export", (bundle / "references/workflow.md").read_text("utf-8")
+        )
 
     def test_release_inventory_requires_archive_module_in_wheel_and_sdist(self):
         self.assertIn("comic_sol_product/engine/handoff_archive.py", REQUIRED_WHEEL_MEMBERS)

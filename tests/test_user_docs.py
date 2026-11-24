@@ -596,7 +596,9 @@ class CrossAgentHandoffDocumentationTests(unittest.TestCase):
 
     def test_fast_mode_allows_documented_handoff_subcommands(self):
         """Fast Mode keeps engine source unread while permitting the handoff CLI."""
-        fast_mode = self.skill.split("## Fast Mode", 1)[1].split("### Resolve the native binary once", 1)[0]
+        fast_mode = self.skill.split("## Fast Mode", 1)[1].split(
+            "### Resolve the native binary once", 1
+        )[0]
         self.assertIn("Do not read, grep, or open any file under `scripts/`", fast_mode)
         self.assertIn("`handoff` subcommands", fast_mode)
         self.assertIn("`skill` and", fast_mode)

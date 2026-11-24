@@ -141,7 +141,6 @@ class PluginBundleTests(unittest.TestCase):
         for doc in bundle.rglob("*.md"):
             self.assertNotRegex(doc.read_text("utf-8"), r"(?m)^\s*(?:python|PYTHON)\s")
 
-
     def test_starter_assets_are_managed_bundle_paths(self):
         synchronized = set(sync_plugin_bundle.synchronized_paths())
         for starter in sync_plugin_bundle.STARTER_IDS:

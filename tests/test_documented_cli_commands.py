@@ -194,6 +194,13 @@ class DocumentedCliCommandTests(unittest.TestCase):
         cls.source_parser = comic_sol._build_parser()
         cls.native_skill_parser = _native_skill_parser()
 
+    def _parser_for(self, surface, arguments):
+        if surface == "source":
+            return self.source_parser
+        if next((arg for arg in arguments if arg != "--json"), None) == "skill":
+            return self.native_skill_parser
+        return self.installed_parser
+
     def test_every_fenced_comic_sol_cli_invocation_parses(self):
         examples = []
         for path in DOC_FILES:
@@ -205,12 +212,7 @@ class DocumentedCliCommandTests(unittest.TestCase):
                     if invocation is None:
                         continue
                     surface, arguments = invocation
-                    if surface == "source":
-                        parser = self.source_parser
-                    elif next((arg for arg in arguments if arg != "--json"), None) == "skill":
-                        parser = self.native_skill_parser
-                    else:
-                        parser = self.installed_parser
+                    parser = self._parser_for(surface, arguments)
                     examples.append(
                         (path, block_start + relative_line - 1, command, parser, arguments)
                     )
