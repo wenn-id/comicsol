@@ -88,23 +88,30 @@ pub fn external_target_absolute(
         volume.push(parts.next().expect("volume component").as_os_str());
     }
     let mut dir = cap::open_ambient_dir(&volume, ambient_authority())?;
-    while let Some(Component::Normal(part)) = parts.next() {
-        if let Some(excluded) = excluded
-            && same_directory(&dir, excluded)?
-        {
-            return Err(Error::invalid("output must be outside the project"));
-        }
-        if parts.peek().is_none() {
-            return Ok((dir, part.to_owned()));
-        }
-        let name = Path::new(part);
-        if create_parents && metadata(&dir, name)?.is_none() {
-            match cap::create_dir(&dir, name, &cap::DirOptions::new()) {
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                result => result?,
+    while let Some(component) = parts.next() {
+        match component {
+            Component::Normal(part) => {
+                if let Some(excluded) = excluded
+                    && same_directory(&dir, excluded)?
+                {
+                    return Err(Error::invalid("output must be outside the project"));
+                }
+                if parts.peek().is_none() {
+                    return Ok((dir, part.to_owned()));
+                }
+                let name = Path::new(part);
+                if create_parents && metadata(&dir, name)?.is_none() {
+                    match cap::create_dir(&dir, name, &cap::DirOptions::new()) {
+                        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                        result => result?,
+                    }
+                }
+                dir = open_dir(&dir, name)?;
             }
+            Component::ParentDir => dir = open_dir(&dir, Path::new(".."))?,
+            Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir => unreachable!("volume components consumed"),
         }
-        dir = open_dir(&dir, name)?;
     }
     Err(Error::invalid("file path must name a regular file"))
 }

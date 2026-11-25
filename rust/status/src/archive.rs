@@ -579,3 +579,49 @@ fn read_project_file(root: &File, path: &str) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::open_archive;
+    use std::fs;
+    use std::io::Read;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn test_directory() -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "comic-sol-archive-open-{}-{timestamp}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn archive_input_accepts_parent_directory_component() {
+        let root = test_directory();
+        let nested = root.join("nested");
+        let exports = root.join("exports");
+        fs::create_dir(&nested).unwrap();
+        fs::create_dir(&exports).unwrap();
+        let expected = b"archive contents";
+        fs::write(exports.join("file.comic-sol-handoff"), expected).unwrap();
+        let path = nested
+            .join("..")
+            .join("exports")
+            .join("file.comic-sol-handoff");
+
+        let mut archive = open_archive(&path).unwrap();
+        let mut actual = Vec::new();
+        archive.read_to_end(&mut actual).unwrap();
+
+        assert_eq!(actual, expected);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
