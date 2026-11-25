@@ -87,28 +87,37 @@ pub fn external_target_absolute(
     while let Some(Component::Prefix(_) | Component::RootDir) = parts.peek() {
         volume.push(parts.next().expect("volume component").as_os_str());
     }
-    let mut dir = cap::open_ambient_dir(&volume, ambient_authority())?;
+    let mut directories = vec![cap::open_ambient_dir(&volume, ambient_authority())?];
     while let Some(component) = parts.next() {
         match component {
             Component::Normal(part) => {
+                let dir = directories.last().expect("root directory handle");
                 if let Some(excluded) = excluded
-                    && same_directory(&dir, excluded)?
+                    && same_directory(dir, excluded)?
                 {
                     return Err(Error::invalid("output must be outside the project"));
                 }
                 if parts.peek().is_none() {
-                    return Ok((dir, part.to_owned()));
+                    return Ok((
+                        directories.pop().expect("target parent handle"),
+                        part.to_owned(),
+                    ));
                 }
                 let name = Path::new(part);
-                if create_parents && metadata(&dir, name)?.is_none() {
-                    match cap::create_dir(&dir, name, &cap::DirOptions::new()) {
+                if create_parents && metadata(dir, name)?.is_none() {
+                    match cap::create_dir(dir, name, &cap::DirOptions::new()) {
                         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                         result => result?,
                     }
                 }
-                dir = open_dir(&dir, name)?;
+                directories.push(open_dir(dir, name)?);
             }
-            Component::ParentDir => dir = open_dir(&dir, Path::new(".."))?,
+            Component::ParentDir => {
+                // Keep the stack anchored at the volume root.
+                if directories.len() > 1 {
+                    drop(directories.pop());
+                }
+            }
             Component::CurDir => {}
             Component::Prefix(_) | Component::RootDir => unreachable!("volume components consumed"),
         }

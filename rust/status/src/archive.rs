@@ -600,7 +600,7 @@ mod tests {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&path).unwrap();
-        path
+        fs::canonicalize(path).unwrap()
     }
 
     #[test]
